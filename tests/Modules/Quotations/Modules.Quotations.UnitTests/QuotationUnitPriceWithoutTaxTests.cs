@@ -72,6 +72,7 @@ public sealed class QuotationUnitPriceWithoutTaxTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -81,7 +82,7 @@ public sealed class QuotationUnitPriceWithoutTaxTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,

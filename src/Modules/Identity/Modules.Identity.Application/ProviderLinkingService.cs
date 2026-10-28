@@ -5,6 +5,7 @@ namespace Modules.Identity.Application;
 
 public sealed class ProviderLinkingService(
     IUserRepository userRepository,
+    IVerifiedProviderLinker providerLinker,
     IIdentityUnitOfWork unitOfWork,
     IClock clock)
     : IProviderLinking
@@ -48,9 +49,8 @@ public sealed class ProviderLinkingService(
             return ProviderLinkOutcome.Denied("invitation_required");
         }
 
-        var now = clock.UtcNow;
-        user.LinkProvider(provider, subject, now);
-        user.Activate(now);
+        await providerLinker.LinkAsync(user, provider, subject, cancellationToken);
+        user.Activate(clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return ProviderLinkOutcome.Linked(user.Id.Value);
     }

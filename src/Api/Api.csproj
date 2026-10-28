@@ -5,12 +5,29 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- RequestFailureCaptureTests: la excepción del webhook en el log de fallas (spec 2026-10-09 §11). -->
+    <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Bootstrapper\Bootstrapper.csproj" />
     <ProjectReference Include="..\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Api\Modules.Catalog.Api.csproj" />
     <ProjectReference Include="..\Modules\Catalog\Modules.Catalog.Infrastructure\Modules.Catalog.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Api\Modules.Companies.Api.csproj" />
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Api\Modules.Suppliers.Api.csproj" />
+    <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Infrastructure\Modules.Suppliers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Pos\Modules.Pos.Api\Modules.Pos.Api.csproj" />
+    <ProjectReference Include="..\Modules\Pos\Modules.Pos.Infrastructure\Modules.Pos.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Api\Modules.Integrations.Api.csproj" />
+    <ProjectReference Include="..\Modules\Integrations\Modules.Integrations.Infrastructure\Modules.Integrations.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Api\Modules.Messaging.Api.csproj" />
+    <ProjectReference Include="..\Modules\Messaging\Modules.Messaging.Infrastructure\Modules.Messaging.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Pipeline\Modules.Pipeline.Api\Modules.Pipeline.Api.csproj" />
+    <ProjectReference Include="..\Modules\Pipeline\Modules.Pipeline.Infrastructure\Modules.Pipeline.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Automations\Modules.Automations.Api\Modules.Automations.Api.csproj" />
+    <ProjectReference Include="..\Modules\Automations\Modules.Automations.Infrastructure\Modules.Automations.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Api\Modules.Customers.Api.csproj" />
     <ProjectReference Include="..\Modules\Customers\Modules.Customers.Infrastructure\Modules.Customers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Geography\Modules.Geography.Api\Modules.Geography.Api.csproj" />
@@ -23,6 +40,8 @@
     <ProjectReference Include="..\Modules\Quotations\Modules.Quotations.Infrastructure\Modules.Quotations.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Reporting\Modules.Reporting.Api\Modules.Reporting.Api.csproj" />
     <ProjectReference Include="..\Modules\Reporting\Modules.Reporting.Infrastructure\Modules.Reporting.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Shopify\Modules.Shopify.Api\Modules.Shopify.Api.csproj" />
+    <ProjectReference Include="..\Modules\Shopify\Modules.Shopify.Infrastructure\Modules.Shopify.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Api\Modules.Storage.Api.csproj" />
     <ProjectReference Include="..\Modules\Storage\Modules.Storage.Infrastructure\Modules.Storage.Infrastructure.csproj" />
   </ItemGroup>

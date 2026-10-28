@@ -4,24 +4,7 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>
-/// SALE-04: el detalle de un pedido, direccionado por su propio id.
-///
-/// Existe aparte de <see cref="GetOrderQuery"/> —que entra por la cotización— porque el listado
-/// muestra pedidos: desde una fila no hay por dónde entrar si la única ruta cuelga de otro
-/// recurso.
-/// </summary>
 public sealed record GetOrderByIdQuery(Guid TenantId, Guid OrderId) : IQuery<OrderDetailDto>;
-
-/// <summary>
-/// El pedido junto a su cotización. Viajan las dos porque la pantalla necesita las dos: cliente,
-/// partes, productos y totales viven en la cotización y el pedido no los repite.
-///
-/// Una sola respuesta y no dos llamadas encadenadas: pedir primero el pedido para enterarse del
-/// `quotationId` y recién entonces la cotización es una cascada que el backend puede evitar, y
-/// este módulo ya tiene las dos a mano.
-/// </summary>
-public sealed record OrderDetailDto(OrderDto Order, QuotationDto Quotation);
 
 public sealed class GetOrderByIdHandler(
     IOrderRepository orderRepository,
@@ -36,17 +19,31 @@ public sealed class GetOrderByIdHandler(
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, OrdersPermissions.OrderRead);
 
-        var order = await orderRepository.FindByIdAsync(
+        var order = await orderRepository.FindUntrackedByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
 
-        // Sin la cotización no hay detalle que dibujar: el pedido no guarda ni el cliente ni las
-        // líneas. Que falte seria un pedido huérfano --imposible por la FK-- asi que se trata
-        // como "no encontrada" y no como un detalle a medias.
-        var quotation = await quotationRepository.FindAsync(
-            query.TenantId, order.QuotationId, cancellationToken)
-            ?? throw OrderNotFound.ById(query.OrderId);
+        return await OrderDetails.LoadAsync(
+            orderRepository, quotationRepository, query.TenantId, order, cancellationToken);
+    }
+}
 
-        return new OrderDetailDto(order.ToDto(), quotation.ToDto());
+/// <summary>Arma el <see cref="OrderDetailDto"/> de un pedido ya cargado: el número de la cotización
+/// de origen (si la hay) y el historial. Lo comparten el detalle y los handlers que devuelven el
+/// pedido después de guardarlo.</summary>
+internal static class OrderDetails
+{
+    public static async Task<OrderDetailDto> LoadAsync(
+        IOrderRepository orders,
+        IQuotationRepository quotations,
+        Guid tenantId,
+        Order order,
+        CancellationToken cancellationToken)
+    {
+        var quotationNumber = order.QuotationId is { } quotationId
+            ? (await quotations.FindUntrackedAsync(tenantId, quotationId, cancellationToken))?.QuotationNumber
+            : null;
+        var history = await orders.ListHistoryAsync(tenantId, order.Id, cancellationToken);
+        return new OrderDetailDto(order.ToDto(), quotationNumber, history.Select(OrderMapping.ToDto).ToArray());
     }
 }

@@ -24,6 +24,11 @@ public sealed class NotificationTests
     }
 
     [Fact]
+    public void CreateEmailAcceptsANullTenant()
+        => Assert.Null(Notification.CreateEmail(
+            null, Guid.NewGuid(), "a@x.com", "identity.password-reset.v1", Now).TenantId);
+
+    [Fact]
     public void MarkSentAndMarkFailedTransition()
     {
         var notification = Notification.CreateEmail(
@@ -64,11 +69,11 @@ public sealed class NotificationTests
     /// Las plantillas publicadas son inmutables y la referencia es la que audita qué se le
     /// mandó a quién: cambiar el contenido exige subir la versión, no reusar la anterior. La v2
     /// cambió el link de la pantalla de login por el deep-link con el token; la v3 nombra al
-    /// tenant en el asunto y en el cuerpo.
+    /// tenant en el asunto y en el cuerpo; la v4 ofrece Google o una contraseña.
     /// </summary>
     [Fact]
-    public void InvitationTemplateRefIsVersionThree()
+    public void InvitationTemplateRefIsVersionFour()
     {
-        Assert.Equal("identity.invitation.v3", InvitationEmailTemplate.TemplateRef);
+        Assert.Equal("identity.invitation.v4", InvitationEmailTemplate.TemplateRef);
     }
 }

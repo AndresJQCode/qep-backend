@@ -1,0 +1,974 @@
+using System.Text.Json.Nodes;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
+using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+
+namespace Modules.Messaging.UnitTests;
+
+/// <summary>Dobles en memoria para los handlers de Messaging (Task 16): un tenant, un miembro, una conexión
+/// <c>Active</c> con el número <c>111</c> y un reloj fijo. Las copias de los dobles de Integrations no se
+/// comparten: Messaging no referencia sus pruebas.</summary>
+internal sealed class MessagingTestBed
+{
+    public Guid TenantId { get; } = Guid.CreateVersion7();
+
+    public Guid SubjectId { get; } = Guid.CreateVersion7();
+
+    public Guid MemberId { get; } = Guid.CreateVersion7();
+
+    public Guid ConnectionId { get; } = Guid.CreateVersion7();
+
+    public Guid ClientId { get; } = Guid.CreateVersion7();
+
+    public DateTimeOffset Now { get; } = new(2026, 10, 9, 15, 0, 0, TimeSpan.Zero);
+
+    public InMemoryConversationQueries Conversations { get; } = new();
+
+    public FakeConnectionDirectory Connections { get; } = new();
+
+    public FakeWhatsAppClient Meta { get; } = new();
+
+    public FakeInstagramClient Instagram { get; } = new();
+
+    public FakeOpusTranscoder Transcoder { get; } = new();
+
+    public FakeOutboundMessages Outbound { get; } = new();
+
+    public FakeTenantModules TenantModules { get; } = new();
+
+    public FakeConversationRepository Repository { get; } = new();
+
+    public FakeMessageQueries Messages { get; } = new();
+
+    public InMemoryMediaStore Store { get; } = new();
+
+    public FakeUploadStaging Staging { get; }
+
+    public FakeImageCompressor Compressor { get; } = new();
+
+    /// <summary>Spec 2026-10-14: lo que los handlers avisaron por el canal en tiempo real, en orden.</summary>
+    public FakeMessagingNotifier Notifier { get; } = new();
+
+    public MessagingTestBed() => Staging = new FakeUploadStaging(Store);
+
+    /// <summary>Spec 2026-10-16 §3.1: el acuse real sobre los dobles de Meta e Instagram; lo mandado queda en
+    /// <see cref="FakeWhatsAppClient.ReadReceipts"/> y <see cref="FakeInstagramClient.Seen"/>.</summary>
+    public ReadReceipts Receipts => new(Connections, Meta, Instagram, NullLogger<ReadReceipts>.Instance);
+
+    /// <summary>Lo que "subió el front" al staging del miembro de la prueba: el objeto en el bucket bajo la clave que reconstruye el
+    /// handler. Devuelve la clave.</summary>
+    public string Stage(Guid conversationId, Guid uploadId, string fileName, byte[] bytes, Guid? memberId = null)
+    {
+        var key = MessagingMediaKeys.Staging(TenantId, conversationId, memberId ?? MemberId, uploadId, OutboundMediaPolicy.ExtensionOf(fileName));
+        Store.Objects[key] = (bytes, OutboundMediaPolicy.MimeTypeOf(OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName))!.Value));
+        return key;
+    }
+
+    public SendMediaMessageHandler SendMediaHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendMediaMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Instagram,
+            Store,
+            Staging,
+            Compressor,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            new SendMediaMessageValidator());
+    }
+
+    public CreateMediaUploadSessionHandler CreateMediaUploadSessionHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new CreateMediaUploadSessionHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            Staging,
+            new CreateMediaUploadSessionValidator());
+    }
+
+    public FakeMessageTemplates Templates { get; } = new();
+
+    public FakeCustomerDirectory Customers { get; } = new();
+
+    public FakeConversationOpener Opener => _opener ??= new FakeConversationOpener(this);
+
+    private FakeConversationOpener? _opener;
+
+    public ConversationRow OpenConversation(
+        int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567",
+        ConversationChannel channel = ConversationChannel.WhatsApp, bool blocked = false)
+    {
+        var row = new ConversationRow(
+            Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
+            CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
+            lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
+            null, null, null, null, null, null, Now, 1, channel,
+            BlockedAt: blocked ? Now.AddHours(-2) : null, BlockedByMemberId: blocked ? MemberId : null);
+        Conversations.Rows.Add(row);
+        return row;
+    }
+
+    public SendMessageHandler SendHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Instagram,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            new SendMessageValidator());
+    }
+
+    public SendTemplateMessageHandler SendTemplateHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendTemplateMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            Templates,
+            Customers,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            new SendTemplateMessageValidator());
+    }
+
+    public StartConversationHandler StartHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        var memberNames = new FakeMemberNames(MemberId);
+        var context = new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage);
+        return new StartConversationHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Connections,
+            memberNames,
+            membership,
+            Templates,
+            Customers,
+            Opener,
+            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context), new FakeChatbotNames()),
+            TenantModules,
+            context,
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            new StartConversationValidator());
+    }
+
+    public ListTemplatesHandler ListTemplatesHandler(params string[] permissions) =>
+        new(Templates, Connections, TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
+
+    public ListMessagingConnectionsHandler ListConnectionsHandler(params string[] permissions) =>
+        new(Connections, new AlwaysOpenBusinessHours(), TenantModules, new FakeExecutionContext(TenantId, SubjectId, permissions));
+
+    public SendAudioMessageHandler SendAudioHandler(Guid? tenantId = null)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(SubjectId, TenantId)] = MemberId;
+        return new SendAudioMessageHandler(
+            Conversations,
+            Repository,
+            Messages,
+            Outbound,
+            Meta,
+            Instagram,
+            Transcoder,
+            Store,
+            Connections,
+            new FakeMemberNames(MemberId),
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage),
+            new FakeClock(Now),
+            Notifier,
+            Receipts,
+            new FakeChatbotNames(),
+            new SendAudioMessageValidator());
+    }
+}
+
+internal sealed class FakeExecutionContext(Guid tenantId, Guid subjectId, params string[] permissions) : IExecutionContext
+{
+    public Guid SubjectId { get; } = subjectId;
+
+    public TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => permissions.Contains(permission, StringComparer.Ordinal);
+}
+
+internal sealed class FakeMembershipDirectory : IMembershipDirectory
+{
+    public Dictionary<(Guid UserId, Guid TenantId), Guid> Active { get; } = [];
+
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<string>?>(null);
+
+    public Task<Guid?> FindActiveMembershipIdAsync(Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Active.TryGetValue((userId, tenantId), out var id) ? id : (Guid?)null);
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>(Active.Where(entry => entry.Key.UserId == userId).Select(entry => entry.Value).ToList());
+}
+
+internal sealed class FakeClock(DateTimeOffset utcNow) : IClock
+{
+    public DateTimeOffset UtcNow { get; set; } = utcNow;
+}
+
+/// <summary>Sin entrada = tenant que no está en <c>tenancy.tenants</c> (el stub): <c>null</c>, todo visible.</summary>
+internal sealed class FakeTenantModules : ITenantModules
+{
+    public Dictionary<Guid, TenantModuleSet> Sets { get; } = [];
+
+    public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<TenantModuleSet?>(Sets.TryGetValue(tenantId, out var set) ? set : null);
+}
+
+internal sealed class InMemoryConversationQueries : IConversationQueries
+{
+    public List<ConversationRow> Rows { get; } = [];
+
+    public Task<IReadOnlyList<ConversationRow>> ListAsync(
+        Guid tenantId, ConversationListFilter filter, ConversationCursor? after, int take, CancellationToken cancellationToken)
+    {
+        var items = Rows
+            .Where(row => row.TenantId == tenantId && row.Status == filter.Status)
+            .Where(row => filter.Assigned switch
+            {
+                AssignedFilter.Mine => filter.MemberId is { } me && row.AssignedMemberId == me,
+                AssignedFilter.Unassigned => row.AssignedMemberId is null,
+                _ => true,
+            })
+            .Where(row => filter.Automation switch
+            {
+                AutomationFilter.Any => row.AutomationStatus != ConversationAutomationStatus.None,
+                AutomationFilter.Active => row.AutomationStatus == ConversationAutomationStatus.Active,
+                AutomationFilter.Paused => row.AutomationStatus == ConversationAutomationStatus.Paused,
+                AutomationFilter.None => row.AutomationStatus == ConversationAutomationStatus.None,
+                _ => true,
+            })
+            .ToList();
+        return Task.FromResult<IReadOnlyList<ConversationRow>>(items.Take(take).ToList());
+    }
+
+    public Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken)
+    {
+        var open = Rows.Where(row => row.TenantId == tenantId && row.Status == ConversationStatus.Open).ToList();
+        return Task.FromResult(new ConversationCountsDto(
+            open.Count,
+            Rows.Where(row => row.TenantId == tenantId).Sum(row => row.UnreadCount),
+            memberId is { } me ? open.Count(row => row.AssignedMemberId == me) : 0,
+            open.Count(row => row.AssignedMemberId is null),
+            open.Count(row => row.AutomationStatus != ConversationAutomationStatus.None),
+            open.Count(row => row.AutomationStatus == ConversationAutomationStatus.Active)));
+    }
+
+    public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        Task.FromResult(Rows.SingleOrDefault(row => row.TenantId == tenantId && row.Id == conversationId));
+
+    public Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ConversationRow>>(Rows.Where(row => row.TenantId == tenantId && ids.Contains(row.Id)).ToList());
+}
+
+/// <summary>D-H4: sin horarios configurados, toda conexión atiende siempre.</summary>
+internal sealed class AlwaysOpenBusinessHours : IBusinessHours
+{
+    private static readonly BusinessHoursStatus Open = new(true, null, null, null);
+
+    public Task<BusinessHoursStatus> GetStatusAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.FromResult(Open);
+
+    public Task<IReadOnlyDictionary<Guid, BusinessHoursStatus>> GetStatusesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, BusinessHoursStatus>>(connectionIds.ToDictionary(id => id, _ => Open));
+}
+
+internal sealed record RejectedReport(Guid TenantId, Guid ConnectionId, string FailureCode);
+
+internal sealed class FakeConnectionDirectory : IMessagingConnectionDirectory
+{
+    public MessagingSender? Sender { get; set; } = new("111", "token");
+
+    public List<RejectedReport> Reported { get; } = [];
+
+    /// <summary>Lo que devuelve <c>ListAllAsync</c> (todas las conexiones, en cualquier estado).</summary>
+    public List<MessagingConnectionRef> AllConnections { get; } = [];
+
+    public Task<IReadOnlyList<MessagingConnectionRef>> ListAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingConnectionRef>>([.. AllConnections]);
+
+    public Task<MessagingRoute?> FindRouteAsync(string phoneNumberId, CancellationToken cancellationToken) =>
+        Task.FromResult<MessagingRoute?>(null);
+
+    public Task<IReadOnlyList<MessagingRoute>> FindByAccountAsync(string wabaId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingRoute>>([]);
+
+    public Task<MessagingSender?> ResolveSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Sender);
+
+    public Task<MessagingSenderResolution> ResolveSenderWithReasonAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(new MessagingSenderResolution(Sender, Sender is null ? "not_found" : null, null));
+
+    /// <summary>Spec 2026-10-11 §6.2: los nombres de las conexiones (Active o no); sin entrada, «Conexión eliminada».</summary>
+    public Dictionary<Guid, string> Names { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, string>> ListNamesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>(Names));
+
+    /// <summary>Spec 2026-10-11 §5.1: <c>null</c> = conexión que no está Active (o de otro tenant).</summary>
+    public MessagingTemplateSource? TemplateSource { get; set; } = new("222", "token");
+
+    public List<MessagingConnectionDto> Active { get; } = [];
+
+    public Task<MessagingTemplateSource?> ResolveTemplateSourceAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(TemplateSource);
+
+    public Task<IReadOnlyList<MessagingConnectionDto>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MessagingConnectionDto>>(Active.ToList());
+
+    /// <summary>Spec 2026-10-14 §6.2: la conexión de Instagram Active; <c>null</c> = pausada o borrada.</summary>
+    public InstagramSender? InstagramSender { get; set; } = new("17841400000000001", "ig-token");
+
+    /// <summary>El canal por conexión (spec 2026-10-14 §5.2); sin entrada, WhatsApp.</summary>
+    public Dictionary<Guid, ConversationChannel> Channels { get; } = [];
+
+    public Task<MessagingRoute?> FindInstagramRouteAsync(string igUserId, CancellationToken cancellationToken) =>
+        Task.FromResult<MessagingRoute?>(null);
+
+    public Task<InstagramSender?> ResolveInstagramSenderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(InstagramSender);
+
+    public Task<ConversationChannel?> FindChannelAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult<ConversationChannel?>(Channels.TryGetValue(connectionId, out var channel) ? channel : ConversationChannel.WhatsApp);
+
+    /// <summary>Simula que Integrations no pudo guardar el cambio de estado.</summary>
+    public Exception? ReportFailure { get; set; }
+
+    public Task ReportRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ReportFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        Reported.Add(new RejectedReport(tenantId, connectionId, failureCode));
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed record SentText(MessagingSender Sender, SendTarget Target, string Body, string CallbackData, string? ContextWamid);
+
+internal sealed record UploadedMedia(MessagingSender Sender, byte[] Content, string MimeType);
+
+internal sealed record StreamUploadedMedia(MessagingSender Sender, byte[] Content, long DeclaredLength, string MimeType, string FileName);
+
+internal sealed record SentImage(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
+
+internal sealed record SentDocument(MessagingSender Sender, SendTarget Target, string MediaId, string FileName, string? Caption, string CallbackData, string? ContextWamid);
+
+internal sealed record SentTemplate(MessagingSender Sender, SendTarget Target, TemplateSend Template, string CallbackData);
+
+internal sealed record SentAudio(MessagingSender Sender, SendTarget Target, string MediaId, string CallbackData, string? ContextWamid, bool Voice = true);
+
+internal sealed record SentVideo(MessagingSender Sender, SendTarget Target, string MediaId, string? Caption, string CallbackData, string? ContextWamid);
+
+internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
+{
+    public SendResult NextSend { get; set; } = new(SendOutcome.Sent, "wamid.default", null, null);
+
+    public List<SentText> Sends { get; } = [];
+
+    /// <summary>Corre mientras "Meta" procesa: p. ej., la persona cierra la pestaña (se cancela el request).</summary>
+    public Action? DuringSend { get; set; }
+
+    /// <summary>Como HttpClient: Meta ya recibió el mensaje, pero un token cancelado a mitad de la llamada lanza.</summary>
+    public Task<SendResult> SendTextAsync(
+        MessagingSender sender, SendTarget target, string body, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        Sends.Add(new SentText(sender, target, body, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Spec 2026-10-11 §6.3 paso 2: lo que responde la subida a Meta.</summary>
+    public MessagingGraphResult<string> NextUpload { get; set; } = new("media.default", null);
+
+    public List<UploadedMedia> Uploads { get; } = [];
+
+    /// <summary>Lo inesperado durante la subida a Meta (una cancelación, un bug): ya se subió a R2.</summary>
+    public Exception? UploadException { get; set; }
+
+    public List<SentAudio> AudioSends { get; } = [];
+
+    public Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, ReadOnlyMemory<byte> content, string mimeType, CancellationToken cancellationToken)
+    {
+        Uploads.Add(new UploadedMedia(sender, content.ToArray(), mimeType));
+        if (UploadException is { } exception)
+        {
+            throw exception;
+        }
+
+        return Task.FromResult(NextUpload);
+    }
+
+    public List<StreamUploadedMedia> StreamUploads { get; } = [];
+
+    /// <summary>Corre cuando "Meta" recibe la subida por stream, antes de contestar: sirve para ver qué había pasado ya (p. ej. si
+    /// ya existía el reclamo).</summary>
+    public Action? DuringStreamUpload { get; set; }
+
+    /// <summary>Lee el stream completo, como Meta: lo que la prueba ve es lo que de verdad viajó.</summary>
+    public async Task<MessagingGraphResult<string>> UploadMediaAsync(
+        MessagingSender sender, Stream content, long contentLength, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        StreamUploads.Add(new StreamUploadedMedia(sender, buffer.ToArray(), contentLength, mimeType, fileName));
+        DuringStreamUpload?.Invoke();
+        if (UploadException is { } exception)
+        {
+            throw exception;
+        }
+
+        return NextUpload;
+    }
+
+    public List<SentImage> ImageSends { get; } = [];
+
+    public List<SentDocument> DocumentSends { get; } = [];
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendImageAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        ImageSends.Add(new SentImage(sender, target, mediaId, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    public List<SentVideo> VideoSends { get; } = [];
+
+    public Task<SendResult> SendInteractiveAsync(
+        MessagingSender sender, SendTarget target, InteractiveSend send, string callbackData, string? contextWamid, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    /// <summary>Como <see cref="SendImageAsync"/>.</summary>
+    public Task<SendResult> SendVideoAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string? caption, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        VideoSends.Add(new SentVideo(sender, target, mediaId, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Como <see cref="SendImageAsync"/>.</summary>
+    public Task<SendResult> SendDocumentAsync(
+        MessagingSender sender, SendTarget target, string mediaId, string fileName, string? caption, string callbackData, string? contextWamid,
+        CancellationToken cancellationToken)
+    {
+        DocumentSends.Add(new SentDocument(sender, target, mediaId, fileName, caption, callbackData, contextWamid));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendAudioAsync(
+        MessagingSender sender, SendTarget target, string mediaId, bool voice, string callbackData, string? contextWamid, CancellationToken cancellationToken)
+    {
+        AudioSends.Add(new SentAudio(sender, target, mediaId, callbackData, contextWamid, voice));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Spec 2026-10-11 §5.1: lo que responde la lista de plantillas, y cuántas veces se pidió.</summary>
+    public MessagingGraphResult<TemplateListing> NextTemplates { get; set; } = new(new TemplateListing([], Complete: true), null);
+
+    private int _templateListCalls;
+
+    public int TemplateListCalls => _templateListCalls;
+
+    public MessagingGraphResult<CreatedTemplate> NextCreatedTemplate { get; set; } = new(new CreatedTemplate("meta-1", "PENDING", "MARKETING"), null);
+
+    public List<JsonObject> CreatedTemplates { get; } = [];
+
+    /// <summary>Respuestas de creación en orden, una por llamada; vacía, responde <see cref="NextCreatedTemplate"/>. Sirve para «la
+    /// primera falla, la segunda no».</summary>
+    public Queue<MessagingGraphResult<CreatedTemplate>> CreateResults { get; } = new();
+
+    public MessagingGraphResult<DeletedTemplate> NextDelete { get; set; } = new(new DeletedTemplate(false), null);
+
+    public List<(string MetaTemplateId, string Name)> Deleted { get; } = [];
+
+    public MessagingGraphResult<string> NextHandle { get; set; } = new("4::handle", null);
+
+    public List<(string MimeType, string FileName, int Length)> ExampleUploads { get; } = [];
+
+    public Task<MessagingGraphResult<CreatedTemplate>> CreateTemplateAsync(MessagingTemplateSource source, JsonObject payload, CancellationToken cancellationToken)
+    {
+        CreatedTemplates.Add(payload);
+        return Task.FromResult(CreateResults.TryDequeue(out var next) ? next : NextCreatedTemplate);
+    }
+
+    public Task<MessagingGraphResult<DeletedTemplate>> DeleteTemplateAsync(MessagingTemplateSource source, string metaTemplateId, string name, CancellationToken cancellationToken)
+    {
+        Deleted.Add((metaTemplateId, name));
+        return Task.FromResult(NextDelete);
+    }
+
+    public Task<MessagingGraphResult<string>> UploadTemplateExampleAsync(
+        MessagingTemplateSource source, ReadOnlyMemory<byte> content, string mimeType, string fileName, CancellationToken cancellationToken)
+    {
+        ExampleUploads.Add((mimeType, fileName, content.Length));
+        return Task.FromResult(NextHandle);
+    }
+
+    /// <summary>Retiene la respuesta de la lista hasta que la prueba lo suelte: sirve para ver cuántas llamadas se juntan en vuelo.</summary>
+    public Func<Task>? BeforeTemplateList { get; set; }
+
+    public async Task<MessagingGraphResult<TemplateListing>> ListTemplatesAsync(MessagingTemplateSource source, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _templateListCalls);
+        if (BeforeTemplateList is { } gate)
+        {
+            await gate();
+        }
+
+        return NextTemplates;
+    }
+
+    public List<SentTemplate> TemplateSends { get; } = [];
+
+    /// <summary>Como <see cref="SendTextAsync"/>: devuelve <see cref="NextSend"/> y corre <see cref="DuringSend"/>.</summary>
+    public Task<SendResult> SendTemplateAsync(
+        MessagingSender sender, SendTarget target, TemplateSend send, string callbackData, CancellationToken cancellationToken)
+    {
+        TemplateSends.Add(new SentTemplate(sender, target, send, callbackData));
+        DuringSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(NextSend);
+    }
+
+    /// <summary>Spec 2026-10-16 §3.1: los wamid que recibieron el acuse de leído al responder.</summary>
+    public List<string> ReadReceipts { get; } = [];
+
+    public Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)
+    {
+        ReadReceipts.Add(wamid);
+        return Task.FromResult(true);
+    }
+
+    /// <summary>Spec 2026-10-26 §2: lo que responde Block Users; por defecto, aplicado.</summary>
+    public MessagingGraphResult<BlockUsersResult> NextBlock { get; set; } = new(new BlockUsersResult(true, null), null);
+
+    public List<(string Direction, string WaId)> BlockCalls { get; } = [];
+
+    public Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("block", waId));
+        return Task.FromResult(NextBlock);
+    }
+
+    public Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("unblock", waId));
+        return Task.FromResult(NextBlock);
+    }
+
+    /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
+    public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
+
+    /// <summary>§8.6: el cuerpo de la URL firmada, o la excepción que lanza.</summary>
+    public Func<Uri, CancellationToken, Stream>? OpenMedia { get; set; }
+
+    public List<string> MediaRequests { get; } = [];
+
+    public Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken)
+    {
+        MediaRequests.Add(mediaId);
+        return Task.FromResult(MediaInfo ?? throw new NotSupportedException());
+    }
+
+    public Task<Stream> OpenMediaAsync(MessagingSender sender, Uri url, CancellationToken cancellationToken) =>
+        Task.FromResult((OpenMedia ?? throw new NotSupportedException())(url, cancellationToken));
+}
+
+/// <summary>Cada <c>ClaimAsync</c> deja un <see cref="FakeClaim"/> con cómo se cerró: <c>committed-sent:wamid</c>,
+/// <c>committed-failed:código</c> o <c>rolled-back</c>.</summary>
+internal sealed class FakeOutboundMessages : IOutboundMessages
+{
+    /// <summary>Lo que el reclamo encuentra con <c>FOR UPDATE</c> (un request en vuelo con el mismo clientId).</summary>
+    public ExistingOutbound? Existing { get; set; }
+
+    /// <summary>Lo ya commiteado con ese clientId (§8.5 paso 2, sin candado).</summary>
+    public ExistingOutbound? Committed { get; set; }
+
+    /// <summary>Lo que aparece en la segunda consulta (otro request con el mismo clientId terminó mientras éste leía R2).</summary>
+    public ExistingOutbound? CommittedOnSecondLookup { get; set; }
+
+    private int _lookups;
+
+    public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
+        Task.FromResult(++_lookups > 1 && CommittedOnSecondLookup is not null ? CommittedOnSecondLookup : Committed);
+
+    public List<FakeClaim> Claims { get; } = [];
+
+    public Task<IOutboundClaim> ClaimAsync(OutboundDraft draft, CancellationToken cancellationToken)
+    {
+        var claim = new FakeClaim(draft, Existing);
+        Claims.Add(claim);
+        return Task.FromResult<IOutboundClaim>(claim);
+    }
+}
+
+internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing) : IOutboundClaim
+{
+    public OutboundDraft Draft { get; } = draft;
+
+    public string? Outcome { get; private set; }
+
+    public bool Inserted => existing is null;
+
+    public Guid MessageId => existing?.Id ?? Draft.MessageId;
+
+    public Guid ConversationId => Draft.ConversationId;
+
+    public ExistingOutbound? Existing => existing;
+
+    /// <summary>Lo que recibió el commit como id del medio en Meta (spec 2026-10-11 §6.5).</summary>
+    public string? MetaMediaId { get; private set; }
+
+    // Como EF/Npgsql: un token ya cancelado hace fallar el commit o el rollback antes de llegar a la base.
+    public Task CommitSentAsync(string wamid, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
+    {
+        MetaMediaId = metaMediaId;
+        return Close("committed-sent:" + wamid, cancellationToken);
+    }
+
+    public Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
+    {
+        MetaMediaId = metaMediaId;
+        return Close("committed-failed:" + failureCode.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+    }
+
+    public Task RollbackAsync(CancellationToken cancellationToken) => Close("rolled-back", cancellationToken);
+
+    public ValueTask DisposeAsync()
+    {
+        Outcome ??= "rolled-back";
+        return ValueTask.CompletedTask;
+    }
+
+    private Task Close(string outcome, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Outcome is not null)
+        {
+            throw new InvalidOperationException($"The claim was already closed as {Outcome}.");
+        }
+
+        Outcome = outcome;
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeConversationRepository : IConversationRepository
+{
+    public AutoAssignOutcome NextAutoAssign { get; set; } = AutoAssignOutcome.Assigned;
+
+    public List<Guid> AutoAssigned { get; } = [];
+
+    public Task<AutoAssignOutcome> TryAutoAssignAsync(Guid tenantId, Guid conversationId, Guid memberId, Guid actorUserId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        AutoAssigned.Add(conversationId);
+        return Task.FromResult(NextAutoAssign);
+    }
+
+    public Task<Conversation?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public List<(Guid ConversationId, int Seen)> Replied { get; } = [];
+
+    public RepliedTarget? NextReplied { get; set; }
+
+    /// <summary>Spec 2026-10-16 §3.1: la resta falla (la base se cayó justo después del commit del envío).</summary>
+    public Exception? RepliedFailure { get; set; }
+
+    public Task<RepliedTarget?> MarkRepliedAsync(Guid tenantId, Guid conversationId, int seen, CancellationToken cancellationToken)
+    {
+        Replied.Add((conversationId, seen));
+        return RepliedFailure is { } failure ? Task.FromException<RepliedTarget?>(failure) : Task.FromResult(NextReplied);
+    }
+
+    public Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<UnreadFromOutcome> MarkUnreadFromAsync(Guid tenantId, Guid conversationId, Guid messageId, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> ExistsAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Guid?> LinkCustomerAsync(Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+internal sealed class FakeMessageQueries : IMessageQueries
+{
+    public Dictionary<Guid, ReplyTargetRow> Targets { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, ReplyTargetRow>> FindReplyTargetsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, ReplyTargetRow>>(Targets.Where(pair => ids.Contains(pair.Key)).ToDictionary());
+
+    public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<MessageRow>> ListThreadAsync(Guid conversationId, MessageCursor? before, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
+/// <summary>Spec 2026-10-21 D-I3: el puerto de nombres de chatbots sin nombres; el mapeo cae a «Chatbot».</summary>
+internal sealed class FakeChatbotNames : IAutomationsChatbotNames
+{
+    public Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+}
+
+internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            memberIds.Contains(memberId) ? new Dictionary<Guid, string> { [memberId] = "Andrés" } : new Dictionary<Guid, string>());
+
+    public Task<string?> FindDisplayNameAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(id == memberId ? "Andrés" : null);
+}
+
+/// <summary>Spec 2026-10-11 §6.3: R2 en un diccionario. <see cref="UploadFailure"/> simula que R2 no aceptó el audio.</summary>
+internal sealed class InMemoryMediaStore : IMessagingMediaStore
+{
+    public Dictionary<string, (byte[] Bytes, string ContentType)> Objects { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Spec 2026-10-14 decisión 12: las URL firmadas que se pidieron, por clave.</summary>
+    public List<(string Key, TimeSpan Lifetime)> DownloadUrls { get; } = [];
+
+    public Exception? DownloadUrlFailure { get; set; }
+
+    public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken)
+    {
+        if (DownloadUrlFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        DownloadUrls.Add((key, lifetime));
+        return Task.FromResult(new Uri($"https://r2.test/{key}?signed=1", UriKind.Absolute));
+    }
+
+    public List<string> Deleted { get; } = [];
+
+    public Exception? UploadFailure { get; set; }
+
+    public async Task UploadAsync(string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
+    {
+        if (UploadFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        Objects[key] = (buffer.ToArray(), contentType);
+    }
+
+    public List<string> Opened { get; } = [];
+
+    public Task<MediaStreamDto?> OpenReadAsync(string key, CancellationToken cancellationToken)
+    {
+        Opened.Add(key);
+        return Task.FromResult(
+            Objects.TryGetValue(key, out var stored) ? new MediaStreamDto(new MemoryStream(stored.Bytes, writable: false), stored.ContentType, stored.Bytes.Length, null) : null);
+    }
+
+    public Exception? DeleteFailure { get; set; }
+
+    /// <summary>Los tokens con que se pidió borrar: el borrado best effort va con <c>CancellationToken.None</c>.</summary>
+    public List<CancellationToken> DeleteTokens { get; } = [];
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        Deleted.Add(key);
+        DeleteTokens.Add(cancellationToken);
+        if (DeleteFailure is { } failure)
+        {
+            throw failure;
+        }
+
+        Objects.Remove(key);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Spec 2026-10-14: acumula lo avisado, como lo vería el listener; <see cref="Fail"/> simula un pg_notify caído.</summary>
+internal sealed class FakeMessagingNotifier : IMessagingNotifier
+{
+    public List<MessagingEvent> Events { get; } = [];
+
+    public Exception? Fail { get; set; }
+
+    public Task ConversationChangedAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        Record(new MessagingEvent(MessagingEventKinds.ConversationChanged, tenantId, conversationId, null, null));
+
+    public Task InboundMessageAsync(Guid tenantId, Guid conversationId, Guid messageId, Guid? assignedMemberId, CancellationToken cancellationToken) =>
+        Record(new MessagingEvent(MessagingEventKinds.InboundMessage, tenantId, conversationId, messageId, assignedMemberId));
+
+    private Task Record(MessagingEvent @event)
+    {
+        if (Fail is not null)
+        {
+            throw Fail;
+        }
+
+        Events.Add(@event);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed record InstagramSentText(InstagramSender Sender, string RecipientId, string Text);
+
+internal sealed record InstagramSentAttachment(InstagramSender Sender, string RecipientId, string Type, Uri Url);
+
+/// <summary>Spec 2026-10-14 §6.2: el cliente de la Messaging API de Instagram en memoria; responde <see cref="NextSend"/>.</summary>
+internal sealed class FakeInstagramClient : IInstagramClient
+{
+    public SendResult NextSend { get; set; } = new(SendOutcome.Sent, "mid.default", null, null);
+
+    public List<InstagramSentText> SentTexts { get; } = [];
+
+    public List<InstagramSentAttachment> SentAttachments { get; } = [];
+
+    public List<(InstagramSender Sender, string RecipientId)> Seen { get; } = [];
+
+    public bool SeenSucceeds { get; set; } = true;
+
+    public InstagramProfile? Profile { get; set; } = new("Laura Pérez", "laura.perez", null);
+
+    public Dictionary<Uri, (byte[] Bytes, string ContentType)> Downloads { get; } = [];
+
+    public Task<SendResult> SendTextAsync(InstagramSender sender, string recipientId, string text, CancellationToken cancellationToken)
+    {
+        SentTexts.Add(new InstagramSentText(sender, recipientId, text));
+        return Task.FromResult(NextSend);
+    }
+
+    public Task<SendResult> SendAttachmentAsync(InstagramSender sender, string recipientId, string attachmentType, Uri url, CancellationToken cancellationToken)
+    {
+        SentAttachments.Add(new InstagramSentAttachment(sender, recipientId, attachmentType, url));
+        return Task.FromResult(NextSend);
+    }
+
+    public Task<bool> MarkSeenAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken)
+    {
+        Seen.Add((sender, recipientId));
+        return Task.FromResult(SeenSucceeds);
+    }
+
+    public Task<MessagingGraphResult<InstagramProfile>> GetProfileAsync(InstagramSender sender, string igsid, CancellationToken cancellationToken) =>
+        Task.FromResult(Profile is { } profile
+            ? new MessagingGraphResult<InstagramProfile>(profile, null)
+            : new MessagingGraphResult<InstagramProfile>(null, new MessagingGraphFailure(400, 100, "http_400")));
+
+    public Task<InstagramDownload?> OpenAsync(Uri url, CancellationToken cancellationToken) =>
+        Task.FromResult(Downloads.TryGetValue(url, out var stored)
+            ? new InstagramDownload(new MemoryStream(stored.Bytes, writable: false), stored.ContentType, stored.Bytes.Length)
+            : null);
+}
+
+/// <summary>Spec 2026-10-14 decisión 16: «transcodifica» anteponiendo una marca, para que la prueba vea qué bytes viajaron.</summary>
+internal sealed class FakeOpusTranscoder : IOpusTranscoder
+{
+    public static readonly byte[] WavMarker = "RIFF-fake"u8.ToArray();
+
+    public InvalidDataException? Failure { get; set; }
+
+    public List<byte[]> Inputs { get; } = [];
+
+    public byte[] ToWav(byte[] oggOpus)
+    {
+        Inputs.Add(oggOpus);
+        if (Failure is { } failure)
+        {
+            throw failure;
+        }
+
+        return [.. WavMarker, .. oggOpus];
+    }
+}
+
+/// <summary>Spec 2026-10-15 §3.5: sin motivos; las pruebas unitarias no resuelven nombres de motivo.</summary>
+internal sealed class FakeResolutionReasonNames : IResolutionReasonNames
+{
+    public Task<IReadOnlyDictionary<Guid, string>> FindAsync(Guid tenantId, IReadOnlyCollection<Guid> reasonIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+}

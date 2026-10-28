@@ -54,6 +54,7 @@ public sealed class OrdersReportApiTests
         // cotizaciones, no a los reportes (spec 2026-09-11, D1). Ver la seccion del contrato al
         // respecto.
         Assert.Equal(tenant.OwnerEmail, item.AdvisorName);
+        Assert.Equal("COP", item.Currency);
         Assert.Equal(quotation.Subtotal, item.Subtotal);
         Assert.Equal(quotation.TaxAmount, item.TaxAmount);
         Assert.Equal(quotation.Total, item.Total);
@@ -245,5 +246,46 @@ public sealed class OrdersReportApiTests
         }
 
         Assert.Equal(reports.Select(report => $"{report}: 404"), answered);
+    }
+
+    // Spec 2026-10-15: el reporte lee del pedido, así que uno manual entra con su origen y sin cotización.
+    [Fact]
+    public async Task TheReportListsAManualOrderWithoutQuotation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var order = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items, item => item.OrderNumber == order.OrderNumber);
+        Assert.Equal(("Manual", (Guid?)null, (string?)null), (row.Source, row.QuotationId, row.QuotationNumber));
+        Assert.Equal((order.Subtotal, order.TaxAmount, order.Total), (row.Subtotal, row.TaxAmount, row.Total));
+        Assert.True(row.Total > 0);
+    }
+
+    [Fact]
+    public async Task ListFiltersBySource()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders?source=Quotation", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(page);
+        Assert.Equal(1, page.Total);
+        Assert.Equal(order.Id, Assert.Single(page.Items).OrderId);
     }
 }

@@ -1,0 +1,104 @@
+using BuildingBlocks.Domain;
+using BuildingBlocks.Domain.Pricing;
+
+namespace Modules.Pos.Domain;
+
+public sealed class PosSaleLine
+{
+    /// <summary>
+    /// El largo de <c>pos.sale_lines.product_name</c>, el mismo que <c>Product.NameMaxLength</c> de
+    /// Catalog y <c>QuotationProductSnapshot.NameMaxLength</c> de Quotations, copiado y no
+    /// referenciado porque Pos no depende de esos módulos. El nombre visible de una variante puede
+    /// pasarlo: se recorta con <see cref="SnapshotText.Fit"/>, la regla compartida con Quotations.
+    /// </summary>
+    public const int ProductNameMaxLength = 200;
+
+    private PosSaleLine()
+    {
+        ProductCode = string.Empty;
+        ProductName = string.Empty;
+    }
+
+    public PosSaleLineId Id { get; private set; }
+
+    public PosSaleId SaleId { get; private set; }
+
+    public int Position { get; private set; }
+
+    /// <summary>
+    /// La variante vendida (spec 2026-10-20 §4). Sin FK, como <see cref="ProductId"/>: la venta
+    /// guarda la foto y una variante borrada no invalida un ticket. Las ventas anteriores a las
+    /// variantes la tienen igual a <see cref="ProductId"/> (la variante por defecto nació con el id
+    /// del producto, migración <c>AddVariantToSaleLines</c>).
+    /// </summary>
+    public Guid VariantId { get; private set; }
+
+    public Guid ProductId { get; private set; }
+
+    public string ProductCode { get; private set; }
+
+    /// <summary>La foto del nombre visible de la variante al vender, recortada a
+    /// <see cref="ProductNameMaxLength"/>. Nunca se recalcula.</summary>
+    public string ProductName { get; private set; }
+
+    public decimal Quantity { get; private set; }
+
+    public decimal UnitPrice { get; private set; }
+
+    public decimal DiscountPercentage { get; private set; }
+
+    public int TaxPercentage { get; private set; }
+
+    public decimal DiscountAmount { get; private set; }
+
+    public decimal TaxAmount { get; private set; }
+
+    public decimal Subtotal { get; private set; }
+
+    /// <summary>Derivado y no persistido, como el precio con descuento de Quotations.</summary>
+    public decimal LineTotal => Subtotal + TaxAmount;
+
+    internal static PosSaleLine Create(PosSaleId saleId, int position, PosSaleLineInput input, PriceRounding rounding)
+    {
+        if (input.Quantity <= 0 || input.Quantity > PosLimits.MaxQuantity || !PosLimits.HasValidScale(input.Quantity))
+        {
+            throw new PosDomainException(
+                "pos.sale.quantity_invalid",
+                "The quantity must be greater than 0, at most 99999 and have at most 2 decimals.");
+        }
+
+        if (input.DiscountPercentage < 0 || input.DiscountPercentage > 100 || !PosLimits.HasValidScale(input.DiscountPercentage))
+        {
+            throw new PosDomainException(
+                "pos.sale.discount_out_of_range",
+                "The discount must be between 0 and 100 with at most 2 decimals.");
+        }
+
+        // Precio y tasa vienen del catálogo, no del cliente: fuera de rango es un bug.
+        ArgumentOutOfRangeException.ThrowIfNegative(input.UnitPrice);
+        ArgumentOutOfRangeException.ThrowIfNegative(input.TaxPercentage);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(input.TaxPercentage, 100);
+
+        // La regla con que se cobra esta venta: la misma fórmula de la cotización (spec 2026-10-27 §1).
+        var amounts = VatIncludedLine.Compute(
+            input.Quantity, input.UnitPrice, input.DiscountPercentage, input.TaxPercentage, rounding);
+
+        return new PosSaleLine
+        {
+            Id = PosSaleLineId.New(),
+            SaleId = saleId,
+            Position = position,
+            VariantId = input.VariantId,
+            ProductId = input.ProductId,
+            ProductCode = input.ProductCode,
+            ProductName = SnapshotText.Fit(input.ProductName, ProductNameMaxLength),
+            Quantity = input.Quantity,
+            UnitPrice = VatIncludedLine.ChargedListPrice(input.UnitPrice, rounding),
+            DiscountPercentage = input.DiscountPercentage,
+            TaxPercentage = input.TaxPercentage,
+            DiscountAmount = amounts.DiscountAmount,
+            TaxAmount = amounts.TaxAmount,
+            Subtotal = amounts.Subtotal,
+        };
+    }
+}

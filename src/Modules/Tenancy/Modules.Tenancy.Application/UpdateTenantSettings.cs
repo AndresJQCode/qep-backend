@@ -11,8 +11,15 @@ public sealed record UpdateTenantSettingsCommand(
     string DefaultCulture,
     string TimeZone,
     string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat,
+    // Null keeps the stored country: a frontend older than the field does not send it (deployment
+    // window). The handler resolves it against the tenant it already loaded, not with a second read.
+    string? Country,
     long ExpectedVersion,
-    string CorrelationId) : ICommand<TenantSettingsDto>;
+    string CorrelationId,
+    // Null keeps the stored requirement, same deployment window as Country (spec 2026-10-26).
+    string? PersonTypeRequirement = null) : ICommand<TenantSettingsDto>;
 
 public sealed class UpdateTenantSettingsValidator
     : AbstractValidator<UpdateTenantSettingsCommand>
@@ -23,6 +30,13 @@ public sealed class UpdateTenantSettingsValidator
         RuleFor(command => command.DefaultCulture).NotEmpty().MaximumLength(20);
         RuleFor(command => command.TimeZone).NotEmpty().MaximumLength(100);
         RuleFor(command => command.DateFormat).NotEmpty().MaximumLength(30);
+        RuleFor(command => command.DefaultCurrency).NotEmpty().MaximumLength(3);
+        RuleFor(command => command.NumberFormat).NotEmpty().MaximumLength(10);
+        // Only the column limit: the two-letter shape is a domain rule, and its code
+        // (tenancy.settings.country.invalid) is what the settings form maps to the field.
+        RuleFor(command => command.Country).MaximumLength(2);
+        // Only the column limit: an unknown value is a domain rule (PersonTypeRequirementPolicy.Parse).
+        RuleFor(command => command.PersonTypeRequirement).MaximumLength(20);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
@@ -57,11 +71,27 @@ public sealed class UpdateTenantSettingsHandler(
                 "Tenant settings changed after they were loaded.");
         }
 
+        // The catalogue check lives here because the aggregate cannot see Currencies. It answers with
+        // the settings-level code (spec, Error codes) — the form maps it to the currency field — and
+        // not with tenancy.currency.unsupported.
+        if (!Currencies.IsSupported(command.DefaultCurrency))
+        {
+            throw new TenantDomainException(
+                "tenancy.settings.default_currency.invalid",
+                $"Currency '{command.DefaultCurrency}' is not in the catalogue.");
+        }
+
         var changed = tenant.UpdateSettings(
             command.DisplayName,
             command.DefaultCulture,
             command.TimeZone,
             command.DateFormat,
+            command.DefaultCurrency,
+            command.NumberFormat,
+            command.Country ?? tenant.Country,
+            command.PersonTypeRequirement is { } requirement
+                ? PersonTypeRequirementPolicy.Parse(requirement)
+                : tenant.PersonTypeRequirement,
             clock.UtcNow);
 
         if (!changed)

@@ -15,9 +15,12 @@ namespace Modules.Quotations.Infrastructure.Persistence;
 /// <remarks>
 /// Cubre cada columna mapeada con <see cref="MemberId"/> en <see cref="QuotationsDbContext"/>:
 /// <c>quotations.advisor_id</c>, <c>created_by</c> y <c>updated_by</c>;
-/// <c>quotation_history.member_id</c>; <c>orders.converted_by</c>, <c>orders.approved_by</c>,
-/// <c>orders.cancelled_by</c> y <c>orders.invoiced_by</c>; y
-/// <c>order_payment_proofs.uploaded_by</c>. Una columna nueva con <see cref="MemberId"/> tiene que
+/// <c>quotation_history.member_id</c>; <c>orders.advisor_id</c>, <c>orders.converted_by</c>,
+/// <c>orders.approved_by</c>, <c>orders.cancelled_by</c> y <c>orders.invoiced_by</c>;
+/// <c>order_history.member_id</c>; y <c>order_payment_proofs.uploaded_by</c>. Desde el spec
+/// 2026-10-15 el pedido tiene asesor e historial propios: un pedido manual o de una integración
+/// referencia a su asesor sin pasar por una cotización, y quien edita un pedido pendiente sólo
+/// queda en su historial. Una columna nueva con <see cref="MemberId"/> tiene que
 /// sumarse acá, o el usuario que la referencia se borra igual.
 /// </remarks>
 internal sealed class QuotationUserReferenceProbe(
@@ -47,10 +50,14 @@ internal sealed class QuotationUserReferenceProbe(
                     entry => entry.MemberId == member,
                     cancellationToken) ||
                 await dbContext.Orders.AnyAsync(
-                    order => order.ConvertedBy == member ||
+                    order => order.AdvisorId == member ||
+                        order.ConvertedBy == member ||
                         order.ApprovedBy == member ||
                         order.CancelledBy == member ||
                         order.InvoicedBy == member,
+                    cancellationToken) ||
+                await dbContext.OrderHistoryEntries.AnyAsync(
+                    entry => entry.MemberId == member,
                     cancellationToken) ||
                 await dbContext.OrderPaymentProofs.AnyAsync(
                     proof => proof.UploadedBy == member,

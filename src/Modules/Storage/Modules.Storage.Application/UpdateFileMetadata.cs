@@ -12,6 +12,7 @@ public sealed record UpdateFileMetadataCommand(
 
 public sealed class UpdateFileMetadataHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IStorageUnitOfWork unitOfWork,
     IStorageAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -31,6 +32,10 @@ public sealed class UpdateFileMetadataHandler(
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }
+
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         var now = clock.UtcNow;
         resource.UpdateMetadata(command.Category, command.Tags, now);

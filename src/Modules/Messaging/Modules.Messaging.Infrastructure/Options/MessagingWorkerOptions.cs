@@ -1,0 +1,19 @@
+namespace Modules.Messaging.Infrastructure.Options;
+
+/// <summary>Spec 2026-10-09 §9: intervalos de entregas, medios y purga, con defaults en código.</summary>
+public sealed class MessagingWorkerOptions
+{
+    public const string SectionName = "Messaging:Workers";
+
+    public int DeliveryPollSeconds { get; set; } = 3;
+
+    public int MediaPollSeconds { get; set; } = 5;
+
+    /// <summary>Spec 2026-10-11 §6.3: el tick del worker de campañas. El sondeo es costo en reposo contra una base compartida
+    /// y sólo retrasa el arranque de una campaña programada; <c>DrainAsync</c> sostiene el caudal.</summary>
+    public int CampaignPollSeconds { get; set; } = 10;
+
+    public int PurgeIntervalHours { get; set; } = 24;
+
+    public int DeliveryRetentionDays { get; set; } = 7;
+}

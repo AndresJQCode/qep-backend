@@ -26,7 +26,8 @@ public sealed class QuotationResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup)
+    IQuotationCompanyLookup companyLookup,
+    IQuotationSettingsStore settingsStore)
     : IQuotationResponseComposer
 {
     public async Task<QuotationResponse> ComposeAsync(
@@ -47,8 +48,12 @@ public sealed class QuotationResponseComposer(
 
         var products = await productLookup.FindManyAsync(
             tenantId,
-            quotation.Items.Select(item => item.ProductId).Distinct().ToArray(),
+            quotation.Items.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
+
+        // Here and not in QuotationDto: every quotation response passes through this composer, and it
+        // is async with DI — the static mapper called by ~25 handlers is neither (plan decision A13).
+        var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
 
         return new QuotationResponse(
             quotation.Id,
@@ -87,25 +92,33 @@ public sealed class QuotationResponseComposer(
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
-            ToMinimumPurchaseResponse(quotation.MinimumPurchase),
+            ToMinimumPurchaseResponse(QuotationMinimumPurchase.DescribeFor(
+                quotation.Items.Sum(item => item.Quantity), quotation.Subtotal + quotation.TaxAmount, quotation.Currency, settings)),
             quotation.Items
                 .Select(item => ToItemResponse(item, products, quotation.GlobalScaleFloor))
                 .ToArray(),
             quotation.Version,
             quotation.GlobalScaleFloor,
             quotation.IsRetail,
-            AvailableFloors(quotation, products));
+            AvailableFloors(quotation, products),
+            ShippingResponse.From(quotation.Shipping),
+            quotation.FreightSubtotal,
+            quotation.FreightTaxAmount);
     }
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización
     // histórica tiene que poder leerse aunque su cliente se haya borrado.
-    private static QuotationClientResponse? ToClientResponse(QuotationCustomerRef? customer) =>
+    // Internos y no privados: el compositor del detalle del pedido (OrderResponseComposer) resuelve
+    // cliente, líneas y cuenta de cobro con las mismas formas (spec 2026-10-15 §6.2).
+    internal static QuotationClientResponse? ToClientResponse(QuotationCustomerRef? customer) =>
         customer is null
             ? null
             : new QuotationClientResponse(
                 customer.Id,
-                customer.Cuc,
+                // Un incompleto no tiene CUC (spec 2026-10-10 §6.2), pero tampoco cotizaciones:
+                // Quotations lo rechaza (T4). Esto sólo cubre el tipo y deja el contrato igual.
+                customer.Cuc ?? string.Empty,
                 customer.Name,
                 customer.Phone,
                 customer.Email,
@@ -130,20 +143,24 @@ public sealed class QuotationResponseComposer(
                         address.DepartmentId,
                         address.DepartmentName,
                         address.IsPrincipal))
-                    .ToArray());
+                    .ToArray(),
+                customer.Country,
+                customer.PersonType,
+                customer.IdentificationType);
 
-    // El producto puede no existir más (se dio de baja y se borró): la línea conserva lo que la
-    // cotización congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único
-    // que este lado no puede reconstruir.
-    private static QuotationItemResponse ToItemResponse(
+    // La variante puede no existir más (se borró): la línea conserva lo que la cotización
+    // congeló —cantidad, precio, descuento— y el nombre queda vacío, que es lo único que este lado
+    // no puede reconstruir. El diccionario va por id de variante (spec 2026-10-20 §4).
+    internal static QuotationItemResponse ToItemResponse(
         QuotationItemDto item,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products,
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products,
         int? globalScaleFloor)
     {
-        products.TryGetValue(item.ProductId, out var product);
+        products.TryGetValue(item.VariantId, out var product);
 
         return new QuotationItemResponse(
             item.Id,
+            item.VariantId,
             item.ProductId,
             // Congelados si la cotización ya salió del borrador; si no, los del catálogo de hoy.
             // Portada y escalas siguen siendo las de hoy: no se congelan.
@@ -197,11 +214,16 @@ public sealed class QuotationResponseComposer(
     /// </summary>
     private static int[] AvailableFloors(
         QuotationDto quotation,
-        IReadOnlyDictionary<Guid, QuotationProductRef> products) =>
-        quotation.Items
-            .Select(item => item.ProductId)
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products) =>
+        AvailableFloors(quotation.Items, products);
+
+    internal static int[] AvailableFloors(
+        IReadOnlyCollection<QuotationItemDto> items,
+        IReadOnlyDictionary<Guid, QuotationVariantRef> products) =>
+        items
+            .Select(item => item.VariantId)
             .Distinct()
-            .SelectMany(productId => products.TryGetValue(productId, out var product)
+            .SelectMany(variantId => products.TryGetValue(variantId, out var product)
                 ? product.Scales.Select(scale => scale.FromUnit)
                 : Enumerable.Empty<int>())
             .Distinct()
@@ -211,7 +233,7 @@ public sealed class QuotationResponseComposer(
     // La empresa que no resuelve deja el bloque con la cuenta guardada y sin razón social, por
     // el mismo motivo que el cliente: la cotización es histórica y tiene que poder leerse aunque
     // la empresa se haya borrado. Lo que se muestra es lo que se congeló, no lo que hay hoy.
-    private static QuotationBillingResponse? ToBillingResponse(
+    internal static QuotationBillingResponse? ToBillingResponse(
         QuotationBillingAccountDto? account, QuotationCompanyRef? company) =>
         account is null
             ? null
@@ -225,14 +247,14 @@ public sealed class QuotationResponseComposer(
                 account.AccountNumber,
                 account.Currency);
 
-    // Copia campo a campo y sin consultar nada: el DTO que llega ya trae la compra mínima resuelta
-    // (QuotationMinimumPurchase.DescribeFor se arma con las líneas y la moneda de la propia
-    // cotización). Recalcularla acá sería una segunda fuente de verdad del mismo número.
+    // Field-by-field copy: the computation is QuotationMinimumPurchase.DescribeFor, the single
+    // source of truth.
     private static QuotationMinimumPurchaseResponse ToMinimumPurchaseResponse(
         QuotationMinimumPurchaseDto minimum) => new(
             minimum.Met,
             minimum.Units,
             minimum.MinimumUnits,
+            minimum.Currency,
             minimum.MinimumTotal,
             minimum.MissingUnits,
             minimum.MissingTotal);
@@ -246,7 +268,9 @@ public sealed class QuotationResponseComposer(
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType,
+        party.IdentificationType);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que

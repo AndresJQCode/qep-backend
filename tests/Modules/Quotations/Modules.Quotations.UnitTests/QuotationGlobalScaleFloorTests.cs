@@ -34,6 +34,7 @@ public sealed class QuotationGlobalScaleFloorTests
             notes: null,
             QuotationParties.Empty,
             billingAccount,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -43,7 +44,7 @@ public sealed class QuotationGlobalScaleFloorTests
     {
         var quotation = NewQuotation(BillingAccount);
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None);
 
@@ -98,8 +99,8 @@ public sealed class QuotationGlobalScaleFloorTests
         Assert.Equal("quotation.global_scale.floor_invalid", error.Code);
     }
 
-    // Una cotizacion convertida no se edita por la puerta normal: para eso esta el mutador propio
-    // del pedido, igual que AddItemAfterConversion.
+    // Una cotizacion convertida no se edita por ninguna puerta (spec 2026-10-15 §4.5): el piso del
+    // pedido vive en el pedido.
     [Fact]
     public void AConvertedQuotationRejectsTheOrdinarySetter()
     {
@@ -111,16 +112,6 @@ public sealed class QuotationGlobalScaleFloorTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    [Fact]
-    public void AConvertedQuotationAcceptsTheAfterConversionSetter()
-    {
-        var quotation = ConvertedQuotation();
-
-        quotation.SetGlobalScaleFloorAfterConversion(1000, AdvisorId, Now.AddHours(3));
-
-        Assert.Equal(1000, quotation.GlobalScaleFloor);
-    }
-
     // El recalculo baja descuento y origen juntos: aplicar uno sin el otro deja la linea diciendo
     // que su 12% se lo dio el piso global cuando la compuerta de compra minima ya se lo quito.
     [Fact]
@@ -129,7 +120,7 @@ public sealed class QuotationGlobalScaleFloorTests
         var quotation = NewQuotation();
         var itemId = QuotationItemId.New();
         quotation.AddItem(
-            itemId, Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
+            itemId, Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.ApplyGroupDiscounts(
@@ -149,7 +140,7 @@ public sealed class QuotationGlobalScaleFloorTests
     {
         var quotation = NewQuotation();
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 3, unitPrice: 100_000m,
             discountPercentage: 5m, taxPercentage: 19, AdvisorId, Now);
 
         Assert.Equal(QuotationDiscountOrigin.Own, quotation.Items.Single().DiscountOrigin);

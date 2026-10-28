@@ -48,6 +48,37 @@ public sealed class QuotationsExportProcessorTests
         Assert.True(writer.Disposed);
     }
 
+    // D-R7: la fecha de texto sigue el formato del tenant; el total sigue siendo número.
+    [Fact]
+    public async Task CreatedAtUsesTheTenantDateFormat()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var directory = new StubTenantDirectory();
+        directory.Regional = directory.Regional! with { DateFormat = "dd/MM/yyyy" };
+        var processor = NewProcessor(
+            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")), writer, tenantDirectory: directory);
+
+        await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(writer.Rows);
+        Assert.Equal("12/09/2026 10:30", row[1].Text);
+        Assert.Null(row[6].Text);
+        Assert.Equal(0m, row[6].Number);
+    }
+
+    [Fact]
+    public async Task WithoutRegionalSettingsCreatedAtIsDayFirst()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var directory = new StubTenantDirectory { Regional = null };
+        var processor = NewProcessor(
+            new StubQuotationListRepository(NewQuotation("QUO-2026-0001")), writer, tenantDirectory: directory);
+
+        await processor.ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("12/09/2026 10:30", Assert.Single(writer.Rows)[1].Text);
+    }
+
     // Sin nombre en la membresía (owner, sembrados) el archivo cae al correo, igual que la tabla.
     [Fact]
     public async Task WritesTheAdvisorEmailWhenTheMemberHasNoName()
@@ -225,6 +256,7 @@ public sealed class QuotationsExportProcessorTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -235,7 +267,8 @@ public sealed class QuotationsExportProcessorTests
         RecordingExportWorkbookWriter? writer = null,
         RecordingExportFileStorage? storage = null,
         StubQuotationAdvisorLookup? advisors = null,
-        FixedTenantClock? tenantClock = null) =>
+        FixedTenantClock? tenantClock = null,
+        StubTenantDirectory? tenantDirectory = null) =>
         new(repository,
             new StubQuotationCustomerLookup(new QuotationCustomerRef(
                 ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
@@ -243,5 +276,15 @@ public sealed class QuotationsExportProcessorTests
             advisors ?? new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             writer ?? new RecordingExportWorkbookWriter(),
             storage ?? new RecordingExportFileStorage(),
-            tenantClock ?? new FixedTenantClock(Now));
+            tenantClock ?? new FixedTenantClock(Now),
+            tenantDirectory ?? IsoDateDirectory());
+
+    // El formato por defecto de las pruebas es ISO: así las que afirman «2026-09-12 10:30» no
+    // dependen del formato de día primero que trae el doble por omisión.
+    private static StubTenantDirectory IsoDateDirectory()
+    {
+        var directory = new StubTenantDirectory();
+        directory.Regional = directory.Regional! with { DateFormat = "yyyy-MM-dd" };
+        return directory;
+    }
 }

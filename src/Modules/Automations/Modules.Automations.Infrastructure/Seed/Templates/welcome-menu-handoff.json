@@ -1,0 +1,44 @@
+{
+  "id": "welcome-menu-handoff",
+  "name": "Menú de bienvenida con traspaso",
+  "category": "Support",
+  "description": "Saluda, ofrece dos opciones con botones y pasa la conversación a un asesor con lo que eligió el cliente.",
+  "channels": ["WhatsApp"],
+  "requirement": null,
+  "parameters": [
+    { "key": "greeting", "label": "Saludo", "kind": "text", "options": null, "defaultValue": "¡Hola! Gracias por escribirnos. ¿En qué te podemos ayudar?" },
+    { "key": "option1", "label": "Primera opción", "kind": "text", "options": null, "defaultValue": "Ventas" },
+    { "key": "option2", "label": "Segunda opción", "kind": "text", "options": null, "defaultValue": "Soporte" }
+  ],
+  "preview": ["Bienvenida", "Primera opción", "Segunda opción", "Pasar a un asesor"],
+  "flow": {
+    "schema": 1,
+    "start": { "firstNodeId": "n1" },
+    "variables": [ { "name": "motivo", "type": "text" } ],
+    "nodes": [
+      {
+        "id": "n1", "kind": "buttons", "title": "Bienvenida", "text": "{param.greeting}",
+        "buttons": [ { "id": "option1", "label": "{param.option1}" }, { "id": "option2", "label": "{param.option2}" } ],
+        "saveTo": "motivo", "fallback": "repeat",
+        "outputs": { "option1": "n2", "option2": "n3", "other": null }
+      },
+      {
+        "id": "n2", "kind": "message", "title": "Primera opción", "text": "Perfecto, te ayudamos con {param.option1}.", "urlButton": null,
+        "outputs": { "next": "n4" }
+      },
+      {
+        "id": "n3", "kind": "message", "title": "Segunda opción", "text": "Perfecto, te ayudamos con {param.option2}.", "urlButton": null,
+        "outputs": { "next": "n4" }
+      },
+      { "id": "n4", "kind": "handoff", "title": "Pasar a un asesor", "text": "En un momento te atiende un asesor." }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "n1": { "x": 260, "y": 100 },
+      "n2": { "x": 560, "y": 20 },
+      "n3": { "x": 560, "y": 220 },
+      "n4": { "x": 860, "y": 120 }
+    }
+  }
+}

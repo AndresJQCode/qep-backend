@@ -14,6 +14,22 @@ public sealed class InvitationServiceTests
     private const string Token = "invitation-token-abc";
     private const string CorrelationId = "corr-1";
 
+    // ---- Aceptabilidad previa a la credencial ----
+
+    private static InvitationDto Dto(MembershipViewState state) =>
+        new(TenantId.New(), "Acme SAS", Guid.CreateVersion7(), state);
+
+    [Theory]
+    [InlineData(MembershipViewState.Expired, "tenancy.membership.invitation_expired")]
+    [InlineData(MembershipViewState.Active, "tenancy.membership.not_invited")]
+    [InlineData(MembershipViewState.Removed, "tenancy.membership.not_invited")]
+    public void EnsurePendingRejectsAnythingButPending(MembershipViewState state, string code)
+        => Assert.Equal(code, Assert.Throws<TenantDomainException>(() => InvitationAcceptability.EnsurePending(Dto(state))).Code);
+
+    [Fact]
+    public void EnsurePendingAcceptsAPendingInvitation()
+        => InvitationAcceptability.EnsurePending(Dto(MembershipViewState.Pending));
+
     // ---- Consulta por token ----
 
     [Fact]
@@ -362,6 +378,9 @@ public sealed class InvitationServiceTests
             string email,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("Not used by invitation flows.");
+
+        public Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class Audit : IAuditRecorder

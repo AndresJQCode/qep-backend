@@ -198,8 +198,19 @@ public sealed class QuotationTenantLogoLookupTests
         public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult(logoFileId);
+
+        public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+            TenantId tenantId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     // Anota si alguien llamó a DownloadAsync; el resto de la interfaz no lo necesita este puerto.
@@ -242,6 +253,13 @@ public sealed class QuotationTenantLogoLookupTests
 
         public Task UploadAsync(
             string key, byte[] content, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

@@ -2,6 +2,10 @@ using Modules.Geography.Domain;
 
 namespace Modules.Geography.Application;
 
+/// <summary>La ciudad que emparejó y, si fue por un sinónimo, cuál: la ocurrencia de un pedido guarda el sinónimo que la
+/// resolvió para poder recorregirla si el operador lo cambia.</summary>
+public sealed record CityNameMatch(City City, CitySynonymId? SynonymId);
+
 public interface ICityRepository
 {
     Task<IReadOnlyList<City>> ListByDepartmentAsync(
@@ -27,9 +31,19 @@ public interface ICityRepository
     /// sobrantes — nunca por nombre de ciudad solo: el mismo nombre puede repetirse en mas de un
     /// departamento del DIVIPOLA, y buscarlo aislado seria ambiguo. Reconoce tanto el nombre que
     /// se muestra como el oficial del DANE ("Cali" y "Santiago de Cali"). La usa
-    /// <c>CustomerGeographyLookup</c> para la importacion masiva de clientes.
+    /// <c>CustomerGeographyLookup</c> para la importacion masiva de clientes. Es
+    /// <c>(await MatchByNameAsync(...))?.City</c>: también reconoce los sinónimos (D-C8).
     /// </summary>
     Task<City?> FindByNameAsync(
+        DepartmentId departmentId, string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// §4.1: <see cref="City.Name"/>, luego <see cref="City.DivipolaName"/>, luego un sinónimo activo del
+    /// departamento con el texto normalizado igual (<see cref="CityText.Normalize"/>). El sinónimo nunca le gana
+    /// a una ciudad real: si una fila de sinónimo repite el nombre de una ciudad, gana la ciudad y
+    /// <see cref="CityNameMatch.SynonymId"/> queda nulo.
+    /// </summary>
+    Task<CityNameMatch?> MatchByNameAsync(
         DepartmentId departmentId, string name, CancellationToken cancellationToken);
 
     /// <summary>

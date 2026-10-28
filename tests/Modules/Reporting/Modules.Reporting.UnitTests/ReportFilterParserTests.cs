@@ -61,9 +61,42 @@ public sealed class ReportFilterParserTests
         Assert.Equal(expected, ReportFilterParser.ParsePaymentStatus(value));
 
     [Theory]
-    [InlineData("PriceBaseUsd", PriceChangeField.PriceBaseUsd)]
-    [InlineData("PriceBaseCop", PriceChangeField.PriceBaseCop)]
+    [InlineData("PriceBase", PriceChangeField.PriceBase)]
     [InlineData("ScaleDiscount", PriceChangeField.ScaleDiscount)]
-    public void ParsesTheThreePriceChangeFields(string value, PriceChangeField expected) =>
+    public void ParsesTheTwoPriceChangeFields(string value, PriceChangeField expected) =>
         Assert.Equal(expected, ReportFilterParser.ParsePriceChangeField(value));
+
+    /// <summary>Los cuatro orígenes del reporte de pedidos: los tres de <c>OrderSource</c> más
+    /// <c>Pos</c>, que es una venta de mostrador y no un pedido (spec 2026-10-23 §2).</summary>
+    [Theory]
+    [InlineData("Quotation", OrderSourceFilter.Quotation)]
+    [InlineData("Manual", OrderSourceFilter.Manual)]
+    [InlineData("Shopify", OrderSourceFilter.Shopify)]
+    [InlineData("Pos", OrderSourceFilter.Pos)]
+    public void ParsesEveryOrderSource(string value, OrderSourceFilter expected)
+    {
+        Assert.True(ReportFilterParser.TryParseSource(value, out var parsed));
+        Assert.Equal(expected, parsed);
+        Assert.Equal(expected, ReportFilterParser.ParseSource(value));
+    }
+
+    [Theory]
+    [InlineData("pos")]
+    [InlineData("Store")]
+    public void RejectsAnUnknownOrLowercaseSource(string value)
+    {
+        Assert.False(ReportFilterParser.TryParseSource(value, out _));
+        var error = Assert.Throws<ReportingDomainException>(() => ReportFilterParser.ParseSource(value));
+        Assert.Equal("reporting.filter.invalid", error.Code);
+    }
+
+    [Fact]
+    public void BlankSourceIsNoFilter() =>
+        Assert.Null(ReportFilterParser.ParseSource("  "));
+
+    [Theory]
+    [InlineData("PriceBaseUsd")]
+    [InlineData("PriceBaseCop")]
+    public void TheRetiredPerCurrencyFieldsAreNoLongerValid(string value) =>
+        Assert.False(ReportFilterParser.TryParsePriceChangeField(value, out _));
 }

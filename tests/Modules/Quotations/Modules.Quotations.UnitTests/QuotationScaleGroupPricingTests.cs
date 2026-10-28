@@ -1,4 +1,4 @@
-﻿using Modules.Quotations.Application;
+using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -674,5 +674,88 @@ public sealed class QuotationScaleGroupPricingTests
 
         Assert.Equal(0m, For(result, a).DiscountPercentage);
         Assert.Equal(QuotationDiscountOrigin.Own, For(result, a).Origin);
+    }
+
+    // ---- Por variante (spec 2026-10-20 §4) ----
+    //
+    // Cada variante se comporta como antes un producto: la clave de las escalas es la variante de
+    // la línea. Camiseta M y Camiseta L son del mismo producto, pero el producto no entra en la
+    // cuenta.
+
+    private static readonly Guid CamisetaM = Guid.NewGuid();
+    private static readonly Guid CamisetaL = Guid.NewGuid();
+
+    // La regla del Enfoque de revisión 5. Escala 12-999 sin agrupación: 6 M y 6 L no suman 12 (igual
+    // que Shopify B2B). Ninguna de las dos alcanza el piso sola, así que las dos van sin descuento.
+    // Esta función sólo ve variantes, así que no puede probar la clave: la amarran las pruebas
+    // EachVariantIsPricedWithItsOwnScalesEvenWithinTheSameProduct de las dos pasadas de recálculo.
+    [Fact]
+    public void ScaleGroupSixMAndSixLDoNotAddUp()
+    {
+        var m = Guid.NewGuid();
+        var l = Guid.NewGuid();
+        var dozen = Scale(allowGrouping: false, multiple: 1, discount: 10m, fromUnit: 12, toUnit: 999);
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(m, CamisetaM, 6m),
+                new QuotationPricingLine(l, CamisetaL, 6m)
+            ],
+            Catalog((CamisetaM, dozen), (CamisetaL, dozen)));
+
+        Assert.All(
+            [For(result, m), For(result, l)],
+            line =>
+            {
+                Assert.Equal(0m, line.DiscountPercentage);
+                Assert.Equal(QuotationDiscountOrigin.Own, line.Origin);
+            });
+    }
+
+    // La misma escala con agrupación sí suma entre variantes, como hoy suma entre productos: misma
+    // clave (FromUnit, ToUnit, Multiple), las dos cumplen el múltiplo de 6 solas y juntas llegan a
+    // 12. Las dos se llevan el 10 % del grupo, y la cantidad evaluada es la del grupo.
+    [Fact]
+    public void ScaleGroupAllowGroupingAddsAcrossVariants()
+    {
+        var m = Guid.NewGuid();
+        var l = Guid.NewGuid();
+        var dozen = Scale(allowGrouping: true, multiple: 6, discount: 10m, fromUnit: 12, toUnit: 999);
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(m, CamisetaM, 6m),
+                new QuotationPricingLine(l, CamisetaL, 6m)
+            ],
+            Catalog((CamisetaM, dozen), (CamisetaL, dozen)));
+
+        Assert.All(
+            [For(result, m), For(result, l)],
+            line =>
+            {
+                Assert.Equal(10m, line.DiscountPercentage);
+                Assert.Equal(QuotationDiscountOrigin.Group, line.Origin);
+                Assert.Equal(12m, line.Restriction!.EvaluatedQuantity);
+            });
+    }
+
+    // Una variante con 12 sí llega sola al tramo sin agrupación, aunque la otra talla del mismo
+    // producto no: cada una resuelve con su cantidad.
+    [Fact]
+    public void ScaleWithoutGroupingIsResolvedPerVariant()
+    {
+        var m = Guid.NewGuid();
+        var l = Guid.NewGuid();
+        var dozen = Scale(allowGrouping: false, multiple: 1, discount: 10m, fromUnit: 12, toUnit: 999);
+
+        var result = QuotationScaleGroupPricing.Resolve(
+            [
+                new QuotationPricingLine(m, CamisetaM, 12m),
+                new QuotationPricingLine(l, CamisetaL, 6m)
+            ],
+            Catalog((CamisetaM, dozen), (CamisetaL, dozen)));
+
+        Assert.Equal(10m, For(result, m).DiscountPercentage);
+        Assert.Equal(0m, For(result, l).DiscountPercentage);
     }
 }

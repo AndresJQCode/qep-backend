@@ -39,4 +39,23 @@ public static class IdentitySeeder
         await dbContext.SaveChangesAsync(cancellationToken);
         return created.Id.Value;
     }
+
+    /// <summary>
+    /// El id del usuario con ese email, o null si no existe. No crea nada: la semilla del tenant
+    /// operador lo usa para mirar a quién le daría poder de plataforma antes de dárselo.
+    /// </summary>
+    public static async Task<Guid?> FindUserIdByEmailAsync(
+        this IServiceProvider services,
+        string email,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+
+        var normalizedEmail = User.NormalizeEmail(email);
+        var existing = await dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(user => user.Email == normalizedEmail, cancellationToken);
+        return existing?.Id.Value;
+    }
 }

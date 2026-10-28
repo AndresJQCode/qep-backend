@@ -37,6 +37,31 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
     // prueba es OrdersExportLayoutPersistenceTests.TwoFirstSavesForTheSameTenantEndInAConcurrencyConflict.
     private const string OrdersExportLayoutKey = "PK_orders_export_layouts";
 
+    // The quotation settings keys (spec 2026-10-08, D7). QuotationSettingsStore.SaveAsync upserts and
+    // locks the parent row inside the handler's transaction, so concurrent PUTs serialize and these
+    // are not reached in the normal path. Safety net, like OrdersExportLayoutKey: a 412 and never a
+    // 500 with the constraint name inside, should a future writer skip the store's lock.
+    private const string QuotationSettingsKey = "PK_tenant_quotation_settings";
+
+    private const string MinimumTotalsKey = "PK_tenant_minimum_totals";
+
+    // La clave de idempotencia del pedido externo (spec de Shopify D-S23). ExternalOrderService busca antes de
+    // crear, pero dos llamadas simultáneas con la misma clave (el webhook y la conciliación) pueden buscar las dos
+    // antes de que alguna guarde: este índice cierra la carrera, y el servicio resuelve el código devolviendo el
+    // pedido que ganó. La prueba es ExternalOrderServiceTests.CreateAsyncConcurrentSameExternalKeyCreatesOneOrder.
+    private const string OrderExternalKeyIndex = "IX_orders_tenant_external_key";
+
+    // El nombre de una transportadora, o cualquiera de sus alias, ya es de otra del mismo tenant
+    // (spec 2026-10-17). Es la regla de negocio, no una red: la comprobación previa en el handler
+    // no cierra la carrera entre dos altas simultáneas, este índice sí.
+    private const string CarrierNameIndex = "IX_carrier_names_tenant_name";
+
+    // Una parte por rol en cada pedido (spec 2026-10-26 §4.4). Dos trabajos de Shopify que ponen la parte de envío del mismo
+    // pedido leen los dos el pedido sin ella y el segundo choca acá. Es el mismo 412 que si la versión del pedido hubiera
+    // cambiado —ganó otro—: el trabajo reintenta y ve la parte ya puesta. La prueba es
+    // ExternalOrderServiceTests.AttachShippingLosingTheRaceForTheShippingPartyIsAConcurrencyConflict.
+    private const string OrderPartyRoleIndex = "IX_order_parties_order_role";
+
     // IOrderNumberGenerator recibe el mismo QuotationsDbContext scoped que esta clase, así que su
     // SQL crudo corre en esta conexión y queda dentro de la transacción. Si alguna vez se
     // registrara con un DbContext propio, el incremento volvería a autocommitearse aparte.
@@ -51,6 +76,8 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
         // Disponer sin commit hace rollback, y el rollback es lo que suelta el lock del contador.
         public ValueTask DisposeAsync() => transaction.DisposeAsync();
     }
+
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
@@ -112,12 +139,57 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
                   postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
                   string.Equals(
                       postgres.ConstraintName,
+                      OrderExternalKeyIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ExternalKeyTaken,
+                "Another order from this source already uses that external key.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      CarrierNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new QuotationsDomainException(
+                "quotations.carrier.name_taken",
+                "Ya hay una transportadora con ese nombre o con alguno de esos nombres externos.");
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
                       OrdersExportLayoutKey,
                       StringComparison.Ordinal))
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The orders export layout was created by another request while this one was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  (string.Equals(postgres.ConstraintName, QuotationSettingsKey, StringComparison.Ordinal) ||
+                   string.Equals(postgres.ConstraintName, MinimumTotalsKey, StringComparison.Ordinal)))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The quotation settings were saved by another request while this one was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, OrderPartyRoleIndex, StringComparison.Ordinal))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The order party was written by another process while this one was being committed.",
                 exception);
         }
     }

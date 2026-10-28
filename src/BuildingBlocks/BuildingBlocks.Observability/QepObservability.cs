@@ -22,10 +22,16 @@ public static class QepObservability
     public static readonly ActivitySource ActivitySource = new(ActivitySourceName);
     public static readonly Meter Meter = new(MeterName);
 
+    /// <param name="serviceVersion">
+    /// El build desplegado (<c>Deployment:BuildNumber</c>, spec 2026-10-14), que es lo que permite
+    /// filtrar trazas por despliegue. Sin valor cae a la versión del assembly, que con
+    /// <c>Deterministic</c> y sin SourceLink es siempre la misma y no identifica nada.
+    /// </param>
     public static IServiceCollection AddQepObservability(
         this IServiceCollection services,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        string? serviceVersion = null)
     {
         // OTEL_SERVICE_NAME lo inyecta el Deployment de k8s; la constante es sólo un
         // fallback local/de desarrollo, para no hardcodear el nombre en un entorno real.
@@ -36,10 +42,11 @@ public static class QepObservability
             .ConfigureResource(resource => resource
                 .AddService(
                     serviceName,
-                    serviceVersion: typeof(QepObservability).Assembly
-                        .GetName()
-                        .Version?
-                        .ToString())
+                    serviceVersion: serviceVersion
+                        ?? typeof(QepObservability).Assembly
+                            .GetName()
+                            .Version?
+                            .ToString())
                 .AddAttributes(
                 [
                     new("deployment.environment", environment.EnvironmentName),

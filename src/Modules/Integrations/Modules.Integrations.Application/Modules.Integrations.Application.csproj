@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- Los apoyos de los handlers (autorización, visibilidad, reglas de entrada) son internal: se
+         prueban unitariamente. Mismo patrón que Pos. -->
+    <InternalsVisibleTo Include="Modules.Integrations.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Integrations.Domain\Modules.Integrations.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <!-- AuditActorType: la auditoría atómica va por un puerto propio (P1 del plan), no por el
+         IAuditRecorder que ya liga Tenancy. -->
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>

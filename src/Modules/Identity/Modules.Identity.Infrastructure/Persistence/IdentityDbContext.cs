@@ -14,6 +14,10 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
 
+    public DbSet<PasswordCredential> PasswordCredentials => Set<PasswordCredential>();
+
+    public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<IdentityInboxMessage> Inbox => Set<IdentityInboxMessage>();
@@ -25,6 +29,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ConfigureUser(modelBuilder);
         ConfigureProviderLink(modelBuilder);
         ConfigureSession(modelBuilder);
+        ConfigurePasswordCredential(modelBuilder);
+        ConfigureEmailToken(modelBuilder);
         ConfigureUserPreference(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías de emisión/revocación de sesión
@@ -53,6 +59,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasMaxLength(20);
         user.Property(value => value.CreatedAt).HasColumnName("created_at");
         user.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        user.Property(value => value.EmailVerifiedAt).HasColumnName("email_verified_at");
 
         user.HasMany(value => value.ProviderLinks)
             .WithOne()
@@ -86,9 +93,64 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             .HasColumnName("mode")
             .HasConversion<string>()
             .HasMaxLength(10);
+        // Spec 2026-10-14, decisión 7. Default en la columna: las filas anteriores a la migración quedan
+        // con el sonido encendido sin reescribirlas, que es lo mismo que ve quien nunca eligió.
+        preference.Property(value => value.MessageSound)
+            .HasColumnName("message_sound")
+            .HasDefaultValue(true);
         preference.Property(value => value.UpdatedAt).HasColumnName("updated_at");
 
         preference.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigurePasswordCredential(ModelBuilder modelBuilder)
+    {
+        var credential = modelBuilder.Entity<PasswordCredential>();
+        credential.ToTable("password_credentials", "identity");
+        credential.HasKey(value => value.UserId);
+        credential.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value))
+            .ValueGeneratedNever();
+        credential.Property(value => value.Hash).HasColumnName("hash");
+        credential.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        credential.HasOne<User>()
+            .WithOne()
+            .HasForeignKey<PasswordCredential>(value => value.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureEmailToken(ModelBuilder modelBuilder)
+    {
+        var token = modelBuilder.Entity<EmailToken>();
+        token.ToTable("email_tokens", "identity");
+        token.HasKey(value => value.Id);
+        token.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new EmailTokenId(value))
+            .ValueGeneratedNever();
+        token.Property(value => value.UserId)
+            .HasColumnName("user_id")
+            .HasConversion(id => id.Value, value => new UserId(value));
+        // Minúscula explícita: TryConsumeAsync filtra por este texto en SQL crudo.
+        token.Property(value => value.Purpose)
+            .HasColumnName("purpose")
+            .HasConversion(
+                purpose => EmailTokenRepository.PurposeToColumn(purpose),
+                value => EmailTokenRepository.PurposeFromColumn(value))
+            .HasMaxLength(10);
+        token.Property(value => value.TokenHash)
+            .HasColumnName("token_hash")
+            .HasMaxLength(64);
+        token.HasIndex(value => value.TokenHash).IsUnique();
+        token.Property(value => value.ExpiresAt).HasColumnName("expires_at");
+        token.Property(value => value.UsedAt).HasColumnName("used_at");
+        token.Property(value => value.CreatedAt).HasColumnName("created_at");
+        token.HasIndex(value => new { value.UserId, value.Purpose, value.UsedAt });
+        token.HasOne<User>()
             .WithMany()
             .HasForeignKey(value => value.UserId)
             .OnDelete(DeleteBehavior.Cascade);
@@ -163,13 +225,16 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
     {
-        // Vista de sólo lectura sobre el Outbox de plataforma, propiedad del módulo productor.
+        // Proyección del Outbox de plataforma (propiedad de Tenancy): se lee y se escribe, pero la
+        // tabla no se migra desde acá. Las columnas NOT NULL salen de InitialPlatform.
         var outbox = modelBuilder.Entity<OutboxRecord>();
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);
         outbox.Property(value => value.Id).HasColumnName("id");
-        outbox.Property(value => value.EventName).HasColumnName("event_name");
-        outbox.Property(value => value.PayloadJson).HasColumnName("payload");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
     }
 }

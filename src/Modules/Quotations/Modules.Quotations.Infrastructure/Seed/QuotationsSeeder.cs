@@ -151,6 +151,9 @@ public static class QuotationsSeeder
         // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la de "EMPRESA"—, no uno
         // escrito a mano, que salía mal en cuanto la cotización se facturaba por otra empresa.
         OrdersExportColumnSetting.Catalog("company_tax_id", "Nit", visible: true),
+        // Spec 2026-10-26 tipo de persona: visible, justo detrás de «Nit». Su encabezado por defecto
+        // («Tipo de persona») no choca con ningún otro de la hoja.
+        OrdersExportColumnSetting.Catalog("customer_person_type", "Tipo de persona", visible: true),
         .. HiddenCatalogKeys().Select(key => OrdersExportColumnSetting.Catalog(
             key,
             OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,
@@ -178,6 +181,14 @@ public static class QuotationsSeeder
         // Nacen ocultas y Effective las completaría así, pero la lista las nombra igual: que la hoja
         // diga en un solo lugar todo lo que no usa.
         .. Enumerable.Range(3, OrdersExportColumnCatalog.PaymentDateColumns - 2).Select(number => $"payment_method_{number}"),
+        // Spec 2026-10-17 flete: "Valor Flete" nace visible en el catálogo, pero la hoja ya tiene su
+        // fija "valor flete" para el ERP y dos visibles no pueden compartir encabezado. Se oculta acá:
+        // el ERP del tenant no la espera, y quien la quiera la prende desde la pantalla de columnas.
+        "freight_amount",
+        // Spec 2026-10-20 variantes §7: nace oculta en el catálogo, pero la hoja la nombra igual: el ERP no
+        // espera esa columna y Effective la completaría al final de todos modos. Su encabezado ("Variante")
+        // no choca con ninguna visible de la hoja.
+        "variant",
     ];
 
     /// <summary>

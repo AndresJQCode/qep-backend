@@ -40,6 +40,7 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
         string? category,
         string? tag,
         FileOwnerFilter? owner,
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -61,6 +62,15 @@ internal sealed class FileResourceRepository(StorageDbContext dbContext) : IFile
             query = query.Where(resource =>
                 resource.OwnerType == selectedOwner.OwnerType &&
                 resource.OwnerId == selectedOwner.OwnerId);
+        }
+
+        // Spec 2026-10-07. Una condición por tipo excluido y no un Contains sobre la lista: la
+        // columna se guarda como texto (HasConversion<string>) y así la traducción no depende de cómo
+        // EF mapee una colección de enums convertidos.
+        foreach (var excluded in excludedOwnerTypes)
+        {
+            var ownerType = excluded;
+            query = query.Where(resource => resource.OwnerType != ownerType);
         }
 
         if (!string.IsNullOrWhiteSpace(search))

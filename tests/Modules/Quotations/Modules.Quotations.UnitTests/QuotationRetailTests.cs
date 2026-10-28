@@ -39,6 +39,7 @@ public sealed class QuotationRetailTests
             notes: null,
             QuotationParties.Empty,
             billingAccount,
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -48,7 +49,7 @@ public sealed class QuotationRetailTests
     {
         var quotation = NewQuotation(BillingAccount);
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         quotation.ConvertToOrder(AdvisorId, Now.AddHours(2), QuotationProductSnapshot.None);
 
@@ -142,15 +143,6 @@ public sealed class QuotationRetailTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    [Fact]
-    public void AConvertedQuotationAcceptsTheAfterConversionRetailSetter()
-    {
-        var quotation = ConvertedQuotation();
-
-        quotation.SetIsRetailAfterConversion(true, AdvisorId, Now.AddHours(3));
-
-        Assert.True(quotation.IsRetail);
-    }
     // Desde el 2026-09-23 el detal no tiene endpoint propio: viaja en el cuerpo del guardado, al
     // lado del piso global, y UpdateDetails lo aplica. Mismo contrato que el piso en 400773f.
     private static void SaveHeader(Quotation quotation, bool isRetail, int? globalScaleFloor) =>
@@ -223,6 +215,7 @@ public sealed class QuotationRetailTests
         SaveHeader(quotation, isRetail: true, globalScaleFloor: null);
 
         Assert.Null(Modules.Quotations.Application.QuotationChangeSummary.HeaderChanged(
-            before, Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation)));
+            before, Modules.Quotations.Application.QuotationHeaderSnapshot.Of(quotation),
+            Modules.Quotations.Application.HistoryFormat.Colombian));
     }
 }

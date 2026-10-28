@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -13,8 +14,99 @@ namespace Modules.Quotations.UnitTests;
 internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
 {
     public Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) =>
         Task.FromException(failure);
+
+    public Task SendOrderAsync(
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) =>
+        Task.FromException(failure);
+}
+
+/// <summary>Los canales de Zenvia del tenant, fijos por prueba (spec 2026-10-21, plan Zenvia por tenant).</summary>
+internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
+{
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WhatsAppChannel>>(channels);
+}
+
+/// <summary>La elección del canal en memoria: una sola por tenant, como la tabla. <see cref="Remembered"/> cuenta las
+/// escrituras que de verdad entraron.</summary>
+internal sealed class InMemoryWhatsAppChannelChoiceStore(Guid? saved = null) : IWhatsAppChannelChoiceStore
+{
+    public Guid? Saved { get; private set; } = saved;
+
+    public int Remembered { get; private set; }
+
+    public Task<Guid?> FindAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Saved);
+
+    public Task<bool> RememberAsync(
+        Guid tenantId, Guid connectionId, Guid? previous, Guid chosenByMemberId, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Como el SQL: inserta si no hay fila, y reemplaza sólo si la guardada sigue siendo `previous`.
+        if (Saved is not null && Saved != previous)
+        {
+            return Task.FromResult(false);
+        }
+
+        Saved = connectionId;
+        Remembered++;
+        return Task.FromResult(true);
+    }
+
+    public Task ReplaceAsync(
+        Guid tenantId, Guid connectionId, Guid chosenByMemberId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        Saved = connectionId;
+        return Task.CompletedTask;
+    }
+}
+
+internal static class WhatsAppChannels
+{
+    public const string OrderTemplateId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+    public static ZenviaWhatsAppChannel Any(Guid? connectionId = null, string? orderTemplateId = OrderTemplateId) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000",
+            "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
+
+    public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
+        new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
+}
+
+/// <summary>Lo que el router le entregó a Zenvia.</summary>
+internal sealed class RecordingZenviaSender : IZenviaWhatsAppSender
+{
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public List<(ZenviaWhatsAppChannel Channel, WhatsAppOrderMessage Message)> Orders { get; } = [];
+
+    public Task SendQuotationAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendOrderAsync(
+        ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        Orders.Add((channel, message));
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Lo que el router le entregó a Meta: el canal, el teléfono ya normalizado y el mensaje.</summary>
+internal sealed class RecordingMetaSender : IMetaWhatsAppSender
+{
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
+
+    public Task SendQuotationAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+    {
+        Quotations.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class RecordingQuotationSendFailureLog : IQuotationSendFailureLog
@@ -34,10 +126,23 @@ internal sealed class RecordingWhatsAppSender : IWhatsAppSender
 {
     public WhatsAppQuotationMessage? Sent { get; private set; }
 
+    public WhatsAppChannel? Channel { get; private set; }
+
     public Task SendQuotationAsync(
-        WhatsAppQuotationMessage message, CancellationToken cancellationToken)
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
+        Channel = channel;
         Sent = message;
+        return Task.CompletedTask;
+    }
+
+    public WhatsAppOrderMessage? SentOrder { get; private set; }
+
+    public Task SendOrderAsync(
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        Channel = channel;
+        SentOrder = message;
         return Task.CompletedTask;
     }
 }
@@ -185,6 +290,15 @@ internal sealed class StubQuotationRepository(Quotation quotation) : IQuotationR
                 ? new HashSet<Guid> { quotation.Id.Value }
                 : []);
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotationIds.Contains(quotation.Id)
+                ? new Dictionary<QuotationId, string> { [quotation.Id] = quotation.QuotationNumber }
+                : new Dictionary<QuotationId, string>());
+
     public Task<(IReadOnlyList<Quotation> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -252,6 +366,10 @@ internal sealed class NoOpQuotationsUnitOfWork : IQuotationsUnitOfWork
 
     public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+
+    public void DiscardPendingChanges()
+    {
+    }
 }
 
 /// <summary>Sin base no hay nada que confirmar ni deshacer: las pruebas unitarias que la piden
@@ -272,6 +390,10 @@ internal sealed class RecordingQuotationAuditPublisher : IQuotationAuditPublishe
     public void Publish(
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) => Actions.Add(action);
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Actions.Add(action);
 }
 
 internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
@@ -281,6 +403,27 @@ internal sealed class NoOpQuotationAuditPublisher : IQuotationAuditPublisher
         string outcome, DateTimeOffset occurredAt)
     {
     }
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
+    {
+    }
+}
+
+/// <summary>Un sujeto sin membresía activa en el tenant: <see cref="QuotationAdvisorResolver"/> responde 403.</summary>
+internal sealed class NoMembershipDirectory : IMembershipDirectory
+{
+    public Task<IReadOnlyCollection<string>?> FindActiveRolesAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyCollection<string>?>(null);
+
+    public Task<Guid?> FindActiveMembershipIdAsync(
+        Guid userId, Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<IReadOnlyList<Guid>> ListMembershipIdsByUserAsync(
+        Guid userId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Guid>>([]);
 }
 
 internal sealed class StubMembershipDirectory(Guid membershipId) : IMembershipDirectory
@@ -337,6 +480,19 @@ internal sealed class FixedTenantClock(DateTimeOffset utcNow, string timeZoneId 
     {
         RequestedTenantIds.Add(tenantId);
         return Task.FromResult(new TenantCalendar(utcNow, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId)));
+    }
+}
+
+/// <summary>La moneda por defecto de un tenant, COP si no se dice otra. Anota por qué tenant se
+/// preguntó, mismo criterio que <see cref="FixedTenantClock"/>.</summary>
+public sealed class FixedTenantDefaultCurrency(string currency = "COP") : ITenantDefaultCurrency
+{
+    public List<Guid> RequestedTenantIds { get; } = [];
+
+    public Task<string> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        RequestedTenantIds.Add(tenantId);
+        return Task.FromResult(currency);
     }
 }
 
@@ -463,6 +619,15 @@ internal sealed class StubQuotationListRepository(params Quotation[] quotations)
                 .Select(quotation => quotation.Id.Value)
                 .ToHashSet());
 
+    public Task<IReadOnlyDictionary<QuotationId, string>> FindNumbersAsync(
+        Guid tenantId,
+        IReadOnlyCollection<QuotationId> quotationIds,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<QuotationId, string>>(
+            quotations
+                .Where(quotation => quotationIds.Contains(quotation.Id))
+                .ToDictionary(quotation => quotation.Id, quotation => quotation.QuotationNumber));
+
     public void Add(Quotation quotation)
     {
     }
@@ -530,6 +695,16 @@ internal sealed class RecordingPdfStorage(string downloadUrl) : IQuotationPdfSto
         return Task.FromResult($"quotations/tenants/{tenantId:N}/{Saves}.pdf");
     }
 
+    /// <summary>El pedido de cada PDF de pedido guardado, en orden.</summary>
+    public List<OrderId> SavedOrders { get; } = [];
+
+    public Task<string> SaveOrderAsync(
+        Guid tenantId, OrderId orderId, byte[] content, CancellationToken cancellationToken)
+    {
+        SavedOrders.Add(orderId);
+        return Task.FromResult($"quotations/tenants/{tenantId:N}/orders/{SavedOrders.Count}.pdf");
+    }
+
     /// <summary>La URL publica que se le entrega a Meta. Distinta de la firmada a proposito:
     /// asi una prueba puede afirmar cual de las dos salio hacia WhatsApp.</summary>
     public const string PublicUrl = "https://assets-qep.example.co/quotations/abc.pdf";
@@ -593,20 +768,88 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.CanBeSent,
             quotation.HasChangesSinceSent,
             quotation.CanBeConvertedToOrder,
-            new QuotationMinimumPurchaseResponse(
-                quotation.MinimumPurchase.Met,
-                quotation.MinimumPurchase.Units,
-                quotation.MinimumPurchase.MinimumUnits,
-                quotation.MinimumPurchase.MinimumTotal,
-                quotation.MinimumPurchase.MissingUnits,
-                quotation.MinimumPurchase.MissingTotal),
+            MinimumPurchaseOf(quotation),
             [],
             quotation.Version,
             quotation.GlobalScaleFloor,
             quotation.IsRetail,
             // El stub no mira el catalogo, asi que no puede resolver los pisos disponibles. El
             // composer real los llena; esto solo ejerce que el PDF se regenere.
-            []));
+            [],
+            ShippingResponse.From(quotation.Shipping),
+            quotation.FreightSubtotal,
+            quotation.FreightTaxAmount));
+
+    // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
+    // way the real composer does, against the defaults a tenant without settings reads.
+    private static QuotationMinimumPurchaseResponse MinimumPurchaseOf(QuotationDto quotation)
+    {
+        var minimum = QuotationMinimumPurchase.DescribeFor(
+            quotation.Items.Sum(item => item.Quantity),
+            quotation.Total,
+            quotation.Currency,
+            QuotationSettings.Default);
+
+        return new QuotationMinimumPurchaseResponse(
+            minimum.Met,
+            minimum.Units,
+            minimum.MinimumUnits,
+            minimum.Currency,
+            minimum.MinimumTotal,
+            minimum.MissingUnits,
+            minimum.MissingTotal);
+    }
+}
+
+/// <summary>Settings held in memory; <see cref="QuotationSettings.Default"/> unless the test
+/// gives others.</summary>
+public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = null) : IQuotationSettingsStore
+{
+    public QuotationSettings Settings { get; private set; } = settings ?? QuotationSettings.Default;
+
+    public Task<QuotationSettings> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Settings);
+
+    public Task SaveAsync(Guid tenantId, QuotationSettings settings, CancellationToken cancellationToken)
+    {
+        Settings = settings;
+        return Task.CompletedTask;
+    }
+
+    public Guid? FreightTaxRateId { get; set; }
+
+    public Task<Guid?> GetFreightTaxRateIdAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(FreightTaxRateId);
+
+    public Task SetFreightTaxRateIdAsync(Guid tenantId, Guid? taxRateId, CancellationToken cancellationToken)
+    {
+        FreightTaxRateId = taxRateId;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Las tres activas, como un tenant que nunca las tocó (spec §4.4).</summary>
+    public IReadOnlySet<FreightChargeMode> EnabledFreightChargeModes { get; set; } =
+        new HashSet<FreightChargeMode>(Enum.GetValues<FreightChargeMode>());
+
+    /// <summary>Cuántas veces se leyeron: un guardado que no cambia el modo no tiene por qué leerlas.</summary>
+    public int FreightChargeModeReads { get; private set; }
+
+    /// <summary>Sin por defecto, como un tenant que nunca lo eligió (spec §4.4.1).</summary>
+    public FreightChargeMode? DefaultFreightChargeMode { get; set; }
+
+    public Task<FreightChargeModeSettings> GetFreightChargeModesAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        FreightChargeModeReads++;
+        return Task.FromResult(new FreightChargeModeSettings(EnabledFreightChargeModes, DefaultFreightChargeMode));
+    }
+
+    public Task SetFreightChargeModesAsync(
+        Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken)
+    {
+        EnabledFreightChargeModes = settings.Enabled;
+        DefaultFreightChargeMode = settings.Default;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>
@@ -618,13 +861,20 @@ internal sealed record RecordedOrderExportSearch(
     OrderPaymentStatus? PaymentStatus,
     DateTimeOffset? ConvertedFrom,
     DateTimeOffset? ConvertedBefore,
-    string? OrderNumber);
+    string? OrderNumber,
+    OrderSource? Source = null);
 
-/// <summary>Devuelve las filas sembradas y anota con que filtro se la llamo — lo que las pruebas
-/// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL.</summary>
-internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) : IOrderRepository
+/// <summary>Devuelve los pedidos sembrados y anota con que filtro se la llamo — lo que las pruebas
+/// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL. Desde el
+/// spec 2026-10-15 las filas son pedidos con sus propias líneas y partes, sin cotización al lado.</summary>
+internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepository
 {
     public IReadOnlyCollection<Guid>? LastClientIds { get; private set; }
+
+    /// <summary>El rango, ya en instantes, con que se pidió la última página del listado.</summary>
+    public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
+
+    public OrderSource? LastSource { get; private set; }
 
     public int AnyCalls { get; private set; }
 
@@ -635,17 +885,24 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
 
     public RecordedOrderExportSearch? LastExportSearch { get; private set; }
 
+    /// <summary>Lo que los handlers escribieron en el historial del pedido.</summary>
+    public List<OrderHistoryEntry> History { get; } = [];
+
     public Task<Order?> FindByQuotationIdAsync(
         Guid tenantId, QuotationId quotationId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Quotation.Id == quotationId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.QuotationId == quotationId));
 
     public Task<Order?> FindUntrackedByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
 
     public Task<Order?> FindByIdAsync(
         Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Order.Id == orderId)?.Order);
+        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
+
+    public Task<Order?> FindByExternalKeyAsync(
+        Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row => row.Source == source && row.ExternalKey == externalKey));
 
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
@@ -653,10 +910,14 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, Order>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id))
-                .ToDictionary(row => row.Quotation.Id.Value, row => row.Order));
+                .Where(row => row.QuotationId is { } quotationId && quotationIds.Contains(quotationId))
+                .ToDictionary(row => row.QuotationId!.Value.Value, row => row));
 
-    public Task<(IReadOnlyList<OrderWithQuotation> Items, int Total)> SearchAsync(
+    public Task<IReadOnlyDictionary<OrderId, string>> FindOrderNumbersAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -666,12 +927,15 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         LastClientIds = clientIds;
-        return Task.FromResult<(IReadOnlyList<OrderWithQuotation>, int)>((rows, rows.Length));
+        LastSearchRange = (convertedFrom, convertedBefore);
+        LastSource = source;
+        return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
 
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
@@ -686,15 +950,16 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         CancellationToken cancellationToken)
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
-    public Task<IReadOnlyList<OrderWithQuotation>> ListForExportAsync(
+    public Task<IReadOnlyList<Order>> ListForExportAsync(
         Guid tenantId,
         Guid? clientId,
         IReadOnlyCollection<Guid>? clientIds,
@@ -704,6 +969,7 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
+        OrderSource? source,
         OrderExportCursor? after,
         int limit,
         CancellationToken cancellationToken)
@@ -711,18 +977,18 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba
         // OrdersCreatedOrLeavingTheFilterBetweenBatchesNeitherRepeatNorSkip.
-        IReadOnlyList<OrderWithQuotation> page = Matching(clientIds)
+        IReadOnlyList<Order> page = Matching(clientIds)
             .Where(row => after is null
-                || row.Order.ConvertedAt < after.ConvertedAt
-                || (row.Order.ConvertedAt == after.ConvertedAt
-                    && string.CompareOrdinal(row.Order.OrderNumber, after.OrderNumber) < 0))
-            .OrderByDescending(row => row.Order.ConvertedAt)
-            .ThenByDescending(row => row.Order.OrderNumber, StringComparer.Ordinal)
+                || row.ConvertedAt < after.ConvertedAt
+                || (row.ConvertedAt == after.ConvertedAt
+                    && string.CompareOrdinal(row.OrderNumber, after.OrderNumber) < 0))
+            .OrderByDescending(row => row.ConvertedAt)
+            .ThenByDescending(row => row.OrderNumber, StringComparer.Ordinal)
             .Take(limit)
             .ToArray();
         return Task.FromResult(page);
@@ -742,34 +1008,38 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
         PaymentProofRequests.Add(orderIds);
         return Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderExportPaymentProof>>>(
             rows
-                .Where(row => orderIds.Contains(row.Order.Id) && row.Order.PaymentProofs.Count > 0)
+                .Where(row => orderIds.Contains(row.Id) && row.PaymentProofs.Count > 0)
                 .ToDictionary(
-                    row => row.Order.Id,
-                    row => (IReadOnlyList<OrderExportPaymentProof>)row.Order.PaymentProofs
+                    row => row.Id,
+                    row => (IReadOnlyList<OrderExportPaymentProof>)row.PaymentProofs
                         .Select(proof => new OrderExportPaymentProof(
                             proof.Id, proof.PublicStorageKey, proof.UploadedAt, proof.Amount, proof.PaidOn))
                         .ToArray()));
     }
 
     // Las líneas y las partes ya viven en el agregado sembrado: a diferencia del repositorio
-    // real, acá no hace falta una consulta aparte, sólo leer lo que la prueba cargó con
-    // Quotation.AddItemAfterConversion / UpdateDetails.
-    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>> ListItemsForExportAsync(
-        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationItem>>>(
+    // real, acá no hace falta una consulta aparte.
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>> ListItemsForExportAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderItem>>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Items.Count > 0)
-                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationItem>)row.Quotation.Items.ToArray()));
+                .Where(row => orderIds.Contains(row.Id) && row.Items.Count > 0)
+                .ToDictionary(row => row.Id, row => (IReadOnlyList<OrderItem>)row.Items.ToArray()));
 
-    public Task<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>> ListPartiesForExportAsync(
-        Guid tenantId, IReadOnlyCollection<QuotationId> quotationIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<QuotationId, IReadOnlyList<QuotationParty>>>(
+    public Task<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>> ListPartiesForExportAsync(
+        Guid tenantId, IReadOnlyCollection<OrderId> orderIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<OrderId, IReadOnlyList<OrderParty>>>(
             rows
-                .Where(row => quotationIds.Contains(row.Quotation.Id) && row.Quotation.Parties.Count > 0)
-                .ToDictionary(row => row.Quotation.Id, row => (IReadOnlyList<QuotationParty>)row.Quotation.Parties.ToArray()));
+                .Where(row => orderIds.Contains(row.Id) && row.Parties.Count > 0)
+                .ToDictionary(row => row.Id, row => (IReadOnlyList<OrderParty>)row.Parties.ToArray()));
 
-    private IEnumerable<OrderWithQuotation> Matching(IReadOnlyCollection<Guid>? clientIds) =>
-        clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.Quotation.ClientId));
+    public Task<IReadOnlyList<OrderHistoryEntry>> ListHistoryAsync(
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OrderHistoryEntry>>(
+            History.Where(entry => entry.OrderId == orderId).OrderByDescending(entry => entry.EventAt).ToArray());
+
+    private IEnumerable<Order> Matching(IReadOnlyCollection<Guid>? clientIds) =>
+        clientIds is null ? rows : rows.Where(row => clientIds.Contains(row.ClientId));
 
     /// <summary>Lo que responde <see cref="IsPaymentProofFileInUseAsync"/> (revisión final, I2).</summary>
     public bool PaymentProofFileInUse { get; set; }
@@ -785,6 +1055,8 @@ internal sealed class StubOrderListRepository(params OrderWithQuotation[] rows) 
     }
 
     public void Add(Order order) { }
+
+    public void AddHistoryEntry(OrderHistoryEntry entry) => History.Add(entry);
 }
 
 /// <summary>
@@ -848,15 +1120,15 @@ internal sealed class RecordingPaymentProofPublisher(bool enabled = true) : IPay
 /// <summary>Dobles del Excel de pedidos con ERP (ajuste 2026-09-20): producto, empresa y ciudad de
 /// una parte, resueltos en lote como los reales, pero desde un diccionario sembrado a mano.</summary>
 internal sealed class StubQuotationProductLookup(
-    IReadOnlyDictionary<Guid, QuotationProductRef> products) : IQuotationProductLookup
+    IReadOnlyDictionary<Guid, QuotationVariantRef> products) : IQuotationProductLookup
 {
     public int FindManyCalls { get; private set; }
 
-    public Task<IReadOnlyDictionary<Guid, QuotationProductRef>> FindManyAsync(
+    public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken)
     {
         FindManyCalls++;
-        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductRef>>(
+        return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantRef>>(
             productIds.Where(products.ContainsKey).Distinct().ToDictionary(id => id, id => products[id]));
     }
 }
@@ -896,5 +1168,214 @@ internal sealed class StubQuotationGeographyLookup(
         LastCoordinadoraRequestedIds = cityIds;
         return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(_coordinadoraNames.ContainsKey).Distinct().ToDictionary(id => id, id => _coordinadoraNames[id]));
+    }
+}
+
+/// <summary>El puerto de módulos con una respuesta fija; <c>null</c> = tenant simulado por el stub
+/// (spec 2026-10-07), que no se bloquea. Es el default de los constructores de prueba para que los
+/// casos que no son sobre módulos no cambien de significado. Cuenta las consultas para que una
+/// prueba de guard pueda afirmar que el puerto sí se consultó (un 403 por otra vía no la engaña).
+/// Cada propiedad estática devuelve una instancia nueva: el contador no se comparte entre pruebas.</summary>
+internal sealed class FixedTenantModules(TenantModuleSet? set) : ITenantModules
+{
+    public static FixedTenantModules Simulated => new(null);
+
+    public static FixedTenantModules WithoutOrders => new(
+        TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Orders])));
+
+    public int FindCalls { get; private set; }
+
+    public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(set);
+    }
+}
+
+/// <summary>Pedidos para los handlers (spec 2026-10-15): un pedido manual, sin cotización, con una
+/// línea de 119.000 con el IVA adentro. Es lo que necesita casi toda prueba de un caso de uso de
+/// pedidos; la que mira la relación con la cotización usa <see cref="Order.FromQuotation"/>.</summary>
+internal static class OrderBuilders
+{
+    public static readonly QuotationBillingAccount BillingAccount = new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    public static Order Pending(
+        Guid tenantId,
+        MemberId advisorId,
+        DateTimeOffset now,
+        Guid? clientId = null,
+        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
+        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
+        string orderNumber = "PED-2026-0001",
+        QuotationParties? parties = null) =>
+        Order.CreateManual(
+            OrderId.New(),
+            tenantId,
+            orderNumber,
+            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
+            parties ?? QuotationParties.Empty,
+            BillingAccount,
+            ShippingDetails.None,
+            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
+            paymentStatus,
+            notes: null,
+            advisorId,
+            proofs ?? [],
+            now);
+}
+
+/// <summary>Spec 2026-10-13 §4.5: anota qué eventos del ciclo pidió el handler, sin outbox.</summary>
+internal sealed class RecordingQuotationLifecycleEventPublisher : IQuotationLifecycleEventPublisher
+{
+    public List<(string Event, Guid QuotationId, decimal Total, string Currency)> Published { get; } = [];
+
+    public void PublishSent(Quotation quotation, DateTimeOffset occurredAt) =>
+        Published.Add(("sent", quotation.Id.Value, quotation.Total, quotation.Currency));
+
+    public void PublishConverted(Quotation quotation, Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("converted", quotation.Id.Value, quotation.Total, quotation.Currency));
+
+    public void PublishOrderCreated(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("order.created", order.Id.Value, order.Total, order.Currency));
+
+    // El pedido puede no tener cotización (spec 2026-10-15): la clave es el pedido.
+    public void PublishOrderCancelled(Order order, DateTimeOffset occurredAt) =>
+        Published.Add(("cancelled", order.Id.Value, 0m, string.Empty));
+}
+
+/// <summary>Las transportadoras sembradas, y cuántas veces se buscó una: <c>ShippingResolver</c> no
+/// tiene que leer el repositorio cuando la transportadora no cambió.</summary>
+internal sealed class StubCarrierRepository(params Carrier[] carriers) : ICarrierRepository
+{
+    public int FindCalls { get; private set; }
+
+    public Task<IReadOnlyList<Carrier>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<Carrier>>(
+            carriers.Where(carrier => carrier.TenantId == tenantId).OrderBy(carrier => carrier.SortOrder).ToArray());
+
+    public Task<Carrier?> FindAsync(Guid tenantId, CarrierId id, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult(carriers.FirstOrDefault(carrier => carrier.TenantId == tenantId && carrier.Id == id));
+    }
+
+    public void Add(Carrier carrier) => throw new NotSupportedException();
+}
+
+/// <summary>Una tasa de Catalog en memoria. Con <paramref name="failIfCalled"/> la lectura hace fallar la
+/// prueba: así se comprueba que un guardado sin cambios en el envío no vuelve a leer la tasa.</summary>
+internal sealed class StubQuotationTaxRateLookup(QuotationTaxRateRef? rate, bool failIfCalled = false)
+    : IQuotationTaxRateLookup
+{
+    public Task<QuotationTaxRateRef?> FindAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken)
+    {
+        if (failIfCalled)
+        {
+            throw new InvalidOperationException("The tax rate lookup must not be called.");
+        }
+
+        return Task.FromResult(rate is not null && rate.Id == taxRateId ? rate : null);
+    }
+}
+
+/// <summary>El catálogo con precio, sembrado a mano. Mismo cuerpo que el privado de
+/// <c>OrderPricingRecalculationTests</c>, que se queda donde está.</summary>
+internal sealed class StubQuotationProductPricingLookup(params QuotationVariantPricingRef[] products)
+    : IQuotationProductPricingLookup
+{
+    private readonly Dictionary<Guid, QuotationVariantPricingRef> _products = products.ToDictionary(product => product.VariantId);
+
+    public Task<QuotationVariantPricingRef?> FindVariantAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
+        Task.FromResult(_products.GetValueOrDefault(productId));
+
+    public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
+            productIds.Where(_products.ContainsKey).ToDictionary(id => id, id => _products[id]));
+}
+
+/// <summary>El consecutivo en memoria: 1, 2, 3… <see cref="Calls"/> dice cuántos números se gastaron.</summary>
+internal sealed class SequentialQuotationNumberGenerator : IQuotationNumberGenerator
+{
+    private long _next;
+
+    public int Calls { get; private set; }
+
+    public Task<long> NextAsync(Guid tenantId, int year, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(++_next);
+    }
+}
+
+internal sealed class DefaultNumberingFormats : IDocumentNumberingFormatLookup
+{
+    public Task<DocumentNumberFormat> GetAsync(
+        Guid tenantId, DocumentNumberType documentType, CancellationToken cancellationToken) =>
+        Task.FromResult(DocumentNumberFormat.DefaultFor(documentType));
+}
+
+/// <summary>
+/// El formato regional del tenant, mutable entre dos llamados de la misma prueba: así se simula que el
+/// tenant cambió de formato entre dos exportaciones (spec 2026-10-23, D-R3). Por defecto, el colombiano.
+/// <see cref="Regional"/> en null simula un tenant sin fila. Los demás miembros no se ejercen acá.
+/// </summary>
+internal sealed class StubTenantDirectory : ITenantDirectory
+{
+    public TenantRegionalSettings? Regional { get; set; } =
+        new("America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal);
+
+    public static StubTenantDirectory WithNumberFormat(string numberFormat) =>
+        new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", numberFormat) };
+
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
+        TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(Regional);
+
+    public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(null);
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<TenantStatus?>(null);
+}
+
+/// <summary>La regla de redondeo del tenant, fija por prueba: la moneda que no se configura usa el valor por defecto
+/// de su catálogo, como el lector real (spec 2026-10-27).</summary>
+public sealed class FixedTenantPriceRounding(params (string Currency, PriceRounding Rule)[] rules) : ITenantPriceRounding
+{
+    public Task<PriceRounding> GetAsync(Guid tenantId, string currency, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            rules.Any(rule => rule.Currency == currency)
+                ? rules.First(rule => rule.Currency == currency).Rule
+                : PriceRoundingDefaults.For(currency));
+
+    public async Task<IReadOnlyDictionary<string, PriceRounding>> GetAllAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        var all = new Dictionary<string, PriceRounding>();
+        foreach (var currency in Currencies.All)
+        {
+            all[currency.Code] = await GetAsync(tenantId, currency.Code, cancellationToken);
+        }
+
+        return all;
     }
 }

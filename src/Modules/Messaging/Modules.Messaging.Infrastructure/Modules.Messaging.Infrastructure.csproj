@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- IHttpClientFactory e IMemoryCache salen del shared framework, como en Integrations. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Messaging.Application\Modules.Messaging.Application.csproj" />
+    <ProjectReference Include="..\Modules.Messaging.Domain\Modules.Messaging.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Spec 2026-10-14 decisión 16: decodificador Opus administrado para pasar la nota de voz a WAV antes de mandarla a Instagram. -->
+    <PackageReference Include="Concentus" />
+    <PackageReference Include="Concentus.Oggfile" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Workers, parser, ingesta y verificador son internal; las pruebas los construyen o los
+         buscan en el host. -->
+    <InternalsVisibleTo Include="Modules.Messaging.UnitTests" />
+    <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+    <!-- Spec 2026-10-21 §5.2: las pruebas de punta a punta del motor de chatbots corren una pasada de la ingesta y de la copia de medios
+         (WebhookDeliveryWorker.DrainAsync, MediaCopyWorker.DrainAsync) como las de Mensajería. -->
+    <InternalsVisibleTo Include="Modules.Automations.IntegrationTests" />
+  </ItemGroup>
+</Project>

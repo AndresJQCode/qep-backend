@@ -65,10 +65,11 @@ public interface IQuotationCustomerLookup
 // WithRetention/VatSurplus se agregan para el snapshot de totales al crear la cotizacion
 // (Quotation.CustomerWithRetention/CustomerVatSurplus): igual criterio que Name/Phone/Address
 // arriba, un pass-through desde Customer para no ir y volver al modulo por dos booleanos.
+// Cuc es nulo en un cliente incompleto (spec 2026-10-10 §6.2); QuotationCustomerEligibility lo rechaza.
 public sealed record QuotationCustomerRef(
     Guid Id,
     Guid TenantId,
-    string Cuc,
+    string? Cuc,
     bool IsActive,
     string Name,
     string? Phone,
@@ -93,7 +94,16 @@ public sealed record QuotationCustomerRef(
     /// la columna "Documento de identidad" del Excel de pedidos (ajuste 2026-09-26), que el ERP
     /// del tenant importa en vez del CUC. Null cuando quien arma la referencia no lo trae.
     /// </summary>
-    string? IdentificationNumber = null);
+    string? IdentificationNumber = null,
+    /// <summary>Spec 2026-10-10 §6.3: a un incompleto no se le cotiza ni se le vende. Default <c>true</c> para que
+    /// los dobles de prueba viejos sigan describiendo un cliente cotizable.</summary>
+    bool IsComplete = true,
+    /// <summary>Natural o jurídica de la ficha ("Natural" | "Juridica"), tal como viaja al contrato. Spec 2026-10-26.</summary>
+    string? PersonType = null,
+    /// <summary>País del cliente (ISO alfa-2). Con él se decide a qué país se factura: el del cliente, o el del tenant si no lo tiene.</summary>
+    string? Country = null,
+    /// <summary>Tipo del documento de la ficha ("NIT" | "CC" | "CE" | "PASAPORTE"), el tipo de <see cref="IdentificationNumber"/>.</summary>
+    string? IdentificationType = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
 /// cotizacion.</summary>

@@ -1,0 +1,614 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Modules.Quotations.Infrastructure.Persistence;
+using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
+
+namespace Modules.Quotations.IntegrationTests;
+
+/// <summary>La API de transportadoras y del IVA del envío (spec 2026-10-17 §4.3).</summary>
+public sealed class CarrierApiTests
+{
+    private const string SettingsRead = "tenancy.settings.read";
+    private const string SettingsUpdate = "tenancy.settings.update";
+    private const string QuotationRead = "quotations.quotation.read";
+    private const string TaxRateRead = "catalog.tax_rate.read";
+    private const string TaxRateManage = "catalog.tax_rate.manage";
+    private const string AuditEvent = "platform.audit.recorded.v1";
+
+    private static string CarriersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/carriers";
+
+    [Fact]
+    public async Task CreatesListsAndOrdersCarriers()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        var first = await CreateCarrierAsync(client, tenantId, "Coordinadora", ["COORDINADORA MERCANTIL"], true);
+        await CreateCarrierAsync(client, tenantId, "Servientrega", [], false);
+        await CreateCarrierAsync(client, tenantId, "Envía", [], true);
+
+        var settings = await GetSettingsAsync(client, tenantId);
+
+        Assert.Null(settings.FreightTaxRate);
+        Assert.Equal(["Coordinadora", "Servientrega", "Envía"], settings.Carriers.Select(c => c.Name));
+        Assert.Equal([0, 1, 2], settings.Carriers.Select(c => c.SortOrder));
+        Assert.All(settings.Carriers, carrier => Assert.True(carrier.IsActive));
+        Assert.Equal(["COORDINADORA MERCANTIL"], first.ExternalNames);
+        Assert.True(first.SupportsCashOnDelivery);
+        Assert.Equal(1, first.Version);
+    }
+
+    [Fact]
+    public async Task AnotherTenantGets403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (_, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = ownerA;
+        var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var __ = ownerB;
+
+        using var read = await ownerA.GetAsync(CarriersUrl(tenantB), TestContext.Current.CancellationToken);
+        using var create = await ownerA.PostAsJsonAsync(
+            CarriersUrl(tenantB),
+            new { name = "Coordinadora", externalNames = Array.Empty<string>(), supportsCashOnDelivery = true },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+    }
+
+    [Fact]
+    public async Task ARepeatedNameIsTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+
+        using var response = await PostCarrierAsync(client, tenantId, " coordinadora ", []);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "quotations.carrier.name_taken");
+    }
+
+    // Review Focus 4: un solo espacio de nombres por tenant (D-F16).
+    [Fact]
+    public async Task AnExternalNameEqualToAnotherCarriersNameIsTaken()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        await CreateCarrierAsync(client, tenantId, "Servientrega", [], true);
+        var coordinadora = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+
+        using var response = await PutCarrierAsync(
+            client, tenantId, coordinadora.Id, coordinadora.Version, "Coordinadora", ["Servientrega"]);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "quotations.carrier.name_taken");
+    }
+
+    [Fact]
+    public async Task AnInactiveCarrierStillHoldsItsName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+
+        using var deactivate = await client.PostAsync(
+            $"{CarriersUrl(tenantId)}/{carrier.Id}/deactivate", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
+        var deactivated = await deactivate.Content.ReadFromJsonAsync<CarrierPayload>(TestContext.Current.CancellationToken);
+        Assert.False(deactivated!.IsActive);
+
+        using var response = await PostCarrierAsync(client, tenantId, "COORDINADORA", []);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "quotations.carrier.name_taken");
+
+        using var activate = await client.PostAsync(
+            $"{CarriersUrl(tenantId)}/{carrier.Id}/activate", content: null, TestContext.Current.CancellationToken);
+        var activated = await activate.Content.ReadFromJsonAsync<CarrierPayload>(TestContext.Current.CancellationToken);
+        Assert.True(activated!.IsActive);
+    }
+
+    [Fact]
+    public async Task ACarrierOfAnotherTenantIsNotFound()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantA, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = ownerA;
+        var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var __ = ownerB;
+        var carrierOfB = await CreateCarrierAsync(ownerB, tenantB, "Coordinadora", [], true);
+
+        using var response = await ownerA.PostAsync(
+            $"{CarriersUrl(tenantA)}/{carrierOfB.Id}/deactivate", content: null, TestContext.Current.CancellationToken);
+
+        await AssertCodeAsync(response, HttpStatusCode.NotFound, "quotations.carrier.not_found");
+    }
+
+    [Fact]
+    public async Task UpdateRequiresIfMatchAndRejectsAStaleVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+
+        using var withoutIfMatch = await client.PutAsJsonAsync(
+            $"{CarriersUrl(tenantId)}/{carrier.Id}",
+            new { name = "Coordinadora", externalNames = Array.Empty<string>(), supportsCashOnDelivery = false },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.PreconditionRequired, withoutIfMatch.StatusCode);
+
+        using var updated = await PutCarrierAsync(client, tenantId, carrier.Id, carrier.Version, "Coordinadora S.A.", ["Coord"]);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var body = await updated.Content.ReadFromJsonAsync<CarrierPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("Coordinadora S.A.", body!.Name);
+        Assert.Equal(["Coord"], body.ExternalNames);
+        Assert.Equal(2, body.Version);
+
+        using var stale = await PutCarrierAsync(client, tenantId, carrier.Id, carrier.Version, "Otra", []);
+        Assert.Equal(HttpStatusCode.PreconditionFailed, stale.StatusCode);
+    }
+
+    [Fact]
+    public async Task InvalidTextIs422OnItsField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var ownedClient = client;
+
+        using var response = await PostCarrierAsync(client, tenantId, new string('a', 61), ["ok", ""]);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        var errors = body.RootElement.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("Name", out _));
+        Assert.True(errors.TryGetProperty("ExternalNames[1]", out _));
+    }
+
+    [Fact]
+    public async Task ReorderWithMissingOrExtraIdsIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+        var a = await CreateCarrierAsync(client, tenantId, "A", [], true);
+        var b = await CreateCarrierAsync(client, tenantId, "B", [], true);
+        var c = await CreateCarrierAsync(client, tenantId, "C", [], true);
+
+        using var missing = await PutOrderAsync(client, tenantId, [c.Id, a.Id]);
+        await AssertCodeAsync(missing, HttpStatusCode.UnprocessableEntity, "quotations.carrier.order_mismatch");
+        using var extra = await PutOrderAsync(client, tenantId, [c.Id, a.Id, b.Id, Guid.NewGuid()]);
+        await AssertCodeAsync(extra, HttpStatusCode.UnprocessableEntity, "quotations.carrier.order_mismatch");
+        using var repeated = await PutOrderAsync(client, tenantId, [c.Id, a.Id, a.Id]);
+        await AssertCodeAsync(repeated, HttpStatusCode.UnprocessableEntity, "quotations.carrier.order_mismatch");
+
+        using var reordered = await PutOrderAsync(client, tenantId, [c.Id, a.Id, b.Id]);
+        Assert.Equal(HttpStatusCode.OK, reordered.StatusCode);
+        var body = await reordered.Content.ReadFromJsonAsync<CarrierSettingsPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(["C", "A", "B"], body!.Carriers.Select(carrier => carrier.Name));
+        Assert.Equal([0, 1, 2], body.Carriers.Select(carrier => carrier.SortOrder));
+    }
+
+    [Fact]
+    public async Task SetsAndClearsTheFreightTaxRate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = client;
+        var iva = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+
+        using var set = await PutFreightTaxRateAsync(client, tenantId, iva);
+        Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+        var withRate = await set.Content.ReadFromJsonAsync<CarrierSettingsPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(19, withRate!.FreightTaxRate!.Percentage);
+        Assert.Equal(iva, withRate.FreightTaxRate.Id);
+        Assert.Equal("IVA 19", withRate.FreightTaxRate.Name);
+        Assert.True(withRate.FreightTaxRate.IsActive);
+        Assert.Equal(19, (await GetSettingsAsync(client, tenantId)).FreightTaxRate!.Percentage);
+
+        using var cleared = await PutFreightTaxRateAsync(client, tenantId, null);
+        var withoutRate = await cleared.Content.ReadFromJsonAsync<CarrierSettingsPayload>(TestContext.Current.CancellationToken);
+        Assert.Null(withoutRate!.FreightTaxRate);
+        Assert.Null((await GetSettingsAsync(client, tenantId)).FreightTaxRate);
+
+        var old = await CreateTaxRateAsync(client, tenantId, "IVA 16", 16);
+        using var deactivate = await client.PostAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/tax-rates/{old}/deactivate", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
+        using var inactive = await PutFreightTaxRateAsync(client, tenantId, old);
+        await AssertCodeAsync(inactive, HttpStatusCode.UnprocessableEntity, "quotations.freight_tax_rate.inactive");
+
+        using var notFound = await PutFreightTaxRateAsync(client, tenantId, Guid.NewGuid());
+        await AssertCodeAsync(notFound, HttpStatusCode.UnprocessableEntity, "quotations.freight_tax_rate.not_found");
+    }
+
+    [Fact]
+    public async Task ShippingOptionsReturnOnlyActiveCarriersInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId, admin) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = admin;
+        var a = await CreateCarrierAsync(admin, tenantId, "A", [], true);
+        var b = await CreateCarrierAsync(admin, tenantId, "B", [], false);
+        var c = await CreateCarrierAsync(admin, tenantId, "C", [], true);
+        using var deactivate = await admin.PostAsync(
+            $"{CarriersUrl(tenantId)}/{b.Id}/deactivate", content: null, TestContext.Current.CancellationToken);
+        using var reorder = await PutOrderAsync(admin, tenantId, [c.Id, b.Id, a.Id]);
+        reorder.EnsureSuccessStatusCode();
+        var iva = await CreateTaxRateAsync(admin, tenantId, "IVA 19", 19);
+        using var set = await PutFreightTaxRateAsync(admin, tenantId, iva);
+        set.EnsureSuccessStatusCode();
+
+        // Sólo el permiso de leer cotizaciones (D-F3): el asesor no configura, pero dibuja la entrega.
+        using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
+        var options = await advisor.GetFromJsonAsync<ShippingOptionsPayload>(
+            $"/api/v1/tenants/{tenantId}/shipping-options", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["C", "A"], options!.Carriers.Select(carrier => carrier.Name));
+        Assert.Equal([c.Id, a.Id], options.Carriers.Select(carrier => carrier.Id));
+        Assert.All(options.Carriers, carrier => Assert.True(carrier.SupportsCashOnDelivery));
+        Assert.Equal(19, options.FreightTaxRate!.Percentage);
+    }
+
+    // Spec §4.4: las tres nacen activas y viajan siempre, en el mismo orden, en las dos lecturas.
+    [Fact]
+    public async Task FreightChargeModesStartEnabledAndCanBeTurnedOff()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId, admin) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = admin;
+        using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
+
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(admin, tenantId)).FreightChargeModes);
+        Assert.Equal(AllEnabled, (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes);
+
+        using var put = await PutFreightChargeModesAsync(admin, tenantId, ["Free", "Charged"]);
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        FreightChargeModePayload[] withoutOnDelivery =
+            [new("Charged", true), new("OnDelivery", false), new("Free", true)];
+        var body = await put.Content.ReadFromJsonAsync<CarrierSettingsPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(withoutOnDelivery, body!.FreightChargeModes);
+        Assert.Equal(withoutOnDelivery, (await GetSettingsAsync(admin, tenantId)).FreightChargeModes);
+        Assert.Equal(withoutOnDelivery, (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes);
+
+        // Vacío está permitido: con las tres apagadas no se pregunta quién paga, pero las tres siguen viajando.
+        using var none = await PutFreightChargeModesAsync(admin, tenantId, []);
+        none.EnsureSuccessStatusCode();
+        var allOff = (await GetShippingOptionsAsync(advisor, tenantId)).FreightChargeModes;
+        Assert.Equal(["Charged", "OnDelivery", "Free"], allOff.Select(mode => mode.Mode));
+        Assert.All(allOff, mode => Assert.False(mode.IsEnabled));
+
+        // El mínimo de compra y la tasa viven en la misma fila y no la pisan.
+        using var minimum = await admin.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/quotations/settings",
+            new { minimumUnits = 10, minimumTotals = new Dictionary<string, decimal> { ["COP"] = 1m } },
+            TestContext.Current.CancellationToken);
+        minimum.EnsureSuccessStatusCode();
+        using var rate = await PutFreightTaxRateAsync(admin, tenantId, null);
+        rate.EnsureSuccessStatusCode();
+        Assert.All((await GetSettingsAsync(admin, tenantId)).FreightChargeModes, mode => Assert.False(mode.IsEnabled));
+    }
+
+    [Fact]
+    public async Task AnUnknownFreightChargeModeIsAFieldError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        using var response = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "Gratis"]);
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("EnabledModes[1]", out var modeErrors));
+        Assert.NotEmpty(modeErrors.EnumerateArray());
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(client, tenantId)).FreightChargeModes);
+    }
+
+    [Fact]
+    public async Task FreightChargeModesOfAnotherTenantAre403()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (_, _, ownerA) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = ownerA;
+        var (tenantB, _, ownerB) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var __ = ownerB;
+
+        using var response = await PutFreightChargeModesAsync(ownerA, tenantB, []);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(AllEnabled, (await GetSettingsAsync(ownerB, tenantB)).FreightChargeModes);
+    }
+
+    // Se audita con el tenant como recurso, como la tasa; repetir lo mismo no deja rastro.
+    [Fact]
+    public async Task FreightChargeModesAreAuditedOnlyWhenTheyChange()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        using var same = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "OnDelivery", "Free"]);
+        same.EnsureSuccessStatusCode();
+        using var changed = await PutFreightChargeModesAsync(client, tenantId, ["Charged"]);
+        changed.EnsureSuccessStatusCode();
+        using var again = await PutFreightChargeModesAsync(client, tenantId, ["Charged", "Charged"]);
+        again.EnsureSuccessStatusCode();
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [("quotations.freight_charge_modes.updated", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.freight_charge_modes.updated"));
+    }
+
+    // Spec §4.4.1: el por defecto nace null, se fija y se quita con el mismo PUT, y viaja en las dos lecturas.
+    // Omitido conserva; apagar el que era el por defecto lo quita en el mismo guardado y el mismo evento.
+    [Fact]
+    public async Task TheDefaultFreightChargeModeIsSetKeptAndCleared()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerId, admin) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = admin;
+        using var advisor = CreateClient(factory, ownerId.ToString(), tenantId.ToString(), QuotationRead);
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.Null((await GetSettingsAsync(admin, tenantId)).DefaultFreightChargeMode);
+        Assert.Null((await GetShippingOptionsAsync(advisor, tenantId)).DefaultFreightChargeMode);
+
+        using var set = await PutFreightChargeModesAsync(admin, tenantId, ["Charged", "OnDelivery", "Free"], "Free");
+        Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+        Assert.Equal("Free", (await set.Content.ReadFromJsonAsync<CarrierSettingsPayload>(ct))!.DefaultFreightChargeMode);
+        Assert.Equal("Free", (await GetSettingsAsync(admin, tenantId)).DefaultFreightChargeMode);
+        Assert.Equal("Free", (await GetShippingOptionsAsync(advisor, tenantId)).DefaultFreightChargeMode);
+
+        // Sin defaultMode en el cuerpo: apagar otra opción no lo toca.
+        using var kept = await PutFreightChargeModesAsync(admin, tenantId, ["Charged", "Free"]);
+        kept.EnsureSuccessStatusCode();
+        Assert.Equal("Free", (await GetShippingOptionsAsync(advisor, tenantId)).DefaultFreightChargeMode);
+
+        // Apagar el que era el por defecto lo quita.
+        using var turnedOff = await PutFreightChargeModesAsync(admin, tenantId, ["Charged"]);
+        turnedOff.EnsureSuccessStatusCode();
+        Assert.Null((await turnedOff.Content.ReadFromJsonAsync<CarrierSettingsPayload>(ct))!.DefaultFreightChargeMode);
+        Assert.Null((await GetShippingOptionsAsync(advisor, tenantId)).DefaultFreightChargeMode);
+
+        // null explícito lo quita.
+        using var again = await PutFreightChargeModesAsync(admin, tenantId, ["Charged"], "Charged");
+        again.EnsureSuccessStatusCode();
+        Assert.Equal("Charged", (await GetSettingsAsync(admin, tenantId)).DefaultFreightChargeMode);
+        using var cleared = await PutFreightChargeModesAsync(admin, tenantId, ["Charged"], defaultMode: null);
+        cleared.EnsureSuccessStatusCode();
+        Assert.Null((await GetSettingsAsync(admin, tenantId)).DefaultFreightChargeMode);
+
+        // Cinco cambios (fijar, apagar OnDelivery, apagar Free con su por defecto, fijar Charged, quitarlo): cada
+        // uno es un solo evento.
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(5, audits.Count(audit => audit.Action == "quotations.freight_charge_modes.updated"));
+    }
+
+    [Fact]
+    public async Task ADefaultFreightChargeModeThatIsNotEnabledIsAFieldError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        using var response = await PutFreightChargeModesAsync(client, tenantId, ["Charged"], "Free");
+
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "validation.failed");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("DefaultMode", out var modeErrors));
+        Assert.NotEmpty(modeErrors.EnumerateArray());
+        var settings = await GetSettingsAsync(client, tenantId);
+        Assert.Equal(AllEnabled, settings.FreightChargeModes);
+        Assert.Null(settings.DefaultFreightChargeMode);
+    }
+
+    // P2: el PUT del mínimo de compra no conoce la tasa del envío, así que no puede pisarla.
+    [Fact]
+    public async Task SavingMinimumPurchaseKeepsTheFreightTaxRate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = client;
+        var iva = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+        using var set = await PutFreightTaxRateAsync(client, tenantId, iva);
+        set.EnsureSuccessStatusCode();
+
+        using var put = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/quotations/settings",
+            new { minimumUnits = 10, minimumTotals = new Dictionary<string, decimal> { ["COP"] = 1m } },
+            TestContext.Current.CancellationToken);
+        put.EnsureSuccessStatusCode();
+
+        Assert.Equal(iva, (await GetSettingsAsync(client, tenantId)).FreightTaxRate!.Id);
+    }
+
+    // R6: cada mutación se audita por outbox con la transportadora como recurso; las que no cambian
+    // nada (activar una activa) no dejan rastro.
+    [Fact]
+    public async Task CarrierMutationsAreAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, SettingsRead, SettingsUpdate);
+        using var _ = client;
+
+        var carrier = await CreateCarrierAsync(client, tenantId, "Coordinadora", [], true);
+        using var updated = await PutCarrierAsync(client, tenantId, carrier.Id, carrier.Version, "Coordinadora S.A.", []);
+        updated.EnsureSuccessStatusCode();
+        await PostActionAsync(client, tenantId, carrier.Id, "activate");
+        await PostActionAsync(client, tenantId, carrier.Id, "deactivate");
+        await PostActionAsync(client, tenantId, carrier.Id, "deactivate");
+        await PostActionAsync(client, tenantId, carrier.Id, "activate");
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [
+                ("quotations.carrier.created", carrier.Id.ToString()),
+                ("quotations.carrier.updated", carrier.Id.ToString()),
+                ("quotations.carrier.deactivated", carrier.Id.ToString()),
+                ("quotations.carrier.activated", carrier.Id.ToString()),
+            ],
+            audits.Where(audit => audit.Action.StartsWith("quotations.carrier.", StringComparison.Ordinal)));
+    }
+
+    // R6: reordenar y fijar la tasa auditan con el tenant como recurso; un orden igual no.
+    [Fact]
+    public async Task ReorderAndFreightTaxRateAreAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = client;
+        var a = await CreateCarrierAsync(client, tenantId, "A", [], true);
+        var b = await CreateCarrierAsync(client, tenantId, "B", [], true);
+        var iva = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
+
+        using var same = await PutOrderAsync(client, tenantId, [a.Id, b.Id]);
+        same.EnsureSuccessStatusCode();
+        using var swapped = await PutOrderAsync(client, tenantId, [b.Id, a.Id]);
+        swapped.EnsureSuccessStatusCode();
+        using var set = await PutFreightTaxRateAsync(client, tenantId, iva);
+        set.EnsureSuccessStatusCode();
+
+        var audits = await AuditsAsync(factory);
+        Assert.Equal(
+            [("quotations.carrier.reordered", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.carrier.reordered"));
+        Assert.Equal(
+            [("quotations.freight_tax_rate.updated", tenantId.ToString())],
+            audits.Where(audit => audit.Action == "quotations.freight_tax_rate.updated"));
+    }
+
+    private static async Task PostActionAsync(HttpClient client, Guid tenantId, Guid carrierId, string action)
+    {
+        using var response = await client.PostAsync(
+            $"{CarriersUrl(tenantId)}/{carrierId}/{action}", content: null, TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<List<(string Action, string ResourceId)>> AuditsAsync(QepApiFactory factory) =>
+        [.. (await OutboxMessagesAsync(factory, AuditEvent)).Select(message =>
+        {
+            using var payload = JsonDocument.Parse(message.PayloadJson);
+            return (
+                payload.RootElement.GetProperty("action").GetString()!,
+                payload.RootElement.GetProperty("resourceId").GetString()!);
+        })];
+
+    private static async Task<CarrierPayload> CreateCarrierAsync(
+        HttpClient client, Guid tenantId, string name, string[] externalNames, bool supportsCashOnDelivery)
+    {
+        using var response = await client.PostAsJsonAsync(
+            CarriersUrl(tenantId),
+            new { name, externalNames, supportsCashOnDelivery },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<CarrierPayload>(TestContext.Current.CancellationToken))!;
+    }
+
+    private static Task<HttpResponseMessage> PostCarrierAsync(
+        HttpClient client, Guid tenantId, string name, string[] externalNames) =>
+        client.PostAsJsonAsync(
+            CarriersUrl(tenantId),
+            new { name, externalNames, supportsCashOnDelivery = true },
+            TestContext.Current.CancellationToken);
+
+    private static Task<HttpResponseMessage> PutCarrierAsync(
+        HttpClient client, Guid tenantId, Guid carrierId, long version, string name, string[] externalNames)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Put, $"{CarriersUrl(tenantId)}/{carrierId}")
+        {
+            Content = JsonContent.Create(new { name, externalNames, supportsCashOnDelivery = true })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        return client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static Task<HttpResponseMessage> PutOrderAsync(HttpClient client, Guid tenantId, Guid[] carrierIds) =>
+        client.PutAsJsonAsync($"{CarriersUrl(tenantId)}/order", new { carrierIds }, TestContext.Current.CancellationToken);
+
+    private static Task<HttpResponseMessage> PutFreightTaxRateAsync(HttpClient client, Guid tenantId, Guid? taxRateId) =>
+        client.PutAsJsonAsync(
+            $"{CarriersUrl(tenantId)}/freight-tax-rate", new { taxRateId }, TestContext.Current.CancellationToken);
+
+    private static Task<HttpResponseMessage> PutFreightChargeModesAsync(
+        HttpClient client, Guid tenantId, string[] enabledModes) =>
+        client.PutAsJsonAsync(
+            $"{CarriersUrl(tenantId)}/freight-charge-modes", new { enabledModes }, TestContext.Current.CancellationToken);
+
+    // Con defaultMode presente en el cuerpo, también cuando es null: es lo que lo distingue del omitido (§4.4.1).
+    private static Task<HttpResponseMessage> PutFreightChargeModesAsync(
+        HttpClient client, Guid tenantId, string[] enabledModes, string? defaultMode) =>
+        client.PutAsJsonAsync(
+            $"{CarriersUrl(tenantId)}/freight-charge-modes",
+            new { enabledModes, defaultMode },
+            TestContext.Current.CancellationToken);
+
+    private static async Task<ShippingOptionsPayload> GetShippingOptionsAsync(HttpClient client, Guid tenantId) =>
+        (await client.GetFromJsonAsync<ShippingOptionsPayload>(
+            $"/api/v1/tenants/{tenantId}/shipping-options", TestContext.Current.CancellationToken))!;
+
+    private static readonly FreightChargeModePayload[] AllEnabled =
+        [new("Charged", true), new("OnDelivery", true), new("Free", true)];
+
+    private static async Task<CarrierSettingsPayload> GetSettingsAsync(HttpClient client, Guid tenantId) =>
+        (await client.GetFromJsonAsync<CarrierSettingsPayload>(CarriersUrl(tenantId), TestContext.Current.CancellationToken))!;
+
+    private static async Task AssertCodeAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    {
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == status, $"Expected {status}, got {response.StatusCode}: {text}");
+        using var body = JsonDocument.Parse(text);
+        Assert.Equal(code, body.RootElement.GetProperty("code").GetString());
+    }
+
+    private sealed record CarrierPayload(
+        Guid Id, string Name, string[] ExternalNames, bool SupportsCashOnDelivery, int SortOrder, bool IsActive, long Version);
+
+    private sealed record FreightTaxRatePayload(Guid Id, string Name, int Percentage, bool IsActive);
+
+    private sealed record FreightChargeModePayload(string Mode, bool IsEnabled);
+
+    private sealed record CarrierSettingsPayload(
+        FreightTaxRatePayload? FreightTaxRate,
+        CarrierPayload[] Carriers,
+        FreightChargeModePayload[] FreightChargeModes,
+        string? DefaultFreightChargeMode);
+
+    private sealed record ShippingCarrierPayload(Guid Id, string Name, bool SupportsCashOnDelivery);
+
+    private sealed record ShippingOptionsPayload(
+        ShippingCarrierPayload[] Carriers,
+        FreightTaxRatePayload? FreightTaxRate,
+        FreightChargeModePayload[] FreightChargeModes,
+        string? DefaultFreightChargeMode);
+}

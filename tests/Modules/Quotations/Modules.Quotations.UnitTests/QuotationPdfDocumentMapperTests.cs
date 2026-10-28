@@ -23,8 +23,38 @@ public sealed class QuotationPdfDocumentMapperTests
         new DateTimeOffset(2027, 1, 1, 4, 0, 0, TimeSpan.Zero),
         TimeZoneInfo.FindSystemTimeZoneById("America/Bogota"));
 
+    // Las mismas opciones con las que QCodePdfRenderer serializa `data`.
+    private static readonly System.Text.Json.JsonSerializerOptions PayloadFormat = new(System.Text.Json.JsonSerializerDefaults.Web);
+
     private static QuotationPdfDocument Map(QuotationResponse quotation, QuotationPdfLogo? logo = null) =>
         QuotationPdfDocumentMapper.From(quotation, Calendar, logo);
+
+    // Spec: the "$ " literal and the sin-decimales list leave the template; the mapper sends what
+    // the catalogue says for the quotation currency.
+    [Theory]
+    [InlineData("COP", "$", 0)]
+    [InlineData("USD", "US$", 2)]
+    [InlineData("EUR", "€", 2)]
+    public void MapsTheCurrencySymbolAndDecimalsFromTheCatalogue(string currency, string symbol, int decimals)
+    {
+        var document = Map(Response() with { Currency = currency });
+
+        Assert.Equal((currency, symbol, decimals), (document.Currency, document.Symbol, document.Decimals));
+    }
+
+    // Spec 2026-10-23 D-R1: los separadores salen del formato numérico del tenant; sin formato o con
+    // uno desconocido, los colombianos.
+    [Theory]
+    [InlineData("1.234,56", ".", ",")]
+    [InlineData("1,234.56", ",", ".")]
+    [InlineData(null, ".", ",")]
+    [InlineData("x", ".", ",")]
+    public void MapsTheSeparatorsOfTheTenantNumberFormat(string? numberFormat, string thousands, string decimals)
+    {
+        var document = QuotationPdfDocumentMapper.From(Response(), Calendar, logo: null, numberFormat);
+
+        Assert.Equal((thousands, decimals), (document.ThousandsSeparator, document.DecimalSeparator));
+    }
 
     // Spec 2026-09-17, punto 7: creada el 31 de diciembre a las 23:00 en Bogotá —1 de enero en UTC—,
     // el documento dice que se emitió el 31 de diciembre de 2026. La fecha viaja sin hora.
@@ -84,6 +114,26 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal("BRONCEADOR RITUAL DEL SOL", document.Items[0].ProductName);
         Assert.Equal(12m, document.Items[0].Quantity);
         Assert.Equal(35900m, document.Items[0].UnitPrice);
+    }
+
+    // Spec 2026-10-20 variantes §7: el PDF imprime el nombre visible de la variante, sin plantilla nueva. La
+    // respuesta ya lo trae en `ProductName` (lo resuelve QuotationItemProductLabel), y el mapeo lo pasa tal
+    // cual al campo `productName` del documento: sin recortarlo, sin cortarlo en producto y variante.
+    [Fact]
+    public void PdfLineShowsTheVisibleNameOfTheVariant()
+    {
+        var response = Response();
+        var first = response.Items.First() with { ProductName = "Camiseta – M / Rojo" };
+
+        var document = Map(response with { Items = [first, .. response.Items.Skip(1)] });
+
+        Assert.Equal("Camiseta – M / Rojo", document.Items[0].ProductName);
+        Assert.Equal("COMBO JALEA REAL 3", document.Items[1].ProductName);
+        using var payload = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(document, PayloadFormat));
+        Assert.Equal(
+            "Camiseta – M / Rojo",
+            payload.RootElement.GetProperty("items")[0].GetProperty("productName").GetString());
     }
 
     /// <summary>
@@ -265,6 +315,43 @@ public sealed class QuotationPdfDocumentMapperTests
     }
 
     [Fact]
+    public void MapsTheShippingFields()
+    {
+        var response = Response() with
+        {
+            Shipping = new ShippingResponse(
+                false, new ShippingCarrierResponse(Guid.CreateVersion7(), "Servientrega"), "Charged",
+                15000m, 19, 12605.04m, 2394.96m, true),
+            FreightSubtotal = 12605.04m,
+            FreightTaxAmount = 2394.96m,
+        };
+
+        var document = Map(response);
+
+        Assert.Equal("Servientrega", document.CarrierName);
+        Assert.Equal("Charged", document.FreightChargeMode);
+        Assert.Equal(15000m, document.FreightAmount);
+        Assert.Equal(19, document.FreightTaxPercentage);
+        Assert.Equal(12605.04m, document.FreightSubtotal);
+        Assert.Equal(2394.96m, document.FreightTaxAmount);
+        Assert.True(document.CashOnDelivery);
+    }
+
+    [Fact]
+    public void MapsNoShippingAsNullsAndZeros()
+    {
+        var document = Map(Response());
+
+        Assert.Null(document.CarrierName);
+        Assert.Null(document.FreightChargeMode);
+        Assert.Equal(0m, document.FreightAmount);
+        Assert.Equal(0, document.FreightTaxPercentage);
+        Assert.Equal(0m, document.FreightSubtotal);
+        Assert.Equal(0m, document.FreightTaxAmount);
+        Assert.False(document.CashOnDelivery);
+    }
+
+    [Fact]
     public void MapsTheLogoWhenPresent()
     {
         var logo = new QuotationPdfLogo("logo.png", [0x89, 0x50, 0x4E, 0x47]);
@@ -299,6 +386,20 @@ public sealed class QuotationPdfDocumentMapperTests
         true,
         DateTimeOffset.UtcNow,
         []);
+
+    // Decisión del owner (2026-10-17): las observaciones se quedan en la cotización y en el Excel
+    // de pedidos, pero el PDF que recibe el cliente ya no las imprime. Se comprueba sobre el JSON
+    // que viaja a qcode-pdf, que es lo único que la plantilla puede dibujar.
+    [Fact]
+    public void ThePayloadSentToThePdfServiceCarriesNoNotes()
+    {
+        var document = Map(Response() with { Notes = "Los precios no incluyen transporte." });
+
+        var json = System.Text.Json.JsonSerializer.Serialize(document, PayloadFormat);
+
+        Assert.DoesNotContain("\"notes\"", json);
+        Assert.DoesNotContain("transporte", json);
+    }
 
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),
@@ -340,11 +441,12 @@ public sealed class QuotationPdfDocumentMapperTests
         // El PDF no la imprime: viaja porque el contrato la exige. Coherente con las 24 unidades
         // de las dos lineas, que ya pasan el minimo -- una cotizacion con descuento del 15% no
         // podria decir que no lo alcanzo.
-        new QuotationMinimumPurchaseResponse(true, 24m, 6m, 500_000m, 0m, 0m),
+        new QuotationMinimumPurchaseResponse(true, 24m, 6m, "COP", 500_000m, 0m, 0m),
         [
             // 12 x 35.900 = 430.800; 15% = 64.620; linea = 366.180 con IVA adentro.
             // IVA contenido = 366.180 x 19 / 119 = 58.465,71; base = 307.714,29.
             new QuotationItemResponse(
+                Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 "BRONCEADOR RITUAL DEL SOL",
@@ -364,6 +466,7 @@ public sealed class QuotationPdfDocumentMapperTests
             // 12 x 114.700 = 1.376.400; 15% = 206.460; linea = 1.169.940.
             // IVA contenido = 186.797,14; base = 983.142,86.
             new QuotationItemResponse(
+                Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 Guid.CreateVersion7(),
                 "COMBO JALEA REAL 3",
@@ -388,5 +491,9 @@ public sealed class QuotationPdfDocumentMapperTests
         // edicion, no del documento.
         null,
         false,
-        []);
+        [],
+        // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
+        new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
+        0m,
+        0m);
 }

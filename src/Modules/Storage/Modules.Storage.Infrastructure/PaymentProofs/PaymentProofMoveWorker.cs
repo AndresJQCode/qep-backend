@@ -4,9 +4,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Modules.Storage.Infrastructure.PaymentProofs;
 
-// Spec 2026-09-16, D9. Cada 3 s, como los demás consumidores del outbox: la sección 2 del spec cuenta
-// con que entre guardar el pedido y borrar el temporal pasen segundos. Cada procesador corre en su
-// propio scope para que el DbContext esté fresco.
+// Spec 2026-09-16, D9. Cada 15 s, como los demás consumidores del outbox: la sección 2 del spec cuenta
+// con que entre guardar el pedido y borrar el temporal pasen segundos. El sondeo es costo en reposo
+// contra una base compartida y nadie espera el movimiento de forma interactiva. Cada procesador corre
+// en su propio scope para que el DbContext esté fresco.
 //
 // D19: el retiro corre en el mismo tick y después del movimiento, con su propio DbContext. Así, en una
 // réplica, el movimiento y el retiro de un mismo archivo nunca corren a la vez (FileResource no tiene
@@ -16,7 +17,7 @@ internal sealed partial class PaymentProofMoveWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<PaymentProofMoveWorker> logger) : BackgroundService
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Payment proof move tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);

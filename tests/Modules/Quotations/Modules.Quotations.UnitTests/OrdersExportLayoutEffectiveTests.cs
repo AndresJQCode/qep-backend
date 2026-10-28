@@ -111,6 +111,29 @@ public sealed class OrdersExportLayoutEffectiveTests
         Assert.Equal([true, true, false], effective.Select(column => column.Visible));
     }
 
+    // Spec 2026-10-20 variantes §7, contra el catálogo real: «Variante» nace oculta sin layout, y si el
+    // layout guardado ya trae una columna visible con ese encabezado (una fija que el ERP exige, sin
+    // distinguir mayúsculas) sigue oculta y el layout completado pasa la regla de encabezados duplicados
+    // de Replace. Se prueba por Replace para que la prueba falle si Effective y Validate se desalinean.
+    [Fact]
+    public void OrdersExportVariantColumnIsBornHiddenAndNeverCollidesWithAVisibleHeader()
+    {
+        var withoutLayout = OrdersExportLayout.Effective(stored: null);
+        var born = Assert.Single(withoutLayout, column => column.Key == "variant");
+        Assert.Equal("Variante", born.Header);
+        Assert.False(born.Visible);
+
+        var layout = OrdersExportLayout.CreateDefault(Guid.CreateVersion7(), Now);
+        var changed = layout.Replace([OrdersExportColumnSetting.Fixed("VARIANTE", "U", visible: true)], Now);
+
+        Assert.True(changed);
+        var variant = Assert.Single(layout.Columns, column => column.Key == "variant");
+        Assert.False(variant.Visible);
+        Assert.Equal("Variante", variant.Header);
+        Assert.Single(layout.Columns, column => column.Visible
+            && string.Equals(column.Header, "Variante", StringComparison.OrdinalIgnoreCase));
+    }
+
     // Lo guardado manda sobre el defecto: el tenant que la prendió la sigue viendo.
     [Fact]
     public void AStoredKeyHiddenByDefaultKeepsTheVisibilityTheTenantSaved()

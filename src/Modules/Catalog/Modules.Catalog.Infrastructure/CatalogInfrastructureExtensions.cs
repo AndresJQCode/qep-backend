@@ -26,7 +26,11 @@ public static class CatalogInfrastructureExtensions
                     "catalog")));
 
         services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<ICurrenciesInUse, CurrenciesInUse>();
         services.AddScoped<ITaxRateRepository, TaxRateRepository>();
+        services.AddScoped<IProductCategoryRepository, ProductCategoryRepository>();
+        services.AddScoped<IOptionDefinitionRepository, OptionDefinitionRepository>();
+        services.AddScoped<IOptionLibraryProvisioner, OptionLibraryProvisioner>();
         services.AddScoped<IProductExportWorkbookBuilder, ClosedXmlProductExportBuilder>();
         services.AddScoped<IProductExportEventPublisher, ProductExportEventPublisher>();
         services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();

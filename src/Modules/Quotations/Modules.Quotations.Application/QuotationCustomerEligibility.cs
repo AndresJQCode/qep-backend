@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// US-1/US-18: no se cotiza a un cliente inexistente, sin CUC o inactivo. Mismo criterio que
+/// US-1/US-18: no se cotiza a un cliente inexistente, sin CUC, inactivo o con la ficha incompleta. Mismo criterio que
 /// <c>ProductImageResolver</c> en Catalog — sin FK real que respalde la referencia (es blanda,
 /// hacia otro módulo), esta comprobación es la única red.
 /// </summary>
@@ -24,6 +24,16 @@ internal static class QuotationCustomerEligibility
             throw new QuotationsDomainException(
                 "quotation.quotation.client_not_found",
                 $"Client '{clientId}' was not found in this tenant.");
+        }
+
+        // Spec 2026-10-10 §6.3 (D-A4): antes que client_cuc_missing. Un incompleto tampoco tiene CUC, y sin este
+        // orden la pantalla diría «falta el CUC» en vez de «completa la ficha». Cubre crear, cambiar cliente, enviar y
+        // convertir en pedido: los cuatro llamadores de Ensure.
+        if (!customer.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.client_incomplete",
+                "The client record is incomplete; complete it before quoting or selling.");
         }
 
         if (string.IsNullOrWhiteSpace(customer.Cuc))

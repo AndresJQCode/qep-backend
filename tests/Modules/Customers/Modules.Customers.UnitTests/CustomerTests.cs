@@ -108,6 +108,7 @@ public sealed class CustomerTests
                 }
                 : null,
             identification ?? Identification(),
+            null,
             contact ?? ValidContact(cityId),
             commercial ?? Commercial(),
             Now);
@@ -146,7 +147,7 @@ public sealed class CustomerTests
 
         Assert.Equal("CLI08000142", customer.Cuc);
         Assert.Equal("Verde Esencial", customer.Name);
-        Assert.Equal("900-1", customer.Identification.Number);
+        Assert.Equal("900-1", customer.Identification?.Number);
     }
 
     [Theory]
@@ -225,19 +226,20 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.classification_required", exception.Code);
     }
 
-    // El correo y el telefono son obligatorios al crear y al editar. Vacio y solo espacios cuentan
-    // como ausente, igual que null: el formulario manda "" cuando el usuario borra el input.
+    // El correo es opcional. Vacio y solo espacios cuentan como ausente, igual que null: el
+    // formulario manda "" cuando el usuario borra el input, y eso se guarda como null.
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void CreateRejectsABlankEmail(string? email)
+    public void CreateAcceptsABlankEmailAndStoresNull(string? email)
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: ValidContact() with { Email = email }));
+        var customer = Create(contact: ValidContact() with { Email = email });
 
-        Assert.Equal("customers.customer.email_required", exception.Code);
+        Assert.Null(customer.Email);
     }
+
+    // El telefono sigue siendo obligatorio al crear y al editar.
 
     [Theory]
     [InlineData(null)]
@@ -251,10 +253,8 @@ public sealed class CustomerTests
         Assert.Equal("customers.customer.phone_required", exception.Code);
     }
 
-    [Theory]
-    [InlineData(null, "310 935 2187", "customers.customer.email_required")]
-    [InlineData("compras@verde.co", "  ", "customers.customer.phone_required")]
-    public void UpdateRejectsABlankEmailOrPhone(string? email, string? phone, string expectedCode)
+    [Fact]
+    public void UpdateRejectsABlankPhone()
     {
         var customer = Create();
 
@@ -262,13 +262,33 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
-            ValidContact() with { Email = email, Phone = phone },
+            null,
+            ValidContact() with { Phone = "  " },
             Commercial(),
             ClassificationPrefix,
             Now.AddMinutes(5)));
 
-        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal("customers.customer.phone_required", exception.Code);
         Assert.Equal(1, customer.Version);
+    }
+
+    // El PUT reemplaza el recurso entero: un correo vacio limpia el que habia.
+    [Fact]
+    public void UpdateWithABlankEmailClearsIt()
+    {
+        var customer = Create();
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            null,
+            ValidContact() with { Email = "" },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.Email);
     }
 
     [Fact]
@@ -367,6 +387,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(OtherCityId) with { Address = "Carrera 7 # 71-21" },
             Commercial(),
             ClassificationPrefix,
@@ -532,6 +553,7 @@ public sealed class CustomerTests
             "Verde Esencial",
             businessName: null,
             Identification(),
+            null,
             ForeignContact(),
             Commercial(),
             ClassificationPrefix,
@@ -551,6 +573,7 @@ public sealed class CustomerTests
             "Verde Esencial",
             businessName: null,
             Identification(),
+            null,
             ValidContact(OtherCityId),
             Commercial(),
             ClassificationPrefix,
@@ -572,6 +595,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Country = "COL" },
             Commercial(),
             ClassificationPrefix,
@@ -595,6 +619,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(),
+            null,
             ValidContact(Guid.Empty),
             Commercial(),
             ClassificationPrefix,
@@ -656,6 +681,7 @@ public sealed class CustomerTests
             "Verde Esencial S.A.S.",
             businessName: null,
             Identification(),
+            null,
             ValidContact() with { Phone = "604 444 5566", Email = "Ventas@Verde.CO" },
             Commercial(),
             ClassificationPrefix,
@@ -677,12 +703,89 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
             Now.AddMinutes(5));
 
         Assert.Equal(newClassificationId, customer.ClassificationId);
+    }
+
+    // La clasificacion es opcional: un cliente puede nacer sin ella. Su CUC no lleva prefijo.
+    [Fact]
+    public void CreateAcceptsACustomerWithoutClassification()
+    {
+        var customer = Create(
+            cuc: "08000142",
+            commercial: Commercial() with { ClassificationId = null });
+
+        Assert.Null(customer.ClassificationId);
+        Assert.Equal("08000142", customer.Cuc);
+    }
+
+    // Quitarle la clasificacion le quita el prefijo al CUC y conserva los ocho caracteres
+    // estables: es la misma regla que cambiarla, con un prefijo vacio.
+    [Fact]
+    public void UpdateDropsThePrefixWhenTheClassificationIsRemoved()
+    {
+        var customer = Create(cuc: "CLI08000142");
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            null,
+            ValidContact(),
+            Commercial() with { ClassificationId = null },
+            classificationPrefix: null,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.ClassificationId);
+        Assert.Equal("08000142", customer.Cuc);
+    }
+
+    // Y al reves: asignarle una clasificacion a un cliente que no tenia antepone el prefijo.
+    [Fact]
+    public void UpdatePrependsThePrefixWhenAClassificationIsAssigned()
+    {
+        var customer = Create(
+            cuc: "08000142",
+            commercial: Commercial() with { ClassificationId = null });
+        var newClassificationId = new ClientClassificationId(Guid.CreateVersion7());
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            null,
+            ValidContact(),
+            Commercial(classificationId: newClassificationId),
+            "MAY",
+            Now.AddMinutes(5));
+
+        Assert.Equal(newClassificationId, customer.ClassificationId);
+        Assert.Equal("MAY08000142", customer.Cuc);
+    }
+
+    // Una clasificacion sin prefijo es un llamador roto, no un cliente sin clasificacion: el
+    // prefijo nulo solo vale cuando la clasificacion tambien lo es.
+    [Fact]
+    public void UpdateRejectsAClassificationWithoutItsPrefix()
+    {
+        var customer = Create();
+
+        var exception = Assert.Throws<CustomersDomainException>(() => customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            null,
+            ValidContact(),
+            Commercial(classificationId: new ClientClassificationId(Guid.CreateVersion7())),
+            classificationPrefix: null,
+            Now.AddMinutes(5)));
+
+        Assert.Equal("customers.customer.classification_prefix_required", exception.Code);
     }
 
     // El CUC no viaja en el request y Update no lo toca por si solo — pero regla de negocio
@@ -697,6 +800,7 @@ public sealed class CustomerTests
             "Otro Nombre",
             businessName: null,
             Identification(number: "830-9"),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -719,6 +823,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(classificationId: newClassificationId),
             "MAY",
@@ -749,6 +854,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             "OTRO",
@@ -771,6 +877,7 @@ public sealed class CustomerTests
             customer.Name,
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             prefix,
@@ -789,6 +896,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(number: "830-9"),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -812,6 +920,7 @@ public sealed class CustomerTests
             "Nombre nuevo",
             businessName: null,
             Identification(number: "   "),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -831,6 +940,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -879,6 +989,7 @@ public sealed class CustomerTests
             "Otro",
             businessName: null,
             Identification(),
+            null,
             ValidContact(),
             Commercial(),
             ClassificationPrefix,
@@ -886,5 +997,293 @@ public sealed class CustomerTests
 
         Assert.True(customer.IsActive);
         Assert.Equal("Otro", customer.Name);
+    }
+
+    private sealed class StubPhoneNormalizer : IPhoneNumberNormalizer
+    {
+        public string? ToE164(string? phone, string country) =>
+            phone is null ? null : "+57" + new string(phone.Where(char.IsDigit).ToArray());
+
+        public bool IsKnownRegion(string regionCode) => regionCode == "CO";
+
+        public string? RegionOf(string? e164) => null;
+    }
+
+    // Spec «Dominio de Customers»: la ficha que da de alta la caja. Documento sí, CUC no: el CUC lo emite Complete.
+    [Fact]
+    public void CreateFromRegisterIsAnActiveIncompleteWithDocumentAndNoCuc()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "  Laura Gómez ",
+            new CustomerIdentification { Type = IdentificationType.Cc, Number = " 1020304050 " },
+            " 3001234567 ", Now, new StubPhoneNormalizer());
+
+        Assert.Equal("Laura Gómez", customer.Name);
+        Assert.Equal(IdentificationType.Cc, customer.IdentificationType);
+        Assert.Equal("1020304050", customer.IdentificationNumber);
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.True(customer.IsActive);
+        Assert.Null(customer.Cuc);
+        Assert.Equal("CO", customer.Country);
+        Assert.Equal("3001234567", customer.Phone);
+        Assert.Equal("+573001234567", customer.PhoneE164);
+        Assert.Null(customer.ClassificationId);
+        Assert.Null(customer.Address);
+        Assert.Null(customer.Email);
+        Assert.Empty(customer.Addresses);
+        Assert.Equal(1, customer.Version);
+    }
+
+    [Fact]
+    public void CreateFromRegisterWithoutPhoneHasNoPhoneE164()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Gómez", Identification(IdentificationType.Cc, "1020304050"),
+            "  ", Now, new StubPhoneNormalizer());
+
+        Assert.Null(customer.Phone);
+        Assert.Null(customer.PhoneE164);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsABadName()
+    {
+        var blank = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "  ", Identification(IdentificationType.Cc, "1020304050"), null, Now, new StubPhoneNormalizer()));
+        var tooLong = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, new string('a', Customer.NameMaxLength + 1), Identification(IdentificationType.Cc, "1020304050"), null, Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.name_required", blank.Code);
+        Assert.Equal("customers.customer.name_too_long", tooLong.Code);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsAnEmptyOrTooLongDocument()
+    {
+        var empty = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, ""), null, Now, new StubPhoneNormalizer()));
+        var tooLong = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, new string('1', 33)), null, Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.identification_number_required", empty.Code);
+        Assert.Equal("customers.customer.identification_number_too_long", tooLong.Code);
+    }
+
+    [Fact]
+    public void CreateFromRegisterRejectsAPhoneLongerThan32()
+    {
+        var failure = Assert.Throws<CustomersDomainException>(() => Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, "1020304050"),
+            new string('3', CustomerContactInfo.PhoneMaxLength + 1), Now, new StubPhoneNormalizer()));
+
+        Assert.Equal("customers.customer.phone_too_long", failure.Code);
+    }
+
+    [Fact]
+    public void ARegisterCustomerCanBeCompletedLater()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Gómez", Identification(IdentificationType.Cc, "1020304050"),
+            null, Now, new StubPhoneNormalizer());
+
+        customer.Complete(
+            "CLI08000142", "Laura Gómez", null, null, Identification(), null, ValidContact(), Commercial(), Now.AddMinutes(1));
+
+        Assert.True(customer.IsComplete);
+        Assert.Equal(IdentificationType.Nit, customer.IdentificationType);
+        Assert.Equal("900.123.456-1", customer.IdentificationNumber);
+    }
+
+    // Spec 2026-10-09 §6.5: se calcula al crear y al editar; sin normalizador queda null (P7 del plan).
+    [Fact]
+    public void PhoneE164IsComputedOnCreateAndUpdateWithTheNormalizer()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "MED-0001", "Verde", null, null, Identification(), null, ValidContact(), Commercial(), Now,
+            phoneNormalizer: new StubPhoneNormalizer());
+
+        Assert.Equal("+573109352187", customer.PhoneE164);
+
+        customer.Update(
+            "Verde", null, Identification(), null, ValidContact() with { Phone = "301 000 0000" }, Commercial(), ClassificationPrefix, Now,
+            phoneNormalizer: new StubPhoneNormalizer());
+        Assert.Equal("+573010000000", customer.PhoneE164);
+
+        var without = Customer.Create(
+            CustomerId.New(), TenantId, "MED-0002", "Sin", null, null, Identification(number: "1"), null, ValidContact(), Commercial(), Now);
+        Assert.Null(without.PhoneE164);
+        Assert.True(without.RecomputePhoneE164(new StubPhoneNormalizer()));
+        Assert.Equal("+573109352187", without.PhoneE164);
+        Assert.False(without.RecomputePhoneE164(new StubPhoneNormalizer()));
+        Assert.Equal(1, without.Version);
+    }
+
+    // Spec de Shopify 2026-10-15 §6.2.1 paso 4: el comprador sin documento nace incompleto. El nombre por defecto
+    // («Cliente de Shopify») lo pone quien llama; el dominio sólo exige que llegue uno.
+    [Fact]
+    public void CreateIncompleteFromExternalSaleNoNameUsesShopifyDefault()
+    {
+        var blank = Assert.Throws<CustomersDomainException>(() => Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "   ", null, null, null, Now, new StubPhoneNormalizer()));
+        Assert.Equal("customers.customer.name_required", blank.Code);
+
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, " Cliente de Shopify ", " 310 935 2187 ", "  Compras@Verde.CO ", "co", Now,
+            new StubPhoneNormalizer());
+
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.Equal("Cliente de Shopify", customer.Name);
+        Assert.Null(customer.Cuc);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+        Assert.Null(customer.Address);
+        Assert.Null(customer.ClassificationId);
+        Assert.Null(customer.WhatsAppUserId);
+        Assert.Empty(customer.Addresses);
+        Assert.Equal("310 935 2187", customer.Phone);
+        Assert.Equal("+573109352187", customer.PhoneE164);
+        Assert.Equal("compras@verde.co", customer.Email);
+        Assert.Equal("CO", customer.Country);
+        Assert.True(customer.IsActive);
+        Assert.Equal(1, customer.Version);
+    }
+
+    // Un dato que no cabe o no sirve no frena el pedido (decisión del owner: el pedido de Shopify entra igual); se
+    // descarta y la ficha queda para completarla a mano.
+    [Fact]
+    public void CreateIncompleteFromExternalSaleDropsUnusableContactData()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", new string('3', CustomerContactInfo.PhoneMaxLength + 1), "no-es-un-correo",
+            "Colombia", Now, new StubPhoneNormalizer());
+
+        Assert.Null(customer.Phone);
+        Assert.Null(customer.PhoneE164);
+        Assert.Null(customer.Email);
+        Assert.Null(customer.Country);
+    }
+
+    public static TheoryData<string> Writes() =>
+        ["Update", "Complete", "Activate", "Deactivate", "AddAddress", "UpdateAddress", "MakeAddressPrincipal", "RemoveAddress", "OptOut", "OptIn", "CorrectCity"];
+
+    // Spec 2026-10-24 §3.1: el código dice «fusionado» y no «inactivo», aunque el fusionado también lo esté.
+    [Theory]
+    [MemberData(nameof(Writes))]
+    public void AMergedCustomerRejectsEveryWrite(string write)
+    {
+        var survivor = Create(cuc: "CLI08000001");
+        var merged = write == "Complete"
+            ? Customer.CreateFromRegister(
+                CustomerId.New(), TenantId, "Laura", Identification(IdentificationType.Cc, "1020"), null, Now, new StubPhoneNormalizer())
+            : Create();
+        var addressId = merged.Addresses.FirstOrDefault()?.Id ?? new CustomerAddressId(Guid.NewGuid());
+        CustomerMergePlan.Create(survivor, [merged]).MarkMerged(Now);
+
+        Action action = write switch
+        {
+            "Update" => () => merged.Update("Nuevo", null, Identification(), null, ValidContact(), Commercial(), ClassificationPrefix, Now),
+            "Complete" => () => merged.Complete(
+                "CLI08000002", "Laura", null, null, Identification(IdentificationType.Cc, "1020"), null, ValidContact(), Commercial(), Now),
+            "Activate" => () => merged.Activate(Now),
+            "Deactivate" => () => merged.Deactivate(Now),
+            "AddAddress" => () => merged.AddAddress(Warehouse(), false, Now),
+            "UpdateAddress" => () => merged.UpdateAddress(addressId, Warehouse(), false, Now),
+            "MakeAddressPrincipal" => () => merged.MakeAddressPrincipal(addressId, Now),
+            "RemoveAddress" => () => merged.RemoveAddress(addressId, Now),
+            "OptOut" => () => merged.OptOutOfMarketing(MarketingConsentSource.Manual, Now),
+            "OptIn" => () => merged.OptInToMarketing(),
+            "CorrectCity" => () => merged.CorrectCity(CityId, OtherCityId, Now),
+            _ => throw new ArgumentOutOfRangeException(nameof(write)),
+        };
+
+        var error = Assert.Throws<CustomersDomainException>(action);
+        Assert.Equal("customers.customer.merged", error.Code);
+    }
+
+    private static readonly DateTimeOffset Later = Now.AddHours(3);
+
+    // Spec de ciudades 2026-10-26 §4.6 (D-C4b): el cliente y su dirección principal se mudan juntos.
+    [Fact]
+    public void CorrectCityMovesTheCustomerAndItsPrincipalAddress()
+    {
+        var customer = Create();
+
+        customer.CorrectCity(CityId, OtherCityId, Later);
+
+        Assert.Equal(OtherCityId, customer.CityId);
+        var principal = Assert.Single(customer.Addresses);
+        Assert.Equal(OtherCityId, principal.CityId);
+        Assert.Equal(Later, principal.UpdatedAt);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    // La dirección que una persona movió a mano después no se pisa: sólo se mueve la que sigue en la ciudad corregida.
+    [Fact]
+    public void CorrectCityLeavesAPrincipalAddressThatAlreadyMovedOn()
+    {
+        var customer = Create();
+        var principal = Assert.Single(customer.Addresses);
+        customer.UpdateAddress(principal.Id, Warehouse(), false, Now);
+        var version = customer.Version;
+
+        customer.CorrectCity(CityId, Guid.Parse("01900000-0000-7000-8000-000000000012"), Later);
+
+        Assert.Equal(Guid.Parse("01900000-0000-7000-8000-000000000012"), customer.CityId);
+        Assert.Equal(OtherCityId, Assert.Single(customer.Addresses).CityId);
+        Assert.Equal(version + 1, customer.Version);
+    }
+
+    [Fact]
+    public void CorrectCityKeepsTheCuc()
+    {
+        var customer = Create(cuc: "CLI08000142");
+
+        customer.CorrectCity(CityId, OtherCityId, Later);
+
+        Assert.Equal("CLI08000142", customer.Cuc);
+    }
+
+    [Fact]
+    public void CorrectCityWithAnotherCurrentCityIsCityChangedAndTouchesNothing()
+    {
+        var customer = Create();
+        var principalUpdatedAt = Assert.Single(customer.Addresses).UpdatedAt;
+
+        var error = Assert.Throws<CustomersDomainException>(() => customer.CorrectCity(OtherCityId, Guid.NewGuid(), Later));
+
+        Assert.Equal(CustomersErrorCodes.CityChanged, error.Code);
+        Assert.Equal("customers.customer.city_changed", error.Code);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(CityId, Assert.Single(customer.Addresses).CityId);
+        Assert.Equal(principalUpdatedAt, Assert.Single(customer.Addresses).UpdatedAt);
+        Assert.Equal(1, customer.Version);
+        Assert.Equal(Now, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void CorrectCityOfAnInactiveCustomerIsInactive()
+    {
+        var customer = Create();
+        customer.Deactivate(Now);
+        var version = customer.Version;
+
+        var error = Assert.Throws<CustomersDomainException>(() => customer.CorrectCity(CityId, OtherCityId, Later));
+
+        Assert.Equal(CustomersErrorCodes.Inactive, error.Code);
+        Assert.Equal(CityId, customer.CityId);
+        Assert.Equal(version, customer.Version);
+    }
+
+    [Fact]
+    public void CorrectCityOfAnIncompleteCustomerIsRejected()
+    {
+        var customer = Customer.CreateIncompleteFromExternalSale(
+            CustomerId.New(), TenantId, "Laura", null, null, null, Now, new StubPhoneNormalizer());
+
+        Assert.Throws<InvalidOperationException>(() => customer.CorrectCity(CityId, OtherCityId, Later));
+
+        Assert.Null(customer.CityId);
+        Assert.Equal(1, customer.Version);
     }
 }

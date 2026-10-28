@@ -24,9 +24,9 @@ public sealed class QuotationItemEditsTests
         Currency = "COP",
     };
 
-    private static QuotationProductPricingRef Product(
+    private static QuotationVariantPricingRef Product(
         Guid productId, string name, decimal unitPriceCop, bool isActive = true) =>
-        new(productId, TenantId, name, isActive, unitPriceCop, null, [], null);
+        new(productId, productId, TenantId, name, "SKU", isActive, new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
 
     /// <summary>Un borrador con líneas sin impuesto ni descuento: el total es la suma de precio por
     /// cantidad y las aserciones no dependen de redondeos.</summary>
@@ -36,10 +36,11 @@ public sealed class QuotationItemEditsTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
             new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
+            "COP",
             false, false, UpdatedBy, Now);
         foreach (var (productId, quantity, unitPrice) in lines)
         {
-            quotation.AddItem(QuotationItemId.New(), productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);
+            quotation.AddItem(QuotationItemId.New(), productId, productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);
         }
 
         return quotation;
@@ -189,26 +190,96 @@ public sealed class QuotationItemEditsTests
         Assert.Equal("quotation.quotation.not_editable", error.Code);
     }
 
-    private sealed class StubPricingCatalog(params QuotationProductPricingRef[] products)
+    // ---- Por variante (spec 2026-10-20 §4) ----
+
+    private static readonly Guid Camiseta = Guid.CreateVersion7();
+    private static readonly Guid CamisetaM = Guid.CreateVersion7();
+    private static readonly Guid CamisetaL = Guid.CreateVersion7();
+
+    private static QuotationVariantPricingRef Variant(Guid variantId, string size, decimal unitPriceCop) =>
+        new(variantId, Camiseta, TenantId, $"Camiseta – {size}", $"CAM-{size}", true,
+            new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
+
+    // Dos tallas del mismo producto son dos líneas: el diff empareja por variante, y cada línea
+    // guarda su variante y el producto común.
+    [Fact]
+    public async Task AddItemTwoSizesOfSameProductAreTwoLines()
+    {
+        var quotation = EditableQuotation();
+        var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
+
+        var edits = await ApplyAsync(
+            quotation, catalog, new QuotationItemAddition(CamisetaM, 2m), new QuotationItemAddition(CamisetaL, 3m));
+
+        Assert.Equal(
+            [
+                new QuotationItemEdit(QuotationItemEditKind.Added, CamisetaM, "Camiseta – M", null, 2m),
+                new QuotationItemEdit(QuotationItemEditKind.Added, CamisetaL, "Camiseta – L", null, 3m),
+            ],
+            edits);
+        Assert.Equal(
+            [(CamisetaM, Camiseta, 30_000m), (CamisetaL, Camiseta, 32_000m)],
+            quotation.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.ProductId, item.UnitPrice)));
+        Assert.Equal(2m * 30_000m + 3m * 32_000m, quotation.Total);
+    }
+
+    // La misma variante dos veces sigue siendo el duplicado de siempre, con el código que el
+    // frontend ya conoce.
+    [Fact]
+    public void AddItemSameVariantTwiceReturnsDuplicateProductCode()
+    {
+        var quotation = EditableQuotation();
+        quotation.AddItem(QuotationItemId.New(), CamisetaM, Camiseta, 1m, 30_000m, 0m, 0, UpdatedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            quotation.AddItem(QuotationItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, UpdatedBy, Now));
+
+        Assert.Equal("quotation.item.duplicate_product", error.Code);
+        Assert.Single(quotation.Items);
+    }
+
+    // Con M y L guardadas, la lista deseada «M x5» cambia la cantidad de M y quita L: la talla que
+    // se queda no se confunde con la que se va aunque compartan producto.
+    [Fact]
+    public async Task TheDiffMatchesLinesByVariantNotByProduct()
+    {
+        var quotation = EditableQuotation();
+        quotation.AddItem(QuotationItemId.New(), CamisetaM, Camiseta, 1m, 30_000m, 0m, 0, UpdatedBy, Now);
+        quotation.AddItem(QuotationItemId.New(), CamisetaL, Camiseta, 1m, 32_000m, 0m, 0, UpdatedBy, Now);
+        var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
+
+        var edits = await ApplyAsync(quotation, catalog, new QuotationItemAddition(CamisetaM, 5m));
+
+        Assert.Equal(
+            [
+                new QuotationItemEdit(QuotationItemEditKind.QuantityChanged, CamisetaM, "Camiseta – M", 1m, 5m),
+                new QuotationItemEdit(QuotationItemEditKind.Removed, CamisetaL, null, 1m, null),
+            ],
+            edits);
+        var line = Assert.Single(quotation.Items);
+        Assert.Equal((CamisetaM, 5m), (line.VariantId, line.Quantity));
+    }
+
+    private sealed class StubPricingCatalog(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
         public List<Guid> Lookups { get; } = [];
 
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken)
         {
             Lookups.Add(productId);
-            return Task.FromResult<QuotationProductPricingRef?>(
-                products.FirstOrDefault(product => product.Id == productId));
+            return Task.FromResult<QuotationVariantPricingRef?>(
+                products.FirstOrDefault(product => product.VariantId == productId));
         }
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 products
-                    .Where(product => productIds.Contains(product.Id))
-                    .ToDictionary(product => product.Id));
+                    .Where(product => productIds.Contains(product.VariantId))
+                    .ToDictionary(product => product.VariantId));
     }
 }

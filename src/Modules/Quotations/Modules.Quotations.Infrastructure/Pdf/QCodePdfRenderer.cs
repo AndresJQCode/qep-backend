@@ -41,7 +41,7 @@ internal sealed class QCodePdfRenderer(
         {
             ["source"] = Template,
             ["data"] = JsonSerializer.SerializeToElement(document, DataFormat),
-            ["filename"] = $"Cotizacion-{document.QuotationNumber}.pdf",
+            ["filename"] = FileNameFor(document),
         };
         if (document.Logo is { } logo)
         {
@@ -72,6 +72,12 @@ internal sealed class QCodePdfRenderer(
 
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
+
+    // Una sola plantilla para los dos documentos (owner): el archivo dice cuál es, igual que el membrete.
+    private static string FileNameFor(QuotationPdfDocument document) =>
+        document.Kind == QuotationPdfKind.Order
+            ? $"Pedido-{document.QuotationNumber}.pdf"
+            : $"Cotizacion-{document.QuotationNumber}.pdf";
 
     // La plantilla viaja adentro del ensamblado: es parte del contrato con el servicio, no
     // configuración, y un archivo suelto en disco se pierde al publicar la imagen.

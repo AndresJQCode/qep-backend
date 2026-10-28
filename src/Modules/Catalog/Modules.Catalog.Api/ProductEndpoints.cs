@@ -14,6 +14,13 @@ public static class ProductEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/catalog")
             .WithTags("Catalog");
 
+        // Spec D10. Under the catalogue because it is catalogue data. /auth/me already carries it for
+        // every member; this route is for screens that refresh it after saving a product.
+        group.MapGet("/currencies-in-use", GetCurrenciesInUseAsync)
+            .RequireAuthorization(CatalogPermissions.ProductRead)
+            .Produces<IReadOnlyList<string>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapGet("/products", ListProductsAsync)
             .RequireAuthorization(CatalogPermissions.ProductRead)
             .Produces<ProductsResponse>()
@@ -47,12 +54,14 @@ public static class ProductEndpoints
             .Produces<ProductResponse>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
-        // estos productos", y partirla en N escrituras deja al cliente orquestando una
-        // transacción que no puede cerrar. Bajo /products y no bajo el producto origen porque
-        // escribe en los destinos, que son varios — el origen es un dato del cuerpo.
+        // estas variantes", y partirla en N escrituras deja al cliente orquestando una
+        // transacción que no puede cerrar. Bajo /products y no bajo la variante origen porque
+        // escribe en los destinos, que son varios y de varios productos — el origen es un dato
+        // del cuerpo (spec 2026-10-20 §4).
         group.MapPost("/products/price-scales/copy", CopyPriceScalesAsync)
             .RequireAuthorization(CatalogPermissions.ProductManage)
             .Accepts<CopyPriceScalesRequest>("application/json")
@@ -82,16 +91,21 @@ public static class ProductEndpoints
         return endpoints;
     }
 
+    private static async Task<IResult> GetCurrenciesInUseAsync(
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCurrenciesInUseQuery(tenantId), cancellationToken));
+
     private static async Task<IResult> ExportProductsAsync(
         Guid tenantId,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken,
+        string? search = null,
         string? name = null,
         string? code = null,
         bool? isActive = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportProductsCommand(tenantId, name, code, isActive), cancellationToken);
+            new ExportProductsCommand(tenantId, search, name, code, isActive), cancellationToken);
 
         // 202 y no 200: lo que se acepto es la exportacion. El archivo se sube durante el
         // request pero el correo lo manda el worker despues, asi que la respuesta no trae el
@@ -109,14 +123,15 @@ public static class ProductEndpoints
         string? code = null,
         bool? isActive = null,
         int page = 1,
-        int pageSize = ProductPaging.DefaultPageSize)
+        int pageSize = ProductPaging.DefaultPageSize,
+        bool includeVariants = false)
     {
         var result = await dispatcher.QueryAsync(
-            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize),
+            new ListProductsQuery(tenantId, search, name, code, isActive, page, pageSize, includeVariants),
             cancellationToken);
 
         return Results.Ok(new ProductsResponse(
-            result.Items.Select(ToResponse).ToArray(),
+            result.Items,
             result.Total,
             result.Page,
             result.PageSize));
@@ -145,11 +160,12 @@ public static class ProductEndpoints
             new CreateProductCommand(
                 tenantId,
                 request.Name,
-                request.Code,
                 request.Description,
-                request.ImageFileId,
                 request.TaxRateId,
-                request.Pricing),
+                request.CategoryId,
+                request.OptionIds,
+                request.Variants,
+                request.Gallery),
             cancellationToken);
 
         return Results.Created(
@@ -168,12 +184,15 @@ public static class ProductEndpoints
             new UpdateProductCommand(
                 tenantId,
                 productId,
+                request.ExpectedVersion,
                 request.Name,
-                request.Code,
                 request.Description,
-                request.ImageFileId,
                 request.TaxRateId,
-                request.Pricing),
+                request.CategoryId,
+                request.OptionIds,
+                request.Variants,
+                request.Gallery,
+                request.DeletedVariantIds),
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
@@ -188,8 +207,8 @@ public static class ProductEndpoints
         var products = await dispatcher.SendAsync(
             new CopyPriceScalesCommand(
                 tenantId,
-                request.SourceProductId,
-                request.TargetProductIds ?? []),
+                request.SourceVariantId,
+                request.TargetVariantIds ?? []),
             cancellationToken);
 
         return Results.Ok(new CopyPriceScalesResponse(
@@ -225,16 +244,16 @@ public static class ProductEndpoints
     private static ProductResponse ToResponse(ProductDto product) => new(
         product.Id,
         product.Name,
-        product.Code,
         product.IsActive,
         product.Description,
         product.ImageFileId,
         product.ImageUrl,
         product.TaxRateId,
-        product.PriceBaseUsd,
-        product.PriceBaseCop,
-        product.PackagingUnits,
-        product.PriceScales,
+        product.CategoryId,
+        product.Options,
+        product.Variants,
+        product.Gallery,
+        product.Version,
         product.CreatedAt,
         product.UpdatedAt);
 }

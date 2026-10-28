@@ -5,81 +5,25 @@ using Modules.Quotations.Infrastructure;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El envío por WhatsApp cae a `LogWhatsAppSender` (no-op) cuando faltan las credenciales de
-/// Zenvia, que es lo que deja andar a las pruebas de integración y al desarrollo local sin
-/// aprovisionar nada. En producción ese mismo fallback es una trampa: la API responde 200, la
-/// cotización pasa a `Sent` y el cliente nunca recibe el mensaje, sin una sola señal de error.
-/// Por eso las tres claves son obligatorias sólo ahí, y su ausencia frena el arranque.
+/// Lo que la API exige de <c>Quotations:*</c> para arrancar. La cuenta de Zenvia ya no es configuración: cada tenant
+/// trae la suya en su conexión (plan 2026-10-21), así que producción arranca sin ninguna clave de WhatsApp.
 /// </summary>
 public sealed class QuotationsOptionsValidatorTests
 {
-    private static readonly WhatsAppOptions CompleteWhatsApp = new()
-    {
-        ApiToken = "token",
-        FromNumber = "573000000000",
-        TemplateId = "template-id",
-    };
-
     private static readonly PdfOptions CompletePdf = new()
     {
         BaseUrl = "https://qcode-pdf.qcode.co",
         ApiKey = "clave",
     };
 
+    // Plan 2026-10-21: sin cuenta global no hay nada de WhatsApp que exigir al arrancar.
     [Fact]
-    public void DevelopmentWithoutWhatsAppCredentialsIsValid()
-    {
-        var result = ValidatorFor(Environments.Development)
-            .Validate(null, new QuotationsOptions());
-
-        Assert.True(result.Succeeded);
-    }
-
-    [Fact]
-    public void ProductionWithCompleteWhatsAppCredentialsIsValid()
-    {
-        var options = new QuotationsOptions { WhatsApp = CompleteWhatsApp, Pdf = CompletePdf };
-
-        var result = ValidatorFor(Environments.Production).Validate(null, options);
-
-        Assert.True(result.Succeeded);
-    }
-
-    [Fact]
-    public void ProductionWithoutWhatsAppCredentialsFails()
+    public void ProductionStartsWithoutWhatsAppCredentials()
     {
         var result = ValidatorFor(Environments.Production)
-            .Validate(null, new QuotationsOptions());
+            .Validate(null, new QuotationsOptions { Pdf = CompletePdf });
 
-        Assert.True(result.Failed);
-        Assert.Contains("Quotations:WhatsApp:ApiToken", result.FailureMessage);
-        Assert.Contains("Quotations:WhatsApp:FromNumber", result.FailureMessage);
-        Assert.Contains("Quotations:WhatsApp:TemplateId", result.FailureMessage);
-    }
-
-    [Theory]
-    [InlineData(nameof(WhatsAppOptions.ApiToken))]
-    [InlineData(nameof(WhatsAppOptions.FromNumber))]
-    [InlineData(nameof(WhatsAppOptions.TemplateId))]
-    public void ProductionWithASingleMissingWhatsAppKeyFails(string missingKey)
-    {
-        var options = new QuotationsOptions
-        {
-            WhatsApp = new WhatsAppOptions
-            {
-                ApiToken = missingKey == nameof(WhatsAppOptions.ApiToken)
-                    ? " " : CompleteWhatsApp.ApiToken,
-                FromNumber = missingKey == nameof(WhatsAppOptions.FromNumber)
-                    ? " " : CompleteWhatsApp.FromNumber,
-                TemplateId = missingKey == nameof(WhatsAppOptions.TemplateId)
-                    ? " " : CompleteWhatsApp.TemplateId,
-            },
-        };
-
-        var result = ValidatorFor(Environments.Production).Validate(null, options);
-
-        Assert.True(result.Failed);
-        Assert.Contains($"Quotations:WhatsApp:{missingKey}", result.FailureMessage);
+        Assert.True(result.Succeeded);
     }
 
     // La regla que ya existía sigue valiendo en cualquier ambiente.
@@ -89,7 +33,6 @@ public sealed class QuotationsOptionsValidatorTests
         var options = new QuotationsOptions
         {
             ExpirationSweepMinutes = 0,
-            WhatsApp = CompleteWhatsApp,
             Pdf = CompletePdf,
         };
 
@@ -105,7 +48,7 @@ public sealed class QuotationsOptionsValidatorTests
     [Fact]
     public void ProductionWithoutThePdfApiKeyFails()
     {
-        var options = new QuotationsOptions { WhatsApp = CompleteWhatsApp };
+        var options = new QuotationsOptions();
 
         var result = ValidatorFor(Environments.Production).Validate(null, options);
 
@@ -134,7 +77,6 @@ public sealed class QuotationsOptionsValidatorTests
     {
         var options = new QuotationsOptions
         {
-            WhatsApp = CompleteWhatsApp,
             Pdf = new PdfOptions { BaseUrl = baseUrl, ApiKey = "clave" },
         };
 

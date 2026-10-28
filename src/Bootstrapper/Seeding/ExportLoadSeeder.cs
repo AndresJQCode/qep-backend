@@ -117,12 +117,16 @@ public static class ExportLoadSeeder
         if (seededQuotations != quotations)
         {
             throw new InvalidOperationException(
-                $"Export load seed expected {quotations} quotations and inserted {seededQuotations}: the load tenant has no active products.");
+                $"Export load seed expected {quotations} quotations and inserted {seededQuotations}: the load tenant has no active variants of active products.");
         }
 
         var seededItems = await ExecuteAsync(connection, transaction, ItemsSql, cancellationToken);
         var seededOrders = await ExecuteAsync(connection, transaction, OrdersSql, cancellationToken,
             ("tenant", TenantId), ("advisor", advisorId), ("now", now));
+        await ExecuteAsync(connection, transaction, OrderItemsSql, cancellationToken,
+            ("tenant", TenantId));
+        await ExecuteAsync(connection, transaction, OrderPartiesSql, cancellationToken,
+            ("tenant", TenantId));
         await ExecuteAsync(connection, transaction, QuotationCountersSql, cancellationToken,
             ("tenant", TenantId));
         await ExecuteAsync(connection, transaction, OrderCountersSql, cancellationToken,
@@ -183,7 +187,7 @@ public static class ExportLoadSeeder
         INSERT INTO customers.customers (
             id, tenant_id, cuc, name, business_name, identification_type, identification_number, is_active,
             phone, email, address, country, city_id, classification_id, with_retention, vat_surplus, version,
-            created_at, updated_at)
+            created_at, updated_at, completeness)
         SELECT gen_random_uuid(), @tenant,
                'CLI' || city.department || lpad(n::text, greatest(6, length(n::text)), '0'),
                'Cliente de carga ' || n, NULL, 'Nit', (800000000 + n)::text, true,
@@ -191,7 +195,12 @@ public static class ExportLoadSeeder
                -- El pais es obligatorio y sin DEFAULT a proposito (AddCustomerCountry): un alta tiene
                -- que decir de donde es. CO porque la ciudad sale de geography.cities, que es DIVIPOLA.
                'CO', city.id,
-               @classification, false, false, 1, @now, @now
+               @classification, false, false, 1, @now, @now,
+               -- Explícito aunque la columna tenga DEFAULT 'Complete': ese default existe sólo para el
+               -- pod viejo durante el despliegue y se quita en una migración posterior. La carga trae
+               -- todos los datos de una ficha completa, y CK_customers_complete_fields lo verifica. Es
+               -- el nombre del enum CustomerCompleteness, que EF guarda como texto.
+               'Complete'
         FROM generate_series(1, @customers) AS n
         CROSS JOIN city
         """;
@@ -233,6 +242,7 @@ public static class ExportLoadSeeder
             id uuid NOT NULL,
             quotation_id uuid NOT NULL,
             position integer NOT NULL,
+            variant_id uuid NOT NULL,
             product_id uuid NOT NULL,
             quantity numeric(10,2) NOT NULL,
             unit_price numeric(14,2) NOT NULL,
@@ -279,9 +289,15 @@ public static class ExportLoadSeeder
     // Las fórmulas del dominio sin descuento: el precio incluye IVA, así que el impuesto sale de adentro
     // de la línea (tax = round(line * t / (100 + t), 2)) y el subtotal es la base. round(x, 2) de
     // Postgres redondea alejando del cero, igual que la app.
+    //
+    // Una línea vende una variante (spec 2026-10-20 §4): los candidatos son las variantes activas de
+    // productos activos, con el precio COP de la variante, y la línea guarda variant_id y product_id.
+    // El catálogo de la carga lo siembra CatalogSeeder por el dominio (productos sin opciones), así que
+    // cada variante es la por defecto y su id es el del producto; el SQL igual lee los dos ids de
+    // catalog.product_variants y no lo da por hecho.
     private const string LoadItemsSql = """
-        INSERT INTO load_items (id, quotation_id, position, product_id, quantity, unit_price, tax, tax_amount, subtotal, created_at)
-        SELECT gen_random_uuid(), line.quotation_id, line.position, line.product_id, line.quantity, line.unit_price,
+        INSERT INTO load_items (id, quotation_id, position, variant_id, product_id, quantity, unit_price, tax, tax_amount, subtotal, created_at)
+        SELECT gen_random_uuid(), line.quotation_id, line.position, line.variant_id, line.product_id, line.quantity, line.unit_price,
                line.tax,
                round(line.line_total * line.tax / (100 + line.tax), 2),
                line.line_total - round(line.line_total * line.tax / (100 + line.tax), 2),
@@ -290,23 +306,30 @@ public static class ExportLoadSeeder
             SELECT quotation.id AS quotation_id,
                    quotation.created_at,
                    slot AS position,
-                   product.id AS product_id,
+                   variant.variant_id,
+                   variant.product_id,
                    (1 + (quotation.n + slot) % 5)::numeric AS quantity,
-                   product.unit_price,
-                   product.tax,
-                   round((1 + (quotation.n + slot) % 5)::numeric * product.unit_price, 2) AS line_total
+                   variant.unit_price,
+                   variant.tax,
+                   round((1 + (quotation.n + slot) % 5)::numeric * variant.unit_price, 2) AS line_total
             FROM load_quotations AS quotation
             CROSS JOIN generate_series(1, @itemsPerQuotation) AS slot
             JOIN (
-                SELECT candidate.id,
-                       coalesce(candidate.price_base_cop, 100000.00) AS unit_price,
+                SELECT candidate.id AS variant_id,
+                       candidate.product_id,
+                       -- La fila COP de catalog.product_prices, que desde las variantes es de la
+                       -- variante (variant_id). Las cotizaciones de la carga son en COP.
+                       coalesce(cop_price.amount, 100000.00) AS unit_price,
                        coalesce(rate.percentage, 0) AS tax,
                        row_number() OVER (ORDER BY candidate.code) - 1 AS position,
                        count(*) OVER () AS total
-                FROM catalog.products AS candidate
-                LEFT JOIN catalog.tax_rates AS rate ON rate.id = candidate.tax_rate_id
-                WHERE candidate.tenant_id = @tenant AND candidate.is_active
-            ) AS product ON product.position = (quotation.n * @itemsPerQuotation + slot) % product.total
+                FROM catalog.product_variants AS candidate
+                JOIN catalog.products AS product ON product.id = candidate.product_id
+                LEFT JOIN catalog.product_prices AS cop_price
+                    ON cop_price.variant_id = candidate.id AND cop_price.currency = 'COP'
+                LEFT JOIN catalog.tax_rates AS rate ON rate.id = product.tax_rate_id
+                WHERE candidate.tenant_id = @tenant AND candidate.is_active AND product.is_active
+            ) AS variant ON variant.position = (quotation.n * @itemsPerQuotation + slot) % variant.total
         ) AS line
         """;
 
@@ -342,25 +365,40 @@ public static class ExportLoadSeeder
         ) AS totals ON totals.quotation_id = quotation.id
         """;
 
+    // variant_id es NOT NULL desde AddVariantToLines: un INSERT que no lo nombre falla.
     private const string ItemsSql = """
         INSERT INTO quotations.quotation_items (
-            id, quotation_id, product_id, quantity, unit_price, discount_percentage, discount_amount,
+            id, quotation_id, variant_id, product_id, quantity, unit_price, discount_percentage, discount_amount,
             subtotal, tax_percentage, tax_amount, position, created_at, updated_at)
-        SELECT id, quotation_id, product_id, quantity, unit_price, 0, 0,
+        SELECT id, quotation_id, variant_id, product_id, quantity, unit_price, 0, 0,
                subtotal, tax, tax_amount, position, created_at, created_at
         FROM load_items
         """;
 
     // Convertida un día después del envío, dentro de la vigencia. PED-{año UTC de la conversión}-{n}.
-    // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage.
+    // PaymentPending porque cualquier otro estado de pago exige comprobantes en Storage. Desde el spec
+    // 2026-10-15 el pedido lleva sus propios cliente, asesor, cuenta de cobro e importes: se copian de su
+    // cotización, como lo hace la migración AddOrderOwnData con los pedidos que ya existían.
     private const string OrdersSql = """
         INSERT INTO quotations.orders (
             id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
-            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version)
+            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version,
+            source, external_reference, client_id, advisor_id, currency,
+            billing_company_id, billing_bank_name, billing_account_number, billing_account_currency,
+            payment_method, is_retail, global_scale_floor, billing_uses_business_name, is_store_pickup,
+            bills_to_final_consumer, party_with_retention, party_vat_surplus, customer_with_retention,
+            customer_vat_surplus, subtotal, tax_percentage, tax_amount, discount_amount, total,
+            retention_amount, net_total)
         SELECT gen_random_uuid(), @tenant,
                'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
                numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
-               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1
+               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1,
+               'Quotation', NULL, q.client_id, q.advisor_id, q.currency,
+               q.billing_company_id, q.billing_bank_name, q.billing_account_number, q.billing_account_currency,
+               q.payment_method, q.is_retail, q.global_scale_floor, q.billing_uses_business_name, q.is_store_pickup,
+               q.bills_to_final_consumer, q.party_with_retention, q.party_vat_surplus, q.customer_with_retention,
+               q.customer_vat_surplus, q.subtotal, q.tax_percentage, q.tax_amount, q.discount_amount, q.total,
+               q.retention_amount, q.net_total
         FROM (
             SELECT converted.quotation_id,
                    converted.converted_at,
@@ -374,6 +412,30 @@ public static class ExportLoadSeeder
                 WHERE converted
             ) AS converted
         ) AS numbered
+        JOIN quotations.quotations AS q ON q.id = numbered.quotation_id
+        """;
+
+    // Las líneas y las partes del pedido son copia de las de su cotización (mismo SQL que AddOrderOwnData).
+    private const string OrderItemsSql = """
+        INSERT INTO quotations.order_items (
+            id, order_id, variant_id, product_id, product_code, product_name, quantity, unit_price, discount_origin,
+            discount_percentage, discount_amount, subtotal, tax_percentage, tax_amount, position, created_at, updated_at)
+        SELECT gen_random_uuid(), o.id, i.variant_id, i.product_id, i.product_code, i.product_name, i.quantity, i.unit_price,
+               i.discount_origin, i.discount_percentage, i.discount_amount, i.subtotal, i.tax_percentage, i.tax_amount,
+               i.position, i.created_at, i.updated_at
+        FROM quotations.orders AS o
+        JOIN quotations.quotation_items AS i ON i.quotation_id = o.quotation_id
+        WHERE o.tenant_id = @tenant
+        """;
+
+    private const string OrderPartiesSql = """
+        INSERT INTO quotations.order_parties (
+            id, order_id, role, name, identification_number, phone, email, address, department_id, city_id)
+        SELECT gen_random_uuid(), o.id, p.role, p.name, p.identification_number, p.phone, p.email, p.address,
+               p.department_id, p.city_id
+        FROM quotations.orders AS o
+        JOIN quotations.quotation_parties AS p ON p.quotation_id = o.quotation_id
+        WHERE o.tenant_id = @tenant
         """;
 
     private const string QuotationCountersSql = """

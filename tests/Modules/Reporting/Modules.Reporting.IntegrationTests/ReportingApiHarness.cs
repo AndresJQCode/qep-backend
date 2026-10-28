@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Catalog.Application;
 using Modules.Companies.Application;
 using Modules.Customers.Application;
+using Modules.Pos.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Reporting.Application;
@@ -361,23 +362,33 @@ internal static class ReportingApiHarness
     }
 
     public static async Task<Guid> CreateProductAsync(
-        HttpClient client, Guid tenantId, decimal baseCop = 100_000m)
+        HttpClient client, Guid tenantId, decimal baseCop = 100_000m,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
+            // Variantes (Catalog, Tarea 5): un producto sin opciones lleva su código y su precio en
+            // su única variante.
             new
             {
                 name = "Vela de soja",
-                code = $"VS-{Guid.NewGuid():N}"[..12],
-                pricing = new
+                variants = new[]
                 {
-                    baseCop,
-                    scales = new object[]
+                    new
                     {
-                        new
+                        code = $"VS-{Guid.NewGuid():N}"[..12],
+                        pricing = new
                         {
-                            fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = baseCop
+                            // A given map wins over the COP shorthand, so tests can price in any currency.
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
+                            scales = new object[]
+                            {
+                                new
+                                {
+                                    fromUnit = 1, toUnit = 999_999, discount = 0m,
+                                    restriction = "multiple", multiple = 1
+                                }
+                            }
                         }
                     }
                 }
@@ -394,7 +405,8 @@ internal static class ReportingApiHarness
     /// <c>catalog.product_price_changes</c> — el unico origen del reporte de cambios de
     /// precio.</summary>
     public static async Task ChangeProductBaseCopAsync(
-        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop)
+        HttpClient client, Guid tenantId, Guid productId, decimal newBaseCop,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var current = await client.GetFromJsonAsync<ProductDetailResponseDto>(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
@@ -403,19 +415,28 @@ internal static class ReportingApiHarness
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
+            // El PUT de Catalog pide la versión leída y la variante por su id (Tarea 5).
             new
             {
+                expectedVersion = current.Version,
                 name = current.Name,
-                code = current.Code,
-                pricing = new
+                variants = new[]
                 {
-                    baseCop = newBaseCop,
-                    scales = new object[]
+                    new
                     {
-                        new
+                        id = Assert.Single(current.Variants).Id,
+                        code = Assert.Single(current.Variants).Code,
+                        pricing = new
                         {
-                            fromUnit = 1, toUnit = 999_999, discount = 0m,
-                            restriction = "multiple", multiple = 1, finalCop = newBaseCop
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = newBaseCop },
+                            scales = new object[]
+                            {
+                                new
+                                {
+                                    fromUnit = 1, toUnit = 999_999, discount = 0m,
+                                    restriction = "multiple", multiple = 1
+                                }
+                            }
                         }
                     }
                 }
@@ -423,6 +444,126 @@ internal static class ReportingApiHarness
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
     }
+
+    private static readonly string[] SizeValues = ["M", "L"];
+
+    /// <summary>
+    /// Un producto con la opción «Talla camiseta» y dos variantes, M y L, en ese orden de
+    /// presentación (spec 2026-10-20 §3.3). Es la siembra del reporte de cambios de precio por
+    /// variante: <see cref="CreateProductAsync"/> sólo arma productos sin opciones.
+    ///
+    /// Los códigos llevan un sufijo aleatorio porque son únicos por tenant entre todas las
+    /// variantes, y el nombre visible de cada una es «Camiseta – M» / «Camiseta – L».
+    /// </summary>
+    public static async Task<SeededSizedProduct> CreateSizedProductAsync(
+        HttpClient client, Guid tenantId, decimal baseCop = 100_000m)
+    {
+        var optionResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/options",
+            new { name = "Talla camiseta", values = SizeValues },
+            TestContext.Current.CancellationToken);
+        optionResponse.EnsureSuccessStatusCode();
+        var option = await optionResponse.Content.ReadFromJsonAsync<OptionResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(option);
+        var mediumValueId = option.Values.Single(value => value.Name == "M").Id;
+        var largeValueId = option.Values.Single(value => value.Name == "L").Id;
+
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var mediumCode = $"CM-M-{suffix}";
+        var largeCode = $"CM-L-{suffix}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name = "Camiseta",
+                optionIds = new[] { option.Id },
+                variants = new object[]
+                {
+                    new
+                    {
+                        code = mediumCode,
+                        optionValueIds = new[] { mediumValueId },
+                        pricing = CopPricing(baseCop)
+                    },
+                    new
+                    {
+                        code = largeCode,
+                        optionValueIds = new[] { largeValueId },
+                        pricing = CopPricing(baseCop)
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var product = await response.Content.ReadFromJsonAsync<ProductDetailResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(product);
+
+        return new SeededSizedProduct(
+            product.Id,
+            option.Id,
+            new SeededVariant(product.Variants.Single(variant => variant.Code == mediumCode).Id, mediumCode, mediumValueId),
+            new SeededVariant(product.Variants.Single(variant => variant.Code == largeCode).Id, largeCode, largeValueId));
+    }
+
+    /// <summary>
+    /// Fija el precio base en COP de **cada** variante del producto de
+    /// <see cref="CreateSizedProductAsync"/> en un solo <c>PUT</c>. El <c>PUT</c> reemplaza el
+    /// recurso entero, así que las dos variantes viajan siempre; las que mantienen su precio no
+    /// dejan fila en <c>catalog.product_price_changes</c>, y cada una que lo cambia deja una, con
+    /// su <c>variant_id</c>.
+    /// </summary>
+    public static async Task SetSizedProductPricesAsync(
+        HttpClient client, Guid tenantId, SeededSizedProduct product,
+        decimal mediumCop, decimal largeCop)
+    {
+        var current = await client.GetFromJsonAsync<ProductDetailResponseDto>(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{product.ProductId}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
+
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{product.ProductId}",
+            new
+            {
+                expectedVersion = current.Version,
+                name = current.Name,
+                optionIds = new[] { product.OptionId },
+                variants = new object[]
+                {
+                    new
+                    {
+                        id = product.Medium.Id,
+                        code = product.Medium.Code,
+                        optionValueIds = new[] { product.Medium.ValueId },
+                        pricing = CopPricing(mediumCop)
+                    },
+                    new
+                    {
+                        id = product.Large.Id,
+                        code = product.Large.Code,
+                        optionValueIds = new[] { product.Large.ValueId },
+                        pricing = CopPricing(largeCop)
+                    }
+                }
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"Se esperaba 2xx y llegó {(int)response.StatusCode}: " +
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static object CopPricing(decimal cop) =>
+        new
+        {
+            prices = new Dictionary<string, decimal> { ["COP"] = cop },
+            scales = new object[]
+            {
+                new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 }
+            }
+        };
 
     /// <summary>
     /// Siembra una cotización enviada. La vigencia es obligatoria para enviar desde
@@ -441,12 +582,15 @@ internal static class ReportingApiHarness
         Guid tenantId,
         Guid clientId,
         Guid productId,
-        DateOnly? validUntil = null)
+        DateOnly? validUntil = null,
+        string currency = "COP",
+        ShippingRequest? shipping = null)
     {
         // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
         // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
         // `ConvertToOrderAsync`, lejos de lo que mide.
-        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        // The quotation takes the billing account's currency, so this is how a test quotes in EUR.
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, currency);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations",
             new CreateQuotationRequest(
@@ -456,7 +600,8 @@ internal static class ReportingApiHarness
                 null,
                 null,
                 new QuotationBillingAccountRequest(
-                    billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency)),
+                    billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                shipping),
             TestContext.Current.CancellationToken);
         created.EnsureSuccessStatusCode();
         var quotation = await created.Content.ReadFromJsonAsync<QuotationResponse>(
@@ -487,12 +632,11 @@ internal static class ReportingApiHarness
     /// así que no alcanza con inventar un banco. Mismo helper que el harness de Quotations.
     /// </summary>
     private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency)
     {
         var cityId = await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
-        const string currency = "COP";
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
@@ -517,6 +661,35 @@ internal static class ReportingApiHarness
         return (body.Id, bankName, accountNumber, currency);
     }
 
+    /// <summary>Los permisos extra que pide fijar la tasa del IVA del envío: crear la tasa en Catalog
+    /// y guardarla en los ajustes del tenant.</summary>
+    public static readonly string[] FreightSetupPermissions =
+    [
+        CatalogPermissions.TaxRateRead,
+        CatalogPermissions.TaxRateManage,
+        "tenancy.settings.read",
+        "tenancy.settings.update",
+    ];
+
+    /// <summary>Fija el IVA del envío en 19 %, que es lo que hace falta para que un envío
+    /// <c>Charged</c> en COP se parta en subtotal e IVA.</summary>
+    public static async Task ConfigureFreightTaxAsync(HttpClient client, Guid tenantId)
+    {
+        var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
+            new { name = "IVA 19", percentage = 19 },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(
+            await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var rateId = body.RootElement.GetProperty("id").GetGuid();
+        var rate = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/carriers/freight-tax-rate",
+            new { taxRateId = rateId },
+            TestContext.Current.CancellationToken);
+        rate.EnsureSuccessStatusCode();
+    }
+
     public static async Task<OrderResponse> ConvertToOrderAsync(
         HttpClient client,
         QepApiFactory factory,
@@ -533,10 +706,141 @@ internal static class ReportingApiHarness
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
-        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(
+        // Spec 2026-10-15 §8: la conversión responde el detalle.
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
             TestContext.Current.CancellationToken);
-        Assert.NotNull(order);
-        return order;
+        Assert.NotNull(detail);
+        return detail.Order;
+    }
+
+    /// <summary>Spec 2026-10-15: un pedido manual, sin cotización, por <c>POST /orders</c>. Las
+    /// partes salen del cliente; la cuenta de cobro, de una empresa con cuenta en COP.</summary>
+    public static async Task<OrderResponse> CreateManualOrderAsync(HttpClient client, Guid tenantId)
+    {
+        var customer = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId, "COP");
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/orders",
+            new CreateOrderRequest(
+                customer.Id, null, null, false, null, null,
+                new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        return detail.Order;
+    }
+
+    /// <summary>
+    /// Lo que hace falta para vender en el POS y anular (spec 2026-10-23 §1): las ventas POS entran
+    /// al reporte de pedidos, así que se siembran por la API del POS y no por SQL. Sin
+    /// <c>pos.register.read</c> el cajero sólo ve sus ventas en el POS; con él, una prueba que lo
+    /// quite mide el alcance del reporte y no el del POS.
+    /// </summary>
+    public static readonly string[] PosPermissions =
+    [
+        Modules.Pos.Application.PosPermissions.SaleRead,
+        Modules.Pos.Application.PosPermissions.SaleCreate,
+        Modules.Pos.Application.PosPermissions.SaleCustomer,
+        Modules.Pos.Application.PosPermissions.SaleVoid,
+        Modules.Pos.Application.PosPermissions.RegisterOperate,
+        Modules.Pos.Application.PosPermissions.RegisterRead,
+        CompaniesPermissions.CompanyRead,
+        CompaniesPermissions.CompanyManage,
+        CatalogPermissions.ProductRead,
+        CatalogPermissions.ProductManage,
+    ];
+
+    /// <summary>Copia de <c>PosApiHarness.EnablePosAsync</c>: ni el signup ni ninguna configuración
+    /// prenden <c>pos</c>, y sin la fila todo <c>/pos/*</c> da 403 aunque el header pida los
+    /// permisos (CLAUDE.md, «Pos necesita la capacidad pos»).</summary>
+    public static async Task EnablePosAsync(PostgreSqlContainer database, Guid tenantId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, 'pos', now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            connection);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Abre una caja con base de 100 000 para quien llama. La empresa emisora se crea acá y viaja
+    /// explícita: las pruebas de Reporting crean una empresa por cotización, y con más de una la
+    /// apertura sin <c>companyId</c> responde <c>pos.session.company_required</c>.
+    /// </summary>
+    public static async Task<Guid> OpenPosSessionAsync(HttpClient client, Guid tenantId)
+    {
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId, "COP");
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sessions",
+            new { companyId = company.CompanyId, openingFloat = 100_000m },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return body.RootElement.GetProperty("id").GetGuid();
+    }
+
+    /// <summary>
+    /// Una venta POS de una línea: cantidad 1, sin descuento, sin IVA y pagada en efectivo justo.
+    /// <paramref name="variantId"/> de un producto sin opciones es el id del producto (CLAUDE.md,
+    /// «La variante por defecto lleva el id del producto»). Sin <paramref name="customerId"/> es
+    /// una venta a consumidor final.
+    /// </summary>
+    public static async Task<PosSaleResponse> CreatePosSaleAsync(
+        HttpClient client,
+        Guid tenantId,
+        Guid sessionId,
+        Guid variantId,
+        decimal unitPrice,
+        Guid? customerId = null)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sales",
+            new
+            {
+                id = Guid.CreateVersion7(),
+                cashSessionId = sessionId,
+                lines = new[]
+                {
+                    new
+                    {
+                        variantId,
+                        quantity = 1m,
+                        discountPercentage = 0m,
+                        expectedUnitPrice = unitPrice,
+                        expectedTaxPercentage = 0,
+                    },
+                },
+                payments = new[] { new { method = "Cash", tendered = unitPrice } },
+                customerId,
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var sale = await response.Content.ReadFromJsonAsync<PosSaleResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(sale);
+        return sale;
+    }
+
+    public static async Task VoidPosSaleAsync(HttpClient client, Guid tenantId, Guid saleId)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/pos/sales/{saleId}/void",
+            new { reason = "El cliente se arrepintió" },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     private static async Task<Guid> CreateAvailablePdfFileAsync(
@@ -598,7 +902,21 @@ internal static class ReportingApiHarness
 
     private sealed record CompanyResponseDto(Guid Id, string Name);
 
-    private sealed record ProductDetailResponseDto(Guid Id, string Name, string Code);
+    internal sealed record ProductDetailResponseDto(
+        Guid Id, string Name, long Version, IReadOnlyList<ProductVariantDetailDto> Variants);
+
+    internal sealed record ProductVariantDetailDto(Guid Id, string Code);
+
+    private sealed record OptionResponseDto(Guid Id, IReadOnlyList<OptionValueResponseDto> Values);
+
+    private sealed record OptionValueResponseDto(Guid Id, string Name);
+
+    /// <summary>Un producto sembrado por <see cref="CreateSizedProductAsync"/>: su opción y sus
+    /// dos variantes, M y L.</summary>
+    public sealed record SeededSizedProduct(
+        Guid ProductId, Guid OptionId, SeededVariant Medium, SeededVariant Large);
+
+    public sealed record SeededVariant(Guid Id, string Code, Guid ValueId);
 
     private sealed record UploadSessionResponseDto(
         Guid FileResourceId, string UploadUrl, string StorageKey);
@@ -626,16 +944,16 @@ internal static class ReportingApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
 
-            // Vaciadas, nunca heredadas: `WebApplicationFactory` corre en Development y ahí
-            // `CreateBuilder` carga los user-secrets de quien corre las pruebas. Con Zenvia
-            // configurado, `CreateSentQuotationAsync` le mandaría un WhatsApp de verdad a un
-            // cliente de prueba. Vacías fuerzan `LogWhatsAppSender`, igual que en el harness de
-            // Quotations.
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
+                // `CreateSentQuotationAsync` envía por la conexión de Zenvia del tenant (plan 2026-10-21), y ninguna
+                // prueba llama a Zenvia (spec 2026-10-21 D18): un canal fijo y un sender que no sale a la red,
+                // igual que en el harness de Quotations.
+                services.RemoveAll<IWhatsAppChannelDirectory>();
+                services.AddSingleton<IWhatsAppChannelDirectory, SingleWhatsAppChannel>();
+                services.RemoveAll<IWhatsAppSender>();
+                services.AddSingleton<IWhatsAppSender, NoOpWhatsAppSender>();
+
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
 
@@ -683,6 +1001,13 @@ internal static class ReportingApiHarness
             byte[] content,
             CancellationToken cancellationToken) =>
             Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
+
+        public Task<string> SaveOrderAsync(
+            Guid tenantId,
+            OrderId orderId,
+            byte[] content,
+            CancellationToken cancellationToken) =>
+            Task.FromResult($"quotations/tenants/{tenantId:N}/orders/{Guid.CreateVersion7():N}.pdf");
 
         public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken) =>
             Task.FromResult($"https://assets.example.co/{storageKey}");
@@ -748,6 +1073,33 @@ internal static class ReportingApiHarness
             return Task.CompletedTask;
         }
 
+        public Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
     }
+}
+
+/// <summary>Un canal de Zenvia fijo para las cotizaciones que siembra Reporting (plan 2026-10-21).</summary>
+internal sealed class SingleWhatsAppChannel : IWhatsAppChannelDirectory
+{
+    private static readonly WhatsAppChannel Channel = new ZenviaWhatsAppChannel(
+        Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000", "d0e79149-ed61-4784-9883-d86807f46ce5", null);
+
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WhatsAppChannel>>([Channel]);
+}
+
+/// <summary>Reporting mira lo que el envío deja en la base, no lo que le llega al cliente.</summary>
+internal sealed class NoOpWhatsAppSender : IWhatsAppSender
+{
+    public Task SendQuotationAsync(
+        WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task SendOrderAsync(
+        WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken) => Task.CompletedTask;
 }

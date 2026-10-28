@@ -15,7 +15,8 @@ public sealed class SaveOrderEditsValidatorTests
     private static SaveOrderEditsCommand Command(
         IReadOnlyList<OrderItemAddition>? items = null,
         OrderEditProofs? proofs = null,
-        string? notes = null) =>
+        string? notes = null,
+        OrderBillingEditRequest? billing = null) =>
         new(
             Guid.CreateVersion7(),
             Guid.CreateVersion7(),
@@ -24,7 +25,8 @@ public sealed class SaveOrderEditsValidatorTests
             proofs ?? OrderEditProofs.None,
             notes,
             null,
-            false);
+            false,
+            Billing: billing);
 
     private static PreviewOrderEditsQuery Query(OrderEditProofs proofs) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), [new OrderItemAddition(ProductId, 1m)], proofs, null, null, false);
@@ -48,19 +50,36 @@ public sealed class SaveOrderEditsValidatorTests
         Assert.True(result.IsValid);
     }
 
+    // Spec 2026-10-26: la parte de facturación propia exige número y tipo de documento, como al crear.
+    [Fact]
+    public void ABillingPartyWithANameRequiresNumberAndIdentificationType()
+    {
+        var billing = new OrderBillingEditRequest(
+            new QuotationPartyRequest("Otra S.A.S.", null, null, null, null, null, null, PersonType: "Juridica"));
+
+        var result = _save.Validate(Command(billing: billing));
+
+        AssertFailsOn(result, "Billing.Party.IdentificationNumber");
+        AssertFailsOn(result, "Billing.Party.IdentificationType");
+    }
+
+    [Fact]
+    public void AnAbsentBillingIsValid() =>
+        Assert.True(_save.Validate(Command(billing: null)).IsValid);
+
     [Fact]
     public void RejectsAnEmptyItemList() =>
         AssertFailsOn(_save.Validate(Command(items: [])), "Items");
 
     [Fact]
-    public void RejectsARepeatedProduct() =>
+    public void RejectsARepeatedVariant() =>
         AssertFailsOn(
             _save.Validate(Command(items: [new OrderItemAddition(ProductId, 1m), new OrderItemAddition(ProductId, 2m)])),
             "Items");
 
     [Fact]
-    public void RejectsAnEmptyProductId() =>
-        AssertFailsOn(_save.Validate(Command(items: [new OrderItemAddition(Guid.Empty, 1m)])), "Items[0].ProductId");
+    public void RejectsAnEmptyVariantId() =>
+        AssertFailsOn(_save.Validate(Command(items: [new OrderItemAddition(Guid.Empty, 1m)])), "Items[0].VariantId");
 
     [Theory]
     [InlineData(0)]
@@ -135,7 +154,24 @@ public sealed class SaveOrderEditsValidatorTests
         AssertFailsOn(_save.Validate(Command(proofs: proofs)), "Proofs");
     }
 
+    // Spec 2026-10-17 §5.4: el bloque `shipping` de la edición valida su forma con el campo.
     [Fact]
-    public void RejectsNotesLongerThanTheLimit() =>
-        AssertFailsOn(_save.Validate(Command(notes: new string('a', Order.NotesMaxLength + 1))), "Notes");
+    public void TheShippingErrorsCarryTheField()
+    {
+        var shipping = new ShippingRequest(null, "Paid", -1m, false);
+
+        foreach (var result in new[]
+        {
+            _save.Validate(Command() with { Shipping = shipping }),
+            _preview.Validate(Query(OrderEditProofs.None) with { Shipping = shipping }),
+        })
+        {
+            AssertFailsOn(result, "Shipping.FreightAmount");
+            AssertFailsOn(result, "Shipping.FreightChargeMode");
+        }
+    }
+
+    [Fact]
+    public void AcceptsAValidShipping() =>
+        Assert.True(_save.Validate(Command() with { Shipping = new ShippingRequest(null, "Charged", 15000m, true) }).IsValid);
 }

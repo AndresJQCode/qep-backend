@@ -4,8 +4,9 @@ namespace Modules.Customers.Domain;
 /// Un cliente del tenant: la contraparte a la que se le cotiza y se le vende. Guarda solo los
 /// datos maestros vivos; una cotizacion congela su propia copia de a quien se le emitio.
 ///
-/// La identificacion (tipo + numero) es **unica por tenant**; esa unicidad la arbitra
-/// <c>IX_customers_tenant_identification</c> y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
+/// La identificacion (tipo + numero) es **unica por tenant entre los clientes no fusionados**: un fusionado completo
+/// conserva su documento y otro cliente puede tenerlo (spec 2026-10-24 §3.1). Esa unicidad la arbitra
+/// <c>IX_customers_tenant_identification</c>, parcial (<c>merged_into_id IS NULL</c>), y la traduce <c>CustomersUnitOfWork</c>. El CUC lo
 /// emite el backend al crear; su prefijo se reescribe cuando cambia la clasificacion del cliente
 /// (ver <see cref="Cuc"/> y <see cref="Update"/>), pero el departamento y el consecutivo no.
 /// </summary>
@@ -24,6 +25,18 @@ public sealed class Customer
     // consecutivo (6). 28 como maximo, y 32 deja margen sin tener que tocar esta constante.
     public const int CucMaxLength = 32;
 
+    /// <summary>Spec 2026-10-10 §6.2: el BSUID de Meta mide hasta 131 (2 + 1 + 128); 150 deja margen.</summary>
+    public const int WhatsAppUserIdMaxLength = 150;
+
+    /// <summary>Spec 2026-10-14 decisión 10: el IGSID es numérico y hoy tiene 16 o 17 dígitos; 64 deja margen. El usuario de
+    /// Instagram tiene hasta 30 caracteres.</summary>
+    public const int InstagramUserIdMaxLength = 64;
+
+    public const int InstagramUsernameMaxLength = 64;
+
+    // P14: libphonenumber ignora la región cuando el número empieza con «+», pero ToE164 exige una.
+    private const string UnknownRegion = "ZZ";
+
     /// <summary>
     /// Colombia en ISO-3166-1 alpha-2. Es una bifurcacion de negocio y no un string suelto: con
     /// este pais el domicilio se ubica con la ciudad DIVIPOLA (<see cref="CityId"/>) y con
@@ -35,11 +48,7 @@ public sealed class Customer
     // punto de entrada, y es el que hace cumplir los invariantes.
     private Customer()
     {
-        Cuc = string.Empty;
         Name = string.Empty;
-        IdentificationNumber = string.Empty;
-        Address = string.Empty;
-        Country = string.Empty;
     }
 
     private Customer(
@@ -50,10 +59,14 @@ public sealed class Customer
         string? businessName,
         CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer)
     {
+        // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
+        EnsurePersonTypeMatches(personType, identification.Type, contact.Normalized().Country);
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -78,10 +91,13 @@ public sealed class Customer
         // Assign(contact) la pisa enseguida con el valor normalizado real. Country igual.
         IdentificationType = identification.Type;
         IdentificationNumber = identification.Number;
+        PersonType = personType;
         Address = string.Empty;
         Country = string.Empty;
         Assign(contact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
         Assign(commercial);
+        Completeness = CustomerCompleteness.Complete;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -102,8 +118,10 @@ public sealed class Customer
     ///
     /// Donde vive su emision es `SDD-OD-06`, que sigue abierta: hoy la resuelve este modulo porque
     /// no existe un modulo `identifiers` al que delegarla.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Cuc { get; private set; }
+    public string? Cuc { get; private set; }
 
     /// <summary>
     /// A quien se le habla: la persona de contacto del cliente. En un cliente que es una empresa
@@ -149,10 +167,19 @@ public sealed class Customer
     /// <summary>
     /// El tipo de documento. Junto con <see cref="IdentificationNumber"/> forma la clave unica del
     /// cliente dentro del tenant.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public IdentificationType IdentificationType { get; private set; }
+    public IdentificationType? IdentificationType { get; private set; }
 
-    public string IdentificationNumber { get; private set; }
+    /// <summary>
+    /// Natural o jurídica (spec 2026-10-26). Nulo es «no se sabe»: un cliente viejo, uno incompleto o uno
+    /// que el tenant no obliga a clasificar. Ver <see cref="EnsurePersonTypeMatches"/> para la regla con el NIT.
+    /// </summary>
+    public PersonType? PersonType { get; private set; }
+
+    /// <summary>Nulo en un cliente incompleto (spec 2026-10-10 §6.2).</summary>
+    public string? IdentificationNumber { get; private set; }
 
     /// <summary>
     /// Las dos partes de la identificacion como el value object que las valida.
@@ -162,13 +189,21 @@ public sealed class Customer
     /// un complex type. Aplanar el mapeo y conservar el value object para las firmas deja las dos
     /// cosas: un `Create` que no permite intercambiar tipo y numero, y un indice que se declara
     /// como cualquier otro.
+    ///
+    /// <c>null</c> mientras la ficha está incompleta (spec 2026-10-10 §6.2).
     /// </summary>
-    public CustomerIdentification Identification =>
-        new() { Type = IdentificationType, Number = IdentificationNumber };
+    public CustomerIdentification? Identification =>
+        IdentificationType is { } type && IdentificationNumber is { } number
+            ? new() { Type = type, Number = number }
+            : null;
 
     public bool IsActive { get; private set; }
 
     public string? Phone { get; private set; }
+
+    /// <summary>Spec 2026-10-09 §6.5: <see cref="Phone"/> en E.164 con «+», o <c>null</c> si no parsea. Lo
+    /// lee Messaging por sus dígitos para emparejar con el <c>wa_id</c> de Meta.</summary>
+    public string? PhoneE164 { get; private set; }
 
     public string? Email { get; private set; }
 
@@ -180,16 +215,20 @@ public sealed class Customer
     /// 2026-09-18): <see cref="Addresses"/> son destinos de envío y su principal es sólo la que
     /// se ofrece primero. CLI-DIR-01 había fundido las dos cosas y marcar otra principal movía el
     /// domicilio; volvieron a separarse.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Address { get; private set; }
+    public string? Address { get; private set; }
 
     /// <summary>
     /// El pais del cliente, ISO-3166-1 alpha-2. Ver <see cref="CustomerContactInfo.Country"/>.
     ///
     /// Es el discriminante del domicilio: <c>CO</c> ⇒ <see cref="CityId"/>; cualquier otro ⇒
     /// <see cref="CityName"/>. Nunca los dos.
+    ///
+    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public string Country { get; private set; }
+    public string? Country { get; private set; }
 
     /// <summary>
     /// FK blanda a <c>Modules.Geography</c>: <see cref="Guid"/> y no un id fuertemente tipado de
@@ -211,15 +250,43 @@ public sealed class Customer
 
     /// <summary>
     /// La clasificacion del cliente, FK a <see cref="ClientClassification"/> — que vive en este
-    /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado.
-    /// Obligatoria: reemplaza al viejo enum fijo <c>CustomerClassification</c>, que no tenia
-    /// relacion con este catalogo y ya no tiene consumidores.
+    /// mismo modulo, asi que va tipada de forma fuerte igual que el resto del agregado. Reemplaza al
+    /// viejo enum fijo <c>CustomerClassification</c>, que no tenia relacion con este catalogo y ya
+    /// no tiene consumidores.
+    ///
+    /// Opcional, tambien en una ficha completa (decision del owner, 2026-10-19): sin ella el CUC no
+    /// lleva prefijo. Ver <see cref="CustomerCommercialInfo.ClassificationId"/>. Y siempre nulo en
+    /// un cliente incompleto (spec 2026-10-10 §6.2).
     /// </summary>
-    public ClientClassificationId ClassificationId { get; private set; }
+    public ClientClassificationId? ClassificationId { get; private set; }
+
+    /// <summary>Spec 2026-10-10 §6.2. La base lo exige con <c>CK_customers_complete_fields</c>.</summary>
+    public CustomerCompleteness Completeness { get; private set; }
+
+    public bool IsComplete => Completeness == CustomerCompleteness.Complete;
+
+    /// <summary>Spec 2026-10-10 §6.2: el BSUID de WhatsApp de esta persona, único por tenant
+    /// (<c>IX_customers_tenant_whatsapp_user_id</c>). Lo pone la ingesta de Messaging; nunca viaja por HTTP.</summary>
+    public string? WhatsAppUserId { get; private set; }
+
+    /// <summary>Spec 2026-10-14 decisión 10: el IGSID (id de la persona ante la cuenta profesional del tenant), único por tenant
+    /// (<c>IX_customers_tenant_instagram_user_id</c>). Lo pone la ingesta de Messaging; nunca viaja por HTTP.</summary>
+    public string? InstagramUserId { get; private set; }
+
+    /// <summary>Decisión 10: el <c>@usuario</c> de Instagram, informativo; puede cambiar y viajar en <c>null</c> (V-7).</summary>
+    public string? InstagramUsername { get; private set; }
 
     public bool WithRetention { get; private set; }
 
     public bool VatSurplus { get; private set; }
+
+    /// <summary>Spec 2026-10-11 decisión 10: el cliente no quiere recibir promociones. Las campañas con plantilla
+    /// <c>MARKETING</c> lo excluyen; las <c>UTILITY</c> no, porque el opt-out de Meta es sólo de marketing.</summary>
+    public bool MarketingOptOut { get; private set; }
+
+    public DateTimeOffset? MarketingOptOutAt { get; private set; }
+
+    public MarketingConsentSource? MarketingOptOutSource { get; private set; }
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Company</c>, <c>Product</c> y <c>Membership</c>.
@@ -233,6 +300,13 @@ public sealed class Customer
     /// </summary>
     public long Version { get; private set; }
 
+    /// <summary>Spec 2026-10-24 D-F2: el cliente en el que se fusionó este. Siempre apunta a uno que no está fusionado.</summary>
+    public CustomerId? MergedIntoId { get; private set; }
+
+    public DateTimeOffset? MergedAt { get; private set; }
+
+    public bool IsMerged => MergedIntoId is not null;
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -245,9 +319,11 @@ public sealed class Customer
         string? businessName,
         CustomerAddressDetails? principalAddress,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        DateTimeOffset occurredAt) =>
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null) =>
         new(
             id,
             tenantId,
@@ -256,16 +332,302 @@ public sealed class Customer
             NormalizeBusinessName(businessName),
             principalAddress,
             identification.Normalized(),
+            personType,
             contact,
             commercial,
-            occurredAt);
+            occurredAt,
+            phoneNormalizer);
+
+    /// <summary>
+    /// Spec 2026-10-10 §6.2: la persona que escribió por WhatsApp y todavía no tiene ficha. Sólo nombre,
+    /// teléfono (E.164 con «+», como lo arma Messaging), país si se conoce y BSUID; sin libreta. Lo crea el
+    /// sistema, nunca una persona por HTTP. El nombre y el país los decide <c>IncompleteCustomerProfile</c>
+    /// (Application); acá sólo se validan.
+    /// </summary>
+    public static Customer CreateIncomplete(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string? phone,
+        string? country,
+        string whatsAppUserId,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+        var normalizedCountry = string.IsNullOrWhiteSpace(country) ? null : country.Trim().ToUpperInvariant();
+        return new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = NormalizeName(name),
+            Phone = normalizedPhone,
+            Country = normalizedCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, normalizedCountry ?? UnknownRegion),
+            WhatsAppUserId = NormalizeWhatsAppUserId(whatsAppUserId),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
+
+    /// <summary>
+    /// Spec «Dominio de Customers»: la ficha que da de alta la caja del POS para identificar al comprador. Nombre,
+    /// documento y, si lo hay, teléfono; sin CUC (lo emite <see cref="Complete"/> cuando alguien la completa), sin
+    /// clasificación, ciudad, correo ni libreta. El país es el del formulario web (<see cref="ColombiaCountryCode"/>):
+    /// la caja no lo pregunta y el teléfono se normaliza contra esa región. Todo se valida antes de armar la ficha.
+    /// </summary>
+    public static Customer CreateFromRegister(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        CustomerIdentification identification,
+        string? phone,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(identification);
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedName = NormalizeName(name);
+        var normalizedIdentification = identification.Normalized();
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
+        if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.phone_too_long",
+                $"The customer phone cannot exceed {CustomerContactInfo.PhoneMaxLength} characters.");
+        }
+
+        var customer = new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = normalizedName,
+            Phone = normalizedPhone,
+            Country = ColombiaCountryCode,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, ColombiaCountryCode),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        customer.Assign(normalizedIdentification);
+        return customer;
+    }
+
+    /// <summary>
+    /// Spec 2026-10-10 §6.2: el <c>PUT</c> sobre un incompleto. Mismas reglas que <see cref="Create"/> (la
+    /// libreta nace igual) más el CUC que el handler acaba de emitir. Todo se valida antes de asignar: un
+    /// 422 deja la ficha como estaba.
+    /// </summary>
+    public void Complete(
+        string cuc,
+        string name,
+        string? businessName,
+        CustomerAddressDetails? principalAddress,
+        CustomerIdentification identification,
+        PersonType? personType,
+        CustomerContactInfo contact,
+        CustomerCommercialInfo commercial,
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null)
+    {
+        ArgumentNullException.ThrowIfNull(identification);
+        ArgumentNullException.ThrowIfNull(contact);
+        ArgumentNullException.ThrowIfNull(commercial);
+        EnsureNotMerged();
+        EnsureActive();
+        if (IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is already complete; use Update.");
+        }
+
+        var normalizedCuc = NormalizeCuc(cuc);
+        var normalizedName = NormalizeName(name);
+        var normalizedBusinessName = NormalizeBusinessName(businessName);
+        var normalizedIdentification = identification.Normalized();
+        var normalizedContact = contact.Normalized();
+        var location = EnsureValidLocation(normalizedContact);
+        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        _ = EnsureValidClassificationId(commercial.ClassificationId);
+
+        Cuc = normalizedCuc;
+        Name = normalizedName;
+        BusinessName = normalizedBusinessName;
+        Assign(normalizedIdentification);
+        PersonType = personType;
+        Assign(normalizedContact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, location.Country);
+        Assign(commercial);
+        if (principalAddress is not null && _addresses.Count == 0)
+        {
+            var first = CustomerAddress.Create(Id, principalAddress, occurredAt);
+            first.MarkPrincipal(true, occurredAt);
+            _addresses.Add(first);
+        }
+
+        Completeness = CustomerCompleteness.Complete;
+        Touch(occurredAt);
+    }
+
+    /// <summary>
+    /// Spec de ciudades 2026-10-26 §4.6 (D-C4b): la ciudad que Shopify le puso al cliente se corrige cuando el operador
+    /// aprueba un sinónimo. Sólo cambia si sigue siendo <paramref name="previousCityId"/>; si una persona ya la movió,
+    /// lanza <c>customers.customer.city_changed</c> y no toca nada. Mueve <see cref="CityId"/> y la ciudad de la
+    /// dirección principal, ésta sólo si también sigue en <paramref name="previousCityId"/>. El CUC no cambia: el
+    /// departamento de la ciudad nueva es el mismo (el sinónimo sólo existe dentro de un departamento).
+    /// </summary>
+    public void CorrectCity(Guid previousCityId, Guid cityId, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is incomplete and has no city to correct.");
+        }
+
+        if (CityId != previousCityId)
+        {
+            throw new CustomersDomainException(CustomersErrorCodes.CityChanged, "The customer city is no longer the one being corrected.");
+        }
+
+        CityId = cityId;
+        if (PrincipalAddress is { } principal && principal.CityId == previousCityId)
+        {
+            principal.MoveToCity(cityId, occurredAt);
+        }
+
+        Touch(occurredAt);
+    }
+
+    /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
+    /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
+    /// <summary>
+    /// Spec 2026-10-14 decisión 10: la persona que escribió por Instagram y todavía no tiene ficha. Sólo nombre, IGSID y usuario:
+    /// sin teléfono, sin país (Instagram no los da) y sin libreta. Lo crea el sistema, nunca una persona por HTTP.
+    /// </summary>
+    public static Customer CreateIncompleteFromInstagram(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string instagramUserId,
+        string? instagramUsername,
+        DateTimeOffset now) =>
+        new()
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = NormalizeName(name),
+            InstagramUserId = NormalizeInstagramUserId(instagramUserId),
+            InstagramUsername = NormalizeInstagramUsername(instagramUsername),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+    /// <summary>
+    /// Spec de Shopify 2026-10-15 §6.2.1 paso 4: el comprador de una venta externa que no trajo lo necesario para una
+    /// ficha completa. Nombre, teléfono, correo y país si vienen; sin documento, domicilio, clasificación, CUC ni libreta.
+    /// Lo crea el sistema (<c>CustomerProvisioning</c>), nunca una persona por HTTP. El nombre por defecto lo decide quien
+    /// llama; acá sólo se exige que llegue.
+    ///
+    /// A diferencia del alta completa, un contacto que no sirve se **descarta** en vez de rechazarse: el owner decidió
+    /// que el pedido de Shopify entra aunque el comprador venga a medias, y un correo mal escrito no puede frenarlo. La
+    /// ficha queda incompleta y quien la complete pone los datos buenos.
+    /// </summary>
+    public static Customer CreateIncompleteFromExternalSale(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string? phone,
+        string? email,
+        string? country,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedName = NormalizeName(name);
+        var normalizedPhone = string.IsNullOrWhiteSpace(phone) || phone.Trim().Length > CustomerContactInfo.PhoneMaxLength
+            ? null
+            : phone.Trim();
+        var trimmedEmail = email?.Trim();
+        var normalizedEmail = string.IsNullOrEmpty(trimmedEmail) ||
+                              trimmedEmail.Length > CustomerContactInfo.EmailMaxLength ||
+                              !CustomerContactInfo.IsPlausibleEmail(trimmedEmail)
+            ? null
+            : trimmedEmail.ToLowerInvariant();
+        var trimmedCountry = country?.Trim();
+        var normalizedCountry = trimmedCountry is { Length: CustomerContactInfo.CountryLength } && trimmedCountry.All(char.IsAsciiLetter)
+            ? trimmedCountry.ToUpperInvariant()
+            : null;
+        return new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = normalizedName,
+            Phone = normalizedPhone,
+            Email = normalizedEmail,
+            Country = normalizedCountry,
+            PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, normalizedCountry ?? UnknownRegion),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
+
+    public static string NormalizeInstagramUserId(string value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > InstagramUserIdMaxLength || !trimmed.All(char.IsAsciiDigit)
+            ? throw new ArgumentException($"An Instagram user id has 1 to {InstagramUserIdMaxLength} digits.", nameof(value))
+            : trimmed;
+    }
+
+    public static string? NormalizeInstagramUsername(string? value)
+    {
+        var trimmed = value?.Trim().TrimStart('@');
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed.Length <= InstagramUsernameMaxLength ? trimmed : trimmed[..InstagramUsernameMaxLength];
+    }
+
+    public static string NormalizeWhatsAppUserId(string value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) || trimmed.Length > WhatsAppUserIdMaxLength
+            ? throw new ArgumentException($"A WhatsApp user id has 1 to {WhatsAppUserIdMaxLength} characters.", nameof(value))
+            : trimmed;
+    }
+
+    private void EnsureComplete()
+    {
+        if (!IsComplete)
+        {
+            throw new InvalidOperationException($"Customer '{Id}' is incomplete; complete it before updating it.");
+        }
+    }
 
     /// <summary>Agrega una direccion. La primera de un cliente —o una marcada como principal—
     /// desplaza a la que lo era: el agregado no admite dos.</summary>
     public CustomerAddress AddAddress(
         CustomerAddressDetails details, bool isPrincipal, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
+        // Spec 2026-10-10 §5.2: no hay edición parcial de un incompleto. La libreta nace al completarlo
+        // (Complete), con la dirección del PUT.
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
 
         var address = CustomerAddress.Create(Id, details, occurredAt);
         _addresses.Add(address);
@@ -282,6 +644,7 @@ public sealed class Customer
         bool isPrincipal,
         DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         var address = FindAddress(addressId);
@@ -299,6 +662,7 @@ public sealed class Customer
 
     public void MakeAddressPrincipal(CustomerAddressId addressId, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         ApplyPrincipal(FindAddress(addressId), true, occurredAt);
@@ -312,6 +676,7 @@ public sealed class Customer
     /// </summary>
     public void RemoveAddress(CustomerAddressId addressId, DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         EnsureActive();
 
         var address = FindAddress(addressId);
@@ -358,7 +723,9 @@ public sealed class Customer
     /// el request, pero no queda intocado: si <paramref name="commercial"/> trae una clasificacion
     /// distinta a la actual, su prefijo se reescribe con <paramref name="classificationPrefix"/> —
     /// regla de negocio confirmada, "cuando cambie el tamano del cliente, cambiara unicamente el
-    /// prefijo; el departamento y el consecutivo se conservaran".
+    /// prefijo; el departamento y el consecutivo se conservaran". Quitar la clasificacion es el
+    /// mismo cambio con un prefijo vacio: <paramref name="classificationPrefix"/> llega
+    /// <c>null</c>, y solo vale asi cuando la clasificacion tambien lo es.
     ///
     /// La ciudad y la clasificacion **si** se pueden reemplazar aca: un cliente se puede mudar de
     /// ciudad o cambiar de categoria comercial. La ciudad no reconstruye el CUC (el departamento
@@ -368,11 +735,15 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerIdentification identification,
+        PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
-        string classificationPrefix,
-        DateTimeOffset occurredAt)
+        string? classificationPrefix,
+        DateTimeOffset occurredAt,
+        IPhoneNumberNormalizer? phoneNormalizer = null)
     {
+        EnsureNotMerged();
+        EnsureComplete();
         EnsureActive();
 
         // Todo se normaliza a locales **antes** de asignar nada. Asignar campo por campo mientras
@@ -389,22 +760,46 @@ public sealed class Customer
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
+        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
-        var normalizedClassificationPrefix = NormalizeClassificationPrefix(classificationPrefix);
+        // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
+        // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
+        var normalizedClassificationPrefix = normalizedClassificationId is null
+            ? string.Empty
+            : NormalizeClassificationPrefix(classificationPrefix ?? string.Empty);
 
         Name = normalizedName;
         BusinessName = normalizedBusinessName;
         Assign(normalizedIdentification);
+        PersonType = personType;
         Assign(normalizedContact);
+        PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
 
         if (normalizedClassificationId != ClassificationId)
         {
-            Cuc = ReplaceClassificationPrefix(Cuc, normalizedClassificationPrefix);
+            // EnsureComplete garantiza el CUC: una ficha completa siempre lo tiene (CK_customers_complete_fields).
+            Cuc = ReplaceClassificationPrefix(Cuc!, normalizedClassificationPrefix);
         }
 
         Assign(commercial);
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>El backfill (spec §6.5): recalcula sin subir la versión ni <c>UpdatedAt</c>, porque nadie
+    /// editó al cliente. <c>true</c> si cambió.</summary>
+    public bool RecomputePhoneE164(IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+
+        var next = phoneNormalizer.ToE164(Phone, Country ?? UnknownRegion);
+        if (string.Equals(next, PhoneE164, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        PhoneE164 = next;
+        return true;
     }
 
     // Desarma el value object en las dos columnas. Ver Customer.Identification para el porque del
@@ -441,6 +836,7 @@ public sealed class Customer
 
     public void Deactivate(DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         if (!IsActive)
         {
             throw new CustomersDomainException(
@@ -462,13 +858,14 @@ public sealed class Customer
     /// que corregir en producto despues de entregarlo, y que `EMP-08` ya nacio cubriendo. No
     /// estrena permiso: reactivar es administrar.
     ///
-    /// No revalida la unicidad de la identificacion: <c>IX_customers_tenant_identification</c> es
-    /// unico **sin filtro parcial**, asi que inactivar nunca libero el documento y reactivar no
-    /// puede colisionar con nadie. Si alguien le agrega un filtro parcial al indice, esta
-    /// suposicion deja de valer.
+    /// No revalida la unicidad de la identificacion: inactivar no libera el documento, asi que
+    /// reactivar no puede colisionar con nadie. Un cliente fusionado si libera el suyo (el indice
+    /// pasa a ser parcial, spec 2026-10-24), pero no se reactiva: <see cref="EnsureNotMerged"/>
+    /// lo rechaza antes de llegar aca.
     /// </summary>
     public void Activate(DateTimeOffset occurredAt)
     {
+        EnsureNotMerged();
         if (IsActive)
         {
             throw new CustomersDomainException(
@@ -481,12 +878,119 @@ public sealed class Customer
         UpdatedAt = occurredAt;
     }
 
+    /// <summary>
+    /// Apaga el marketing. Idempotente: si ya estaba apagado conserva el momento y el origen originales —el primero
+    /// es el que explica por qué— y devuelve <c>false</c>.
+    ///
+    /// No sube <see cref="Version"/> ni <see cref="UpdatedAt"/> a propósito: es un interruptor aparte de la ficha,
+    /// y subirla le daría un 412 a quien la tiene abierta para editarla (misma razón por la que las notas son otro
+    /// agregado).
+    /// </summary>
+    public bool OptOutOfMarketing(MarketingConsentSource source, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (MarketingOptOut)
+        {
+            return false;
+        }
+
+        MarketingOptOut = true;
+        MarketingOptOutAt = occurredAt;
+        MarketingOptOutSource = source;
+        return true;
+    }
+
+    /// <summary>La vuelta de <see cref="OptOutOfMarketing"/>: borra el rastro. <c>false</c> si ya aceptaba marketing.</summary>
+    public bool OptInToMarketing()
+    {
+        EnsureNotMerged();
+        if (!MarketingOptOut)
+        {
+            return false;
+        }
+
+        MarketingOptOut = false;
+        MarketingOptOutAt = null;
+        MarketingOptOutSource = null;
+        return true;
+    }
+
+    /// <summary>Spec 2026-10-24 §3.1: va primero en toda escritura, antes de <see cref="EnsureActive"/>, para que el
+    /// código diga «fusionado» y no «inactivo».</summary>
+    public void EnsureNotMerged()
+    {
+        if (IsMerged)
+        {
+            throw new CustomersDomainException(CustomersErrorCodes.Merged, "A merged customer cannot be edited.");
+        }
+    }
+
+    // Las usa sólo CustomerMergePlan (mismo ensamblado): la fusión escribe campos que ninguna operación pública toca.
+    internal void ApplyMergedInto(
+        CustomerId survivorId, DateTimeOffset now, bool releaseWhatsAppUserId, bool releaseInstagram, bool releaseIdentification)
+    {
+        MergedIntoId = survivorId;
+        MergedAt = now;
+        IsActive = false;
+        if (releaseWhatsAppUserId)
+        {
+            WhatsAppUserId = null;
+        }
+
+        if (releaseInstagram)
+        {
+            InstagramUserId = null;
+            InstagramUsername = null;
+        }
+
+        if (releaseIdentification)
+        {
+            IdentificationType = null;
+            IdentificationNumber = null;
+        }
+
+        Touch(now);
+    }
+
+    internal void FillEmail(string value) => Email = value;
+
+    internal void FillBusinessName(string value) => BusinessName = value;
+
+    internal void FillPhone(string value, string? e164)
+    {
+        Phone = value;
+        PhoneE164 = e164;
+    }
+
+    internal void FillWhatsAppUserId(string value) => WhatsAppUserId = value;
+
+    internal void FillInstagram(string userId, string? username)
+    {
+        InstagramUserId = userId;
+        InstagramUsername = username;
+    }
+
+    // El tipo de persona se llena junto con el documento y solo con él: un sobreviviente que ya tenía documento no pasa por
+    // aquí, y uno sin tipo nunca recibe el del fusionado si conservó el suyo (spec 2026-10-26, fusión).
+    internal void FillIdentification(Domain.IdentificationType type, string number, Domain.PersonType? personType)
+    {
+        IdentificationType = type;
+        IdentificationNumber = number;
+        PersonType = personType;
+    }
+
+    internal void FillCountry(string value) => Country = value;
+
+    internal void FillAddress(string value) => Address = value;
+
+    internal void TouchForMerge(DateTimeOffset now) => Touch(now);
+
     private void EnsureActive()
     {
         if (!IsActive)
         {
             throw new CustomersDomainException(
-                "customers.customer.inactive",
+                CustomersErrorCodes.Inactive,
                 "An inactive customer cannot be edited.");
         }
     }
@@ -600,9 +1104,36 @@ public sealed class Customer
             : (country, null, normalized.CityName);
     }
 
-    private static ClientClassificationId EnsureValidClassificationId(
-        ClientClassificationId classificationId) =>
-        classificationId.Value == Guid.Empty
+    /// <summary>
+    /// Spec 2026-10-26: en Colombia una persona jurídica se identifica con NIT. Fuera de Colombia el NIT no
+    /// aplica y la regla tampoco. Se comprueba **antes** de asignar nada, dentro de la garantía de
+    /// todo-o-nada de <see cref="Update"/> y <see cref="Complete"/>. Marca <c>IdentificationType</c> porque es el
+    /// campo que la persona corrige en el formulario.
+    /// </summary>
+    private static void EnsurePersonTypeMatches(
+        PersonType? personType, IdentificationType identificationType, string country)
+    {
+        if (personType != Domain.PersonType.Juridica
+            || identificationType == Domain.IdentificationType.Nit
+            || !string.Equals(country, ColombiaCountryCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        throw new CustomersDomainException(
+            CustomersErrorCodes.PersonTypeRequiresNit,
+            "A legal entity is identified by its NIT.",
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["IdentificationType"] = ["A legal entity is identified by its NIT."]
+            });
+    }
+
+    // Nulo es un cliente sin clasificacion y vale. Un Guid.Empty, en cambio, es un id roto y no
+    // una forma de decir "ninguna": se sigue rechazando.
+    private static ClientClassificationId? EnsureValidClassificationId(
+        ClientClassificationId? classificationId) =>
+        classificationId is { Value: var value } && value == Guid.Empty
             ? throw new CustomersDomainException(
                 "customers.customer.classification_required",
                 "The customer classification is required.")

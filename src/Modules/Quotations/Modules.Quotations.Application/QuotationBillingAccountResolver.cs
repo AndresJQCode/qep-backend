@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -27,6 +28,10 @@ internal static class QuotationBillingAccountResolver
         // el recurso entero, así que mandarlo en null la limpia.
         if (request is null) return null;
 
+        // Before the company lookup: a currency outside the catalogue can never be quoted, whatever
+        // the company has on file (spec D6; replaces the former Quotations-only currency code).
+        var currency = Currencies.Normalize(request.Currency);
+
         var company = await lookup.FindAsync(tenantId, request.CompanyId, cancellationToken);
 
         // Mismo código para "no existe" y "es de otro tenant", igual que con el cliente:
@@ -41,7 +46,7 @@ internal static class QuotationBillingAccountResolver
         var matches = company.BankAccounts.Any(account =>
             string.Equals(account.BankName, request.BankName?.Trim(), StringComparison.OrdinalIgnoreCase) &&
             account.AccountNumber == request.AccountNumber?.Trim() &&
-            string.Equals(account.Currency, request.Currency?.Trim(), StringComparison.OrdinalIgnoreCase));
+            string.Equals(account.Currency, currency, StringComparison.OrdinalIgnoreCase));
 
         if (!matches)
         {
@@ -55,7 +60,7 @@ internal static class QuotationBillingAccountResolver
             CompanyId = company.Id,
             BankName = request.BankName,
             AccountNumber = request.AccountNumber,
-            Currency = request.Currency
+            Currency = currency
         };
     }
 }

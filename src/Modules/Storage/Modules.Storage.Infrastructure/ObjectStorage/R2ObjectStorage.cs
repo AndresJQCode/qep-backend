@@ -126,4 +126,58 @@ internal sealed class R2ObjectStorage(IAmazonS3 client, IOptions<StorageOptions>
             },
             cancellationToken);
     }
+
+    public Task UploadAsync(
+        string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
+    {
+        var request = new PutObjectRequest
+        {
+            BucketName = Bucket,
+            Key = key,
+            InputStream = content,
+            ContentType = contentType,
+            AutoCloseStream = false,
+            // Las mismas dos banderas que el byte[] (ver arriba): R2 no implementa el cuerpo firmado en
+            // chunks. Sin chunks el SDK necesita el largo antes de subir, y un stream de red no lo sabe.
+            UseChunkEncoding = false,
+            DisablePayloadSigning = true,
+        };
+        request.Headers.ContentLength = contentLength;
+        return client.PutObjectAsync(request, cancellationToken);
+    }
+
+    public async Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.GetObjectAsync(Bucket, key, cancellationToken);
+            return new StoredObjectStream(
+                response.ResponseStream,
+                response.Headers.ContentType ?? "application/octet-stream",
+                response.ContentLength);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    // Spec 2026-10-20 D10: el stream de GetObject no admite búsqueda, así que el rango viaja en el GET y R2 sólo manda ese tramo.
+    public async Task<StoredObjectStream?> OpenReadRangeAsync(string key, long first, long last, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.GetObjectAsync(
+                new GetObjectRequest { BucketName = Bucket, Key = key, ByteRange = new ByteRange(first, last) },
+                cancellationToken);
+            return new StoredObjectStream(
+                response.ResponseStream,
+                response.Headers.ContentType ?? "application/octet-stream",
+                response.ContentLength);
+        }
+        catch (AmazonS3Exception exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
 }

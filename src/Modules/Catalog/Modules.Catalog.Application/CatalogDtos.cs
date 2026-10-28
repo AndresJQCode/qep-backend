@@ -1,57 +1,191 @@
+using System.Text.Json.Serialization;
+
 namespace Modules.Catalog.Application;
 
+// Variantes (spec 2026-10-20 §6). El detalle es lo que el formulario dibuja y lo que
+// vuelve del PUT, entero, para que lo repinte sin otra lectura.
+//
+// Decisiones de forma (BFF; el backend no ve la pantalla que las pidió):
+// - Code, precios, escalas y empaques ya no están arriba: son de cada variante. Un producto sin
+//   opciones trae Variants con **una** sola, y el formulario la pinta como los campos de siempre
+//   (spec §3.2). Un campo de arriba que valiera «el de la única variante» obligaría a la pantalla a
+//   saber cuándo vale y cuándo no.
+// - ImageFileId e ImageUrl se quedan: son la imagen principal (la primera de Gallery), y la grilla,
+//   la cotización y el POS la pintan sin recorrer la galería.
+// - Version viaja para que el PUT la devuelva como ExpectedVersion: sin ella, dos personas
+//   editando el mismo producto se pisan en silencio (gana el último).
 public sealed record ProductDto(
     Guid Id,
     string Name,
-    string Code,
     bool IsActive,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
-    decimal? PriceBaseUsd,
-    decimal? PriceBaseCop,
-    IReadOnlyList<int> PackagingUnits,
-    IReadOnlyCollection<PriceScaleResponse> PriceScales,
+    Guid? CategoryId,
+    IReadOnlyList<ProductOptionResponse> Options,
+    IReadOnlyList<ProductVariantResponse> Variants,
+    IReadOnlyList<ProductGalleryImageResponse> Gallery,
+    long Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 public sealed record ProductResponse(
     Guid Id,
     string Name,
-    string Code,
     bool IsActive,
     string? Description,
+    // La imagen principal: el archivo de la primera foto de Gallery. Derivada; se cambia
+    // reordenando Gallery en el PUT.
     Guid? ImageFileId,
     // CAT-05b. Derivado y de sólo lectura: dónde se sirve el archivo es de Storage, no de
-    // catalog. Viene en null si la imagen no fue publicada. `ImageFileId` se mantiene porque es
-    // lo que el cliente manda de vuelta en el PUT.
+    // catalog. Viene en null si la imagen no fue publicada o es de otro tenant.
     string? ImageUrl,
     Guid? TaxRateId,
-    // CAT-09. El precio en dos monedas fijas — reemplazó por completo al viejo Price, retirado.
-    decimal? PriceBaseUsd,
-    decimal? PriceBaseCop,
-    // Los empaques del producto, ascendentes. Viaja siempre, vacío incluido, y no se omite
-    // cuando no hay: el formulario los repinta tal cual, y la pantalla de cotización los
-    // necesita para explicar una escala `packaging_unit` sin pedir el producto aparte.
-    IReadOnlyList<int> PackagingUnits,
-    IReadOnlyCollection<PriceScaleResponse> PriceScales,
+    Guid? CategoryId,
+    // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
+    IReadOnlyList<ProductOptionResponse> Options,
+    // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
+    // también las inactivas, y el PUT exige que vuelvan todas las guardadas salvo las que pide
+    // eliminar en DeletedVariantIds (spec §3.3, §6); cada una trae CanDelete para anticiparlo.
+    IReadOnlyList<ProductVariantResponse> Variants,
+    // La galería en orden; la primera es la principal.
+    IReadOnlyList<ProductGalleryImageResponse> Gallery,
+    long Version,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 /// <summary>
-/// Precio y escalas de un producto (CAT-09), tal como los manda el cliente. Al menos uno de
-/// <c>BaseUsd</c>/<c>BaseCop</c> es obligatorio — el dominio lo exige incondicionalmente, así
-/// que ningún producto se crea sin esto.
+/// Una opción del producto. <paramref name="Values"/> son los valores que usa alguna variante de
+/// este producto, en el orden de la biblioteca —no la biblioteca entera, que el formulario lee de
+/// <c>/catalog/options</c>—: es lo que la pantalla necesita para dibujar los encabezados de la
+/// tabla de variantes sin cruzar ids. Mismo <c>{ id, name }</c> que <c>OptionValueResponse</c>.
 /// </summary>
+public sealed record ProductOptionResponse(
+    Guid Id,
+    string Name,
+    IReadOnlyList<ProductOptionValueResponse> Values);
+
+public sealed record ProductOptionValueResponse(Guid Id, string Name);
+
+/// <param name="Name">El nombre visible ya armado (spec §3.4: «Camiseta – M / Azul»; el del
+/// producto en la variante por defecto). El frontend no concatena: es el mismo texto que guardan
+/// las líneas, el PDF y el POS, y armarlo en dos lugares los dejaría distintos.</param>
+/// <param name="OptionValueIds">Un valor por opción, en el orden de <c>Options</c>; vacío en la
+/// variante por defecto.</param>
+/// <param name="Prices">Igual que el antiguo <c>prices</c> del producto: en orden de catálogo.</param>
+/// <param name="PriceScales">Ordenadas por <c>FromUnit</c>, con los finales de cada moneda.</param>
+/// <param name="PackagingUnits">Viajan siempre, vacíos incluidos: el formulario los repinta tal cual.</param>
+/// <param name="GalleryImageId">La fila de galería que muestra la variante.</param>
+/// <param name="GalleryFileId">El archivo de esa foto: es lo que el PUT pide de vuelta
+/// (<c>ProductVariantRequest.GalleryFileId</c>), así el formulario no cruza Gallery para
+/// reenviarlo.</param>
+/// <param name="ImageUrl">La URL que la variante muestra: la de su foto o, sin foto, la de la
+/// principal del producto (spec §3.3). Resuelta acá para que la pantalla no repita la regla.</param>
+/// <param name="CanDelete">Si el formulario puede ofrecer «Eliminar» en vez de «Desactivar»
+/// (spec §3.3): true cuando ninguna línea de cotización, pedido o venta del POS guarda esta
+/// variante. Viaja calculado porque desde la pantalla no se ven esas líneas. «Eliminar» es mandar
+/// su id en <c>UpdateProductRequest.DeletedVariantIds</c> (omitirla de <c>Variants</c> no borra:
+/// responde <c>missing_in_request</c>): el backend la borra si sigue sin uso y la desactiva si,
+/// entretanto, alguien la vendió (la respuesta lo muestra). Con false, pedir su borrado la
+/// desactiva. No mira la regla de «al menos una variante activa»: esa la responde el PUT con su
+/// propio código.</param>
+public sealed record ProductVariantResponse(
+    Guid Id,
+    string Name,
+    string Code,
+    string? Barcode,
+    IReadOnlyList<Guid> OptionValueIds,
+    IReadOnlyDictionary<string, decimal> Prices,
+    IReadOnlyCollection<PriceScaleResponse> PriceScales,
+    IReadOnlyList<int> PackagingUnits,
+    Guid? GalleryImageId,
+    Guid? GalleryFileId,
+    string? ImageUrl,
+    bool IsActive,
+    bool CanDelete);
+
+/// <param name="Url">Null si el archivo no está publicado o no es del tenant, igual que
+/// <c>ImageUrl</c>; <c>FileId</c> viaja siempre porque es lo que el PUT manda de vuelta.</param>
+public sealed record ProductGalleryImageResponse(Guid Id, Guid FileId, string? Url);
+
+/// <summary>
+/// Una fila del listado de productos. El listado sigue siendo por producto (spec §6), así que no
+/// trae las variantes: trae lo que la grilla pinta de ellas.
+/// </summary>
+/// <param name="Code">El código de la única variante; null cuando el producto tiene varias
+/// (<paramref name="VariantCount"/> lo explica). La grilla de un catálogo sin variantes se ve como
+/// antes, y la de uno con variantes no inventa un código que no es de nadie.</param>
+/// <param name="VariantCount">Todas las variantes, activas e inactivas.</param>
+/// <param name="PriceRange">Por moneda, el menor y el mayor precio entre las variantes
+/// **activas**, en orden de catálogo: con 2.048 variantes posibles, sumar o recorrer del lado del
+/// cliente no es opción. Una sola variante da Min = Max.</param>
+/// <param name="Variants">Sólo con <c>includeVariants=true</c> (el selector de productos de
+/// cotizaciones y pedidos, spec §6); sin el parámetro no viaja, ni siquiera como null, y la grilla
+/// del catálogo no paga el costo. Son las variantes **vendibles** del producto —activas, de un
+/// producto activo— en el orden de presentación; un producto dado de baja trae la lista vacía.
+/// Es BFF a propósito: el selector tiene que agregar una línea (variante, código, escalas y
+/// empaques para la cantidad inicial) sin pedir el detalle de cada producto, y antes de las
+/// variantes todo eso venía en el propio ítem del listado.</param>
+public sealed record ProductListItemDto(
+    Guid Id,
+    string Name,
+    string? Code,
+    bool IsActive,
+    string? Description,
+    Guid? ImageFileId,
+    string? ImageUrl,
+    Guid? TaxRateId,
+    Guid? CategoryId,
+    int VariantCount,
+    IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<ProductSellableVariantDto>? Variants = null);
+
+public sealed record PriceRangeResponse(decimal Min, decimal Max);
+
+/// <summary>
+/// Una variante vendible en el selector de productos (<see cref="ProductListItemDto.Variants"/>).
+/// Es lo que el detalle trae de una variante (<see cref="ProductVariantResponse"/>), sin lo que sólo
+/// sirve al formulario de edición: ni <c>CanDelete</c> (exigiría la consulta de uso de cada una) ni
+/// los ids de galería ni <c>IsActive</c> (todas lo son) ni <c>OptionValueIds</c> (el nombre ya
+/// viene armado).
+/// </summary>
+/// <param name="Name">El nombre visible ya armado (spec §3.4), el mismo que guarda la línea: el
+/// selector no concatena producto y valores.</param>
+/// <param name="Prices">En orden de catálogo, como el detalle.</param>
+/// <param name="PriceScales">Ordenadas por <c>FromUnit</c>, con la misma forma que el detalle y que
+/// el antiguo <c>priceScales</c> del producto: <c>quotePriceScalesOf</c> las lee tal cual.</param>
+/// <param name="PackagingUnits">Viajan siempre, vacíos incluidos: una escala
+/// <c>packaging_unit</c> se explica con los empaques de **esta** variante.</param>
+/// <param name="ImageUrl">La foto de la variante o, sin ella, la principal del producto; null si
+/// el archivo no está publicado o no es del tenant.</param>
+public sealed record ProductSellableVariantDto(
+    Guid Id,
+    string Name,
+    string Code,
+    string? Barcode,
+    IReadOnlyDictionary<string, decimal> Prices,
+    IReadOnlyCollection<PriceScaleResponse> PriceScales,
+    IReadOnlyList<int> PackagingUnits,
+    string? ImageUrl);
+
+/// <summary>
+/// Precio y escalas de un producto (CAT-09), tal como los manda el cliente.
+/// </summary>
+/// <param name="Prices">At least one entry (the domain answers <c>catalog.product.price_required</c>).
+/// Keys are catalogue codes; an unknown one is a 422 on <c>errors["Pricing.Prices.&lt;CODE&gt;"]</c>.
+/// baseUsd/baseCop from the previous contract are ignored if present.</param>
 /// <param name="PackagingUnits">Los empaques del producto (p. ej. <c>[100, 150]</c>). Viajan en
 /// el precio y no en los datos maestros porque una escala <c>packaging_unit</c> se valida
 /// contra ellos: el dominio los revisa juntos, y un empaque que llegara por otro request dejaría
 /// una ventana con escalas que exigen empaque y ninguno cargado. Null es lo mismo que vacío,
 /// para que un cuerpo que no los manda siga siendo válido mientras no tenga escalas de empaque.</param>
 public sealed record ProductPricingRequest(
-    decimal? BaseUsd,
-    decimal? BaseCop,
+    IReadOnlyDictionary<string, decimal>? Prices,
     IReadOnlyCollection<PriceScaleRequest>? Scales,
     IReadOnlyCollection<int>? PackagingUnits);
 
@@ -62,6 +196,9 @@ public sealed record ProductPricingRequest(
 ///
 /// No lleva unidad de empaque: una escala <c>packaging_unit</c> usa los empaques del producto
 /// (<see cref="ProductPricingRequest.PackagingUnits"/>).
+///
+/// No finals: they are derived from each product price and the discount (spec D4).
+/// finalUsd/finalCop sent by an old client are ignored, not rejected.
 /// </summary>
 /// <param name="AllowGrouping">Nullable y último: los cuerpos que no lo mandan mantienen el
 /// comportamiento de siempre, que es no agrupar.</param>
@@ -71,13 +208,13 @@ public sealed record PriceScaleRequest(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    decimal? FinalUsd,
-    decimal? FinalCop,
     bool? AllowGrouping);
 
 /// <param name="Restriction">Null en una escala incompleta, la que deja la copia de escalas
 /// (<c>PriceScaleCopy</c>). No hay un campo aparte que lo diga: el frontend lo deriva de este null,
 /// y un segundo campo sólo abriría la puerta a que los dos se contradigan.</param>
+/// <param name="Finals">Derived with <c>PriceScale.FinalFor</c> for each currency the product has,
+/// in catalogue order. Read-only.</param>
 public sealed record PriceScaleResponse(
     Guid Id,
     int FromUnit,
@@ -85,9 +222,8 @@ public sealed record PriceScaleResponse(
     decimal Discount,
     string? Restriction,
     int? Multiple,
-    decimal? FinalUsd,
-    decimal? FinalCop,
-    bool AllowGrouping);
+    bool AllowGrouping,
+    IReadOnlyDictionary<string, decimal> Finals);
 
 /// <summary>El sobre del listado, con el total que la paginación necesita — mismo criterio que
 /// `CustomersResponse`.</summary>
@@ -101,51 +237,105 @@ public sealed record ProductExportResponse(
     DateTimeOffset ExpiresAt);
 
 public sealed record ProductsResponse(
-    IReadOnlyCollection<ProductResponse> Items,
+    IReadOnlyCollection<ProductListItemDto> Items,
     int Total,
     int Page,
     int PageSize);
 
-// IsActive no viaja en los requests: un producto nace activo y sólo cambia por
-// /deactivate. Un booleano editable convertiría la desactivación en un PUT común y la
-// dejaría sin su propia entrada de auditoría, el mismo razonamiento que mantuvo suspender
-// aparte de editar roles en AUTH-06.
+// IsActive del producto no viaja en los requests: un producto nace activo y sólo cambia por
+// /deactivate. Un booleano editable convertiría la desactivación en un PUT común y la dejaría sin
+// su propia entrada de auditoría, el mismo razonamiento que mantuvo suspender aparte de editar
+// roles en AUTH-06. El IsActive de cada **variante** sí viaja (spec §3.3): es parte de la tabla
+// de variantes que el formulario edita.
 //
-// Description/ImageFileId/TaxRateId sí viajan, y son opcionales: un producto sin ninguno
-// sigue siendo válido. En el PUT, mandarlos en null los **limpia** — el verbo reemplaza el
-// recurso entero. Pricing es la excepción: no es opcional, porque el precio en al menos una
-// moneda es obligatorio incondicionalmente (CAT-09).
+// Description/TaxRateId son opcionales, y en el PUT mandarlos en null los **limpia** — el verbo
+// reemplaza el recurso entero. Lo mismo OptionIds y Gallery: null es lista vacía.
+//
+// Con las variantes, Code y Pricing salieron del producto hacia cada variante, y ImageFileId hacia
+// Gallery (la primera foto es la principal). Un producto sin opciones manda una sola variante, sin
+// OptionValueIds.
 public sealed record CreateProductRequest(
     string Name,
-    string Code,
     string? Description,
-    Guid? ImageFileId,
     Guid? TaxRateId,
-    ProductPricingRequest Pricing);
+    Guid? CategoryId,
+    IReadOnlyList<Guid>? OptionIds,
+    IReadOnlyList<ProductVariantRequest>? Variants,
+    IReadOnlyList<Guid>? Gallery);
 
 /// <summary>
-/// El cuerpo de la copia de escalas: de dónde salen y a quiénes van. No lleva las escalas
+/// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
+/// (spec §3.3.1): con id es esa variante guardada; sin id, una nueva.
+/// </summary>
+/// <param name="OptionValueIds">Un valor por opción, en el orden de <c>OptionIds</c>. En el PUT,
+/// null en una variante guardada significa «los suyos»: se proyectan a las opciones nuevas —una
+/// opción que se quita suelta su valor, una que se agrega toma su primer valor activo—, así quitar
+/// o agregar una opción no obliga a la pantalla a reescribir cada fila.</param>
+/// <param name="Pricing">Obligatorio en el POST. En el PUT, null en una variante guardada deja su
+/// precio, escalas y empaques como están; en una nueva los copia de la variante guardada que más
+/// valores comparte con ella (spec §3.3.1: «copiadas de la variante de su misma talla»).</param>
+/// <param name="GalleryFileId">La foto de la variante, por id de archivo: una foto que se sube en el
+/// mismo PUT todavía no tiene fila de galería. Tiene que estar en <c>Gallery</c>.</param>
+/// <param name="IsActive">Null es activa en una variante nueva y «como está» en una guardada.</param>
+public sealed record ProductVariantRequest(
+    Guid? Id,
+    string? Code,
+    string? Barcode,
+    IReadOnlyList<Guid>? OptionValueIds,
+    ProductPricingRequest? Pricing,
+    Guid? GalleryFileId,
+    bool? IsActive);
+
+/// <summary>
+/// El cuerpo de la copia de escalas: de qué variante salen y a cuáles van. No lleva las escalas
 /// mismas a propósito — el backend las lee del origen. Que las mandara el cliente es lo que
 /// permitía copiar algo distinto de lo que la pantalla mostró.
 /// </summary>
+/// <param name="SourceVariantId">La variante que da las escalas. Es una **variante** y no un
+/// producto porque cada variante tiene las suyas (spec 2026-10-20 §4): copiar las de «Camiseta – M»
+/// a «Camiseta – L» es un caso corriente, y un producto con varias variantes no tiene «unas»
+/// escalas que copiar. Para un producto sin opciones el frontend manda el id de su única variante,
+/// que es el mismo del producto.</param>
+/// <param name="TargetVariantIds">Las variantes que las reciben, de uno o de varios productos, y
+/// **contadas en variantes** contra el tope de 200 (<see cref="PriceScaleCopyLimits.MaxTargets"/>):
+/// la pantalla de copia deja marcar variantes sueltas de productos distintos, y un tope por
+/// productos dejaría pasar un lote de miles de filas. Sin repetidos ni el origen.</param>
 public sealed record CopyPriceScalesRequest(
-    Guid SourceProductId,
-    IReadOnlyList<Guid> TargetProductIds);
+    Guid SourceVariantId,
+    IReadOnlyList<Guid> TargetVariantIds);
 
 /// <summary>
-/// Los destinos ya actualizados, en el orden en que se pidieron. Devolverlos evita que el
-/// cliente tenga que releer el listado para pintar el resultado.
+/// Los productos que recibieron escalas, ya actualizados, cada uno **una sola vez** y en el orden
+/// en que aparece su primera variante de destino en la petición, con todas sus variantes y su
+/// <c>canDelete</c>. Es por producto y no por variante porque el formulario repinta el
+/// producto entero (su tabla de variantes con las escalas nuevas), y devolverlos evita que el
+/// cliente tenga que releer el listado o cada detalle para pintar el resultado.
 /// </summary>
 public sealed record CopyPriceScalesResponse(
     IReadOnlyCollection<ProductResponse> Products);
 
+/// <param name="ExpectedVersion">La <c>Version</c> que el formulario leyó. Si el producto cambió
+/// desde entonces, el PUT responde 412 <c>concurrency.conflict</c> en vez de pisar lo que guardó
+/// otra persona. Mismo nombre que el resto de los PUT del repositorio (notas, etiquetas,
+/// cotizaciones).</param>
+/// <param name="DeletedVariantIds">Las variantes guardadas que el usuario pidió eliminar (spec §3.3 y
+/// §6). Se borran si ninguna línea de cotización, pedido o venta del POS las guarda y se desactivan
+/// si alguna sí (la respuesta las trae inactivas). Una guardada que no viene en
+/// <c>Variants</c> ni acá responde 422 <c>catalog.variant.missing_in_request</c>: **omitir no
+/// borra**. Es BFF a propósito: la tabla de variantes llega a 2.048 filas y el formulario la
+/// pagina o virtualiza, así que una fila ausente puede ser una página que no se mandó, no una orden
+/// de borrar. Un id que además viene en <c>Variants</c> da <c>duplicated_in_request</c>; uno que no
+/// es de este producto, <c>catalog.variant.not_found</c>.</param>
 public sealed record UpdateProductRequest(
+    long ExpectedVersion,
     string Name,
-    string Code,
     string? Description,
-    Guid? ImageFileId,
     Guid? TaxRateId,
-    ProductPricingRequest Pricing);
+    Guid? CategoryId,
+    IReadOnlyList<Guid>? OptionIds,
+    IReadOnlyList<ProductVariantRequest>? Variants,
+    IReadOnlyList<Guid>? Gallery,
+    IReadOnlyList<Guid>? DeletedVariantIds = null);
 
 public sealed record TaxRateDto(
     Guid Id,
@@ -173,3 +363,45 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 public sealed record CreateTaxRateRequest(string Name, int Percentage);
 
 public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+
+public sealed record CategoryDto(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
+
+/// <param name="ProductCount">
+/// Los productos asignados **directamente** a la categoria, activos e inactivos; los de las
+/// descendientes no suman. El POS trae otro conteo.
+/// </param>
+/// <param name="Version">El <c>If-Match</c> de editar y borrar. Cambiar el acceso rápido no la sube.</param>
+/// <param name="PosQuickAccessPosition">
+/// Lugar entre los chips de acceso rápido de la caja (1..N, contiguos por tenant); null si no está fijada.
+/// </param>
+public sealed record CategoryResponse(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
+
+public sealed record CategoriesResponse(IReadOnlyList<CategoryResponse> Items);
+
+public sealed record CreateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>Renombra y/o mueve: los dos campos viajan siempre. <c>ParentId</c> null la deja como raíz.</summary>
+public sealed record UpdateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>
+/// Reemplaza la lista entera del acceso rápido: el orden es la posición (índice 0 → posición 1).
+/// Lista vacía = nada fijado. Anulable sólo para que un cuerpo sin el campo salga como 422 del
+/// validador y no como un 500 al recorrerlo.
+/// </summary>
+public sealed record ReplacePosQuickAccessRequest(IReadOnlyList<Guid>? CategoryIds);

@@ -16,14 +16,19 @@ public sealed class UpdateQuotationItemValidator : AbstractValidator<UpdateQuota
     }
 }
 
+// Spec 2026-10-15 §4.4: una cotización Converted queda congelada. Editar el pedido pendiente se
+// hace sobre el pedido (SaveOrderEdits / AddOrderItems), no por acá: este handler sólo edita
+// Draft y Sent, y el dominio responde quotation.quotation.not_editable para el resto.
 public sealed class UpdateQuotationItemHandler(
     IQuotationRepository repository,
-    IOrderRepository orderRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateQuotationItemCommand> validator)
@@ -41,24 +46,6 @@ public sealed class UpdateQuotationItemHandler(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
 
-        // Mismo endpoint para dos pantallas (a pedido, 2026-09-15): una cotización Converted ya
-        // no admite EnsureEditable, pero "Editar" pedido pendiente ofrece corregir cantidad igual
-        // que el editor de Draft/Sent -- ver Quotation.UpdateItemQuantityAfterConversion.
-        Order? order = null;
-        if (quotation.Status == QuotationStatus.Converted)
-        {
-            order = await orderRepository.FindByQuotationIdAsync(
-                command.TenantId, quotation.Id, cancellationToken)
-                ?? throw OrderNotFound.For(command.QuotationId);
-
-            if (order.Status != OrderStatus.Pending)
-            {
-                throw new QuotationsDomainException(
-                    "order.order.not_pending",
-                    "Products can only be edited while the order is pending.");
-            }
-        }
-
         // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
         // — ver Quotation.RefreshCustomerTaxProfile.
         var customer = await customerLookup.FindAsync(
@@ -69,7 +56,7 @@ public sealed class UpdateQuotationItemHandler(
         }
 
         // Mismo código que Quotation.UpdateItemQuantity usaría si se le pasara un id
-        // desconocido: se busca acá primero porque hace falta el ProductId de la línea antes de
+        // desconocido: se busca acá primero porque hace falta el VariantId de la línea antes de
         // poder resolver su descuento.
         var item = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId)
             ?? throw new QuotationsDomainException(
@@ -83,35 +70,23 @@ public sealed class UpdateQuotationItemHandler(
         var pricing = await QuotationProductPricingResolver.ResolveAsync(
             pricingLookup,
             command.TenantId,
-            item.ProductId,
+            item.VariantId,
             command.Quantity,
             quotation.Currency, quotation.IsRetail,
             cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
-        if (order is not null)
-        {
-            quotation.UpdateItemQuantityAfterConversion(
-                item.Id,
-                command.Quantity,
-                pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage,
-                updatedBy,
-                now);
-        }
-        else
-        {
-            quotation.UpdateItemQuantity(
-                item.Id,
-                command.Quantity,
-                pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage,
-                updatedBy,
-                now);
-        }
+        quotation.UpdateItemQuantity(
+            item.Id,
+            command.Quantity,
+            pricing.Pricing.DiscountPercentage,
+            pricing.Pricing.TaxPercentage,
+            updatedBy,
+            now);
 
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
@@ -119,13 +94,13 @@ public sealed class UpdateQuotationItemHandler(
             QuotationHistoryEventType.Edited,
             updatedBy,
             QuotationChangeSummary.ItemQuantityChanged(
-                pricing.Name, previousQuantity, command.Quantity),
+                pricing.Name, previousQuantity, command.Quantity, format),
             now));
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            order is not null ? "quotation.order.item_updated" : "quotation.quotation.item_updated",
-            order?.Id.ToString() ?? quotation.Id.ToString(),
+            "quotation.quotation.item_updated",
+            quotation.Id.ToString(),
             "success",
             now);
 
@@ -133,11 +108,8 @@ public sealed class UpdateQuotationItemHandler(
         // que agrupan con ella, y con eso el total. El descuento que trajo UpdateQuantity es
         // provisional.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, quotation, now, cancellationToken);
 
-        // El total de la cotización cambió: lo que ya está cargado en comprobantes no cambia,
-        // pero el estado del pago sí puede -- mismo motivo que AddOrderItemsHandler.
-        order?.RecalculatePaymentStatus(quotation.NetTotal, quotation.Currency, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

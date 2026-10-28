@@ -222,7 +222,7 @@ public sealed class MembershipTests
         var membership = Invite(Guid.CreateVersion7());
         membership.PullDomainEvents();
 
-        membership.ChangeRoles(TenantOwnedByAnother(), 
+        membership.ChangeRoles(TenantOwnedByAnother(),
             [" admin ", "admin", "advisor"],
             InvitedAt.AddHours(1));
 

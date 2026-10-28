@@ -3,11 +3,8 @@ using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
-/// <summary>
-/// Spec 2026-09-17 (editar pedido como borrador): el guardado recibe la lista **completa** de
-/// productos deseada y el backend calcula la diferencia contra la cotización, por
-/// <c>productId</c>, en el orden altas → cambios → bajas.
-/// </summary>
+/// <summary>Spec 2026-09-17 y spec 2026-10-15 §4.5: las ediciones de líneas de «Editar» pedido se aplican
+/// sobre el pedido, no sobre su cotización.</summary>
 public sealed class OrderItemEditsTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
@@ -22,65 +19,57 @@ public sealed class OrderItemEditsTests
         Currency = "COP",
     };
 
-    private static QuotationProductPricingRef Product(
+    private static QuotationVariantPricingRef Product(
         Guid productId, string name, decimal unitPriceCop, bool isActive = true) =>
-        new(productId, TenantId, name, isActive, unitPriceCop, null, [], null);
+        new(productId, productId, TenantId, name, "SKU", isActive, new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
 
-    // Convertida por el camino real, con líneas sin impuesto ni descuento: el total es la suma de
-    // precio por cantidad y las aserciones no dependen de redondeos.
-    private static Quotation ConvertedQuotation(params (Guid ProductId, decimal Quantity, decimal UnitPrice)[] lines)
-    {
-        var quotation = Quotation.Create(
-            QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
-            new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
-            false, false, UpdatedBy, Now);
-        foreach (var (productId, quantity, unitPrice) in lines)
-        {
-            quotation.AddItem(QuotationItemId.New(), productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);
-        }
-
-        quotation.ConvertToOrder(UpdatedBy, Now, QuotationProductSnapshot.None);
-        return quotation;
-    }
+    // Un pedido manual pendiente con esas líneas (sin IVA, para que el total sea la suma de los precios).
+    private static Order PendingOrder(params (Guid ProductId, decimal Quantity, decimal UnitPrice, QuotationProductSnapshot? Product)[] lines) =>
+        Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            lines.Select(line => new OrderLineInput(line.ProductId, line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
+            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
 
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
-        Quotation quotation, StubPricingCatalog catalog, params OrderItemAddition[] desired) =>
+        Order order, StubPricingCatalog catalog, params OrderItemAddition[] desired) =>
         OrderItemEdits.ApplyAsync(
-            quotation, desired, catalog, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
+            order, desired, catalog, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
             TestContext.Current.CancellationToken);
 
     [Fact]
-    public async Task AddsProductsThatAreNotInTheQuotationPricedFromTheCatalog()
+    public async Task AddsProductsThatAreNotInTheOrderPricedFromTheCatalog()
     {
         var existing = Guid.CreateVersion7();
         var added = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((existing, 1m, 100_000m));
+        var order = PendingOrder((existing, 1m, 100_000m, null));
         var catalog = new StubPricingCatalog(
             Product(existing, "Vela de soja", 100_000m), Product(added, "Difusor", 50_000m));
 
         var edits = await ApplyAsync(
-            quotation, catalog, new OrderItemAddition(existing, 1m), new OrderItemAddition(added, 2m));
+            order, catalog, new OrderItemAddition(existing, 1m), new OrderItemAddition(added, 2m));
 
         var edit = Assert.Single(edits);
         Assert.Equal(new OrderItemEdit(OrderItemEditKind.Added, added, "Difusor", null, 2m), edit);
-        Assert.Equal(2, quotation.Items.Count);
-        Assert.Equal(200_000m, quotation.Total);
+        Assert.Equal(2, order.Items.Count);
+        Assert.Equal(200_000m, order.Total);
     }
 
     [Fact]
     public async Task RepricesAProductWhoseQuantityChanged()
     {
         var productId = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((productId, 1m, 100_000m));
+        var order = PendingOrder((productId, 1m, 100_000m, null));
         var catalog = new StubPricingCatalog(Product(productId, "Vela de soja", 100_000m));
 
-        var edits = await ApplyAsync(quotation, catalog, new OrderItemAddition(productId, 3m));
+        var edits = await ApplyAsync(order, catalog, new OrderItemAddition(productId, 3m));
 
         Assert.Equal(
             new OrderItemEdit(OrderItemEditKind.QuantityChanged, productId, "Vela de soja", 1m, 3m),
             Assert.Single(edits));
-        Assert.Equal(3m, Assert.Single(quotation.Items).Quantity);
-        Assert.Equal(300_000m, quotation.Total);
+        Assert.Equal(3m, Assert.Single(order.Items).Quantity);
+        Assert.Equal(300_000m, order.Total);
     }
 
     [Fact]
@@ -88,49 +77,83 @@ public sealed class OrderItemEditsTests
     {
         var kept = Guid.CreateVersion7();
         var removed = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((kept, 1m, 100_000m), (removed, 2m, 50_000m));
+        var order = PendingOrder((kept, 1m, 100_000m, null), (removed, 2m, 50_000m, null));
         var catalog = new StubPricingCatalog(Product(kept, "Vela de soja", 100_000m));
 
-        var edits = await ApplyAsync(quotation, catalog, new OrderItemAddition(kept, 1m));
+        var edits = await ApplyAsync(order, catalog, new OrderItemAddition(kept, 1m));
 
         Assert.Equal(
             new OrderItemEdit(OrderItemEditKind.Removed, removed, null, 2m, null),
             Assert.Single(edits));
-        Assert.Equal(kept, Assert.Single(quotation.Items).ProductId);
+        Assert.Equal(kept, Assert.Single(order.Items).ProductId);
         Assert.Empty(catalog.Lookups);
     }
 
-    // El orden del spec: bajar primero dispararía quotation.item.last_item_required a mitad de un
-    // reemplazo total.
+    [Fact]
+    public async Task AppliesAdditionsQuantityChangesAndRemovalsOnTheOrder()
+    {
+        var keep = Guid.CreateVersion7();
+        var drop = Guid.CreateVersion7();
+        var add = Guid.CreateVersion7();
+        var order = PendingOrder((keep, 1m, 10_000m, null), (drop, 2m, 10_000m, null));
+        var catalog = new StubPricingCatalog(
+            Product(keep, "Uno", 10_000m), Product(drop, "Dos", 10_000m), Product(add, "Tres", 10_000m));
+
+        var edits = await ApplyAsync(
+            order, catalog, new OrderItemAddition(keep, 3m), new OrderItemAddition(add, 1m));
+
+        Assert.Equal(
+            [OrderItemEditKind.Added, OrderItemEditKind.QuantityChanged, OrderItemEditKind.Removed],
+            edits.Select(edit => edit.Kind));
+        Assert.Equal([keep, add], order.Items.Select(item => item.ProductId));
+        Assert.Equal(3m, order.Items.Single(item => item.ProductId == keep).Quantity);
+    }
+
+    // Review Focus 3 del plan: una línea intacta de un producto que ya no existe se queda con su foto.
+    [Fact]
+    public async Task LeavesAnUntouchedLineAloneEvenIfItsProductIsGone()
+    {
+        var gone = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var order = PendingOrder(
+            (gone, 1m, 10_000m, new QuotationProductSnapshot("OLD", "Viejo")), (other, 1m, 10_000m, null));
+        var catalog = new StubPricingCatalog(Product(other, "Otro", 10_000m));
+
+        await ApplyAsync(order, catalog, new OrderItemAddition(gone, 1m), new OrderItemAddition(other, 2m));
+
+        Assert.Equal("OLD", order.Items.Single(item => item.ProductId == gone).ProductCode);
+        Assert.Equal([other], catalog.Lookups);
+    }
+
     [Fact]
     public async Task ReplacingEveryProductAddsBeforeRemovingSoTheLastItemRuleDoesNotFire()
     {
         var previous = Guid.CreateVersion7();
         var replacement = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((previous, 1m, 100_000m));
+        var order = PendingOrder((previous, 1m, 100_000m, null));
         var catalog = new StubPricingCatalog(Product(replacement, "Difusor", 50_000m));
 
-        var edits = await ApplyAsync(quotation, catalog, new OrderItemAddition(replacement, 1m));
+        var edits = await ApplyAsync(order, catalog, new OrderItemAddition(replacement, 1m));
 
         Assert.Equal(
             new[] { OrderItemEditKind.Added, OrderItemEditKind.Removed },
             edits.Select(edit => edit.Kind).ToArray());
-        Assert.Equal(replacement, Assert.Single(quotation.Items).ProductId);
-        Assert.Equal(50_000m, quotation.Total);
+        Assert.Equal(replacement, Assert.Single(order.Items).ProductId);
+        Assert.Equal(50_000m, order.Total);
     }
 
     [Fact]
-    public async Task LeavesTheQuotationUntouchedWhenNothingChanges()
+    public async Task LeavesTheOrderUntouchedWhenNothingChanges()
     {
         var productId = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((productId, 2m, 100_000m));
-        var versionBefore = quotation.Version;
+        var order = PendingOrder((productId, 2m, 100_000m, null));
+        var versionBefore = order.Version;
         var catalog = new StubPricingCatalog(Product(productId, "Vela de soja", 100_000m));
 
-        var edits = await ApplyAsync(quotation, catalog, new OrderItemAddition(productId, 2m));
+        var edits = await ApplyAsync(order, catalog, new OrderItemAddition(productId, 2m));
 
         Assert.Empty(edits);
-        Assert.Equal(versionBefore, quotation.Version);
+        Assert.Equal(versionBefore, order.Version);
         Assert.Empty(catalog.Lookups);
     }
 
@@ -139,37 +162,99 @@ public sealed class OrderItemEditsTests
     {
         var existing = Guid.CreateVersion7();
         var inactive = Guid.CreateVersion7();
-        var quotation = ConvertedQuotation((existing, 1m, 100_000m));
+        var order = PendingOrder((existing, 1m, 100_000m, null));
         var catalog = new StubPricingCatalog(
             Product(existing, "Vela de soja", 100_000m), Product(inactive, "Difusor", 50_000m, isActive: false));
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            ApplyAsync(quotation, catalog, new OrderItemAddition(existing, 1m), new OrderItemAddition(inactive, 1m)));
+            ApplyAsync(order, catalog, new OrderItemAddition(existing, 1m), new OrderItemAddition(inactive, 1m)));
 
         Assert.Equal("quotation.item.product_inactive", error.Code);
-        Assert.Equal(existing, Assert.Single(quotation.Items).ProductId);
+        Assert.Equal(existing, Assert.Single(order.Items).ProductId);
     }
 
-    private sealed class StubPricingCatalog(params QuotationProductPricingRef[] products)
+    // ---- Por variante (spec 2026-10-20 §4) ----
+
+    private static readonly Guid Camiseta = Guid.CreateVersion7();
+    private static readonly Guid CamisetaM = Guid.CreateVersion7();
+    private static readonly Guid CamisetaL = Guid.CreateVersion7();
+
+    private static QuotationVariantPricingRef Variant(Guid variantId, string size, decimal unitPriceCop) =>
+        new(variantId, Camiseta, TenantId, $"Camiseta – {size}", $"CAM-{size}", true,
+            new Dictionary<string, decimal> { ["COP"] = unitPriceCop }, [], null);
+
+    // Gemela de la de la cotización: con M en el pedido, agregar L es una línea nueva y no una
+    // cantidad más para M.
+    [Fact]
+    public async Task AddItemTwoSizesOfSameProductAreTwoLines()
+    {
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0)],
+            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
+        var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
+
+        var edits = await ApplyAsync(
+            order, catalog, new OrderItemAddition(CamisetaM, 2m), new OrderItemAddition(CamisetaL, 3m));
+
+        Assert.Equal(new OrderItemEdit(OrderItemEditKind.Added, CamisetaL, "Camiseta – L", null, 3m), Assert.Single(edits));
+        Assert.Equal(
+            [(CamisetaM, Camiseta, 2m), (CamisetaL, Camiseta, 3m)],
+            order.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.ProductId, item.Quantity)));
+    }
+
+    [Fact]
+    public void AddItemSameVariantTwiceReturnsDuplicateProductCode()
+    {
+        var order = PendingOrder((CamisetaM, 1m, 30_000m, null));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, UpdatedBy, Now));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+        Assert.Single(order.Items);
+    }
+
+    // Un pedido manual no puede nacer con la misma variante en dos líneas: el dominio lo frena con
+    // el mismo código, aunque el validador de la API ya lo haya frenado antes.
+    [Fact]
+    public void CreateManualRejectsTheSameVariantTwice()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty, BillingAccount, ShippingDetails.None,
+            [
+                new OrderLineInput(CamisetaM, Camiseta, 1m, 30_000m, 0m, 0),
+                new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0),
+            ],
+            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now));
+
+        Assert.Equal("order.item.duplicate_product", error.Code);
+    }
+
+    private sealed class StubPricingCatalog(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
         public List<Guid> Lookups { get; } = [];
 
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken)
         {
             Lookups.Add(productId);
-            return Task.FromResult<QuotationProductPricingRef?>(
-                products.FirstOrDefault(product => product.Id == productId));
+            return Task.FromResult<QuotationVariantPricingRef?>(
+                products.FirstOrDefault(product => product.VariantId == productId));
         }
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 products
-                    .Where(product => productIds.Contains(product.Id))
-                    .ToDictionary(product => product.Id));
+                    .Where(product => productIds.Contains(product.VariantId))
+                    .ToDictionary(product => product.VariantId));
     }
 }

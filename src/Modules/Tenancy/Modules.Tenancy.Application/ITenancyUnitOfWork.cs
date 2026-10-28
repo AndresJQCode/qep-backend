@@ -1,3 +1,5 @@
+using Modules.Tenancy.Domain;
+
 namespace Modules.Tenancy.Application;
 
 public interface ITenancyUnitOfWork
@@ -15,10 +17,24 @@ public interface ITenancyUnitOfWork
     Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-10-08 §3: abre la transacción de un cambio de la consola y toma
+    /// <c>pg_advisory_xact_lock</c> sobre el tenant destino <b>antes de leer</b> su estado. Sin él, en
+    /// READ COMMITTED, «A activa quotations» y «B desactiva customers» pasarían los dos la validación
+    /// (write skew). Mismo patrón que <see cref="BeginUserLifecycleScopeAsync"/>.
+    /// </summary>
+    Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Se libera al commitear o, si el handler falla, al disponerlo (rollback).</summary>
 public interface IUserLifecycleScope : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Se libera al commitear o, si el handler falla, al disponerlo (rollback).</summary>
+public interface ITenantChangeScope : IAsyncDisposable
 {
     Task CommitAsync(CancellationToken cancellationToken);
 }

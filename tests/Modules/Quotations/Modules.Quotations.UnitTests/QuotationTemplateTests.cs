@@ -69,7 +69,7 @@ public sealed partial class QuotationTemplateTests
     }
 
     // El caso completo ejercita todas las ramas que dibujan algo: descuento por linea, retencion,
-    // cuenta de cobro, partes con datos propios y observaciones.
+    // cuenta de cobro y partes con datos propios.
     [Fact]
     public async Task TheTemplateCompilesWithACompleteDocument() =>
         await AssertCompilesAsync(Complete());
@@ -151,6 +151,158 @@ public sealed partial class QuotationTemplateTests
     [Fact]
     public async Task TheTemplateCompilesWithAFinalConsumerBilling() =>
         await AssertCompilesAsync(Minimal() with { Billing = FinalConsumerBilling() });
+
+    // Un envío cobrado sin IVA (USD, o cliente con excedente de IVA) no imprime «IVA del envío: 0»: el
+    // renglón sobra y, con excedente, contradiría el «excedente de IVA» del renglón de productos.
+    [Fact]
+    public async Task TheTemplateHidesTheFreightTaxRowWhenItIsZero()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal() with
+        {
+            FreightChargeMode = "Charged",
+            FreightAmount = 20m,
+            FreightSubtotal = 20m,
+        });
+
+        Assert.Contains("if data.freightTaxAmount > 0", source, StringComparison.Ordinal);
+    }
+
+    // Y esa rama compila: cobrado en USD, sin IVA del envío.
+    [Fact]
+    public async Task TheTemplateCompilesWithAChargedFreightWithoutTax() =>
+        await AssertCompilesAsync(Minimal() with
+        {
+            CarrierName = "Coordinadora",
+            FreightChargeMode = "Charged",
+            FreightAmount = 20m,
+            FreightSubtotal = 20m,
+        });
+
+    // El pedido usa la misma plantilla (owner: «layout único para cotización y pedido»): compila en
+    // las dos ramas del membrete, con y sin emisor, y sin vigencia.
+    [Fact]
+    public async Task TheTemplateCompilesWithAnOrder() =>
+        await AssertCompilesAsync(Complete() with { Kind = QuotationPdfKind.Order, ValidUntil = null });
+
+    [Fact]
+    public async Task TheTemplateCompilesWithAMinimalOrder() =>
+        await AssertCompilesAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+    // Lo único que el pedido cambia: el nombre del documento —membrete y pie— y el renglón de
+    // vigencia, que un pedido no tiene. La prueba de contrato de arriba sólo mira que `data.kind`
+    // exista; esta, que la plantilla decida con él.
+    [Fact]
+    public async Task TheTemplateNamesTheDocumentAfterItsKindAndDropsTheValidityOfAnOrder()
+    {
+        var (source, data, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+        Assert.Equal("Order", data.GetProperty("kind").GetString());
+        Assert.Contains("data.kind == \"Order\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"Pedido\"", source, StringComparison.Ordinal);
+        // El nombre del documento sale de una sola variable: ningún "Cotización" suelto queda impreso
+        // fuera de ella (membrete con emisor, membrete sin emisor y pie).
+        Assert.Equal(1, Count(StripComments(source), "Cotización"));
+        Assert.Contains("if not es-pedido [", source, StringComparison.Ordinal);
+    }
+
+    // «Emitida» concuerda con «la cotización»; el pedido es masculino.
+    [Fact]
+    public async Task TheIssueDateAgreesWithTheDocumentGender()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal() with { Kind = QuotationPdfKind.Order });
+
+        Assert.Contains("if es-pedido { \"Emitido\" } else { \"Emitida\" }", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("renglon(\"Emitida\"", source, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-10-23 D-R1: los separadores del tenant viajan en `data`; sin tocarlos, los colombianos.
+    [Fact]
+    public async Task ThePayloadCarriesTheSeparators()
+    {
+        var (_, dotDecimal, _) = await CapturedRequestAsync(
+            Complete() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+        var (_, defaults, _) = await CapturedRequestAsync(Minimal());
+
+        Assert.Equal(",", dotDecimal.GetProperty("thousandsSeparator").GetString());
+        Assert.Equal(".", dotDecimal.GetProperty("decimalSeparator").GetString());
+        Assert.Equal(".", defaults.GetProperty("thousandsSeparator").GetString());
+        Assert.Equal(",", defaults.GetProperty("decimalSeparator").GetString());
+    }
+
+    // Los ayudantes de importe no llevan separadores escritos a mano: salen del payload.
+    [Fact]
+    public async Task TheAmountHelpersUseTheTenantSeparators()
+    {
+        var (source, _, _) = await CapturedRequestAsync(Minimal());
+        var markup = StripComments(source);
+
+        Assert.Contains("partes.join(data.thousandsSeparator)", markup, StringComparison.Ordinal);
+        Assert.Contains("data.decimalSeparator", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("partes.join(\".\")", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("\",\" +", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("\",0\" +", markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("porcentaje(", markup, StringComparison.Ordinal);
+        // La fecha sigue escrita en español: no depende del formato numérico.
+        Assert.Contains("fecha(data.issuedOn)", markup, StringComparison.Ordinal);
+        Assert.Contains("#let meses", markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheTemplateCompilesWithADotDecimalDocument() =>
+        await AssertCompilesAsync(Complete() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+
+    [Fact]
+    public async Task TheTemplateCompilesWithADotDecimalMinimalDocument() =>
+        await AssertCompilesAsync(Minimal() with { ThousandsSeparator = ",", DecimalSeparator = "." });
+
+    // Typst evalúa las ramas de cantidad() de forma perezosa: con cantidades enteras nunca entra
+    // a las que usan el separador decimal, y un error ahí sólo aparecería en producción como un 422.
+    // 12.5 y 1234.5 ejercen la rama de décimas, 0.05 la de centésimas sueltas y 3.75 la general.
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithADotDecimalDocument() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()) with
+        {
+            ThousandsSeparator = ",",
+            DecimalSeparator = ".",
+        });
+
+    [Fact]
+    public async Task TheTemplateCompilesFractionalQuantitiesWithTheColombianDefaults() =>
+        await AssertCompilesAsync(WithFractionalQuantities(Complete()));
+
+    private static QuotationPdfDocument WithFractionalQuantities(QuotationPdfDocument document) =>
+        document with
+        {
+            Items =
+            [
+                new QuotationPdfLine("Cable por metro", 12.5m, 35900m, 0m, 35900m, 448750m),
+                new QuotationPdfLine("Tornillo suelto", 0.05m, 114700m, 0m, 114700m, 5735m),
+                new QuotationPdfLine("Resina a granel", 1234.5m, 1000m, 0m, 1000m, 1234500m),
+                new QuotationPdfLine("Lámina", 3.75m, 2000m, 0m, 2000m, 7500m),
+            ],
+        };
+
+    private static int Count(string text, string value)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(value, StringComparison.Ordinal);
+            index >= 0;
+            index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static string StripComments(string source) =>
+        string.Join(
+            '\n',
+            source.Split('\n').Select(line =>
+            {
+                var comment = line.IndexOf("//", StringComparison.Ordinal);
+                return comment < 0 ? line : line[..comment];
+            }));
 
     private static QuotationPdfParty FinalConsumerBilling() => new(
         false,
@@ -374,11 +526,12 @@ public sealed partial class QuotationTemplateTests
         IsStorePickup: false,
         AdvisorLabel: "ana.perez@ejemplo.co",
         Currency: "COP",
+        Symbol: "$",
+        Decimals: 0,
         BillingAccount: new QuotationPdfBillingAccount(
             "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP"),
         PaymentMethod: "Transferencia bancaria a 30 días",
-        Notes: "Los precios no incluyen transporte hasta la bodega del cliente.",
         Items:
         [
             new QuotationPdfLine("BRONCEADOR RITUAL DEL SOL", 12m, 35900m, 15m, 30515m, 366180m),
@@ -392,7 +545,14 @@ public sealed partial class QuotationTemplateTests
         RetentionAmount: 32271.43m,
         NetTotal: 1503848.57m,
         CustomerVatSurplus: false,
-        Logo: null);
+        Logo: null,
+        CarrierName: "Servientrega",
+        FreightChargeMode: "Charged",
+        FreightAmount: 15000m,
+        FreightTaxPercentage: 19,
+        FreightSubtotal: 12605.04m,
+        FreightTaxAmount: 2394.96m,
+        CashOnDelivery: true);
 
     private static QuotationPdfDocument Minimal() => new(
         QuotationNumber: "QUO-2026-0002",
@@ -407,9 +567,10 @@ public sealed partial class QuotationTemplateTests
         IsStorePickup: false,
         AdvisorLabel: string.Empty,
         Currency: "USD",
+        Symbol: "US$",
+        Decimals: 2,
         BillingAccount: null,
         PaymentMethod: null,
-        Notes: null,
         Items: [new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 15.5m, 0m, 15.5m, 1550m)],
         Subtotal: 1302.52m,
         DiscountAmount: 0m,

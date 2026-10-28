@@ -12,6 +12,14 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
 
     public DbSet<Membership> Memberships => Set<Membership>();
 
+    public DbSet<TenantModule> TenantModules => Set<TenantModule>();
+
+    public DbSet<TenantProvider> TenantProviders => Set<TenantProvider>();
+
+    public DbSet<TenantChange> TenantChanges => Set<TenantChange>();
+
+    public DbSet<TenantPriceRounding> TenantPriceRoundings => Set<TenantPriceRounding>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
@@ -24,6 +32,10 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureTenant(modelBuilder);
+        ConfigureTenantModule(modelBuilder);
+        ConfigureTenantProvider(modelBuilder);
+        ConfigureTenantChange(modelBuilder);
+        ConfigureTenantPriceRounding(modelBuilder);
         ConfigureMembership(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías críticas commiteen atómicas en
@@ -63,6 +75,14 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DateFormat)
             .HasColumnName("date_format")
             .HasMaxLength(30);
+        tenant.Property(value => value.DefaultCurrency).HasColumnName("default_currency").HasMaxLength(3).IsRequired();
+        tenant.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(10).IsRequired();
+        tenant.Property(value => value.Country).HasColumnName("country").HasMaxLength(2).IsRequired();
+        tenant.Property(value => value.PersonTypeRequirement)
+            .HasColumnName("person_type_requirement")
+            .HasMaxLength(20)
+            .HasConversion<string>()
+            .IsRequired();
         // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
         // la clave que se guarda acá es esa misma.
         tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
@@ -87,6 +107,175 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Ignore(value => value.DomainEvents);
     }
 
+    // Spec 2026-10-07, «Tabla y migración». La FK va en el modelo y no sólo en SQL: sin ella EF no
+    // sabe que la fila depende del tenant y puede ordenar el INSERT de tenant_modules antes que el de
+    // tenants en el mismo SaveChangesAsync (23503 en TenantRegistrationService y en TenancySeeder).
+    // Sin navegación en Tenant: el agregado no carga sus módulos, y no cierra ningún ciclo porque
+    // tenants no apunta a tenant_modules.
+    private static void ConfigureTenantModule(ModelBuilder modelBuilder)
+    {
+        var module = modelBuilder.Entity<TenantModule>();
+        module.ToTable("tenant_modules", "tenancy", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_tenant_modules_module_key",
+                "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers')");
+            table.HasCheckConstraint(
+                "CK_tenant_modules_source",
+                "source IN ('backfill','signup','seed','manual','operator')");
+            table.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
+        });
+        module.HasKey(value => new { value.TenantId, value.ModuleKey });
+        module.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        // La única conversión de texto a clave (TenantModuleKey.Parse): una clave desconocida lanza
+        // al materializar la fila, ruidoso a propósito.
+        module.Property(value => value.ModuleKey)
+            .HasColumnName("module_key")
+            .HasMaxLength(32)
+            .HasConversion(key => key.Value, value => TenantModuleKey.Parse(value));
+        module.Property(value => value.EnabledAt).HasColumnName("enabled_at");
+        module.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasMaxLength(TenantModule.SourceMaxLength);
+        module.Property(value => value.Note)
+            .HasColumnName("note")
+            .HasMaxLength(TenantModule.NoteMaxLength);
+        // Spec 2026-10-08 §3: el DEFAULT se queda y se declara en el modelo. Durante el rolling update los
+        // pods viejos insertan filas (signup, semilla) sin la columna, y el SQL manual del README también.
+        // HasDefaultValueSql y no HasDefaultValue("active"): Status es un enum con conversión a texto
+        // (decisión P3 del plan). Active vale 1, no 0, así que EF siempre manda el valor del agregado.
+        module.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasMaxLength(TenantModule.StatusMaxLength)
+            .HasConversion(
+                status => TenantChangeVocabulary.ToText(status),
+                text => TenantChangeVocabulary.ParseModuleStatus(text))
+            .HasDefaultValueSql("'active'");
+        module.Property(value => value.StatusChangedAt)
+            .HasColumnName("status_changed_at")
+            .HasDefaultValueSql("now()");
+        module.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Plan 2026-10-21: mismo molde que tenant_modules, sin source ni note (el porqué vive en tenant_changes) y
+    // sin DEFAULT en status: la tabla es nueva, así que no hay pods viejos que inserten sin la columna. La FK
+    // va en el modelo por la misma razón que en tenant_modules: que EF ordene los INSERT si tenant y proveedor
+    // viajan en el mismo SaveChanges. La clave es texto y no un tipo: Tenancy no conoce el catálogo de Integrations, y el CHECK
+    // es el que rechaza una clave desconocida.
+    private static void ConfigureTenantProvider(ModelBuilder modelBuilder)
+    {
+        var provider = modelBuilder.Entity<TenantProvider>();
+        provider.ToTable("tenant_providers", "tenancy", table =>
+        {
+            table.HasCheckConstraint("CK_tenant_providers_provider_key", "provider_key IN ('zenvia')");
+            table.HasCheckConstraint("CK_tenant_providers_status", "status IN ('active','inactive')");
+        });
+        provider.HasKey(value => new { value.TenantId, value.ProviderKey });
+        provider.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        provider.Property(value => value.ProviderKey)
+            .HasColumnName("provider_key")
+            .HasMaxLength(TenantProvider.ProviderKeyMaxLength);
+        provider.Property(value => value.Status)
+            .HasColumnName("status")
+            .HasMaxLength(TenantModule.StatusMaxLength)
+            .HasConversion(
+                status => TenantChangeVocabulary.ToText(status),
+                text => TenantChangeVocabulary.ParseModuleStatus(text));
+        provider.Property(value => value.EnabledAt).HasColumnName("enabled_at");
+        provider.Property(value => value.StatusChangedAt).HasColumnName("status_changed_at");
+        provider.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-08 §3 (D12): un solo historial para módulos, proveedores (plan 2026-10-21) y estado del tenant. La FK va en el
+    // modelo por la misma razón que tenant_modules: que EF ordene los INSERT del mismo SaveChanges. Sin
+    // navegación en Tenant.
+    private static void ConfigureTenantChange(ModelBuilder modelBuilder)
+    {
+        var change = modelBuilder.Entity<TenantChange>();
+        change.ToTable("tenant_changes", "tenancy", table =>
+        {
+            table.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status','provider')");
+            // Plan 2026-10-21: cada clave va en su tipo de fila y sólo ahí. La forma de antes nombraba
+            // tenant_status y rechazaba toda fila de proveedor.
+            table.HasCheckConstraint("CK_tenant_changes_module_key", "(kind = 'module') = (module_key IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_tenant_changes_provider_key",
+                "(kind = 'provider') = (provider_key IS NOT NULL) AND (provider_key IS NULL OR provider_key IN ('zenvia'))");
+            table.HasCheckConstraint(
+                "CK_tenant_changes_reason",
+                "reason IN ('contract','courtesy','nonpayment','cancellation','correction')");
+        });
+        change.HasKey(value => value.Id);
+        change.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        change.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        change.Property(value => value.BatchId).HasColumnName("batch_id");
+        change.Property(value => value.Kind)
+            .HasColumnName("kind")
+            .HasMaxLength(16)
+            .HasConversion(kind => TenantChangeVocabulary.ToText(kind), text => TenantChangeVocabulary.ParseKind(text));
+        // EF no le pasa null a un conversor: las filas de estado del tenant quedan con NULL.
+        change.Property(value => value.ModuleKey)
+            .HasColumnName("module_key")
+            .HasMaxLength(32)
+            .HasConversion(key => key!.Value, value => TenantModuleKey.Parse(value));
+        change.Property(value => value.ProviderKey)
+            .HasColumnName("provider_key")
+            .HasMaxLength(TenantProvider.ProviderKeyMaxLength);
+        change.Property(value => value.FromStatus).HasColumnName("from_status").HasMaxLength(TenantChange.StatusMaxLength);
+        change.Property(value => value.ToStatus).HasColumnName("to_status").HasMaxLength(TenantChange.StatusMaxLength);
+        change.Property(value => value.Reason)
+            .HasColumnName("reason")
+            .HasMaxLength(16)
+            .HasConversion(reason => TenantChangeVocabulary.ToText(reason), text => TenantChangeVocabulary.ParseReason(text));
+        change.Property(value => value.Note).HasColumnName("note").HasMaxLength(TenantChange.NoteMaxLength);
+        change.Property(value => value.ActorUserId).HasColumnName("actor_user_id");
+        change.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        change.HasIndex(value => new { value.TenantId, value.OccurredAt })
+            .IsDescending(false, true)
+            .HasDatabaseName("IX_tenant_changes_tenant_id_occurred_at");
+        change.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-27: una fila por (tenant, moneda) sólo cuando la regla se aparta del valor por defecto
+    // (guardar el valor por defecto la borra). La FK va en el modelo por la misma razón que tenant_modules.
+    // La regla se guarda en dos columnas (decimals, mode); Rule es un valor derivado y no se mapea.
+    private static void ConfigureTenantPriceRounding(ModelBuilder modelBuilder)
+    {
+        var rounding = modelBuilder.Entity<TenantPriceRounding>();
+        rounding.ToTable("tenant_price_roundings", "tenancy");
+        rounding.HasKey(value => new { value.TenantId, value.Currency });
+        rounding.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        rounding.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasMaxLength(TenantPriceRounding.CurrencyMaxLength);
+        rounding.Property(value => value.Decimals)
+            .HasColumnName("decimals")
+            .HasConversion<short>();
+        rounding.Property(value => value.Mode)
+            .HasColumnName("mode")
+            .HasConversion<string>()
+            .HasMaxLength(TenantPriceRounding.ModeMaxLength);
+        rounding.Ignore(value => value.Rule);
+        rounding.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        rounding.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
     private static void ConfigureMembership(ModelBuilder modelBuilder)
     {
         var membership = modelBuilder.Entity<Membership>();
@@ -100,6 +289,13 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         membership.Property(value => value.TenantId)
             .HasColumnName("tenant_id")
             .HasConversion(id => id.Value, value => new TenantId(value));
+        // La mitad del ciclo tenant ↔ membership que sí se declara (la otra, owner_membership_id,
+        // se omite arriba). Sin ella la base aceptaba membresías con tenant_id fantasma: la regla
+        // "sin FK entre agregados" aplica a user_id, que cruza a Identity, no a una referencia
+        // dentro del mismo módulo. Restrict: un tenant no se borra, se suspende.
+        membership.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
         membership.Property(value => value.State)
             .HasColumnName("state")
             .HasConversion<string>()

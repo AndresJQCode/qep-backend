@@ -17,18 +17,46 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string action,
         string resourceId,
         string outcome,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        string? source = null) =>
+        Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, source);
+
+    public void PublishByIntegration(
+        Guid tenantId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, Guid.Empty, "Integration", action, resourceId, outcome, occurredAt, source: null);
+
+    public void PublishBySystem(
+        Guid tenantId,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt) =>
+        Add(tenantId, Guid.Empty, "System", action, resourceId, outcome, occurredAt, source: null);
+
+    private void Add(
+        Guid tenantId,
+        Guid actorId,
+        string actorType,
+        string action,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt,
+        string? source)
     {
         var payload = JsonSerializer.Serialize(new AuditEventPayload(
             tenantId,
             actorId,
-            "Human",
+            actorType,
             action,
             "customer",
             resourceId,
             outcome,
             [],
-            "customers",
+            source ?? "customers",
             occurredAt));
 
         dbContext.Outbox.Add(new CustomersOutboxMessage

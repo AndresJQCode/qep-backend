@@ -27,7 +27,31 @@ public sealed class RequestConcurrencyException(
     public string Code { get; } = code;
 }
 
+// 409: lo pedido choca con lo que ya existe y el cliente puede resolverlo cambiando el pedido (un nombre repetido,
+// una campaña que ya no es borrador). Distinta de RequestConcurrencyException (412), que es «el recurso cambió desde
+// que lo leíste», y de DomainException (422), que es «el pedido no cumple una regla de negocio».
+public sealed class ResourceConflictException(string code, string message, Exception? innerException = null)
+    : Exception(message, innerException)
+{
+    public string Code { get; } = code;
+}
+
 public sealed class PreconditionRequiredException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+// 503: lo pedido es válido pero el servidor no puede cumplirlo por su configuración (spec 2026-10-08:
+// sin llave activa, Integrations no puede cifrar). Distinta de un 500: no es un error del código, y
+// el cliente puede mostrar "todavía no disponible" en vez de "algo falló".
+public sealed class ServiceUnavailableException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+// 502: un servicio externo respondió algo que no reconocemos, falló o no respondió (spec 2026-10-26 §3.3: Meta al bloquear un
+// contacto). Distinta de un 500: no es un error del código, y el cliente puede ofrecer reintentar en vez de "algo falló".
+public sealed class UpstreamServiceException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;
 }

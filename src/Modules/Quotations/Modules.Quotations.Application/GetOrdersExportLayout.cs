@@ -13,6 +13,7 @@ public sealed record GetOrdersExportLayoutQuery(Guid TenantId) : IQuery<OrdersEx
 /// </summary>
 public sealed class GetOrdersExportLayoutHandler(
     IOrdersExportLayoutRepository repository,
+    ITenantModules tenantModules,
     IExecutionContext executionContext)
     : IQueryHandler<GetOrdersExportLayoutQuery, OrdersExportLayoutDto>
 {
@@ -22,6 +23,10 @@ public sealed class GetOrdersExportLayoutHandler(
     {
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, query.TenantId, TenancyPermissions.SettingsRead);
+        // Spec 2026-10-07: el permiso es de núcleo, así que el enmascarado no lo cubre; lo que se
+        // configura es de orders. Después de la autorización y antes de leer nada.
+        await TenantModuleGuard.EnsureEnabledAsync(
+            tenantModules, query.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Orders, cancellationToken);
 
         var stored = await repository.FindAsync(query.TenantId, cancellationToken);
         return OrdersExportLayoutMappings.ToDto(stored, query.TenantId);

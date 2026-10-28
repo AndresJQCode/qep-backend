@@ -53,6 +53,16 @@ public static class QuotationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Calcular una cotización nueva sin crearla (spec 2026-10-18 §7): el mismo cuerpo que `POST /`, sin
+        // número, sin escritura. Mismo permiso que crear: es el paso previo de crear.
+        // `/preview` no choca con `/{quotationId:guid}`: la restricción de guid no lo acepta.
+        group.MapPost("/preview", PreviewNewQuotationAsync)
+            .RequireAuthorization(QuotationsPermissions.QuotationManage)
+            .Accepts<CreateQuotationRequest>("application/json")
+            .Produces<QuotationResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // Guardar el editor de una vez: el estado deseado completo —encabezado y líneas— con
         // If-Match de Quotation.Version. Mismo contrato de precondición que PUT /orders/{orderId}:
         // sin If-Match 428, versión vieja 412, y el ETag de la respuesta trae la nueva.
@@ -255,12 +265,38 @@ public static class QuotationEndpoints
                 request.PaymentMethod,
                 request.Notes,
                 request.Parties,
-                request.BillingAccount),
+                request.BillingAccount,
+                request.Shipping,
+                ToItems(request),
+                request.GlobalScaleFloor,
+                request.IsRetail),
             cancellationToken);
 
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}",
             await composer.ComposeAsync(tenantId, quotation, cancellationToken));
+    }
+
+    private static async Task<IResult> PreviewNewQuotationAsync(
+        Guid tenantId,
+        CreateQuotationRequest request,
+        IRequestDispatcher dispatcher,
+        IQuotationResponseComposer composer,
+        CancellationToken cancellationToken)
+    {
+        var quotation = await dispatcher.QueryAsync(
+            new PreviewNewQuotationQuery(
+                tenantId,
+                request.ClientId,
+                request.ValidUntil,
+                request.PaymentMethod,
+                request.Notes,
+                request.Parties,
+                request.BillingAccount,
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
+            cancellationToken);
+
+        return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
     }
 
     private static async Task<IResult> SaveQuotationAsync(
@@ -289,7 +325,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
             cancellationToken);
 
         httpContext.Response.Headers.ETag = $"\"{quotation.Version}\"";
@@ -313,7 +349,7 @@ public static class QuotationEndpoints
                 request.Notes,
                 request.Parties,
                 request.BillingAccount,
-                ToItems(request), request.GlobalScaleFloor, request.IsRetail),
+                ToItems(request), request.GlobalScaleFloor, request.IsRetail, request.Shipping),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -323,7 +359,12 @@ public static class QuotationEndpoints
     // null, y "sin productos" se escribe de una sola forma (OrderEndpoints.cs:370).
     private static QuotationItemAddition[] ToItems(SaveQuotationRequest request) =>
         (request.Items ?? [])
-            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
+            .ToArray();
+
+    private static QuotationItemAddition[] ToItems(CreateQuotationRequest request) =>
+        (request.Items ?? [])
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
     // Copia de RoleEndpoints.TryParseVersion (src/Api), igual que OrderEndpoints.cs:435: este
@@ -372,7 +413,7 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken)
     {
         var quotation = await dispatcher.SendAsync(
-            new AddQuotationItemCommand(tenantId, quotationId, request.ProductId, request.Quantity),
+            new AddQuotationItemCommand(tenantId, quotationId, request.VariantId, request.Quantity),
             cancellationToken);
 
         return Results.Created(
@@ -389,7 +430,7 @@ public static class QuotationEndpoints
         CancellationToken cancellationToken)
     {
         var toAdd = request.ToAdd
-            .Select(item => new QuotationItemAddition(item.ProductId, item.Quantity))
+            .Select(item => new QuotationItemAddition(item.VariantId, item.Quantity))
             .ToArray();
 
         var quotation = await dispatcher.SendAsync(
@@ -445,7 +486,7 @@ public static class QuotationEndpoints
         SendQuotationRequest? request = null)
     {
         var quotation = await dispatcher.SendAsync(
-            new SendQuotationCommand(tenantId, quotationId, request?.Recipient),
+            new SendQuotationCommand(tenantId, quotationId, request?.Recipient, request?.ConnectionId),
             cancellationToken);
 
         return Results.Ok(await composer.ComposeAsync(tenantId, quotation, cancellationToken));
@@ -487,6 +528,7 @@ public static class QuotationEndpoints
         quotation.CanBeSent,
         quotation.IsComplete,
         quotation.OrderId,
-        quotation.OrderStatus);
+        quotation.OrderStatus,
+        ShippingResponse.From(quotation.Shipping));
 
 }

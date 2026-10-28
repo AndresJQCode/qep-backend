@@ -129,6 +129,7 @@ public sealed class PaymentProofFileManagementTests
         var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
             new PublishFileHandler(
                     new InMemoryFileResourceRepository(proof),
+                    FixedTenantModules.Simulated,
                     new CountingStorageUnitOfWork(),
                     new FilePublication(storage, new FixedClock(Now)),
                     storage,
@@ -153,6 +154,7 @@ public sealed class PaymentProofFileManagementTests
         var error = await Assert.ThrowsAsync<StorageDomainException>(() =>
             new PublishFileHandler(
                     new InMemoryFileResourceRepository(),
+                    FixedTenantModules.Simulated,
                     new CountingStorageUnitOfWork(),
                     new FilePublication(storage, new FixedClock(Now)),
                     storage,
@@ -231,6 +233,7 @@ public sealed class PaymentProofFileManagementTests
         params IFileReferenceProbe[] probes) =>
         new(
             new InMemoryFileResourceRepository(resource),
+            FixedTenantModules.Simulated,
             unitOfWork,
             new FilePublication(storage, new FixedClock(Now)),
             probes,
@@ -245,6 +248,7 @@ public sealed class PaymentProofFileManagementTests
         params IFileReferenceProbe[] probes) =>
         new(
             new InMemoryFileResourceRepository(resource),
+            FixedTenantModules.Simulated,
             unitOfWork,
             new FilePublication(storage, new FixedClock(Now)),
             storage,

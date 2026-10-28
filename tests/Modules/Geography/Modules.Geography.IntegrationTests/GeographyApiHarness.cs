@@ -1,5 +1,10 @@
+using System.Net;
+using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Geography.IntegrationTests;
@@ -36,7 +41,34 @@ internal static class GeographyApiHarness
         return client;
     }
 
-    public sealed class QepApiFactory(string connectionString)
+    /// <summary>
+    /// Un cliente del stub con permisos explícitos por <c>X-Permissions</c>, como <c>OperatorConsoleApiTests</c>: el stub
+    /// sólo concede los de tenancy por defecto, y el filtro de operador deja vivos los <c>operator.*</c> sólo en el tenant
+    /// configurado como operador.
+    /// </summary>
+    public static HttpClient StubClient(QepApiFactory factory, Guid subjectId, Guid tenantId, params string[] permissions)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", subjectId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString());
+        if (permissions.Length > 0)
+        {
+            client.DefaultRequestHeaders.Add("X-Permissions", string.Join(',', permissions));
+        }
+
+        return client;
+    }
+
+    public static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    {
+        Assert.Equal(status, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal(code, problem?.Code);
+    }
+
+    public sealed record ProblemPayload(string? Code);
+
+    public sealed class QepApiFactory(string connectionString, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -56,6 +88,23 @@ internal static class GeographyApiHarness
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            // Siempre fijado, aunque la prueba no pida operador: un Platform:OperatorTenantId en los user-secrets de quien corre
+            // las pruebas convertiría en operador a un tenant ajeno. Vacío vale lo mismo que ausente.
+            builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
+            // El host registra el consumidor de los eventos de sinónimos y el worker que corrige pedidos de Shopify. En estas pruebas
+            // no corren solos: uno en segundo plano reclamaría los eventos y trabajos que la prueba mira (una carrera con sus
+            // aserciones sobre el outbox y los trabajos). Los tipos son internos de Shopify.Infrastructure, que este proyecto no
+            // referencia: se quitan por nombre.
+            builder.ConfigureTestServices(services =>
+            {
+                foreach (var worker in services
+                    .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType?.Name is "ShopifyCityCorrectionWorker" or "CitySynonymEventsWorker")
+                    .ToArray())
+                {
+                    services.Remove(worker);
+                }
+            });
         }
     }
 }

@@ -41,6 +41,53 @@ public interface IOrderEdits
     /// persiste al guardar sólo si cambió.
     /// </summary>
     bool IsRetail { get; }
+
+    /// <summary>
+    /// El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Null es "no lo toques"</b>, como en la
+    /// cotización: un frontend viejo no lo borra. El pedido no cambia recoger o enviar.
+    /// </summary>
+    ShippingRequest? Shipping { get; }
+
+    /// <summary>
+    /// A quién se le factura (spec 2026-10-26). <b>Null es «no lo toques»</b>, como <see cref="Shipping"/>:
+    /// un frontend viejo no borra la facturación del pedido.
+    /// </summary>
+    OrderBillingEditRequest? Billing { get; }
+}
+
+/// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
+/// previo para que la retención y el excedente de IVA de la vista previa sean los que el guardado dejaría.</summary>
+internal static class OrderBillingEdits
+{
+    /// <summary>Devuelve <c>null</c> si no hay bloque o nada cambió; si cambió, el texto del historial.
+    /// <paramref name="strict"/> aplica la regla NIT y las exigencias de fila completa, que sólo el guardado
+    /// exige: el cálculo previo se hace mientras la persona teclea.</summary>
+    public static string? Apply(
+        Order order,
+        OrderBillingEditRequest? billing,
+        string? tenantCountry,
+        bool strict,
+        MemberId updatedBy,
+        DateTimeOffset now)
+    {
+        if (billing is null)
+        {
+            return null;
+        }
+
+        var party = billing.Party.ToDomain();
+        if (strict)
+        {
+            BillingPartyFiscalRules.EnsureConsistent(party, tenantCountry);
+        }
+
+        var before = OrderChangeSummary.BillingLabel(order);
+        var changed = order.SetBilling(
+            party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName, billing.BillingWithRetention,
+            billing.BillingVatSurplus, updatedBy, now,
+            enforceCompleteness: strict);
+        return changed ? OrderChangeSummary.BillingChanged(before, OrderChangeSummary.BillingLabel(order)) : null;
+    }
 }
 
 /// <summary>
@@ -52,19 +99,21 @@ public interface IOrderEdits
 public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
     where TEdits : IOrderEdits
 {
-    protected OrderEditsValidator(bool requireFileIds)
+    protected OrderEditsValidator(bool requireFileIds, bool requireBillingIdentification)
     {
+        AddBillingRules(requireBillingIdentification);
+
         RuleFor(edits => edits.Items)
             .Must(items => items.Count > 0)
             .WithMessage("At least one product is required.");
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
-            item.RuleFor(line => line.ProductId).NotEmpty();
+            item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
         });
         RuleFor(edits => edits.Items)
-            .Must(items => !HasDuplicates(items.Select(line => line.ProductId)))
-            .WithMessage("The same product cannot appear more than once.");
+            .Must(items => !HasDuplicates(items.Select(line => line.VariantId)))
+            .WithMessage("La misma variante no puede aparecer más de una vez.");
 
         RuleForEach(edits => edits.Proofs.Add).ChildRules(addition =>
         {
@@ -91,10 +140,52 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
                     .Select(update => update.NewFileId!.Value))))
             .WithMessage("The same file cannot be attached more than once in a request.");
 
-        RuleFor(edits => edits.Notes)
-            .MaximumLength(Order.NotesMaxLength)
-            .When(edits => edits.Notes is not null);
+        RuleFor(edits => edits.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(edits => edits.Shipping is not null);
+
+        // Las notas no tienen tope (plan 2026-10-15, P2): heredan las de la cotización.
     }
+
+    // Las mismas reglas de número y tipo de documento que QuotationPartiesRequestValidator, con la clave que
+    // arma FluentValidation para este comando (Billing.Party.*). El guardado las exige; el cálculo previo sólo
+    // rechaza lo mal escrito, porque la persona todavía está tecleando.
+    private void AddBillingRules(bool requireBillingIdentification)
+    {
+        RuleFor(edits => edits.Billing!.Party!.IdentificationNumber)
+            .NotEmpty()
+            .WithMessage("The identification number is required when billing to someone else.")
+            .When(edits => requireBillingIdentification && HasNamedOwnParty(edits));
+
+        RuleFor(edits => edits.Billing!.Party!.IdentificationType)
+            .NotEmpty()
+            .WithMessage("The identification type is required when billing to someone else.")
+            .When(edits => requireBillingIdentification && HasNamedOwnParty(edits));
+
+        RuleFor(edits => edits.Billing!.Party!.IdentificationType)
+            .Must(type => PartyFiscalTypesParser.SupportedIdentificationTypes
+                .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage("The identification type must be one of NIT, CC, CE or PASAPORTE.")
+            .When(edits => !string.IsNullOrWhiteSpace(edits.Billing?.Party?.IdentificationType));
+
+        RuleFor(edits => edits.Billing!.Party!.PersonType)
+            .Must(type => PartyFiscalTypesParser.SupportedPersonTypes
+                .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage("The person type must be one of Natural or Juridica.")
+            .When(edits => !string.IsNullOrWhiteSpace(edits.Billing?.Party?.PersonType));
+
+        RuleFor(edits => edits.Billing!.Party!.IdentificationNumber)
+            .Must(number => number!.Trim().Length <= QuotationPartyDetails.IdentificationNumberMaxLength)
+            .WithMessage(
+                $"The identification number cannot exceed {QuotationPartyDetails.IdentificationNumberMaxLength} characters.")
+            .When(edits => edits.Billing?.Party?.IdentificationNumber is not null);
+    }
+
+    // Con consumidor final una parte propia es otro error, con su código de dominio
+    // (order.billing.final_consumer_conflict): un 422 de campo lo taparía.
+    private static bool HasNamedOwnParty(TEdits edits) =>
+        edits.Billing is { BillsToFinalConsumer: false, Party: { } party }
+        && !string.IsNullOrWhiteSpace(party.Name);
 
     private static bool HasDuplicates<TValue>(IEnumerable<TValue> values)
     {

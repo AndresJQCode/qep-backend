@@ -11,13 +11,14 @@ namespace Bootstrapper.Cors;
 /// sólo https; un comodín —ni siquiera de subdominio: bajo <c>*.qcode.co</c> corren otras apps— o
 /// un origen reflejado desactivarían esa defensa en silencio. Ver <c>CorsSettingsValidator</c>.
 ///
-/// Sin valor por defecto a propósito: vacía no registra CORS, que es como corre en local (proxy
-/// de Vite) y en las pruebas (TestServer).
+/// Sin valor por defecto a propósito: vacía no registra CORS, que es como corren las pruebas
+/// (TestServer). En local, <c>appsettings.Development.json</c> trae <c>http://localhost:3002</c>, la
+/// única excepción a "sólo https", y sólo en Development.
 /// </summary>
 public sealed class CorsSettings
 {
     public const string SectionName = "Cors";
 
-    /// <summary>Orígenes <c>https</c> exactos, p. ej. <c>https://qep.qcode.co</c>.</summary>
+    /// <summary>Orígenes <c>https</c> exactos, p. ej. <c>https://qep.qcode.co</c>; en Development, también <c>http://localhost[:puerto]</c>.</summary>
     public List<string> AllowedOrigins { get; set; } = [];
 }

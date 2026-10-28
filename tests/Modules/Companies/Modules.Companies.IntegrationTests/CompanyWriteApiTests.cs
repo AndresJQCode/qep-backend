@@ -336,6 +336,56 @@ public sealed class CompanyWriteApiTests
         Assert.Contains("BankAccounts[2].BankName", fields);
     }
 
+    // Spec D6: the account currency must be a catalogue code. EUR is in the catalogue, so it is
+    // accepted now; MXN is a well-formed ISO code the catalogue lacks, and it fails on its own row.
+    [Fact]
+    public async Task CreateAcceptsABankAccountInAnotherCatalogueCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = new[] { BankAccount("CTA-000123", currency: "eur") },
+                taxId = "900.111.222-3",
+                cityId,
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var company = await response.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(company);
+        Assert.Equal("EUR", Assert.Single(company.BankAccounts).Currency);
+    }
+
+    [Fact]
+    public async Task CreateRejectsABankAccountCurrencyOutsideTheCatalogue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Andes Logistica S.A.S.",
+                bankAccounts = new[] { BankAccount("CTA-000123", currency: "MXN") },
+                taxId = "900.111.222-3"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("BankAccounts[0].Currency", fields);
+    }
+
     // Vacio es ausente para un campo opcional: el formulario manda "" cuando el usuario borra el
     // input, y rechazarlo bloquearia el alta de una empresa que legitimamente no tiene correo.
     [Fact]

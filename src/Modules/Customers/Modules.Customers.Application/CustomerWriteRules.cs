@@ -32,7 +32,10 @@ public interface ICustomerWriteCommand
 
     string? CityName { get; }
 
-    Guid ClassificationId { get; }
+    Guid? ClassificationId { get; }
+
+    /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; en blanco es «sin tipo».</summary>
+    string? PersonType { get; }
 }
 
 /// <summary>
@@ -49,7 +52,8 @@ public interface ICustomerWriteCommand
 /// (<c>FIELD_BY_BACKEND_NAME</c>): Name, IdentificationType, IdentificationNumber, Phone, Email,
 /// Address, CityId, ClassificationId, WithRetention, VatSurplus.
 ///
-/// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca: que la fila
+/// <c>CityId</c> y <c>ClassificationId</c> solo se comprueban **no vacios** aca (la clasificacion,
+/// solo si viene: es opcional): que la fila
 /// exista y sea del tenant lo resuelve el handler (para armar el CUC) y, en la carrera, la FK de
 /// base — mismo criterio que el resto de las FKs de este repo, sin pre-chequeo de existencia en
 /// el validador.
@@ -64,8 +68,8 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.IdentificationNumber)
             .NotEmpty()
             .MaximumLength(CustomerIdentification.NumberMaxLength);
-        // Telefono y correo son obligatorios (CustomerContactInfo): se rechazan aca tambien para
-        // que el 422 lleve el mapa errors por campo y no solo el codigo de dominio.
+        // El telefono es obligatorio (CustomerContactInfo): se rechaza aca tambien para que el 422
+        // lleve el mapa errors por campo y no solo el codigo de dominio.
         RuleFor(command => command.Phone)
             .NotEmpty()
             .MaximumLength(CustomerContactInfo.PhoneMaxLength);
@@ -88,9 +92,19 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
 
-        // La clasificacion es obligatoria: la Fase 3 la convirtio en una FK de primer nivel, ya no
-        // texto libre opcional.
-        RuleFor(command => command.ClassificationId).NotEmpty();
+        // Spec 2026-10-26: el tipo de persona es opcional, pero uno que no se reconoce se rechaza aca para que el 422
+        // lleve el mapa errors con la clave PersonType. Se comprueba contra la misma tabla que el dominio
+        // (PersonTypeParser), por lo mismo que el tipo de documento.
+        RuleFor(command => command.PersonType)
+            .Must(IsSupportedPersonType)
+            .WithMessage(
+                $"The person type must be one of {Join(PersonTypeParser.SupportedWireValues)}.")
+            .When(command => !string.IsNullOrWhiteSpace(command.PersonType));
+
+        // La clasificacion es opcional (decision del owner, 2026-10-19): sin ella el CUC no lleva
+        // prefijo. Lo que se rechaza es Guid.Empty, que es un id roto y no una forma de decir
+        // "ninguna" — la ausencia se dice con null.
+        RuleFor(command => command.ClassificationId).NotEqual(Guid.Empty);
 
         // El pais es obligatorio y son dos letras (ISO-3166-1 alpha-2). Dos RuleFor por la misma
         // razon que el correo: el When() gobierna toda la cadena que lo precede, asi que un
@@ -123,12 +137,8 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .MaximumLength(CustomerContactInfo.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
 
-        // Dos RuleFor y no uno encadenado: el When() gobierna toda la cadena que lo precede
-        // (ApplyConditionTo.AllValidators), asi que un NotEmpty() delante quedaria apagado
-        // justamente cuando el correo viene vacio. El When() del formato evita que un correo vacio
-        // reporte ademas "no es una direccion valida" encima de "es obligatorio".
-        RuleFor(command => command.Email)
-            .NotEmpty();
+        // El correo es opcional (CustomerContactInfo): vacio no es error, y el When() evita que un
+        // correo vacio se reporte como "no es una direccion valida".
         RuleFor(command => command.Email)
             .MaximumLength(CustomerContactInfo.EmailMaxLength)
             .EmailAddress()
@@ -152,6 +162,19 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         try
         {
             IdentificationTypeParser.Parse(value);
+            return true;
+        }
+        catch (CustomersDomainException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSupportedPersonType(string? value)
+    {
+        try
+        {
+            PersonTypeParser.ParseOptional(value);
             return true;
         }
         catch (CustomersDomainException)

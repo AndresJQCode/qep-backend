@@ -14,5 +14,6 @@
     <!-- Los servicios de invitación (tokens, consulta y aceptación) viven en Application;
          mismo patrón que Modules.Authorization.UnitTests con sus handlers. -->
     <ProjectReference Include="..\..\..\..\src\Modules\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Tenancy\Modules.Tenancy.Infrastructure\Modules.Tenancy.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

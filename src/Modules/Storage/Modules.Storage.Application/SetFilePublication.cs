@@ -10,6 +10,7 @@ public sealed record UnpublishFileCommand(Guid TenantId, Guid FileId) : ICommand
 
 public sealed class PublishFileHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IStorageUnitOfWork unitOfWork,
     FilePublication filePublication,
     IPublicObjectStorage publicStorage,
@@ -34,6 +35,9 @@ public sealed class PublishFileHandler(
         }
 
         var resource = await LoadAsync(repository, command.TenantId, command.FileId, cancellationToken);
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
         // Spec 2026-09-16, D15: un comprobante sólo llega al público por el movimiento. Por acá
         // copiaría desde su temporal, que después de moverse ya no existe.
         PaymentProofGuard.EnsureNotPaymentProof(resource);
@@ -61,6 +65,7 @@ public sealed class PublishFileHandler(
 
 public sealed class UnpublishFileHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IStorageUnitOfWork unitOfWork,
     FilePublication filePublication,
     IPublicObjectStorage publicStorage,
@@ -77,6 +82,9 @@ public sealed class UnpublishFileHandler(
             executionContext, command.TenantId, StoragePermissions.FilePublish);
         var resource = await PublishFileHandler.LoadAsync(
             repository, command.TenantId, command.FileId, cancellationToken);
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
         // es la que enlaza el Excel.

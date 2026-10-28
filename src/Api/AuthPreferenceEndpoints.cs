@@ -56,7 +56,7 @@ public static class AuthPreferenceEndpoints
 
         var preference = await preferences.GetAsync(userId, tenantId, cancellationToken);
         return Results.Ok(
-            new UserPreferenceResponse(preference.ColorScheme, preference.Mode));
+            new UserPreferenceResponse(preference.ColorScheme, preference.Mode, preference.MessageSound));
     }
 
     private static async Task<IResult> SaveAsync(
@@ -71,15 +71,17 @@ public static class AuthPreferenceEndpoints
         }
 
         // Los valores inválidos salen como IdentityDomainException desde el dominio y el
-        // mapeo central de ApiExceptionHandler los convierte en 422 con su código.
+        // mapeo central de ApiExceptionHandler los convierte en 422 con su código. Un campo ausente
+        // conserva lo guardado (spec 2026-10-14, contrato §2.2); un cuerpo vacío es 422.
         var saved = await preferences.SaveAsync(
             userId,
             tenantId,
-            request.ColorScheme ?? string.Empty,
-            request.Mode ?? string.Empty,
+            request.ColorScheme,
+            request.Mode,
+            request.MessageSound,
             cancellationToken);
 
-        return Results.Ok(new UserPreferenceResponse(saved.ColorScheme, saved.Mode));
+        return Results.Ok(new UserPreferenceResponse(saved.ColorScheme, saved.Mode, saved.MessageSound));
     }
 
     private static bool TryResolveScope(
@@ -113,6 +115,6 @@ public static class AuthPreferenceEndpoints
             title: "No active tenant for this session.");
 }
 
-public sealed record UserPreferenceRequest(string? ColorScheme, string? Mode);
+public sealed record UserPreferenceRequest(string? ColorScheme, string? Mode, bool? MessageSound);
 
-public sealed record UserPreferenceResponse(string ColorScheme, string Mode);
+public sealed record UserPreferenceResponse(string ColorScheme, string Mode, bool MessageSound);

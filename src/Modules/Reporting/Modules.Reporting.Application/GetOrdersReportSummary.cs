@@ -51,12 +51,16 @@ public sealed class GetOrdersReportSummaryHandler(
 
         return new OrdersReportSummaryDto(
             current.OrderCount,
-            current.Subtotal,
-            current.TaxAmount,
-            current.Total,
+            current.Subtotals,
+            current.TaxAmounts,
+            current.FreightSubtotals,
+            current.FreightTaxAmounts,
+            current.Totals,
             current.Monthly,
             current.ByAdvisor,
             current.ByClient,
+            current.BySource,
+            current.WithoutClient,
             await SummarizePrecedingAsync(filter, criteria, calendar, cancellationToken));
     }
 
@@ -87,6 +91,6 @@ public sealed class GetOrdersReportSummaryHandler(
             ReportSummaryRules.RankSize,
             cancellationToken);
 
-        return new ReportComparisonDto(preceding.OrderCount, preceding.Total);
+        return new ReportComparisonDto(preceding.OrderCount, preceding.Totals);
     }
 }

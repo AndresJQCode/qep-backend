@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +18,216 @@ public sealed class TenantSettingsApiTests
     private const string SubjectId = "01900000-0000-7000-8000-000000000002";
     private const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     private const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
+
+    [Fact]
+    public async Task PutChangesDefaultCurrencyAndNumberFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), defaultCurrency: "USD", numberFormat: "1,234.56");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("USD", body.GetProperty("defaultCurrency").GetString());
+        Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
+    }
+
+    // Ventana de despliegue: un frontend anterior a la moneda y al formato de número no manda
+    // esos dos campos. El PUT no debe fallar ni pisarlos: conserva lo guardado.
+    [Fact]
+    public async Task PutWithoutCurrencyAndNumberFormatKeepsTheStoredValues()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), defaultCurrency: "USD", numberFormat: "1,234.56");
+        first.EnsureSuccessStatusCode();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{TenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = NewDisplayName(),
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "dd/MM/yyyy",
+            })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", first.Headers.ETag!.Tag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("USD", body.GetProperty("defaultCurrency").GetString());
+        Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
+    }
+
+    // Spec 2026-10-26: arranca en Never; un PUT con el requisito lo guarda y un PUT sin él (frontend
+    // anterior) lo conserva.
+    [Fact]
+    public async Task PersonTypeRequirementRoundTripsAndDefaultsToNever()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("Never", settings.GetProperty("personTypeRequirement").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var put = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), personTypeRequirement: "OnCustomerSave");
+
+        put.EnsureSuccessStatusCode();
+        var body = await put.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("OnCustomerSave", body.GetProperty("personTypeRequirement").GetString());
+
+        var again = await PutAsync(client, TenantId, put.Headers.ETag!.Tag, NewDisplayName());
+        again.EnsureSuccessStatusCode();
+        var kept = await again.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("OnCustomerSave", kept.GetProperty("personTypeRequirement").GetString());
+    }
+
+    [Fact]
+    public async Task GetReturnsColombiaAndPutChangesTheCountry()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("CO", settings.GetProperty("country").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "mx");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("MX", body.GetProperty("country").GetString());
+    }
+
+    // Ventana de despliegue: un frontend anterior al país no lo manda. El PUT no debe fallar ni
+    // pisarlo: conserva lo guardado.
+    [Fact]
+    public async Task PutWithoutCountryKeepsTheStoredValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "MX");
+        first.EnsureSuccessStatusCode();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{TenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = NewDisplayName(),
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "dd/MM/yyyy",
+                defaultCurrency = "COP",
+                numberFormat = "1.234,56",
+            })
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", first.Headers.ETag!.Tag);
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("MX", body.GetProperty("country").GetString());
+    }
+
+    [Fact]
+    public async Task PutWithAMalformedCountryIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), country: "C1");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.country.invalid", problem.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task PutAcceptsEurNowThatTheCatalogueHasIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "eur");
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("EUR", body.GetProperty("defaultCurrency").GetString());
+    }
+
+    [Fact]
+    public async Task GetCurrenciesReturnsTheCatalogueToAnyAuthenticatedCaller()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var currencies = await client.GetFromJsonAsync<JsonElement>(
+            "/api/v1/currencies", TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, currencies.GetArrayLength());
+        Assert.Equal("COP", currencies[0].GetProperty("code").GetString());
+        Assert.Equal("$", currencies[0].GetProperty("symbol").GetString());
+        Assert.Equal(0, currencies[0].GetProperty("decimals").GetInt32());
+        Assert.Equal("EUR", currencies[2].GetProperty("code").GetString());
+        Assert.Equal("€", currencies[2].GetProperty("symbol").GetString());
+        Assert.Equal(2, currencies[2].GetProperty("decimals").GetInt32());
+    }
+
+    [Fact]
+    public async Task PutWithUnsupportedCurrencyIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(client, TenantId, etag, NewDisplayName(), defaultCurrency: "XYZ");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("tenancy.settings.default_currency.invalid", problem.GetProperty("code").GetString());
+    }
 
     [Fact]
     public async Task GetAndPutWithCurrentEtagUpdatesSettings()
@@ -233,7 +444,11 @@ public sealed class TenantSettingsApiTests
         HttpClient client,
         string tenantId,
         string ifMatch,
-        string displayName)
+        string displayName,
+        string defaultCurrency = "COP",
+        string numberFormat = "1.234,56",
+        string country = "CO",
+        string? personTypeRequirement = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -244,7 +459,11 @@ public sealed class TenantSettingsApiTests
                 displayName,
                 defaultCulture = "es-CO",
                 timeZone = "America/Bogota",
-                dateFormat = "dd/MM/yyyy"
+                dateFormat = "dd/MM/yyyy",
+                defaultCurrency,
+                numberFormat,
+                country,
+                personTypeRequirement
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

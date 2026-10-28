@@ -32,9 +32,6 @@ public sealed class AddOrderPaymentProofsValidator
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
             .WithMessage(
                 $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
-        RuleFor(command => command.Notes)
-            .MaximumLength(Order.NotesMaxLength)
-            .When(command => command.Notes is not null);
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
         RuleForEach(command => command.UpdatedProofs).SetValidator(new OrderPaymentProofUpdateRequestValidator());
 

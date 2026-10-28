@@ -1,5 +1,6 @@
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -47,6 +48,29 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Storage.PublishedKey);
     }
 
+    // El mensaje y el documento salen del mismo ajuste regional (spec 2026-10-23, D-R4).
+    [Fact]
+    public async Task TheMessageAndTheDocumentUseTheSameNumberFormat()
+    {
+        var harness = NewHandler(
+            tenantDirectory: StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(TenantNumberFormats.DotDecimal, harness.Sender.Sent!.NumberFormat);
+        Assert.Equal(",", harness.Renderer.Last!.ThousandsSeparator);
+    }
+
+    [Fact]
+    public async Task WithoutRegionalSettingsTheMessageHasNoNumberFormat()
+    {
+        var harness = NewHandler(tenantDirectory: new StubTenantDirectory { Regional = null });
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Null(harness.Sender.Sent!.NumberFormat);
+    }
+
     [Fact]
     public async Task SendHandsTheSenderTheQuotationTotalAndValidity()
     {
@@ -59,6 +83,43 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal(ValidUntil, harness.Sender.Sent.ValidUntil);
         Assert.Equal("Ferretería El Tornillo", harness.Sender.Sent.FullName);
         Assert.Equal("3001234567", harness.Sender.Sent.ToPhone);
+    }
+
+    // Spec 2026-10-13 §4.5: el envío deja quotations.quotation.sent.v1 en la misma unidad de trabajo, con el total y la moneda
+    // con los que Pipeline mueve el monto del negocio.
+    [Fact]
+    public async Task SendPublishesTheSentEventWithTheTotalAndCurrency()
+    {
+        var harness = NewHandler();
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        var published = Assert.Single(harness.Lifecycle.Published);
+        Assert.Equal(("sent", CurrentQuotationId, "COP"), (published.Event, published.QuotationId, published.Currency));
+        Assert.True(published.Total > 0m);
+    }
+
+    // H5 del spec 2026-10-13: reenviar es el mismo hecho para el agregado; el consumidor es idempotente.
+    [Fact]
+    public async Task AResendPublishesTheSentEventAgain()
+    {
+        var harness = NewHandler(alreadySent: true);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("sent", Assert.Single(harness.Lifecycle.Published).Event);
+    }
+
+    // Un envío que no llegó a guardarse no avisa nada: el evento sólo existe si la cotización quedó en Sent.
+    [Fact]
+    public async Task AFailedSendPublishesNothing()
+    {
+        var harness = NewHandler(whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Empty(harness.Lifecycle.Published);
     }
 
     // Con datos propios de facturacion, la cotizacion se le puede mandar a ese telefono en vez
@@ -110,7 +171,7 @@ public sealed class SendQuotationHandlerTests
     public async Task SendToTheBillingPartyWithoutAPhoneIsRejected()
     {
         var harness = NewHandler(
-            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda", IdentificationNumber = "1020304050" });
+            billing: new QuotationPartyDetails { Name = "Danilo Amaris Ojeda", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit });
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             harness.Handler.HandleAsync(
@@ -313,13 +374,123 @@ public sealed class SendQuotationHandlerTests
         Assert.Null(harness.FailureLog.HistoryEntry);
     }
 
-    private static SendQuotationCommand NewCommand(string? recipient = null) =>
-        new(TenantId, CurrentQuotationId, recipient);
+    // Plan 2026-10-21 (Zenvia por tenant): sale por la conexión del tenant, no por una cuenta global.
+    [Fact]
+    public async Task SendsThroughTheOnlyAvailableChannel()
+    {
+        var channel = WhatsAppChannels.Any();
+        var harness = NewHandler(channels: [channel]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(QuotationStatus.Sent, harness.Repository.Quotation.Status);
+    }
+
+    // R2: sin canal no hay envío. Es uno que nunca empezó: ni PDF, ni registro de falla, ni cambio de estado.
+    [Fact]
+    public async Task NoChannelIsRejectedBeforeAnyExternalEffect()
+    {
+        var harness = NewHandler(channels: []);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.no_channel", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    // R1: con varias, elegir es del plan 3; mientras tanto no se adivina.
+    [Fact]
+    public async Task SeveralChannelsRequireAChoice()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Any(), WhatsAppChannels.Any()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.whatsapp.channel_required", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    // Spec 2026-10-21 D17: Meta lee el PDF privado desde Mensajería, así que no hay copia pública que publicar.
+    [Fact]
+    public async Task AMetaChannelSkipsThePublicCopyAndCarriesTheStorageKey()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Null(harness.Storage.PublishedKey);
+        Assert.IsType<MetaWhatsAppChannel>(harness.Sender.Channel);
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+        Assert.Equal(ClientId, harness.Sender.Sent.CustomerId);
+        // El adaptador de Meta lanza sin tenant y la prueba de integración reemplaza el sender: sólo aquí se ve.
+        Assert.Equal(TenantId, harness.Sender.Sent.TenantId);
+    }
+
+    [Fact]
+    public async Task AZenviaChannelStillPublishesTheCopy()
+    {
+        var harness = NewHandler(channels: [WhatsAppChannels.Any()]);
+
+        await harness.Handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(harness.Repository.Pdf!.StorageKey, harness.Storage.PublishedKey);
+        Assert.Equal(RecordingPdfStorage.PublicUrl, harness.Sender.Sent!.DocumentUrl);
+        Assert.Equal(harness.Repository.Pdf.StorageKey, harness.Sender.Sent.DocumentStorageKey);
+    }
+
+    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
+    [Fact]
+    public async Task ABillingRecipientCarriesNoCustomerId()
+    {
+        var harness = NewHandler(billing: BillingParty, channels: [WhatsAppChannels.Meta()]);
+
+        await harness.Handler.HandleAsync(NewCommand("Billing"), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.Sent);
+        Assert.Null(harness.Sender.Sent.CustomerId);
+        Assert.Equal(AdvisorId.Value, harness.Sender.Sent.SentByMemberId);
+    }
+
+    // Una elección rechazada es un envío que nunca empezó: ni PDF, ni registro de falla, ni cambio de estado.
+    [Theory]
+    [InlineData("channel_already_set")]
+    [InlineData("channel_unavailable")]
+    public async Task ARejectedChoiceTouchesNothing(string code)
+    {
+        var saved = WhatsAppChannels.Any();
+        var other = WhatsAppChannels.Meta();
+        var harness = code == "channel_already_set"
+            ? NewHandler(channels: [saved, other], choices: new InMemoryWhatsAppChannelChoiceStore(saved.ConnectionId))
+            : NewHandler(channels: [saved]);
+        var requested = code == "channel_already_set" ? other.ConnectionId : Guid.CreateVersion7();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(connectionId: requested), TestContext.Current.CancellationToken));
+
+        Assert.Equal($"quotation.whatsapp.{code}", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
+        Assert.Null(harness.FailureLog.HistoryEntry);
+        Assert.Equal(QuotationStatus.Draft, harness.Repository.Quotation.Status);
+    }
+
+    private static SendQuotationCommand NewCommand(string? recipient = null, Guid? connectionId = null) =>
+        new(TenantId, CurrentQuotationId, recipient, connectionId);
 
     private static readonly QuotationPartyDetails BillingParty = new()
     {
         Name = "Danilo Amaris Ojeda",
         IdentificationNumber = "1020304050",
+        IdentificationType = PartyIdentificationType.Nit,
         Phone = "3013574996",
         Email = "daniloamaris@ejemplo.co",
         Address = "calle 90#45",
@@ -337,14 +508,20 @@ public sealed class SendQuotationHandlerTests
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         RecordingQuotationAuditPublisher Audit,
-        RecordingQuotationSendFailureLog FailureLog);
+        RecordingQuotationSendFailureLog FailureLog,
+        RecordingQuotationLifecycleEventPublisher Lifecycle,
+        CountingPdfRenderer Renderer);
 
     private static Harness NewHandler(
         bool withValidUntil = true,
         bool alreadySent = false,
         Exception? whatsAppFailure = null,
-        QuotationPartyDetails? billing = null)
+        QuotationPartyDetails? billing = null,
+        WhatsAppChannel[]? channels = null,
+        StubTenantDirectory? tenantDirectory = null,
+        InMemoryWhatsAppChannelChoiceStore? choices = null)
     {
+        var tenant = tenantDirectory ?? new StubTenantDirectory();
         var quotation = Quotation.Create(
             QuotationId.New(),
             TenantId,
@@ -358,12 +535,13 @@ public sealed class SendQuotationHandlerTests
                 ? QuotationParties.Empty
                 : new QuotationParties(billing, null),
             billingAccount: null,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
             Now);
         quotation.AddItem(
-            QuotationItemId.New(), ProductId, quantity: 1m, unitPrice: 1_000m,
+            QuotationItemId.New(), ProductId, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         if (alreadySent)
@@ -383,32 +561,39 @@ public sealed class SendQuotationHandlerTests
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false);
 
         var failureLog = new RecordingQuotationSendFailureLog();
+        var lifecycle = new RecordingQuotationLifecycleEventPublisher();
+        var renderer = new CountingPdfRenderer();
 
         var handler = new SendQuotationHandler(
             repository,
             new NoOpQuotationsUnitOfWork(),
             audit,
+            lifecycle,
             new QuotationPdfProvider(
                 repository,
                 new StubQuotationResponseComposer(),
-                new CountingPdfRenderer(),
+                renderer,
                 storage,
                 new FixedTenantClock(Now),
-                new StubQuotationLogoLookup()),
+                new StubQuotationLogoLookup(),
+                tenant),
             storage,
             new StubQuotationCustomerLookup(customer),
-            new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+            new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
             {
-                [ProductId] = new(ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
+                [ProductId] = new(ProductId, ProductId, "Tornillo 1/4", "TOR-001", ImageUrl: null, Scales: []),
             }),
             whatsAppFailure is null
                 ? sender
                 : new FailingWhatsAppSender(whatsAppFailure),
+            new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            choices ?? new InMemoryWhatsAppChannelChoiceStore(),
+            tenant,
             new StubMembershipDirectory(AdvisorId.Value),
             failureLog,
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return new Harness(handler, sender, storage, repository, audit, failureLog);
+        return new Harness(handler, sender, storage, repository, audit, failureLog, lifecycle, renderer);
     }
 }

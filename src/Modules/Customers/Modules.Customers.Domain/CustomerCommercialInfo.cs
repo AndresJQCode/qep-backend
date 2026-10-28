@@ -9,12 +9,15 @@ namespace Modules.Customers.Domain;
 public sealed record CustomerCommercialInfo
 {
     /// <summary>
-    /// FK obligatoria a <see cref="ClientClassification"/>. Reemplaza al enum fijo
+    /// FK opcional a <see cref="ClientClassification"/>. Reemplaza al enum fijo
     /// <c>CustomerClassification</c> (Pequeno/Mediano/Grande): ese catalogo no tenia ninguna
-    /// relacion con este agregado y ya no tiene consumidores. Un cliente sin clasificacion tampoco
-    /// tiene de donde salir el prefijo de su CUC, asi que dejo de ser opcional.
+    /// relacion con este agregado y ya no tiene consumidores.
+    ///
+    /// <c>null</c> es un cliente sin clasificacion, y su CUC no lleva prefijo (decision del owner,
+    /// 2026-10-19): solo departamento y consecutivo, los ocho caracteres estables. Asignarle una
+    /// despues antepone el prefijo; quitarla lo vuelve a sacar.
     /// </summary>
-    public ClientClassificationId ClassificationId { get; init; }
+    public ClientClassificationId? ClassificationId { get; init; }
 
     /// <summary>
     /// Si al cliente se le aplica retencion de impuestos.
@@ -34,10 +37,9 @@ public sealed record CustomerCommercialInfo
     public bool VatSurplus { get; init; }
 
     /// <summary>
-    /// **No usar para <c>Customer.Create</c>/<c>Update</c>.** Deja <c>ClassificationId</c> en su
-    /// default (<c>Guid.Empty</c>), que <c>Customer</c> rechaza — la clasificacion es obligatoria.
-    /// Sigue existiendo para pruebas que arman un <c>CustomerCommercialInfo</c> parcial y
-    /// sobreescriben el campo que les importa con un <c>with</c> o un inicializador propio.
+    /// Sin clasificacion, sin retencion y sin excedente de IVA. Existe para pruebas que arman un
+    /// <c>CustomerCommercialInfo</c> parcial y sobreescriben el campo que les importa con un
+    /// <c>with</c> o un inicializador propio.
     /// </summary>
     public static CustomerCommercialInfo Empty { get; } = new();
 }

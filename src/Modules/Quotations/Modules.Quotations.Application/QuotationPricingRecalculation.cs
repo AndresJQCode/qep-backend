@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -23,11 +24,19 @@ internal static class QuotationPricingRecalculation
 {
     public static async Task ApplyAsync(
         IQuotationProductPricingLookup lookup,
+        IQuotationSettingsStore settingsStore,
+        ITenantPriceRounding priceRounding,
         Guid tenantId,
         Quotation quotation,
         DateTimeOffset occurredAt,
         CancellationToken cancellationToken)
     {
+        // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4): la regla es la de la moneda del
+        // documento **después** de la mutación, así que cambiar de cuenta y de moneda toma la de la nueva. Si es la
+        // que ya tiene, no hace nada; si cambió, rehace las líneas desde el precio guardado.
+        quotation.UsePriceRounding(
+            await priceRounding.GetAsync(tenantId, quotation.Currency, cancellationToken), occurredAt);
+
         if (quotation.Items.Count == 0)
         {
             return;
@@ -60,33 +69,38 @@ internal static class QuotationPricingRecalculation
         // cambio de cantidad en veinte lecturas, mismo criterio que ResolveManyAsync.
         var products = await lookup.FindManyAsync(
             tenantId,
-            quotation.Items.Select(item => item.ProductId).Distinct().ToArray(),
+            quotation.Items.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
 
-        // Un producto que ya no está —borrado o movido de tenant después de cotizarlo— se queda
+        // Una variante que ya no está —borrada o movida de tenant después de cotizarla— se queda
         // sin escalas y por lo tanto sin descuento. No se lanza: la línea ya está en la
-        // cotización, y un recálculo disparado por otra línea no es el momento de romper.
-        var scalesByProduct = quotation.Items
-            .Select(item => item.ProductId)
+        // cotización, y un recálculo disparado por otra línea no es el momento de romper. Las
+        // escalas van por variante (spec 2026-10-20 §4): ver QuotationScaleGroupPricing.
+        var scalesByVariant = quotation.Items
+            .Select(item => item.VariantId)
             .Distinct()
             .ToDictionary(
-                productId => productId,
-                productId => products.TryGetValue(productId, out var product)
+                variantId => variantId,
+                variantId => products.TryGetValue(variantId, out var product)
                     ? product.Scales
                     : []);
 
         var lines = quotation.Items
             .Select(item => new QuotationPricingLine(
-                item.Id.Value, item.ProductId, item.Quantity))
+                item.Id.Value, item.VariantId, item.Quantity))
             .ToArray();
 
         var discounts = Apply(
-            quotation, lines, scalesByProduct, quotation.GlobalScaleFloor, occurredAt);
+            quotation, lines, scalesByVariant, quotation.GlobalScaleFloor, occurredAt);
+
+        // Read once per recalculation, and only when there is a gate to evaluate (not for an empty
+        // or retail quotation, which return above).
+        var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
 
         // La compuerta se evalúa sobre el total que dejaron esos descuentos, y una sola vez: si no
         // alcanza, se quitan todos y se termina. Ver QuotationMinimumPurchase para por qué no se
         // vuelve a mirar.
-        if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
+        if (QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings))
         {
             return;
         }
@@ -102,9 +116,9 @@ internal static class QuotationPricingRecalculation
         // productos que ya están cargados: ni una consulta más.
         if (quotation.GlobalScaleFloor is not null)
         {
-            discounts = Apply(quotation, lines, scalesByProduct, globalFloor: null, occurredAt);
+            discounts = Apply(quotation, lines, scalesByVariant, globalFloor: null, occurredAt);
 
-            if (QuotationMinimumPurchase.IsSatisfiedBy(quotation))
+            if (QuotationMinimumPurchase.IsSatisfiedBy(quotation, settings))
             {
                 return;
             }
@@ -126,12 +140,12 @@ internal static class QuotationPricingRecalculation
     private static Dictionary<QuotationItemId, QuotationItemDiscount> Apply(
         Quotation quotation,
         IReadOnlyCollection<QuotationPricingLine> lines,
-        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByProduct,
+        IReadOnlyDictionary<Guid, IReadOnlyCollection<QuotationPriceScaleRef>> scalesByVariant,
         int? globalFloor,
         DateTimeOffset occurredAt)
     {
         var discounts = QuotationScaleGroupPricing
-            .Resolve(lines, scalesByProduct, globalFloor)
+            .Resolve(lines, scalesByVariant, globalFloor)
             .ToDictionary(
                 line => new QuotationItemId(line.ItemId),
                 line => new QuotationItemDiscount(line.DiscountPercentage, line.Origin));

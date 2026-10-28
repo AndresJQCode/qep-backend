@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 49 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 56 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -22,6 +22,8 @@ public sealed class OrdersExportColumnCatalogTests
         "bank_account", "proof_amount_total", "tax_rate", "company_tax_id", "coordinadora_city",
         "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5",
         "carrier", "order_total", "retention_amount",
+        "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery",
+        "variant", "customer_person_type", "business_name",
     ];
 
     private static readonly string[] Headers =
@@ -38,18 +40,65 @@ public sealed class OrdersExportColumnCatalogTests
         "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Ciudad Coordinadora",
         "Forma de pago 1", "Forma de pago 2", "Forma de pago 3", "Forma de pago 4", "Forma de pago 5",
         "Transportadora", "Total facturado", "Retencion",
+        "Valor Flete", "Flete sin IVA", "IVA Flete", "Pago Flete", "Contraentrega",
+        "Variante", "Tipo de persona", "Razon social",
     ];
 
     [Fact]
-    public void HasTheFortyNineColumnsOfTheSpecInItsOrder()
+    public void HasTheFiftySevenColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(49, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(57, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
 
     // Las dos que pidió la hoja de importación del ERP (MIGRACION 1) van al final, como toda columna
     // nueva: no mueven lo que el ERP ya importa sin layout guardado.
+    // Spec 2026-10-17 flete §7: el flete va al final; sólo "Valor Flete" es visible (D-F10).
+    [Fact]
+    public void FreightColumnsAreAppendedAtTheEnd()
+    {
+        Assert.Equal(new OrdersExportCatalogColumn("freight_amount", "Valor Flete", 16), OrdersExportColumnCatalog.Columns[49]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_without_tax", "Flete sin IVA", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[50]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_tax", "IVA Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[51]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[52]);
+        Assert.Equal(new OrdersExportCatalogColumn("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[53]);
+    }
+
+    // Spec 2026-10-20 variantes §7: el nombre visible de la variante, al final como toda columna nueva y
+    // oculta por defecto, para que ningún Excel que ya existe —ni la hoja del ERP— gane una columna.
+    // "product_code" no cambia de llave ni de encabezado: lo que cambia es que lleva el `Code` de la variante.
+    [Fact]
+    public void VariantIsAppendedAfterTheFreightColumnsHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("variant", "Variante", 36, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[54]);
+        Assert.Equal(54, OrdersExportColumnCatalog.IndexOf("variant"));
+        Assert.Equal(new OrdersExportCatalogColumn("product_code", "Cod. Producto", 18), OrdersExportColumnCatalog.Columns[1]);
+    }
+
+    // Spec 2026-10-26 tipo de persona: al final de todo, oculta por defecto.
+    [Fact]
+    public void CustomerPersonTypeIsAppendedAfterVariantHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[55]);
+        Assert.Equal(55, OrdersExportColumnCatalog.IndexOf("customer_person_type"));
+    }
+
+    // La razón social de la ficha del cliente, al final de todo y oculta por defecto: ningún Excel que
+    // ya existe gana una columna que nadie pidió.
+    [Fact]
+    public void BusinessNameIsAppendedAfterCustomerPersonTypeHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("business_name", "Razon social", 30, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[56]);
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("business_name"));
+    }
+
     [Fact]
     public void OrderDateAndCustomerNameAreAppendedAtTheEnd()
     {
@@ -138,7 +187,9 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(45, OrdersExportColumnCatalog.IndexOf("payment_method_5"));
         Assert.Equal(36, OrdersExportColumnCatalog.IndexOf("bank_account"));
         Assert.Equal(
-            ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier"],
+            ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier",
+                "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant",
+                "customer_person_type", "business_name"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
@@ -177,7 +228,7 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("retention_amount", "Retencion", 16),
-            OrdersExportColumnCatalog.Columns[^1]);
+            OrdersExportColumnCatalog.Columns[48]);
         Assert.Equal(48, OrdersExportColumnCatalog.IndexOf("retention_amount"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("order_total") + 1, OrdersExportColumnCatalog.IndexOf("retention_amount"));
     }
@@ -202,7 +253,7 @@ public sealed class OrdersExportColumnCatalogTests
                 .Where(column => column.DefaultVisible)
                 .Select(column => new ExportColumn(column.DefaultHeader, column.Width)),
             OrdersExportProcessor.Columns);
-        Assert.Equal(42, OrdersExportProcessor.Columns.Count);
+        Assert.Equal(43, OrdersExportProcessor.Columns.Count);
     }
 
     // Review Focus 5: la llave se compara ordinal. "Company" no existe.

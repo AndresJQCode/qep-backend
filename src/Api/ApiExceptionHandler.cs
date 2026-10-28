@@ -1,10 +1,10 @@
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
-using Microsoft.Extensions.DependencyInjection;
-using Modules.Platform.Application;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Platform.Application;
 
 namespace Api;
 
@@ -36,7 +36,12 @@ internal sealed class ApiExceptionHandler(
         CancellationToken cancellationToken)
     {
         var (status, title, code) = MapException(exception);
-        if (status >= StatusCodes.Status500InternalServerError)
+        // El 503 de Integrations (sin llave de cifrado fuera de producción) es una condición de
+        // configuración que el mensaje ya explica, no una excepción sin manejar: va como las 4xx.
+        // El 502 tampoco: es la respuesta de un servicio externo (Meta), ya registrada con su código.
+        if (status >= StatusCodes.Status500InternalServerError
+            && status != StatusCodes.Status503ServiceUnavailable
+            && status != StatusCodes.Status502BadGateway)
         {
             LogUnhandledException(logger, exception);
         }
@@ -62,6 +67,22 @@ internal sealed class ApiExceptionHandler(
                 .ToDictionary(
                     group => group.Key,
                     group => group.Select(error => error.ErrorMessage).ToArray());
+        }
+        else if (exception is IHasFieldErrors { FieldErrors.Count: > 0 } withFieldErrors)
+        {
+            // Spec 2026-10-08 (Integraciones): un error de dominio que marca un campo
+            // (credentials_rejected → secrets.apiToken) viaja con el mismo mapa que el 422 de
+            // FluentValidation, el único que el formulario sabe leer.
+            problem.Extensions["errors"] = withFieldErrors.FieldErrors;
+        }
+
+        if (exception is IHasProblemExtensions withExtensions)
+        {
+            // TryAdd: un dato extra nunca reemplaza el contrato (code, traceId, errors).
+            foreach (var (key, value) in withExtensions.ProblemExtensions)
+            {
+                problem.Extensions.TryAdd(key, value);
+            }
         }
 
         await RecordAsync(httpContext, exception, status, code);
@@ -136,10 +157,16 @@ internal sealed class ApiExceptionHandler(
                 (StatusCodes.Status403Forbidden, "Access denied", value.Code),
             RequestUnauthorizedException value =>
                 (StatusCodes.Status401Unauthorized, "Unauthorized", value.Code),
+            ResourceConflictException value =>
+                (StatusCodes.Status409Conflict, "Conflict", value.Code),
             RequestConcurrencyException value =>
                 (StatusCodes.Status412PreconditionFailed, "Concurrency conflict", value.Code),
             PreconditionRequiredException value =>
                 (StatusCodes.Status428PreconditionRequired, "Precondition required", value.Code),
+            ServiceUnavailableException value =>
+                (StatusCodes.Status503ServiceUnavailable, "Service unavailable", value.Code),
+            UpstreamServiceException value =>
+                (StatusCodes.Status502BadGateway, "Bad gateway", value.Code),
             ValidationException =>
                 (StatusCodes.Status422UnprocessableEntity, "Validation failed", "validation.failed"),
             DomainException value =>

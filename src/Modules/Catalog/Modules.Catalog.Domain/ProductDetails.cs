@@ -8,14 +8,17 @@ namespace Modules.Catalog.Domain;
 /// <c>Price</c> vivía acá y se retiró ahí, reemplazado por el precio en USD/COP.
 ///
 /// **Las propiedades son `init` y no posicionales, así que sólo se construye por nombre.**
+///
+/// La imagen salió de acá con las variantes (2026-10-20): la principal es ahora la primera foto de
+/// la galería (<see cref="Product.Gallery"/>), que <c>Create</c>/<c>Update</c> reciben aparte.
 /// </summary>
 public sealed record ProductDetails
 {
     public string? Description { get; init; }
 
-    public Guid? ImageFileId { get; init; }
-
     public TaxRateId? TaxRateId { get; init; }
+
+    public ProductCategoryId? CategoryId { get; init; }
 
     // Espeja el ancho de columna, igual que Name y Code en Product: un valor demasiado largo
     // falla como 422 con código de dominio en vez de llegar a PostgreSQL y volver como 500.

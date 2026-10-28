@@ -6,6 +6,7 @@ using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -46,11 +47,66 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 internal static class QuotationsApiHarness
 {
+    /// <summary>Spec 2026-10-15 §8: la conversión responde el detalle (<see cref="OrderDetailResponse"/>);
+    /// las pruebas que sólo necesitan el pedido lo sacan de ahí.</summary>
+    public static async Task<OrderResponse?> ReadConvertedOrderAsync(
+        this HttpContent content, CancellationToken cancellationToken) =>
+        (await content.ReadFromJsonAsync<OrderDetailResponse>(cancellationToken))?.Order;
+
     /// <summary>31 de diciembre de 2026 a las 23:00 en Bogotá, que en UTC ya es 2027: la frontera
     /// de la spec 2026-09-17. Las pruebas del día del tenant fijan acá el reloj del host.</summary>
     public static readonly DateTimeOffset NewYearsEveInBogota = new(2027, 1, 1, 4, 0, 0, TimeSpan.Zero);
 
     public static string QuotationsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/quotations";
+
+    /// <summary>
+    /// Spec 2026-10-08 §3: apaga un módulo dejando su fila en <c>inactive</c>, como el SQL de respaldo
+    /// del README. Ya no se borra: contratado = fila activa, y la fila inactiva es la que se reactiva.
+    /// </summary>
+    public static async Task DisableModuleAsync(
+        QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider
+            .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        var id = new Modules.Tenancy.Domain.TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
+        await dbContext.TenantModules
+            .Where(module => module.TenantId == id && module.ModuleKey == key)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(module => module.Status, Modules.Tenancy.Domain.TenantModuleStatus.Inactive)
+                    .SetProperty(module => module.StatusChangedAt, now),
+                TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Lo prende otra vez: reactiva la fila si existe (inactiva) o la crea con origen <c>manual</c>, el
+    /// que escribe el SQL de «Operación». Crearla siempre chocaría con la PK de la fila inactiva.
+    /// </summary>
+    public static async Task EnableModuleAsync(
+        QepApiFactory factory, Guid tenantId, Modules.Tenancy.Domain.TenantModuleKey key)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider
+            .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        var id = new Modules.Tenancy.Domain.TenantId(tenantId);
+        var now = DateTimeOffset.UtcNow;
+        var row = await dbContext.TenantModules
+            .SingleOrDefaultAsync(
+                module => module.TenantId == id && module.ModuleKey == key,
+                TestContext.Current.CancellationToken);
+        if (row is null)
+        {
+            dbContext.TenantModules.Add(Modules.Tenancy.Domain.TenantModule.Create(id, key, "manual", now, note: null));
+        }
+        else if (row.Status != Modules.Tenancy.Domain.TenantModuleStatus.Active)
+        {
+            row.Activate(now);
+        }
+
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
 
     /// <summary>El huso con el que nacen los tenants de este harness (ver
     /// <see cref="RegisterTenantAsync"/>).</summary>
@@ -277,7 +333,8 @@ internal static class QuotationsApiHarness
         Guid tenantId,
         string? identificationNumber = null,
         bool withRetention = false,
-        bool vatSurplus = false)
+        bool vatSurplus = false,
+        string? personType = null)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -297,6 +354,8 @@ internal static class QuotationsApiHarness
                 // recurso entero. CO porque el cityId de arriba es DIVIPOLA, que solo describe
                 // Colombia: con otro pais la regla pediria cityName y no cityId.
                 country = "CO",
+                // Spec 2026-10-26: la ficha del cliente trae el tipo de persona; null es «sin clasificar».
+                personType,
                 cityId,
                 classificationId,
                 withRetention,
@@ -320,7 +379,8 @@ internal static class QuotationsApiHarness
         Guid customerId,
         string identificationNumber,
         bool withRetention,
-        bool vatSurplus)
+        bool vatSurplus,
+        string? personType = null)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -339,6 +399,8 @@ internal static class QuotationsApiHarness
                 // recurso entero. CO porque el cityId de arriba es DIVIPOLA, que solo describe
                 // Colombia: con otro pais la regla pediria cityName y no cityId.
                 country = "CO",
+                // En un PUT, ausente borra el tipo de persona (spec 2026-10-26): se repite el que haya.
+                personType,
                 cityId,
                 classificationId,
                 withRetention,
@@ -364,6 +426,9 @@ internal static class QuotationsApiHarness
     /// cotiza con 0% (RN-013). <paramref name="packagingUnits"/> son los empaques del producto:
     /// desde el 2026-10-01 una escala "packaging_unit" no trae numero propio y usa estos, asi que
     /// toda escala de empaque necesita que se pasen.
+    ///
+    /// Sin opciones, así que su única variante lleva el id del producto (Catalog, <c>Product.Create</c>):
+    /// el id que devuelve sirve tal cual como <c>variantId</c> en las líneas (spec 2026-10-20 §4).
     /// </summary>
     public static async Task<Guid> CreateProductWithScalesAsync(
         HttpClient client,
@@ -371,20 +436,30 @@ internal static class QuotationsApiHarness
         decimal baseCop = 100_000m,
         object[]? scales = null,
         Guid? taxRateId = null,
-        int[]? packagingUnits = null)
+        int[]? packagingUnits = null,
+        IReadOnlyDictionary<string, decimal>? prices = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
+            // Variantes (Catalog, Tarea 5): un producto sin opciones lleva su código y su precio en
+            // su única variante.
             new
             {
                 name = "Vela de soja",
-                code = $"VS-{Guid.NewGuid():N}"[..12],
                 taxRateId,
-                pricing = new
+                variants = new[]
                 {
-                    baseCop,
-                    scales = scales ?? DefaultScales(baseCop),
-                    packagingUnits = packagingUnits ?? []
+                    new
+                    {
+                        code = $"VS-{Guid.NewGuid():N}"[..12],
+                        pricing = new
+                        {
+                            // A given map wins over the COP shorthand, so tests can price in any currency.
+                            prices = prices ?? new Dictionary<string, decimal> { ["COP"] = baseCop },
+                            scales = scales ?? DefaultScales(baseCop),
+                            packagingUnits = packagingUnits ?? []
+                        }
+                    }
                 }
             },
             TestContext.Current.CancellationToken);
@@ -420,13 +495,26 @@ internal static class QuotationsApiHarness
         HttpClient client, Guid tenantId, Guid productId, string name, string code,
         decimal baseCop = 100_000m)
     {
+        // El PUT de Catalog pide la versión leída y la variante por su id (Tarea 5).
+        var current = await client.GetFromJsonAsync<ProductResponseDto>(
+            $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(current);
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products/{productId}",
             new
             {
+                expectedVersion = current.Version,
                 name,
-                code,
-                pricing = new { baseCop, scales = DefaultScales(baseCop) }
+                variants = new[]
+                {
+                    new
+                    {
+                        id = Assert.Single(current.Variants).Id,
+                        code,
+                        pricing = new { prices = new Dictionary<string, decimal> { ["COP"] = baseCop }, scales = DefaultScales(baseCop) }
+                    }
+                }
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -437,17 +525,17 @@ internal static class QuotationsApiHarness
         new
         {
             fromUnit = 1, toUnit = 9, discount = 0m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 10, toUnit = 19, discount = 5m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+            restriction = "multiple", multiple = 1
         },
         new
         {
             fromUnit = 20, toUnit = 999_999, discount = 10m,
-            restriction = "multiple", multiple = 1, finalCop = baseCop * 0.90m
+            restriction = "multiple", multiple = 1
         }
     ];
 
@@ -463,7 +551,7 @@ internal static class QuotationsApiHarness
                 new
                 {
                     fromUnit = 10, toUnit = 19, discount = 5m,
-                    restriction = "multiple", multiple = 1, finalCop = baseCop * 0.95m
+                    restriction = "multiple", multiple = 1
                 }
             ]);
 
@@ -543,12 +631,11 @@ internal static class QuotationsApiHarness
     /// antes de copiarla, así que no alcanza con inventar un nombre de banco.
     /// </summary>
     public static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)>
-        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId)
+        CreateCompanyWithBankAccountAsync(HttpClient client, Guid tenantId, string currency = "COP")
     {
         var cityId = await EnsureCityIdAsync(client);
         const string bankName = "Bancolombia";
         var accountNumber = $"{Random.Shared.Next(100000000, 999999999)}";
-        const string currency = "COP";
 
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/companies",
@@ -573,12 +660,15 @@ internal static class QuotationsApiHarness
         return (body.Id, bankName, accountNumber, currency);
     }
 
+    /// <param name="variantId">La variante de la única línea (spec 2026-10-20 §4). Para un producto sin
+    /// opciones —todo lo que crea <see cref="CreateProductWithScalesAsync"/>— es el id del producto: su
+    /// variante por defecto nace con ese id.</param>
     public static async Task<QuotationResponse> CreateSentQuotationAsync(
         HttpClient client,
         QepApiFactory factory,
         Guid tenantId,
         Guid clientId,
-        Guid productId,
+        Guid variantId,
         string? paymentMethod = "Transferencia",
         QuotationPartiesRequest? parties = null,
         string? notes = null)
@@ -605,7 +695,7 @@ internal static class QuotationsApiHarness
             notes: notes);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 1m),
+            new AddQuotationItemRequest(variantId, 1m),
             TestContext.Current.CancellationToken);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
@@ -710,6 +800,25 @@ internal static class QuotationsApiHarness
         UpdateExportJobAsync(factory, jobId, setters =>
             setters.SetProperty(job => job.LockedUntil, DateTimeOffset.UtcNow.AddSeconds(-1)));
 
+    /// <summary>
+    /// Cambia el formato regional del tenant por SQL, como lo haría una pantalla de configuración sin pasar por
+    /// ella: sólo se escriben las columnas que vienen (<c>null</c> deja la actual).
+    /// </summary>
+    public static async Task SetTenantRegionalFormatAsync(
+        QepApiFactory factory, Guid tenantId, string? dateFormat = null, string? numberFormat = null)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE tenancy.tenants
+            SET date_format = COALESCE({dateFormat}, date_format),
+                number_format = COALESCE({numberFormat}, number_format)
+            WHERE id = {tenantId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     public static async Task<IReadOnlyList<QuotationsOutboxMessage>> OutboxMessagesAsync(
         WebApplicationFactory<Program> factory, string eventName)
     {
@@ -788,6 +897,13 @@ internal static class QuotationsApiHarness
             CancellationToken cancellationToken) =>
             Task.FromResult($"quotations/tenants/{tenantId:N}/{Guid.CreateVersion7():N}.pdf");
 
+        public Task<string> SaveOrderAsync(
+            Guid tenantId,
+            OrderId orderId,
+            byte[] content,
+            CancellationToken cancellationToken) =>
+            Task.FromResult($"quotations/tenants/{tenantId:N}/orders/{Guid.CreateVersion7():N}.pdf");
+
         public Task<string> PublishAsync(string storageKey, CancellationToken cancellationToken) =>
             Task.FromResult($"https://assets.example.co/{storageKey}");
 
@@ -796,14 +912,23 @@ internal static class QuotationsApiHarness
             Task.FromResult($"https://r2.example.com/{storageKey}?X-Amz-Signature=stub");
     }
 
-    private sealed class StubPdfRenderer : IQuotationPdfRenderer
+    /// <summary>Keeps the last document it was asked to render, so a test can assert what the
+    /// mapper sends to the PDF service without rendering anything.</summary>
+    public sealed class StubPdfRenderer : IQuotationPdfRenderer
     {
+        public QuotationPdfDocument? LastDocument { get; private set; }
+
         public Task<byte[]> RenderAsync(
-            QuotationPdfDocument document, CancellationToken cancellationToken) =>
-            Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+            QuotationPdfDocument document, CancellationToken cancellationToken)
+        {
+            LastDocument = document;
+            return Task.FromResult<byte[]>([0x25, 0x50, 0x44, 0x46]);
+        }
     }
 
-    private sealed record ProductResponseDto(Guid Id);
+    private sealed record ProductResponseDto(Guid Id, long Version, IReadOnlyList<ProductVariantIdDto> Variants);
+
+    private sealed record ProductVariantIdDto(Guid Id);
 
     private sealed record TaxRateResponseDto(Guid Id);
 
@@ -827,11 +952,24 @@ internal static class QuotationsApiHarness
         /// bytes en un diccionario.</summary>
         public InMemoryObjectStorage ObjectStorage { get; } = new();
 
+        /// <summary>The stub that replaces the PDF service; exposes the last document rendered.</summary>
+        public StubPdfRenderer PdfRenderer { get; } = new();
+
+        /// <summary>Spec 2026-10-13 §7: el interceptor de <see cref="OutboxSaveFailureInterceptor"/>, uno por host. La prueba lo
+        /// arma justo antes de la llamada que quiere hacer fallar y lo desarma después.</summary>
+        public OutboxSaveFailureInterceptor SaveFailure { get; } = new();
+
         /// <summary>Doble de <c>IPublicObjectStorage</c> (spec 2026-09-15): el publicador real de
         /// comprobantes copia entre buckets de R2, que en una prueba no existen. Anota las copias y
         /// los borrados para que la prueba los vea. Queda configurado sólo con
         /// <c>publicPaymentProofLinks</c>, como el adaptador real sólo lo está con bucket público.</summary>
         public InMemoryPublicObjectStorage PublicObjectStorage { get; } = new() { IsConfigured = publicPaymentProofLinks };
+
+        /// <summary>Los canales de WhatsApp del tenant (plan 2026-10-21): uno por defecto; la prueba los cambia.</summary>
+        public RecordingWhatsAppChannelDirectory WhatsAppChannels { get; } = new();
+
+        /// <summary>Lo que el envío le entregó al sender, sin salir a Zenvia.</summary>
+        public RecordingWhatsAppSender WhatsAppSender { get; } = new();
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -869,18 +1007,15 @@ internal static class QuotationsApiHarness
             // prenden con WithWebHostBuilder, que se aplica después y gana.
             builder.UseSetting("Seed:ExportLoad:Quotations", "0");
 
-            // Mismo criterio, y por el mismo motivo: `WebApplicationFactory` corre en
-            // Development y ahí `CreateBuilder` carga los user-secrets del developer. Si esa
-            // persona configuró Zenvia para probar el envío a mano, el registro condicional ve
-            // las tres claves, monta `ZenviaWhatsAppSender` y estas pruebas empiezan a mandarle
-            // WhatsApps de verdad a clientes de prueba sin teléfono -- que fallan con
-            // `quotation.whatsapp.recipient_missing` en aserciones que no tienen nada que ver.
-            // Vaciarlas fuerza `LogWhatsAppSender`, que es lo que estas pruebas quieren.
-            builder.UseSetting("Quotations:WhatsApp:ApiToken", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:FromNumber", string.Empty);
-            builder.UseSetting("Quotations:WhatsApp:TemplateId", string.Empty);
             builder.ConfigureServices(services =>
             {
+                // El envío sale por la conexión de Zenvia del tenant (plan 2026-10-21), y ninguna prueba llama a
+                // Zenvia (spec 2026-10-21 D18): el canal y el sender son dobles, sólo de este host.
+                services.RemoveAll<IWhatsAppChannelDirectory>();
+                services.AddSingleton<IWhatsAppChannelDirectory>(WhatsAppChannels);
+                services.RemoveAll<IWhatsAppSender>();
+                services.AddSingleton<IWhatsAppSender>(WhatsAppSender);
+
                 services.RemoveAll<IObjectStorage>();
                 services.AddSingleton<IObjectStorage>(ObjectStorage);
 
@@ -904,13 +1039,17 @@ internal static class QuotationsApiHarness
                 // un servicio ajeno, y consumiendo la cuota de una API key real. Mismo criterio
                 // que `IObjectStorage`, que tampoco habla con R2 aca.
                 services.RemoveAll<IQuotationPdfRenderer>();
-                services.AddSingleton<IQuotationPdfRenderer, StubPdfRenderer>();
+                services.AddSingleton<IQuotationPdfRenderer>(PdfRenderer);
 
                 // El adaptador real copia al bucket publico de R2 y falla si no esta
                 // configurado -- que es el caso aca, y a proposito: un envio que no puede
                 // publicar el PDF no debe darse por bueno. Estas pruebas no ejercitan R2.
                 services.RemoveAll<IQuotationPdfStorage>();
                 services.AddSingleton<IQuotationPdfStorage, StubPdfStorage>();
+
+                // Spec 2026-10-13 §7: se suma a la configuración que dejó AddQuotationsInfrastructure (EF Core 9+ compone las
+                // dos), así que llega al DbContext del request y también al de IQuotationSendFailureLog. Desarmado no hace nada.
+                services.ConfigureDbContext<QuotationsDbContext>(options => options.AddInterceptors(SaveFailure));
 
                 // El worker de exportaciones toma jobs cada 5 s por su cuenta: en una prueba
                 // competiría con el tick que la prueba corre a mano (RunExportJobAsync) y la
@@ -935,6 +1074,7 @@ internal static class QuotationsApiHarness
         // Concurrente desde el 2026-09-16: PaymentProofMoveWorker corre en el host cada 3 s y borra
         // temporales mientras la prueba sube y lee (hallazgo 9 del plan).
         private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, string> _contentTypes = new(StringComparer.Ordinal);
 
         public Task<Uri> CreatePresignedUploadUrlAsync(
             string key, string contentType, CancellationToken cancellationToken) =>
@@ -985,12 +1125,54 @@ internal static class QuotationsApiHarness
             string key, byte[] content, string contentType, CancellationToken cancellationToken)
         {
             _objects[key] = content.ToArray();
+            _contentTypes[key] = contentType;
             return Task.CompletedTask;
         }
+
+        // Spec 2026-10-09 §6.6: el camino por stream guarda lo mismo que el de byte[].
+        public async Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken)
+        {
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer, cancellationToken);
+            _objects[key] = buffer.ToArray();
+            _contentTypes[key] = contentType;
+        }
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+            Task.FromResult(_objects.TryGetValue(key, out var bytes)
+                ? new StoredObjectStream(
+                    new MemoryStream(bytes),
+                    _contentTypes.TryGetValue(key, out var contentType) ? contentType : "application/octet-stream",
+                    bytes.LongLength)
+                : null);
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
 
         public bool Exists(string key) => _objects.ContainsKey(key);
+    }
+
+    /// <summary>Spec 2026-10-13 §7: hace fallar el SaveChanges que intenta guardar un evento dado del outbox, después de que el
+    /// handler lo publicó. Con eso la prueba ve que el cambio y su evento se guardan juntos o ninguno. Desarmado
+    /// (<see cref="FailWhenSaving"/> en <c>null</c>) no hace nada, así que puede quedar registrado en todos los hosts.</summary>
+    public sealed class OutboxSaveFailureInterceptor : SaveChangesInterceptor
+    {
+        /// <summary>El <c>event_name</c> cuyo SaveChanges tiene que fallar; <c>null</c> lo desarma.</summary>
+        public string? FailWhenSaving { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(eventData);
+            if (FailWhenSaving is { } eventName && eventData.Context is { } context
+                && context.ChangeTracker.Entries<QuotationsOutboxMessage>().Any(entry =>
+                    entry.State == EntityState.Added && string.Equals(entry.Entity.EventName, eventName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException($"Simulated failure while saving '{eventName}'.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>

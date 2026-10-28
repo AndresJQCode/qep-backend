@@ -18,6 +18,7 @@ using Modules.Storage.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
+using static Modules.Identity.IntegrationTests.PasswordAuthApiHarness;
 
 namespace Modules.Identity.IntegrationTests;
 
@@ -68,6 +69,39 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountAuditAsync(connection, member.UserId, "identity.user.deleted"));
     }
 
+    [Fact]
+    public async Task RemovingTheOnlyMembershipAlsoDeletesTheCredentialAndEmailTokens()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerClient) = await RegisterTenantWithOwnerAsync(factory);
+        var member = await InviteAsync(ownerClient, tenantId, NewEmail());
+        await ActivateMembershipAsync(connectionString, member.Id);
+        await ExecuteAsync(
+            connectionString,
+            "INSERT INTO identity.password_credentials (user_id, hash, updated_at) VALUES (@userId, 'h', now())",
+            ("userId", member.UserId));
+        await ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO identity.email_tokens (id, user_id, purpose, token_hash, expires_at, created_at)
+            VALUES (@id, @userId, 'verify', @tokenHash, now() + interval '1 day', now())
+            """,
+            ("id", Guid.CreateVersion7()),
+            ("userId", member.UserId),
+            ("tokenHash", Guid.NewGuid().ToString("N")));
+
+        var removal = await RemoveAsync(ownerClient, tenantId, member.Id);
+        Assert.Equal(HttpStatusCode.OK, removal.StatusCode);
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () => await CountUsersAsync(connection, member.UserId) == 0);
+
+        Assert.Equal(0, await CountRowsAsync(connectionString, "identity.password_credentials", member.UserId));
+        Assert.Equal(0, await CountRowsAsync(connectionString, "identity.email_tokens", member.UserId));
+    }
     /// <summary>
     /// Spec 2026-10-02: cuando el usuario se borra por no tener historia, su membresía quitada se
     /// borra con él y su código de asesor queda libre. Antes la fila quedaba apuntando a un usuario
@@ -784,6 +818,7 @@ public sealed class OrphanUserCleanupTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: "COP",
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
             customerWithRetention: false,
@@ -794,8 +829,8 @@ public sealed class OrphanUserCleanupTests
     }
 
     // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
-    // cancelled_by o invoiced_by, no el resto del contrato de pedidos. La cotización subyacente
-    // existe sólo porque orders.quotation_id tiene FK — su contenido no se ejercita.
+    // cancelled_by o invoiced_by, no el resto del contrato de pedidos. Desde el spec 2026-10-15 el
+    // pedido tiene datos propios y no necesita cotización: se siembra uno manual.
     private static async Task SeedOrderAsync(
         QepApiFactory factory,
         Guid tenantId,
@@ -808,28 +843,23 @@ public sealed class OrphanUserCleanupTests
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var convertedBy = new MemberId(convertedByMembershipId);
         var occurredAt = DateTimeOffset.UtcNow;
-        var quotation = Quotation.Create(
-            QuotationId.New(),
-            tenantId,
-            $"COT-{Guid.NewGuid():N}"[..20],
-            Guid.CreateVersion7(),
-            convertedBy,
-            validUntil: null,
-            paymentMethod: null,
-            notes: null,
-            QuotationParties.Empty,
-            billingAccount: null,
-            customerWithRetention: false,
-            customerVatSurplus: false,
-            convertedBy,
-            occurredAt);
-        dbContext.Quotations.Add(quotation);
-
-        var order = Order.Create(
+        // La variante por defecto lleva el id del producto (spec 2026-10-20 §8).
+        var productId = Guid.CreateVersion7();
+        var order = Order.CreateManual(
             OrderId.New(),
             tenantId,
             $"PED-{Guid.NewGuid():N}"[..20],
-            quotation.Id,
+            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
+            },
+            ShippingDetails.None,
+            [new OrderLineInput(productId, productId, 1m, 119_000m, 0m, 19)],
             OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,
@@ -891,14 +921,14 @@ public sealed class OrphanUserCleanupTests
             ProductId.New(),
             tenantId,
             "Vela de soja",
-            $"VS-{Guid.NewGuid():N}"[..12],
             ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 100m },
+            new ProductVariantInput { Code = $"VS-{Guid.NewGuid():N}"[..12], Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 100m } } }, [],
             occurredAt);
         dbContext.Products.Add(product);
-        dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.Detect(
+        dbContext.ProductPriceChanges.AddRange(ProductPriceChangeDetector.DetectForVariant(
             product,
-            new ProductPricing { BaseUsd = 120m },
+            product.Variants.Single(),
+            new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 120m } },
             changedByUserId,
             occurredAt));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);

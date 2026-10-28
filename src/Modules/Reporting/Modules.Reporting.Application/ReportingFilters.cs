@@ -28,6 +28,9 @@ public sealed record ReportPeriod(DateTimeOffset? Start, DateTimeOffset? EndExcl
 ///
 /// El mismo record lo usan el listado y el resumen —el contrato pide exactamente los mismos
 /// filtros menos la paginación—, así que también hay un solo validador para los dos caminos.
+///
+/// <c>Source</c> es texto por el mismo motivo que <c>PaymentStatus</c>; sin él vienen los cuatro
+/// orígenes, incluidas las ventas POS (spec 2026-10-23 §2).
 /// </summary>
 public sealed record OrdersReportFilter(
     Guid TenantId,
@@ -35,7 +38,8 @@ public sealed record OrdersReportFilter(
     DateOnly? To,
     Guid? AdvisorId,
     Guid? ClientId,
-    string? PaymentStatus);
+    string? PaymentStatus,
+    string? Source);
 
 /// <summary>Los mismos filtros ya validados y parseados, que es lo que ve el adaptador. Separado
 /// del filtro de entrada para que ningún origen de datos tenga que volver a interpretar
@@ -45,7 +49,8 @@ public sealed record OrdersReportCriteria(
     ReportPeriod Period,
     Guid? AdvisorId,
     Guid? ClientId,
-    OrderPaymentStatusFilter? PaymentStatus);
+    OrderPaymentStatusFilter? PaymentStatus,
+    OrderSourceFilter? Source);
 
 /// <summary>Ver <see cref="OrdersReportFilter"/>.</summary>
 public sealed record QuotationsReportFilter(
@@ -64,14 +69,23 @@ public sealed record QuotationsReportCriteria(
     Guid? ClientId,
     QuotationStatusFilter? Status);
 
-/// <summary>Ver <see cref="OrdersReportFilter"/>.</summary>
+/// <summary>
+/// Ver <see cref="OrdersReportFilter"/>.
+///
+/// <c>ProductId</c> y <c>VariantId</c> se combinan con Y: el cambio es de una variante (spec
+/// 2026-10-20 §3.5) y el reporte filtra por las dos cosas. Un <c>VariantId</c> que no es del
+/// producto pedido da un conjunto vacío, no un error; uno ajeno al tenant también (la consulta
+/// siempre filtra por tenant).
+/// </summary>
 public sealed record PriceChangeReportFilter(
     Guid TenantId,
     DateOnly? From,
     DateOnly? To,
     Guid? ProductId,
     Guid? ChangedBy,
-    string? Field);
+    string? Field,
+    string? Currency = null,
+    Guid? VariantId = null);
 
 /// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
 public sealed record PriceChangeReportCriteria(
@@ -79,7 +93,9 @@ public sealed record PriceChangeReportCriteria(
     ReportPeriod Period,
     Guid? ProductId,
     Guid? ChangedBy,
-    PriceChangeField? Field);
+    PriceChangeField? Field,
+    string? Currency,
+    Guid? VariantId = null);
 
 /// <summary>
 /// <c>From</c> y <c>To</c> cortan por **fecha de alta** (<c>Customer.CreatedAt</c>), que es la
@@ -125,7 +141,8 @@ public static class ReportFilterMapping
             ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.AdvisorId,
             filter.ClientId,
-            ReportFilterParser.ParsePaymentStatus(filter.PaymentStatus));
+            ReportFilterParser.ParsePaymentStatus(filter.PaymentStatus),
+            ReportFilterParser.ParseSource(filter.Source));
 
     public static QuotationsReportCriteria ToCriteria(this QuotationsReportFilter filter, TenantCalendar calendar) =>
         new(
@@ -141,7 +158,9 @@ public static class ReportFilterMapping
             ReportPeriod.Of(calendar, filter.From, filter.To),
             filter.ProductId,
             filter.ChangedBy,
-            ReportFilterParser.ParsePriceChangeField(filter.Field));
+            ReportFilterParser.ParsePriceChangeField(filter.Field),
+            string.IsNullOrWhiteSpace(filter.Currency) ? null : Currencies.Normalize(filter.Currency),
+            filter.VariantId);
 
     public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter, TenantCalendar calendar) =>
         new(
@@ -168,6 +187,10 @@ public sealed class OrdersReportFilterValidator : AbstractValidator<OrdersReport
             .WithMessage(
                 "paymentStatus must be one of FullPaymentReceived, PartialPaymentReceived, "
                     + "PaymentPending.");
+        RuleFor(filter => filter.Source)
+            .Must(value => ReportFilterParser.TryParseSource(value, out _))
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)
@@ -199,7 +222,11 @@ public sealed class PriceChangeReportFilterValidator : AbstractValidator<PriceCh
         RuleFor(filter => filter.Field)
             .Must(value => ReportFilterParser.TryParsePriceChangeField(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Field))
-            .WithMessage("field must be one of PriceBaseUsd, PriceBaseCop, ScaleDiscount.");
+            .WithMessage("field must be one of PriceBase, ScaleDiscount.");
+        RuleFor(filter => filter.Currency)
+            .Must(Currencies.IsSupported)
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Currency))
+            .WithMessage("currency must be one of the catalogue currencies.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)

@@ -2,7 +2,8 @@ namespace Modules.Customers.Domain;
 
 /// <summary>
 /// Los datos de contacto del cliente, agrupados: teléfono, correo y su domicilio (calle y
-/// ciudad). Los cuatro son obligatorios al escribir.
+/// ciudad). Todos son obligatorios al escribir salvo el correo: hay clientes que no tienen uno
+/// (venta de mostrador, contacto sólo por WhatsApp) y exigirlo producía correos inventados.
 ///
 /// Van juntos y no como parámetros sueltos de <c>Create</c>/<c>Update</c> por la misma razón por
 /// la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales, así
@@ -129,10 +130,10 @@ public sealed record CustomerContactInfo
             : trimmed;
     }
 
-    // Telefono y correo son obligatorios al crear y al editar. Las propiedades siguen siendo
-    // string? a proposito: las filas anteriores a la regla pueden tener null en base (las columnas
-    // no pasaron a NOT NULL), y el agregado tiene que poder leerlas. La regla muerde al escribir,
-    // no al materializar.
+    // El telefono es obligatorio al crear y al editar. La propiedad sigue siendo string? a
+    // proposito: las filas anteriores a la regla pueden tener null en base (la columna no paso a
+    // NOT NULL), y el agregado tiene que poder leerlas. La regla muerde al escribir, no al
+    // materializar.
     private static string NormalizeRequired(
         string? value,
         int maxLength,
@@ -154,16 +155,23 @@ public sealed record CustomerContactInfo
 
     // A minusculas por el mismo criterio que CompanyContactInfo: "Compras@Verde.CO" y
     // "compras@verde.co" son la misma casilla, y dejar las dos formas en base obliga a cada
-    // consumidor a normalizar de nuevo.
-    private static string NormalizeEmail(string? email)
+    // consumidor a normalizar de nuevo. Opcional: vacio y ausente son lo mismo (el formulario manda
+    // "" cuando el usuario borra el input) y se guardan como null, no como cadena vacia; si viene,
+    // tiene que ser una direccion.
+    private static string? NormalizeEmail(string? email)
     {
-        var trimmed = NormalizeRequired(
-            email,
-            EmailMaxLength,
-            "customers.customer.email_required",
-            "The customer email is required.",
-            "customers.customer.email_too_long",
-            $"The customer email cannot exceed {EmailMaxLength} characters.");
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return null;
+        }
+
+        var trimmed = email.Trim();
+        if (trimmed.Length > EmailMaxLength)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.email_too_long",
+                $"The customer email cannot exceed {EmailMaxLength} characters.");
+        }
 
         return IsPlausibleEmail(trimmed)
             ? trimmed.ToLowerInvariant()
@@ -178,7 +186,7 @@ public sealed record CustomerContactInfo
     // hace CustomerWriteRules con EmailAddress(); esta es la red del dominio, que corre igual si
     // alguien construye el agregado sin pasar por el validador. Copiado a proposito de
     // CompanyContactInfo: son dos modulos, y compartirlo los acoplaria por una utilidad.
-    private static bool IsPlausibleEmail(string value)
+    internal static bool IsPlausibleEmail(string value)
     {
         if (value.Any(char.IsWhiteSpace))
         {

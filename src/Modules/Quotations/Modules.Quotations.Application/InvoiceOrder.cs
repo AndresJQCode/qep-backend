@@ -46,6 +46,8 @@ public sealed class InvoiceOrderHandler(
 
         var now = clock.UtcNow;
         order.Invoice(invoicedBy, now);
+        repository.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, invoicedBy, OrderChangeSummary.Invoiced(), now));
 
         auditPublisher.Publish(
             command.TenantId,

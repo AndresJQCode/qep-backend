@@ -6,13 +6,13 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 public sealed record AddQuotationItemCommand(
-    Guid TenantId, Guid QuotationId, Guid ProductId, decimal Quantity) : ICommand<QuotationDto>;
+    Guid TenantId, Guid QuotationId, Guid VariantId, decimal Quantity) : ICommand<QuotationDto>;
 
 public sealed class AddQuotationItemValidator : AbstractValidator<AddQuotationItemCommand>
 {
     public AddQuotationItemValidator()
     {
-        RuleFor(command => command.ProductId).NotEmpty();
+        RuleFor(command => command.VariantId).NotEmpty();
         RuleFor(command => command.Quantity).GreaterThan(0m);
     }
 }
@@ -22,8 +22,11 @@ public sealed class AddQuotationItemHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddQuotationItemCommand> validator)
@@ -56,18 +59,20 @@ public sealed class AddQuotationItemHandler(
         var pricing = await QuotationProductPricingResolver.ResolveAsync(
             pricingLookup,
             command.TenantId,
-            command.ProductId,
+            command.VariantId,
             command.Quantity,
             quotation.Currency, quotation.IsRetail,
             cancellationToken);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
 
         var now = clock.UtcNow;
         quotation.AddItem(
             QuotationItemId.New(),
-            command.ProductId,
+            command.VariantId,
+            pricing.ProductId,
             command.Quantity,
             pricing.Pricing.UnitPrice,
             pricing.Pricing.DiscountPercentage,
@@ -80,7 +85,7 @@ public sealed class AddQuotationItemHandler(
             quotation.Id,
             QuotationHistoryEventType.Edited,
             updatedBy,
-            QuotationChangeSummary.ItemAdded(pricing.Name, command.Quantity),
+            QuotationChangeSummary.ItemAdded(pricing.Name, command.Quantity, format),
             now));
         auditPublisher.Publish(
             command.TenantId,
@@ -94,7 +99,7 @@ public sealed class AddQuotationItemHandler(
         // las que ya estaban (agrupación) y mueve el total contra el que se mide la compra mínima.
         // El que vale sale de acá.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, quotation, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

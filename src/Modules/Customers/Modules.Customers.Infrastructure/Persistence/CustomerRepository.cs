@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Npgsql;
 
 namespace Modules.Customers.Infrastructure.Persistence;
 
@@ -38,17 +39,25 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var query = dbContext.Customers
             .AsNoTracking()
             .Include(customer => customer.Addresses)
-            .Where(customer => customer.TenantId == tenantId);
+            // Un fusionado ya es otra ficha (spec 2026-10-24 §3.3): no se lista, ni se busca, ni se exporta, ni se elige en POS.
+            .Where(customer => customer.TenantId == tenantId && customer.MergedIntoId == null);
 
         // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
         // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
         if (searchPattern is not null)
         {
+            // Un incompleto no tiene CUC, pero desde el alta rápida del POS (POSC-05) sí puede tener documento:
+            // el filtro por número tiene que seguir alcanzándolo.
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
-                EF.Functions.ILike(
-                    customer.IdentificationNumber, searchPattern, LikeEscapeCharacter) ||
-                EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter));
+                (customer.IdentificationNumber != null && EF.Functions.ILike(
+                    customer.IdentificationNumber, searchPattern, LikeEscapeCharacter)) ||
+                (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter)) ||
+                // El CUC impreso de un fusionado sigue resolviendo hacia el que quedó (spec 2026-10-24 §3.3, ruling C2). Sólo el
+                // CUC: su nombre y su documento ya no son de nadie que se liste.
+                dbContext.Customers.Any(merged =>
+                    merged.TenantId == tenantId && merged.MergedIntoId == customer.Id && merged.Cuc != null &&
+                    EF.Functions.ILike(merged.Cuc, searchPattern, LikeEscapeCharacter)));
         }
 
         // Tres cajas separadas en el listado (CLI-FILTROS-01), cada una filtra su propia columna
@@ -62,22 +71,27 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         if (identificationPattern is not null)
         {
             query = query.Where(customer =>
-                EF.Functions.ILike(
+                customer.IdentificationNumber != null && EF.Functions.ILike(
                     customer.IdentificationNumber, identificationPattern, LikeEscapeCharacter));
         }
 
         if (cucPattern is not null)
         {
+            // Como en el criterio combinado: el CUC de un fusionado trae al que quedó (ruling C2).
             query = query.Where(customer =>
-                EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter));
+                (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, cucPattern, LikeEscapeCharacter)) ||
+                dbContext.Customers.Any(merged =>
+                    merged.TenantId == tenantId && merged.MergedIntoId == customer.Id && merged.Cuc != null &&
+                    EF.Functions.ILike(merged.Cuc, cucPattern, LikeEscapeCharacter)));
         }
 
         return query;
     }
 
-    // Orden por CUC y no por relevancia como SearchAsync: el CUC es unico dentro del tenant, asi
-    // que desempata siempre. Recorrer en lotes un orden que empata puede saltear o repetir filas
-    // entre una consulta y la siguiente, y eso en un archivo exportado no lo ve nadie.
+    // Orden por CUC y no por relevancia como SearchAsync. Recorrer en lotes un orden que empata
+    // puede saltear o repetir filas entre una consulta y la siguiente, y eso en un archivo
+    // exportado no lo ve nadie. El CUC era unico y desempataba solo; un incompleto lo tiene nulo
+    // (spec 2026-10-10 §6.2), asi que el id desempata (P18).
     public async Task<IReadOnlyList<Customer>> ListForExportAsync(
         Guid tenantId,
         string? search,
@@ -94,6 +108,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 LikePattern(identificationNumber),
                 LikePattern(cuc))
             .OrderBy(customer => customer.Cuc)
+            .ThenBy(customer => customer.Id)
             .Skip(skip)
             .Take(take)
             .ToListAsync(cancellationToken);
@@ -105,6 +120,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? identificationNumber,
         string? cuc,
         IReadOnlyCollection<Guid>? cityIds,
+        bool? isComplete,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -131,39 +147,20 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 customer.CityId.HasValue && cityIds.Contains(customer.CityId.Value));
         }
 
+        // Spec 2026-10-10 §5.2: el filtro usa IX_customers_tenant_incomplete.
+        if (isComplete is { } complete)
+        {
+            var completeness = complete ? CustomerCompleteness.Complete : CustomerCompleteness.Incomplete;
+            query = query.Where(customer => customer.Completeness == completeness);
+        }
+
         // El total se cuenta sobre la consulta **ya filtrada** y antes de paginar: es cuantos
         // clientes coinciden con la busqueda, no cuantos tiene el tenant. Contar despues del Skip
         // devolveria como mucho pageSize y la UI dibujaria una sola pagina siempre.
         var total = await query.CountAsync(cancellationToken);
 
-        // Con algun filtro de texto activo, el resultado se ordena por relevancia — la fila que
-        // mas se parece al termino buscado va primero, no la que gana alfabeticamente. `search`
-        // (el combobox de quotes) usa un solo termino contra los tres campos; name/
-        // identificationNumber/cuc (el listado) usan un termino independiente por campo.
-        // `TrigramsSimilarity(columna, "")` da 0, asi que sumar los tres terminos funciona igual
-        // aunque el llamador solo haya llenado uno.
-        // Los `?.`/`??` tienen que resolverse ANTES del lambda: un operador null-propagating
-        // dentro de un árbol de expresión (lo que EF Core traduce a SQL) no compila — CS8072 —
-        // aunque el operando sea una variable capturada y no el parámetro del lambda.
-        var searchTerm = search?.Trim() ?? string.Empty;
-        var nameTerm = name?.Trim() ?? string.Empty;
-        var identificationTerm = identificationNumber?.Trim() ?? string.Empty;
-        var cucTerm = cuc?.Trim() ?? string.Empty;
-
-        // Sin filtro de texto, el mas nuevo va primero: es el orden que importa para operar (el
-        // cliente que alguien acaba de cargar aparece arriba de entrada, sin tener que buscarlo),
-        // no el alfabetico que solo ayuda a ubicar un nombre que ya se conoce.
-        var orderedQuery = searchPattern is not null
-            ? query.OrderByDescending(customer =>
-                EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
-                EF.Functions.TrigramsSimilarity(customer.IdentificationNumber, searchTerm) +
-                EF.Functions.TrigramsSimilarity(customer.Cuc, searchTerm))
-            : namePattern is not null || identificationPattern is not null || cucPattern is not null
-                ? query.OrderByDescending(customer =>
-                    EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
-                    EF.Functions.TrigramsSimilarity(customer.IdentificationNumber, identificationTerm) +
-                    EF.Functions.TrigramsSimilarity(customer.Cuc, cucTerm))
-                : query.OrderByDescending(customer => customer.CreatedAt);
+        var orderedQuery = OrderByRelevance(
+            query, search, searchPattern, name, namePattern, identificationNumber, identificationPattern, cuc, cucPattern);
 
         var items = await orderedQuery
             .ThenBy(customer => customer.Name)
@@ -173,6 +170,74 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .ToListAsync(cancellationToken);
 
         return (items, total);
+    }
+
+    // El orden de relevancia de SearchAsync, compartido con SearchSelectableAsync para que la caja y el listado no
+    // diverjan. Sigue siendo una sola expresion por rama (no un selector generico): EF tiene que ver
+    // `EF.Functions.TrigramsSimilarity` directo sobre el parametro del lambda para traducirlo.
+    private static IOrderedQueryable<Customer> OrderByRelevance(
+        IQueryable<Customer> query,
+        string? search,
+        string? searchPattern,
+        string? name,
+        string? namePattern,
+        string? identificationNumber,
+        string? identificationPattern,
+        string? cuc,
+        string? cucPattern)
+    {
+        // Con algun filtro de texto activo, el resultado se ordena por relevancia — la fila que
+        // mas se parece al termino buscado va primero, no la que gana alfabeticamente. `search`
+        // (el combobox de quotes) usa un solo termino contra los tres campos; name/
+        // identificationNumber/cuc (el listado) usan un termino independiente por campo.
+        // `TrigramsSimilarity(columna, "")` da 0, asi que sumar los tres terminos funciona igual
+        // aunque el llamador solo haya llenado uno.
+        // Los `?.`/`??` tienen que resolverse ANTES del lambda: un operador null-propagating
+        // dentro de un árbol de expresión (lo que EF Core traduce a SQL) no compila — CS8072 —
+        // aunque el operando sea una variable capturada y no el parámetro del lambda.
+        // El documento y el CUC van con `?? ""` (COALESCE): un incompleto los tiene nulos, y la
+        // similitud de un NULL es NULL, que en un ORDER BY DESC de PostgreSQL va **primero**.
+        var searchTerm = search?.Trim() ?? string.Empty;
+        var nameTerm = name?.Trim() ?? string.Empty;
+        var identificationTerm = identificationNumber?.Trim() ?? string.Empty;
+        var cucTerm = cuc?.Trim() ?? string.Empty;
+
+        // Sin filtro de texto, el mas nuevo va primero: es el orden que importa para operar (el
+        // cliente que alguien acaba de cargar aparece arriba de entrada, sin tener que buscarlo),
+        // no el alfabetico que solo ayuda a ubicar un nombre que ya se conoce.
+        return searchPattern is not null
+            ? query.OrderByDescending(customer =>
+                EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
+                EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, searchTerm) +
+                EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, searchTerm))
+            : namePattern is not null || identificationPattern is not null || cucPattern is not null
+                ? query.OrderByDescending(customer =>
+                    EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, identificationTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, cucTerm))
+                : query.OrderByDescending(customer => customer.CreatedAt);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Customer>> SearchSelectableAsync(
+        Guid tenantId,
+        string? search,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var searchPattern = LikePattern(search);
+
+        // Activo y con documento (numero Y tipo: el lookup de Pos desreferencia el tipo) en la consulta y no despues: los incompletos de WhatsApp (sin documento) son los
+        // mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
+        var query = FilteredQuery(tenantId, searchPattern, null, null, null)
+            .Where(customer => customer.IsActive && customer.IdentificationNumber != null && customer.IdentificationType != null);
+
+        // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
+        return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)
+            .ThenBy(customer => customer.Name)
+            .ThenBy(customer => customer.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
     }
 
     // Con tracking a proposito, a diferencia de SearchAsync: los llamadores de este mutan el
@@ -223,15 +288,23 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
 
         var candidates = await dbContext.Customers
             .AsNoTracking()
+            // Un incompleto también puede ser dueño de un documento (alta rápida del POS, POSC-05): no filtrar por
+            // `Completeness == Complete`, el pre-chequeo de Pos depende de que estos aparezcan.
+            // Un fusionado puede compartir documento con el que quedó (el índice es parcial): sin excluirlo, el
+            // ToDictionary de abajo lanza con dos dueños del mismo par (spec 2026-10-24, F8).
             .Where(customer =>
                 customer.TenantId == tenantId &&
-                types.Contains(customer.IdentificationType) &&
+                customer.MergedIntoId == null &&
+                customer.IdentificationType != null &&
+                customer.IdentificationNumber != null &&
+                types.Contains(customer.IdentificationType.Value) &&
                 numbers.Contains(customer.IdentificationNumber))
+            // El Where de arriba garantiza los dos valores.
             .Select(customer => new
             {
                 customer.Id,
-                customer.IdentificationType,
-                customer.IdentificationNumber
+                IdentificationType = customer.IdentificationType!.Value,
+                IdentificationNumber = customer.IdentificationNumber!
             })
             .ToListAsync(cancellationToken);
 
@@ -255,15 +328,16 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             return new HashSet<Guid>();
         }
 
-        var ids = await dbContext.Customers
+        var rows = await dbContext.Customers
             .AsNoTracking()
             .Where(customer =>
                 customer.TenantId == tenantId &&
+                customer.IdentificationNumber != null &&
                 EF.Functions.ILike(customer.IdentificationNumber, pattern, LikeEscapeCharacter))
-            .Select(customer => customer.Id.Value)
+            .Select(customer => new { customer.Id, customer.MergedIntoId })
             .ToListAsync(cancellationToken);
 
-        return ids.ToHashSet();
+        return WithSurvivors(rows.Select(row => (row.Id, row.MergedIntoId)));
     }
 
     public async Task<IReadOnlySet<Guid>> SearchIdsByCucAsync(
@@ -277,15 +351,34 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             return new HashSet<Guid>();
         }
 
-        var ids = await dbContext.Customers
+        var rows = await dbContext.Customers
             .AsNoTracking()
             .Where(customer =>
                 customer.TenantId == tenantId &&
+                customer.Cuc != null &&
                 EF.Functions.ILike(customer.Cuc, pattern, LikeEscapeCharacter))
-            .Select(customer => customer.Id.Value)
+            .Select(customer => new { customer.Id, customer.MergedIntoId })
             .ToListAsync(cancellationToken);
 
-        return ids.ToHashSet();
+        return WithSurvivors(rows.Select(row => (row.Id, row.MergedIntoId)));
+    }
+
+    // Spec 2026-10-24 §3.3 (desvío F7): el filtro de cotizaciones (por documento) y el de pedidos (por CUC) siguen trayendo lo
+    // del fusionado, que ya se movió al que quedó, así que cada fusionado que coincide suma el id del que quedó. Un salto basta
+    // (D-F2), y el que quedó es del mismo tenant: lo escribió la fusión.
+    private static HashSet<Guid> WithSurvivors(IEnumerable<(CustomerId Id, CustomerId? MergedIntoId)> rows)
+    {
+        var ids = new HashSet<Guid>();
+        foreach (var (id, mergedIntoId) in rows)
+        {
+            ids.Add(id.Value);
+            if (mergedIntoId is { } survivor)
+            {
+                ids.Add(survivor.Value);
+            }
+        }
+
+        return ids;
     }
 
     public async Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
@@ -304,8 +397,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // filtrado por tenant es chico.
         var tenantCustomers = await dbContext.Customers
             .AsNoTracking()
-            .Where(customer => customer.TenantId == tenantId)
-            .Select(customer => new { customer.Id, customer.Cuc })
+            // Un incompleto no tiene CUC (spec 2026-10-10 §6.2): ninguna fila del Excel lo encuentra.
+            .Where(customer => customer.TenantId == tenantId && customer.Cuc != null)
+            // El Where de arriba garantiza el CUC.
+            .Select(customer => new { customer.Id, Cuc = customer.Cuc! })
             .ToListAsync(cancellationToken);
 
         var suffixSet = suffixes.ToHashSet();
@@ -366,4 +461,118 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     }
 
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
+
+    // lower() de los dos lados y en SQL: la expresión exacta de IX_customers_tenant_email. Bajarlo en .NET con
+    // ToLowerInvariant podría discrepar de la base con letras como «Ó» y además deja de usar el índice. Mismo criterio
+    // que ResolutionReasonRepository. Sólo el id, así que no aplica la regla de listar todas las columnas del FromSql.
+    // Los fusionados van al final, como en FindOldestByPhoneE164Async (spec 2026-10-24 §3.3): uno sólo sale si es el único con
+    // ese correo, y el adaptador de Shopify lo cambia por el que quedó.
+    public async Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(email);
+        var trimmed = email.Trim();
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        var ids = await dbContext.Database
+            .SqlQuery<Guid>($"""
+                SELECT id AS "Value" FROM customers.customers
+                WHERE tenant_id = {tenantId} AND lower(email) = lower({trimmed})
+                ORDER BY merged_into_id IS NOT NULL, created_at, id
+                LIMIT 1
+                """)
+            .ToListAsync(cancellationToken);
+        return ids.Count == 0 ? null : new CustomerId(ids[0]);
+    }
+
+    public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == whatsAppUserId, cancellationToken);
+
+    public Task<Customer?> FindByInstagramUserIdAsync(Guid tenantId, string instagramUserId, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .SingleOrDefaultAsync(customer => customer.TenantId == tenantId && customer.InstagramUserId == instagramUserId, cancellationToken);
+
+    public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164)
+            // Spec 2026-10-24 §3.3: un fusionado nunca es «el más viejo» del número. Sólo sale si es el único, y el llamador lo
+            // redirige al que quedó (CustomerWhatsAppDirectory, ShopifyCustomerDirectory).
+            .OrderBy(customer => customer.MergedIntoId != null).ThenBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    // Un UPDATE condicional y no el agregado + SaveChanges: el BSUID no sube la versión (P4), así que el chequeo de
+    // concurrencia de EF no protege nada y dos vinculaciones simultáneas terminarían en «gana la última» (D-A6).
+    public async Task<bool> TryAttachWhatsAppUserIdAsync(
+        Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken)
+    {
+        var normalized = Customer.NormalizeWhatsAppUserId(whatsAppUserId);
+        return await TranslateTakenAsync(() => dbContext.Customers
+            .Where(customer => customer.TenantId == tenantId && customer.Id == customerId && customer.WhatsAppUserId == null &&
+                customer.MergedIntoId == null)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.WhatsAppUserId, normalized), cancellationToken)) == 1;
+    }
+
+    public async Task<bool> TryReplaceWhatsAppUserIdAsync(
+        Guid tenantId, string previous, string current, CancellationToken cancellationToken)
+    {
+        var normalized = Customer.NormalizeWhatsAppUserId(current);
+        return await TranslateTakenAsync(() => dbContext.Customers
+            .Where(customer => customer.TenantId == tenantId && customer.WhatsAppUserId == previous)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.WhatsAppUserId, normalized), cancellationToken)) == 1;
+    }
+
+    // ExecuteUpdate no pasa por SaveChanges, así que la traducción de CustomersUnitOfWork no lo cubre: se repite acá
+    // por el mismo nombre de índice. La excepción puede llegar cruda o envuelta, según el camino del proveedor.
+    private static async Task<int> TranslateTakenAsync(Func<Task<int>> update)
+    {
+        try
+        {
+            return await update();
+        }
+        catch (Exception exception) when (IsWhatsAppUserIdTaken(exception))
+        {
+            throw new WhatsAppUserIdTakenException(exception);
+        }
+    }
+
+    private static bool IsWhatsAppUserIdTaken(Exception exception) =>
+        (exception as PostgresException ?? exception.InnerException as PostgresException) is { } postgres &&
+        postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+        string.Equals(postgres.ConstraintName, CustomersUnitOfWork.WhatsAppUserIdIndex, StringComparison.Ordinal);
+
+    public async Task<IReadOnlyList<CustomerWhatsAppRef>> FindWhatsAppRefsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var wanted = ids.Select(id => new CustomerId(id)).ToArray();
+        // El id viaja con su conversión: se arma el ref en memoria y no en la proyección SQL.
+        var rows = await dbContext.Customers.AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && wanted.Contains(customer.Id))
+            .Select(customer => new { customer.Id, customer.Name, customer.Completeness })
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => new CustomerWhatsAppRef(row.Id.Value, row.Name, row.Completeness == CustomerCompleteness.Complete)).ToArray();
+    }
+
+    public async Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        var pattern = "%" + EscapeLikeWildcards(term) + "%";
+        var ids = await dbContext.Customers.AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && EF.Functions.ILike(customer.Name, pattern, LikeEscapeCharacter))
+            .OrderBy(customer => customer.Id)
+            .Select(customer => customer.Id)
+            .Take(cap)
+            .ToListAsync(cancellationToken);
+        return ids.Select(id => id.Value).ToArray();
+    }
 }

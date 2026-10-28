@@ -1,5 +1,6 @@
 using FluentValidation;
 using Modules.Companies.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Companies.Application;
 
@@ -97,15 +98,12 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
                 .NotEmpty()
                 .MaximumLength(CompanyBankAccount.AccountNumberMaxLength);
 
-            // Tres letras, ISO 4217. Se comprueba con Length + All(IsLetter) y no con una
-            // expresion regular por el mismo criterio con el que CompanyContactInfo evita una para
-            // el correo: no hace falta un patron para decidir si algo tiene tres letras.
+            // A catalogue code (spec D6), not just three letters: the account currency decides the
+            // currency of every quotation billed to it, and a currency the catalogue lacks can
+            // never be quoted.
             account.RuleFor(value => value.Currency)
-                .Must(currency =>
-                    currency is not null &&
-                    currency.Trim().Length == CompanyBankAccount.CurrencyLength &&
-                    currency.Trim().All(char.IsLetter))
-                .WithMessage("The currency must be a three-letter ISO 4217 code.");
+                .Must(Currencies.IsSupported)
+                .WithMessage("The currency must be one of the catalogue currencies.");
         });
 
         // El duplicado se comprueba aca **ademas** de en el dominio, y no solo alla, porque el

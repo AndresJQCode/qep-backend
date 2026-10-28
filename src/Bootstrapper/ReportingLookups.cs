@@ -125,9 +125,12 @@ internal sealed class ReportingClientLookup(CustomersDbContext customers)
 
         return rows.ToDictionary(
             row => row.Id.Value,
+            // Un incompleto no tiene CUC, y sí puede aparecer en un reporte: una venta POS a un cliente
+            // del alta rápida o un pedido de Shopify lo referencian. Sin CUC viaja null, no "" (spec
+            // 2026-10-23 §1).
             row => new ReportingClientRef(row.Name, row.Cuc));
     }
 }
 
 /// <summary>Lo unico que los reportes de pedidos y cotizaciones necesitan de un cliente.</summary>
-internal sealed record ReportingClientRef(string Name, string Cuc);
+internal sealed record ReportingClientRef(string Name, string? Cuc);

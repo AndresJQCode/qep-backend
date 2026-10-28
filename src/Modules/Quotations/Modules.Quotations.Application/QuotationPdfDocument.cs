@@ -35,11 +35,14 @@ public sealed record QuotationPdfDocument(
     /// <summary>La moneda de todos los importes del documento, la de la cuenta de cobro: un PDF
     /// que cobra a una cuenta en dólares imprime dólares.</summary>
     string Currency,
+    /// <summary>The currency symbol printed before every amount (spec D8: fixed per currency).</summary>
+    string Symbol,
+    /// <summary>How many decimals the amounts print with: 0 for COP, 2 for USD/EUR.</summary>
+    int Decimals,
     /// <summary>A nombre de quién y a qué cuenta se paga. Nulo si la cotización todavía no
     /// eligió cuenta: el documento sale igual, sin ese pie.</summary>
     QuotationPdfBillingAccount? BillingAccount,
     string? PaymentMethod,
-    string? Notes,
     IReadOnlyList<QuotationPdfLine> Items,
     /// <summary>La base sin IVA de todo el documento. El precio de los productos viene con el
     /// impuesto adentro, así que esto es <b>menos</b> que la suma de las líneas, no más.</summary>
@@ -64,7 +67,40 @@ public sealed record QuotationPdfDocument(
     /// <summary>El logo del tenant, o null sin logo — el request a qcode-pdf no cambia de forma
     /// en ese caso (spec 2026-09-19). `Content` lleva [JsonIgnore]: viaja sólo como asset
     /// (`QCodePdfRenderer`), nunca duplicado en base64 dentro de `data`.</summary>
-    QuotationPdfLogo? Logo);
+    QuotationPdfLogo? Logo,
+    /// <summary>Nombre de la transportadora; null sin envío o sin transportadora elegida.</summary>
+    string? CarrierName = null,
+    /// <summary>Nombre del modo (<c>Charged</c>, <c>Free</c>, <c>OnDelivery</c>) o null sin envío. La
+    /// plantilla decide qué renglón imprime según este valor: el mapeo no arma textos.</summary>
+    string? FreightChargeMode = null,
+    /// <summary>El valor bruto digitado (IVA adentro). Con <c>OnDelivery</c> es sólo informativo.</summary>
+    decimal FreightAmount = 0m,
+    int FreightTaxPercentage = 0,
+    /// <summary>La base del envío sin IVA; 0 salvo en <c>Charged</c>.</summary>
+    decimal FreightSubtotal = 0m,
+    decimal FreightTaxAmount = 0m,
+    /// <summary>Pago contra entrega: la plantilla imprime «Forma de pago: Contraentrega».</summary>
+    bool CashOnDelivery = false,
+    /// <summary>Qué documento es. Un solo layout para cotización y pedido (owner): la plantilla sólo
+    /// cambia el nombre del documento y omite la vigencia, que un pedido no tiene. Default
+    /// <see cref="QuotationPdfKind.Quotation"/> para que el PDF de la cotización no cambie.</summary>
+    QuotationPdfKind Kind = QuotationPdfKind.Quotation,
+    /// <summary>El separador de miles del formato numérico del tenant. El símbolo y los decimales de la
+    /// moneda siguen saliendo de <c>Currencies</c> (spec 2026-10-23, D-R4): esto sólo decide los separadores.</summary>
+    string ThousandsSeparator = ".",
+    /// <summary>El separador decimal del formato numérico del tenant; ver <see cref="ThousandsSeparator"/>.</summary>
+    string DecimalSeparator = ",");
+
+/// <summary>
+/// Viaja como texto (<c>"Quotation"</c> / <c>"Order"</c>) en <c>data.kind</c>: la plantilla compara
+/// con el nombre, y un número la ataría al orden de este enum sin que el compilador lo vea.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<QuotationPdfKind>))]
+public enum QuotationPdfKind
+{
+    Quotation,
+    Order
+}
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">
@@ -105,6 +141,11 @@ public sealed record QuotationPdfBillingAccount(
 /// Acá no viaja <c>QuotationItem.Subtotal</c>, que es la base <b>sin</b> IVA de la línea. Ese
 /// número es correcto y es lo que el encabezado suma, pero puesto al lado de un unitario que sí
 /// trae impuesto da una fila que no multiplica.
+///
+/// <c>ProductName</c> es el nombre visible de la variante vendida («Camiseta – M»; el nombre del producto si
+/// no tiene opciones), tal como lo resuelve <c>QuotationItemProductLabel</c>: la foto de la línea una vez la
+/// cotización salió del borrador. Conserva el nombre <c>productName</c> para que la plantilla del PDF no cambie
+/// (spec 2026-10-20 variantes §7).
 /// </summary>
 public sealed record QuotationPdfLine(
     string ProductName,

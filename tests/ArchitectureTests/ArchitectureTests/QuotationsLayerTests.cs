@@ -18,6 +18,12 @@ public sealed class QuotationsLayerTests
             typeof(QuotationEndpoints).Assembly);
     }
 
+    // Spec 2026-10-08, D6: the currency is a catalogue code (Modules.Tenancy.Application.Currencies),
+    // not a two-value enum. A new QuotationCurrency type would bring the "only COP or USD" rule back.
+    [Fact]
+    public void DomainHasNoCurrencyEnum() =>
+        Assert.Null(typeof(Quotation).Assembly.GetType("Modules.Quotations.Domain.QuotationCurrency"));
+
     [Fact]
     public void ApplicationDoesNotReferenceInfrastructureOrApi()
     {

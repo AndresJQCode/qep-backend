@@ -1,9 +1,9 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Un tramo de precio por cantidad de un producto (CAT-09). No es un agregado propio: nace,
-/// vive y muere con su <see cref="Product"/> — no tiene repositorio ni caso de uso propio, y
-/// <see cref="Create"/> es <c>internal</c> porque sólo <c>Product</c> la construye.
+/// Un tramo de precio por cantidad de una variante (CAT-09; de un producto hasta 2026-10-20). No es
+/// un agregado propio: nace, vive y muere con su <see cref="ProductVariant"/>, dentro de <see cref="Product"/> — no tiene repositorio ni caso de uso propio, y
+/// <see cref="Create"/> es <c>internal</c> porque sólo el agregado la construye.
 /// </summary>
 public sealed class PriceScale
 {
@@ -15,33 +15,33 @@ public sealed class PriceScale
 
     private PriceScale(
         PriceScaleId id,
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
         int fromUnit,
         int toUnit,
         decimal discount,
         PriceScaleRestriction? restriction,
         int? multiple,
-        decimal? finalUsd,
-        decimal? finalCop,
         bool allowGrouping)
     {
         Id = id;
-        ProductId = productId;
+        VariantId = variantId;
         TenantId = tenantId;
         FromUnit = fromUnit;
         ToUnit = toUnit;
         Discount = discount;
         Restriction = restriction;
         Multiple = multiple;
-        FinalUsd = finalUsd;
-        FinalCop = finalCop;
         AllowGrouping = allowGrouping;
     }
 
     public PriceScaleId Id { get; private set; }
 
-    public ProductId ProductId { get; private set; }
+    /// <summary>
+    /// La variante dueña de la escala. Era el producto hasta las variantes (2026-10-20): cada variante
+    /// se comporta como antes un producto, con sus propias escalas.
+    /// </summary>
+    public VariantId VariantId { get; private set; }
 
     public Guid TenantId { get; private set; }
 
@@ -63,27 +63,16 @@ public sealed class PriceScale
     /// <summary>Sólo cuando <see cref="Restriction"/> es <c>Multiple</c>; null en el otro caso.</summary>
     public int? Multiple { get; private set; }
 
-    public decimal? FinalUsd { get; private set; }
-
-    public decimal? FinalCop { get; private set; }
-
     /// <summary>Si esta escala permite que las cantidades de varias líneas de una cotización
     /// se sumen para validar el múltiplo. Siempre <c>false</c> cuando
     /// <see cref="Restriction"/> es <c>PackagingUnit</c> — lo hace cumplir
     /// <see cref="Create"/>.</summary>
     public bool AllowGrouping { get; private set; }
 
-    /// <param name="productBaseUsd">
-    /// El precio base USD del producto dueño, para validar <see cref="FinalUsd"/> contra
-    /// base × (1 − descuento%). No es un campo de la escala: vive en <c>Product</c>.
-    /// </param>
-    /// <param name="productBaseCop">Igual que <paramref name="productBaseUsd"/>, para COP.</param>
     internal static PriceScale Create(
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
-        PriceScaleInput input,
-        decimal? productBaseUsd,
-        decimal? productBaseCop)
+        PriceScaleInput input)
     {
         ValidateRangeAndDiscount(input);
 
@@ -118,7 +107,7 @@ public sealed class PriceScale
             }
 
             // Sin número propio: la escala usa los empaques del producto, y que no estén vacíos
-            // lo hace cumplir Product, que es el que ve los dos (Product.PackagingUnits).
+            // lo hace cumplir la variante, que es la que ve los dos (ProductVariant.PackagingUnits).
             if (input.Multiple is not null)
             {
                 throw new CatalogDomainException(
@@ -129,38 +118,32 @@ public sealed class PriceScale
             multiple = null;
         }
 
-        ValidateFinals(input, productBaseUsd, productBaseCop);
-
         return new PriceScale(
             PriceScaleId.New(),
-            productId,
+            variantId,
             tenantId,
             input.FromUnit,
             input.ToUnit,
             input.Discount,
             restriction,
             multiple,
-            input.FinalUsd,
-            input.FinalCop,
             input.AllowGrouping);
     }
 
     /// <summary>
-    /// Una escala sin restricción, múltiplo ni agrupación: sólo rango, descuento y los
-    /// finales. La usa **únicamente** la copia de escalas (<see cref="Product.ApplyCopiedPriceScales"/>);
+    /// Una escala sin restricción, múltiplo ni agrupación: sólo rango y descuento. La usa
+    /// **únicamente** la copia de escalas (<see cref="Product.ApplyCopiedPriceScales"/>);
     /// el formulario pasa por <see cref="Create"/>, que sigue exigiendo la restricción.
     ///
-    /// Rango, descuento y finales se validan igual que en <see cref="Create"/>: lo incompleto es
-    /// la restricción, no el precio. Una entrada que sí trae restricción no se acepta ni se
+    /// Rango y descuento se validan igual que en <see cref="Create"/>: lo incompleto es la
+    /// restricción, no el precio. Una entrada que sí trae restricción no se acepta ni se
     /// descarta en silencio — quien la armó creía estar copiando algo que esta escala no guarda,
     /// y eso es un error de programación, no un 422.
     /// </summary>
     internal static PriceScale CreateIncomplete(
-        ProductId productId,
+        VariantId variantId,
         Guid tenantId,
-        PriceScaleInput input,
-        decimal? productBaseUsd,
-        decimal? productBaseCop)
+        PriceScaleInput input)
     {
         if (input.Restriction is not null
             || input.Multiple is not null
@@ -172,19 +155,16 @@ public sealed class PriceScale
         }
 
         ValidateRangeAndDiscount(input);
-        ValidateFinals(input, productBaseUsd, productBaseCop);
 
         return new PriceScale(
             PriceScaleId.New(),
-            productId,
+            variantId,
             tenantId,
             input.FromUnit,
             input.ToUnit,
             input.Discount,
             restriction: null,
             multiple: null,
-            input.FinalUsd,
-            input.FinalCop,
             allowGrouping: false);
     }
 
@@ -212,85 +192,15 @@ public sealed class PriceScale
         }
     }
 
-    private static void ValidateFinals(
-        PriceScaleInput input, decimal? productBaseUsd, decimal? productBaseCop)
-    {
-        if (input.FinalUsd is null && input.FinalCop is null)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_scale.final_currency_required",
-                "The price scale requires a final price in at least one currency.");
-        }
-
-        ValidateFinal(
-            input.FinalUsd,
-            productBaseUsd,
-            input.Discount,
-            "catalog.product.price_scale.final_without_base_usd",
-            "catalog.product.price_scale.final_mismatch_usd",
-            "USD");
-        ValidateFinal(
-            input.FinalCop,
-            productBaseCop,
-            input.Discount,
-            "catalog.product.price_scale.final_without_base_cop",
-            "catalog.product.price_scale.final_mismatch_cop",
-            "COP");
-    }
-
     /// <summary>
-    /// El precio final que le corresponde a un descuento sobre un precio base, con el mismo
-    /// redondeo con el que <see cref="ValidateFinal"/> decide si acepta el que manda el
-    /// cliente.
-    ///
-    /// Vive acá y no en quien lo necesita porque hay tres usos y tienen que dar idéntico:
-    /// <see cref="PriceScaleCopy"/> recalcula el final contra el precio base del destino, y
-    /// esa escala pasa después por esta misma validación; y el seeder de catálogo
-    /// (<c>CatalogSeeder</c>, en Infrastructure) hace de cliente y manda los finales que
-    /// <see cref="Create"/> valida. Con la cuenta escrita en dos lados, un cambio de redondeo
-    /// en uno dejaría a la copia —o a la semilla— generando escalas que el otro rechaza.
-    ///
-    /// <c>public</c> y no <c>internal</c> por ese tercer uso: Domain no expone internals a
-    /// Infrastructure, y duplicar la cuenta en el seeder es justo lo que este método evita.
+    /// The final price of a discount over a base price, rounded to two decimals away from zero.
+    /// The single derivation (spec D4): the product response, the Excel export and the contract
+    /// migration guard (DropLegacyProductPriceColumns) all go through it or mirror it, so they cannot
+    /// disagree on a cent. Public because Infrastructure (the export builder) calls it.
     /// </summary>
     public static decimal? FinalFor(decimal? productBase, decimal discount) =>
         productBase is null
             ? null
             : Math.Round(
                 productBase.Value * (1 - discount / 100m), 2, MidpointRounding.AwayFromZero);
-
-    /// <summary>
-    /// El precio final lo manda el cliente — no lo calcula el backend — pero el backend lo
-    /// valida contra el precio base del producto y el descuento de la escala, con una
-    /// tolerancia de redondeo de un centavo. Ver DomainDecisiones: precio final por
-    /// cálculo del cliente, back valida.
-    /// </summary>
-    private static void ValidateFinal(
-        decimal? final,
-        decimal? productBase,
-        decimal discount,
-        string withoutBaseCode,
-        string mismatchCode,
-        string currencyLabel)
-    {
-        if (final is null)
-        {
-            return;
-        }
-
-        if (productBase is null)
-        {
-            throw new CatalogDomainException(
-                withoutBaseCode,
-                $"A final price in {currencyLabel} requires the product to have a base price in {currencyLabel}.");
-        }
-
-        var expected = FinalFor(productBase, discount)!.Value;
-        if (Math.Abs(final.Value - expected) > 0.01m)
-        {
-            throw new CatalogDomainException(
-                mismatchCode,
-                $"The final price in {currencyLabel} does not match the base price and the discount.");
-        }
-    }
 }

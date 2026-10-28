@@ -1,5 +1,7 @@
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Storage.UnitTests;
 
@@ -35,9 +37,43 @@ public sealed class PaymentProofPublicUrlTests
         Assert.Null(file.PublicUrl);
     }
 
+    [Fact]
+    public async Task WithoutOrdersTheHandlerExcludesPaymentProofs()
+    {
+        var repository = new InMemoryFileResourceRepository(MovedPaymentProof());
+
+        await ListAsync(repository, FixedTenantModules.AllBut(TenantModuleKeys.Orders));
+
+        Assert.Equal([FileOwnerType.PaymentProof], repository.LastExcludedOwnerTypes);
+    }
+
+    [Fact]
+    public async Task WithEverythingOnNothingIsExcluded()
+    {
+        var repository = new InMemoryFileResourceRepository(MovedPaymentProof());
+
+        await ListAsync(repository, FixedTenantModules.AllBut());
+
+        Assert.Empty(repository.LastExcludedOwnerTypes!);
+    }
+
+    [Fact]
+    public async Task ASimulatedTenantExcludesNothing()
+    {
+        var repository = new InMemoryFileResourceRepository(MovedPaymentProof());
+
+        await ListAsync(repository, FixedTenantModules.Simulated);
+
+        Assert.Empty(repository.LastExcludedOwnerTypes!);
+    }
+
     private static Task<PagedFilesDto> ListAsync(FileResource resource) =>
+        ListAsync(new InMemoryFileResourceRepository(resource), FixedTenantModules.Simulated);
+
+    private static Task<PagedFilesDto> ListAsync(InMemoryFileResourceRepository repository, ITenantModules modules) =>
         new ListFilesHandler(
-                new InMemoryFileResourceRepository(resource),
+                repository,
+                modules,
                 new FixedPublicObjectStorage(),
                 new AllowAllExecutionContext(TenantId))
             .HandleAsync(

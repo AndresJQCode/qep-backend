@@ -1,5 +1,6 @@
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -143,6 +144,48 @@ public sealed class ExportQuotationPdfHandlerTests
         Assert.Equal(logo.FileId, repository.Pdf!.LogoFileId);
     }
 
+    // El formato numérico del tenant es parte de lo que se imprimió (spec 2026-10-23, D-R3): cambiarlo
+    // vence el PDF guardado y el documento nuevo sale con los separadores nuevos.
+    [Fact]
+    public async Task ChangingTheTenantNumberFormatRegenerates()
+    {
+        var directory = new StubTenantDirectory();
+        var (handler, renderer, _, repository, _, _) = NewHandler(directory);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        directory.Regional = directory.Regional! with { NumberFormat = TenantNumberFormats.DotDecimal };
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, renderer.Calls);
+        Assert.Equal(",", renderer.Last!.ThousandsSeparator);
+        Assert.Equal(TenantNumberFormats.DotDecimal, repository.Pdf!.NumberFormat);
+    }
+
+    [Fact]
+    public async Task ExportingTwiceWithTheSameNumberFormatDoesNotRegenerate()
+    {
+        var (handler, renderer, _, _, _, _) =
+            NewHandler(StubTenantDirectory.WithNumberFormat(TenantNumberFormats.DotDecimal));
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, renderer.Calls);
+    }
+
+    // Un tenant sin fila de ajustes imprime con el formato colombiano, el de siempre.
+    [Fact]
+    public async Task WithoutRegionalSettingsTheDocumentUsesColombianSeparators()
+    {
+        var (handler, renderer, _, repository, _, _) = NewHandler(new StubTenantDirectory { Regional = null });
+
+        await handler.HandleAsync(NewCommand(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(".", renderer.Last!.ThousandsSeparator);
+        Assert.Equal(",", renderer.Last.DecimalSeparator);
+        Assert.Equal(TenantNumberFormats.CommaDecimal, repository.Pdf!.NumberFormat);
+    }
+
     private static ExportQuotationPdfCommand NewCommand(Guid? quotationId = null) =>
         new(TenantId, quotationId ?? CurrentQuotationId);
 
@@ -154,7 +197,7 @@ public sealed class ExportQuotationPdfHandlerTests
         RecordingPdfStorage Storage,
         StubQuotationRepository Repository,
         StubQuotationLogoLookup LogoLookup,
-        Quotation Quotation) NewHandler()
+        Quotation Quotation) NewHandler(StubTenantDirectory? tenantDirectory = null)
     {
         var quotation = Quotation.Create(
             QuotationId.New(),
@@ -167,6 +210,7 @@ public sealed class ExportQuotationPdfHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -187,7 +231,8 @@ public sealed class ExportQuotationPdfHandlerTests
                 renderer,
                 storage,
                 new FixedTenantClock(Now),
-                logoLookup),
+                logoLookup,
+                tenantDirectory ?? new StubTenantDirectory()),
             storage,
             new StubExecutionContext(SubjectId, TenantId));
 

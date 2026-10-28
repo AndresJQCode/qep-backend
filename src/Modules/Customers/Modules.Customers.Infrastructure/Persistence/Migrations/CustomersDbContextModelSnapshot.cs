@@ -17,7 +17,7 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -87,7 +87,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     b.Property<string>("Address")
-                        .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
@@ -106,12 +105,19 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(120)")
                         .HasColumnName("city_name");
 
-                    b.Property<Guid>("ClassificationId")
+                    b.Property<Guid?>("ClassificationId")
                         .HasColumnType("uuid")
                         .HasColumnName("classification_id");
 
-                    b.Property<string>("Country")
+                    b.Property<string>("Completeness")
                         .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Complete")
+                        .HasColumnName("completeness");
+
+                    b.Property<string>("Country")
                         .HasMaxLength(2)
                         .HasColumnType("character varying(2)")
                         .HasColumnName("country");
@@ -121,7 +127,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("created_at");
 
                     b.Property<string>("Cuc")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("cuc");
@@ -132,20 +137,51 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnName("email");
 
                     b.Property<string>("IdentificationNumber")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
 
                     b.Property<string>("IdentificationType")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_type");
 
+                    b.Property<string>("InstagramUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("instagram_user_id");
+
+                    b.Property<string>("InstagramUsername")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("instagram_username");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
+
+                    b.Property<bool>("MarketingOptOut")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("marketing_opt_out");
+
+                    b.Property<DateTimeOffset?>("MarketingOptOutAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("marketing_opt_out_at");
+
+                    b.Property<string>("MarketingOptOutSource")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("marketing_opt_out_source");
+
+                    b.Property<DateTimeOffset?>("MergedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("merged_at");
+
+                    b.Property<Guid?>("MergedIntoId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("merged_into_id");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -153,10 +189,20 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(160)")
                         .HasColumnName("name");
 
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
+
                     b.Property<string>("Phone")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("phone");
+
+                    b.Property<string>("PhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("phone_e164");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
@@ -174,6 +220,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint")
                         .HasColumnName("version");
+
+                    b.Property<string>("WhatsAppUserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("whatsapp_user_id");
 
                     b.Property<bool>("WithRetention")
                         .HasColumnType("boolean")
@@ -193,20 +244,46 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Name"), "gin");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Name"), new[] { "gin_trgm_ops" });
 
-                    b.HasIndex("TenantId")
-                        .HasDatabaseName("IX_customers_tenant");
-
                     b.HasIndex("TenantId", "ClassificationId");
 
                     b.HasIndex("TenantId", "Cuc")
                         .IsUnique()
                         .HasDatabaseName("IX_customers_tenant_cuc");
 
+                    b.HasIndex("TenantId", "MergedIntoId")
+                        .HasDatabaseName("IX_customers_tenant_merged_into")
+                        .HasFilter("merged_into_id IS NOT NULL");
+
+                    b.HasIndex("TenantId", "PhoneE164")
+                        .HasDatabaseName("IX_customers_tenant_phone_e164")
+                        .HasFilter("phone_e164 IS NOT NULL");
+
                     b.HasIndex("TenantId", "IdentificationType", "IdentificationNumber")
                         .IsUnique()
-                        .HasDatabaseName("IX_customers_tenant_identification");
+                        .HasDatabaseName("IX_customers_tenant_identification")
+                        .HasFilter("merged_into_id IS NULL");
 
-                    b.ToTable("customers", "customers");
+                    b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_customers_tenant_incomplete")
+                        .HasFilter("completeness = 'Incomplete'");
+
+                    b.HasIndex(new[] { "TenantId", "InstagramUserId" }, "IX_customers_tenant_instagram_user_id")
+                        .IsUnique()
+                        .HasFilter("instagram_user_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId", "WhatsAppUserId" }, "IX_customers_tenant_whatsapp_user_id")
+                        .IsUnique()
+                        .HasFilter("whatsapp_user_id IS NOT NULL");
+
+                    b.ToTable("customers", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_customers_complete_fields", "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL AND address IS NOT NULL AND country IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
+
+                            t.HasCheckConstraint("CK_customers_marketing_opt_out_source", "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerAddress", b =>
@@ -264,6 +341,274 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_customer_addresses_principal");
 
                     b.ToTable("customer_addresses", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerDataConsent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("actor_kind");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<string>("Channel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("ChannelUserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("channel_user_id");
+
+                    b.Property<Guid?>("ChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_id");
+
+                    b.Property<string>("ChatbotName")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("chatbot_name");
+
+                    b.Property<Guid?>("ChatbotVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_version_id");
+
+                    b.Property<int?>("ChatbotVersionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("chatbot_version_number");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("event");
+
+                    b.Property<string>("Medium")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("medium");
+
+                    b.Property<string>("NodeId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("node_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid?>("PromptMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prompt_message_id");
+
+                    b.Property<Guid?>("RepliedToMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("replied_to_message_id");
+
+                    b.Property<Guid?>("ReplyMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reply_message_id");
+
+                    b.Property<string>("ReplyWamid")
+                        .HasColumnType("text")
+                        .HasColumnName("reply_wamid");
+
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("sequence");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Sequence"));
+
+                    b.Property<string>("ShownText")
+                        .HasColumnType("text")
+                        .HasColumnName("shown_text");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("WaId")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("wa_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReplyMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_data_consents_reply_message")
+                        .HasFilter("reply_message_id IS NOT NULL");
+
+                    b.HasIndex("TenantId", "CustomerId", "OccurredAt", "Sequence")
+                        .IsDescending(false, false, true, true)
+                        .HasDatabaseName("IX_data_consents_tenant_customer_order");
+
+                    b.ToTable("data_consents", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_data_consents_actor", "(event IN ('Accepted', 'Rejected') AND actor_kind = 'Chatbot' AND actor_user_id IS NULL) OR (event = 'Revoked' AND actor_kind = 'Member' AND actor_user_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_channel", "channel IS NULL OR channel IN ('WhatsApp', 'Instagram')");
+
+                            t.HasCheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_event", "event IN ('Accepted', 'Rejected', 'Revoked')");
+
+                            t.HasCheckConstraint("CK_data_consents_identity", "(event = 'Revoked' AND medium = 'Other' AND conversation_id IS NULL AND channel IS NULL AND channel_user_id IS NULL AND wa_id IS NULL) OR ((event <> 'Revoked' OR medium = 'ThisConversation') AND conversation_id IS NOT NULL AND channel IS NOT NULL AND channel_user_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_medium", "medium IS NULL OR medium IN ('ThisConversation', 'Other')");
+
+                            t.HasCheckConstraint("CK_data_consents_revocation_fields", "(event = 'Revoked' AND medium IS NOT NULL AND note IS NOT NULL AND length(btrim(note)) BETWEEN 1 AND 500) OR (event <> 'Revoked' AND medium IS NULL AND note IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_user_id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("body");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("TenantId", "CustomerId", "CreatedAt")
+                        .IsDescending(false, false, true)
+                        .HasDatabaseName("IX_customer_notes_tenant_customer_created");
+
+                    b.ToTable("customer_notes", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerTagAssignment", b =>
+                {
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<Guid>("TagId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tag_id");
+
+                    b.Property<DateTimeOffset>("AssignedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("assigned_at");
+
+                    b.Property<Guid>("AssignedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("assigned_by_user_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("CustomerId", "TagId")
+                        .HasName("PK_customer_tags");
+
+                    b.HasIndex("TagId");
+
+                    b.HasIndex("TenantId", "TagId")
+                        .HasDatabaseName("IX_customer_tags_tenant_tag");
+
+                    b.ToTable("customer_tags", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.Tag", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("color");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_tags_tenant");
+
+                    b.ToTable("tags", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_tags_color", "color IN ('gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Infrastructure.Persistence.CustomerCucCounter", b =>
@@ -337,7 +682,6 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId", "ClassificationId")
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_customers_client_classifications_classification_id");
                 });
 
@@ -348,6 +692,33 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_notes_customers_customer_id");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerTagAssignment", b =>
+                {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_tags_customers_customer_id");
+
+                    b.HasOne("Modules.Customers.Domain.Tag", null)
+                        .WithMany()
+                        .HasForeignKey("TagId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_customer_tags_tags_tag_id");
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>

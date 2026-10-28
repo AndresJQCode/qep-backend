@@ -4,9 +4,17 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
+using Modules.Authorization.Domain;
+using Modules.Authorization.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -43,6 +51,118 @@ public sealed class RealAuthenticationApiTests
         var response = await owner.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Spec 2026-10-07: el camino real, ExternalClaimsTransformation -> AuthorizationService. Mismo
+    // cliente y misma cookie antes y después: los permisos se resuelven en cada request.
+    [Fact]
+    public async Task TurningCatalogOffForbidsProductsThroughTheCookie()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);
+
+        // Tercera copia deliberada del apagado (TenantModulesApiTests, QuotationsApiHarness): cada
+        // ensamblado de pruebas tiene su propia fábrica y no hay proyecto compartido. Desde el spec
+        // 2026-10-08 §3 apagar deja la fila inactiva, no la borra.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var id = new TenantId(tenantId);
+            var now = DateTimeOffset.UtcNow;
+            await dbContext.TenantModules
+                .Where(module => module.TenantId == id && module.ModuleKey == TenantModuleKeys.Catalog)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(module => module.Status, TenantModuleStatus.Inactive)
+                        .SetProperty(module => module.StatusChangedAt, now),
+                    TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await GetProductsAsync(owner, tenantId)).StatusCode);
+    }
+
+    private static async Task<HttpResponseMessage> GetProductsAsync(HttpClient client, Guid tenantId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/catalog/products");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Spec 2026-10-08 §4 y criterio 5: misma cookie antes y después; los permisos se resuelven en cada
+    // request y la sesión se arma de nuevo en /auth/me. Reactivar deja todo como estaba (D8).
+    [Fact]
+    public async Task ASuspendedTenantLeavesTheSessionAndForbidsTheCookieUntilReactivated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+
+        await SetTenantStatusAsync(factory, tenantId, suspend: true);
+
+        var session = await owner.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(session!.ActiveTenants, tenant => tenant.TenantId == tenantId);
+        Assert.Equal(HttpStatusCode.Forbidden, (await GetSettingsAsync(owner, tenantId)).StatusCode);
+
+        await SetTenantStatusAsync(factory, tenantId, suspend: false);
+
+        session = await owner.GetFromJsonAsync<SessionPayload>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+        Assert.Contains(session!.ActiveTenants, tenant => tenant.TenantId == tenantId);
+        Assert.Equal(HttpStatusCode.OK, (await GetSettingsAsync(owner, tenantId)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await GetProductsAsync(owner, tenantId)).StatusCode);   // módulos intactos
+    }
+
+    // Spec «Errores y casos borde» y criterio 2: un rol personalizado con operator.* insertado por SQL,
+    // fuera del tenant operador, no abre la consola. El filtro corre en ResolvePermissionsAsync.
+    [Fact]
+    public async Task ACustomRoleWithOperatorPermissionsDoesNotOpenTheConsole()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), operatorTenantId: Guid.CreateVersion7());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var roles = scope.ServiceProvider.GetRequiredService<AuthorizationDbContext>();
+            roles.Roles.Add(Role.Create(RoleId.New(), tenantId, "operador-falso", "Operador falso", "",
+                [OperatorPermissions.TenantsRead], DateTimeOffset.UtcNow));
+            await roles.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.ExecuteSqlAsync(
+                $"UPDATE tenancy.memberships SET roles = array_append(roles, 'operador-falso') WHERE tenant_id = {tenantId}",
+                TestContext.Current.CancellationToken);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/operator/tenants");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        var response = await owner.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static async Task<HttpResponseMessage> GetSettingsAsync(HttpClient client, Guid tenantId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/settings");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    // Por el agregado, no por SQL: es el mismo camino que usará el handler de la consola.
+    private static async Task SetTenantStatusAsync(QepApiFactory factory, Guid tenantId, bool suspend)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = new TenantId(tenantId);
+        var tenant = await dbContext.Tenants.SingleAsync(value => value.Id == id, TestContext.Current.CancellationToken);
+        if (suspend)
+        {
+            tenant.Suspend(ChangeReason.Nonpayment, DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            tenant.Reactivate(ChangeReason.Correction, DateTimeOffset.UtcNow);
+        }
+
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -152,6 +272,40 @@ public sealed class RealAuthenticationApiTests
         file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         content.Add(file, "file", "clientes.xlsx");
+        return content;
+    }
+
+    // Spec 2026-10-11 §6.1: la nota de voz lleva DisableAntiforgery por el mismo motivo que /import, y un multipart POST
+    // es un request simple, sin preflight. Sólo X-Qep-Client lo frena. La defensa corre antes de la autenticación.
+    [Fact]
+    public async Task VoiceNoteWithoutCsrfHeaderIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var url = $"/api/v1/tenants/{Guid.NewGuid()}/messaging/conversations/{Guid.NewGuid()}/messages/audio";
+
+        using var withoutHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = VoiceUpload() };
+        var rejected = await client.SendAsync(withoutHeader, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("Missing required client header.", problem?.Title);
+
+        using var withHeader = new HttpRequestMessage(HttpMethod.Post, url) { Content = VoiceUpload() };
+        withHeader.Headers.Add("X-Qep-Client", "web");
+        var passed = await client.SendAsync(withHeader, TestContext.Current.CancellationToken);
+
+        // Pasó la defensa CSRF y la frenó la autenticación: no hay sesión.
+        Assert.Equal(HttpStatusCode.Unauthorized, passed.StatusCode);
+    }
+
+    private static MultipartFormDataContent VoiceUpload()
+    {
+        var content = new MultipartFormDataContent { { new StringContent(Guid.NewGuid().ToString()), "clientId" } };
+        var file = new ByteArrayContent("OggS"u8.ToArray());
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/ogg");
+        content.Add(file, "file", "voice.ogg");
         return content;
     }
 
@@ -382,6 +536,101 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(new[] { new SessionRolePayload("admin", "Administrador") }, tenant.Roles);
     }
 
+    // Spec D2: the frontend keeps no currency list; it reads it here, before the first paint.
+    [Fact]
+    public async Task CurrentSessionCarriesTheCurrencyCatalogue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, _) = await RegisterOwnerAndTenantAsync(factory);
+
+        var session = await owner.GetFromJsonAsync<JsonElement>(
+            "/api/v1/auth/me", TestContext.Current.CancellationToken);
+
+        var currencies = session.GetProperty("currencies");
+        List<string?> codes = ["COP", "USD", "EUR"];
+        Assert.Equal(
+            codes,
+            currencies.EnumerateArray().Select(currency => currency.GetProperty("code").GetString()).ToList());
+        Assert.Equal("US$", currencies[1].GetProperty("symbol").GetString());
+        Assert.Equal(2, currencies[1].GetProperty("decimals").GetInt32());
+    }
+
+    [Fact]
+    public async Task CurrentSessionCarriesEachTenantsCurrenciesInUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+
+        using var create = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tenants/{tenantId}/catalog/products")
+        {
+            // Variantes (Catalog, Tarea 5): código y precio van en la única variante.
+            Content = JsonContent.Create(new
+            {
+                name = "Vela de soja",
+                variants = new[]
+                {
+                    new { code = "VS-001", pricing = new { prices = new Dictionary<string, decimal> { ["EUR"] = 9m } } },
+                },
+            }),
+        };
+        create.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        create.Headers.Add("X-Qep-Client", "web");
+        (await owner.SendAsync(create, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
+        var session = await owner.GetFromJsonAsync<JsonElement>("/api/v1/auth/me", TestContext.Current.CancellationToken);
+
+        var tenant = Assert.Single(session.GetProperty("activeTenants").EnumerateArray());
+        Assert.Equal(
+            ["EUR"],
+            tenant.GetProperty("currenciesInUse").EnumerateArray().Select(code => code.GetString()!).ToArray());
+    }
+
+    // Final review 2026-10-08: el formato regional viaja en /auth/me para que llegue a todo
+    // miembro —GET /settings exige tenancy.settings.read y cashier no lo tiene— y antes de la
+    // primera pintura.
+    [Fact]
+    public async Task CurrentSessionCarriesEachTenantsRegionalSettings()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        var etag = await GetSettingsEtagAsync(owner, tenantId);
+
+        using var update = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"/api/v1/tenants/{tenantId}/settings")
+        {
+            Content = JsonContent.Create(new
+            {
+                displayName = "Regional Co",
+                defaultCulture = "es-CO",
+                timeZone = "America/New_York",
+                dateFormat = "MM/dd/yyyy",
+                defaultCurrency = "USD",
+                numberFormat = "1,234.56",
+            }),
+        };
+        update.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        update.Headers.Add("X-Qep-Client", "web");
+        update.Headers.TryAddWithoutValidation("If-Match", etag);
+        var updated = await owner.SendAsync(update, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+
+        var session = await owner.GetFromJsonAsync<RegionalSessionPayload>(
+            "/api/v1/auth/me",
+            TestContext.Current.CancellationToken);
+
+        var tenant = Assert.Single(session!.ActiveTenants);
+        Assert.Equal(tenantId, tenant.TenantId);
+        Assert.Equal("America/New_York", tenant.TimeZone);
+        Assert.Equal("MM/dd/yyyy", tenant.DateFormat);
+        Assert.Equal("USD", tenant.DefaultCurrency);
+        Assert.Equal("1,234.56", tenant.NumberFormat);
+    }
+
     // Todo cliente de esta suite se crea acá, y sobre https. Ver CreateClient.
     private static async Task<(HttpClient Client, Guid TenantId)> RegisterOwnerAndTenantAsync(
         QepApiFactory factory)
@@ -449,6 +698,8 @@ public sealed class RealAuthenticationApiTests
         defaultCulture = "es-CO",
         timeZone = "America/Bogota",
         dateFormat = "dd/MM/yyyy",
+        defaultCurrency = "COP",
+        numberFormat = "1.234,56",
     };
 
     private static string NewEmail() => $"real-auth-{Guid.NewGuid():N}@example.com";
@@ -520,6 +771,16 @@ public sealed class RealAuthenticationApiTests
 
     private sealed record SessionRolePayload(string Role, string DisplayName);
 
+    private sealed record RegionalSessionPayload(IReadOnlyList<RegionalTenantPayload> ActiveTenants);
+
+    // Nullable: un backend que no manda los campos deserializa a null y la prueba lo reporta.
+    private sealed record RegionalTenantPayload(
+        Guid TenantId,
+        string? TimeZone,
+        string? DateFormat,
+        string? DefaultCurrency,
+        string? NumberFormat);
+
     /// <summary>
     /// Cliente sobre **https**, y no es cosmético: es lo que hace que la cookie de sesión viaje.
     ///
@@ -538,7 +799,7 @@ public sealed class RealAuthenticationApiTests
         factory.CreateClient(
             new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
-    private sealed class QepApiFactory(string connectionString)
+    private sealed class QepApiFactory(string connectionString, Guid? operatorTenantId = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -574,6 +835,8 @@ public sealed class RealAuthenticationApiTests
             builder.UseSetting("Registration:PublicTenantSignupEnabled", "true");
             builder.UseSetting("Authentication:Audience", Audience);
             builder.UseSetting("Authentication:TestSigningKey", SigningKeyBase64);
+            // Siempre fijado, como en TenantModulesApiTests.QepApiFactory: vacío vale lo mismo que ausente.
+            builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
         }
     }
 }

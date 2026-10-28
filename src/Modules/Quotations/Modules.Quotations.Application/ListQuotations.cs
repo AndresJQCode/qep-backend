@@ -61,7 +61,9 @@ public sealed record QuotationListItemDto(
     Guid? OrderId,
     /// <summary><c>Pending</c> mientras ese pedido espera el visto bueno, <c>Approved</c> despues.
     /// <c>null</c> cuando no hay pedido.</summary>
-    string? OrderStatus);
+    string? OrderStatus,
+    /// <summary>La entrega por envío, misma forma que en el detalle (ver <see cref="ShippingDto"/>).</summary>
+    ShippingDto Shipping);
 
 /// <summary>Una página del listado y el total que la UI necesita para paginar. Mismo criterio
 /// que <c>CustomerPage</c> en Customers.</summary>

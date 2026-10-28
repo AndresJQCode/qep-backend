@@ -5,24 +5,432 @@ namespace Modules.Quotations.UnitTests;
 public sealed class OrderTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
-    private static readonly QuotationId QuotationId = Domain.QuotationId.New();
+    private static readonly Guid ClientId = Guid.CreateVersion7();
+    private static readonly MemberId Advisor = new(Guid.CreateVersion7());
     private static readonly MemberId ConvertedBy = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
 
+    private static QuotationBillingAccount Account => new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
+        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, withRetention, false);
+
+    private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m, decimal discount = 0m) =>
+        new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
+
+    // Por defecto: una línea de 2 × 11.900 con IVA del 19 % → subtotal 20.000, IVA 3.800, neto 23.800.
     private static Order NewOrder(
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
         string? notes = null,
-        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null) =>
-        Order.Create(
-            OrderId.New(),
-            TenantId,
-            "PED-2026-0001",
-            QuotationId,
-            paymentStatus,
-            notes,
-            ConvertedBy,
-            proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
-            Now);
+        IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
+        IReadOnlyCollection<OrderLineInput>? lines = null,
+        OrderHeader? header = null) =>
+        Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(), QuotationParties.Empty, Account,
+            ShippingDetails.None, lines ?? [Line()], paymentStatus, notes, ConvertedBy,
+            proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)], Now);
+
+    [Fact]
+    public void CreateManualCarriesItsOwnHeaderLinesAndTotals()
+    {
+        var order = NewOrder(lines: [Line(quantity: 2m, unitPrice: 11_900m)]);
+
+        Assert.Equal((OrderSource.Manual, (QuotationId?)null, (string?)null), (order.Source, order.QuotationId, order.ExternalReference));
+        Assert.Equal((ClientId, Advisor, "COP"), (order.ClientId, order.AdvisorId, order.Currency));
+        var item = Assert.Single(order.Items);
+        Assert.Equal(("ABC", "Aceite", 1), (item.ProductCode, item.ProductName, item.Position));
+        Assert.Equal(20_000m, order.Subtotal);
+        Assert.Equal(3_800m, order.TaxAmount);
+        Assert.Equal(23_800m, order.Total);
+        Assert.Equal(23_800m, order.NetTotal);
+    }
+
+    // La aritmética de la línea (ver OrderItemTests): 3 × 11.900 con 10 % en pesos enteros.
+    [Fact]
+    public void ALineComputesTheSameAmountsAsAQuotationLine()
+    {
+        var order = NewOrder(lines: [Line(quantity: 3m, unitPrice: 11_900m, discount: 10m)]);
+
+        var item = Assert.Single(order.Items);
+        Assert.Equal(3_570m, item.DiscountAmount);
+        Assert.Equal(27_000m, item.Subtotal);
+        Assert.Equal(5_130m, item.TaxAmount);
+        Assert.Equal(10_000m, item.UnitPriceWithoutTax);
+        Assert.Equal(QuotationDiscountOrigin.Own, item.DiscountOrigin);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ALineRejectsANonPositiveQuantity(decimal quantity)
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(lines: [Line(quantity: quantity)]));
+
+        Assert.Equal("order.item.quantity_invalid", error.Code);
+    }
+
+    [Fact]
+    public void CreateManualRequiresAtLeastOneLine()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => NewOrder(lines: []));
+
+        Assert.Equal("order.order.items_required", error.Code);
+    }
+
+    [Fact]
+    public void CreateManualRejectsAnIncompleteShippingParty()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            Order.CreateManual(
+                OrderId.New(), TenantId, "PED-2026-0001", Header(),
+                new QuotationParties(null, new QuotationPartyDetails { Name = "Bodega" }), Account,
+                ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+
+        Assert.Equal("order.shipping.party_incomplete", error.Code);
+    }
+
+    [Fact]
+    public void CreateManualRejectsABillingPartyWithoutIdentification()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            Order.CreateManual(
+                OrderId.New(), TenantId, "PED-2026-0001", Header(),
+                new QuotationParties(
+                    new QuotationPartyDetails
+                    {
+                        Name = "Otra S.A.S.",
+                        Phone = "1",
+                        Email = "a@b.co",
+                        Address = "x",
+                        DepartmentId = Guid.CreateVersion7(),
+                        CityId = Guid.CreateVersion7(),
+                    },
+                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+
+        Assert.Equal("order.billing.identification_required", error.Code);
+    }
+
+    [Fact]
+    public void CreateManualRejectsABillingPartyWithoutIdentificationType()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            Order.CreateManual(
+                OrderId.New(), TenantId, "PED-2026-0001", Header(),
+                new QuotationParties(
+                    new QuotationPartyDetails
+                    {
+                        Name = "Otra S.A.S.",
+                        IdentificationNumber = "9001234561",
+                        Phone = "1",
+                        Email = "a@b.co",
+                        Address = "x",
+                        DepartmentId = Guid.CreateVersion7(),
+                        CityId = Guid.CreateVersion7(),
+                    },
+                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+
+        Assert.Equal("order.billing.identification_required", error.Code);
+    }
+
+    [Fact]
+    public void ConvertingCarriesTheBillingPartysPersonTypeAndIdentificationType()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), "Transferencia",
+            null,
+            new QuotationParties(
+                new QuotationPartyDetails
+                {
+                    Name = "Otra persona",
+                    IdentificationNumber = "1020304050",
+                    PersonType = PartyPersonType.Natural,
+                    IdentificationType = PartyIdentificationType.Ce,
+                    Phone = "3001234567",
+                    Email = "otra@x.co",
+                    Address = "Cl 1",
+                    DepartmentId = Guid.CreateVersion7(),
+                    CityId = Guid.CreateVersion7(),
+                },
+                null, BillingWithRetention: false, BillingVatSurplus: false),
+            Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
+        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [quotation.Items.Single().VariantId] = new("ABC", "Aceite"),
+        });
+
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null,
+            ConvertedBy, [], Now);
+
+        Assert.Equal(PartyPersonType.Natural, order.Billing?.PersonType);
+        Assert.Equal(PartyIdentificationType.Ce, order.Billing?.IdentificationType);
+    }
+
+    [Fact]
+    public void CreateExternalAcceptsTheSourceAndReference()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
+
+        Assert.Equal((OrderSource.Shopify, "#1001"), (order.Source, order.ExternalReference));
+    }
+
+    // Spec de Shopify (vía spec 2026-10-15 §5.4): el pedido externo entra con el estado de pago que avisa la
+    // plataforma y sin comprobantes, porque el pago vive allá. La regla del comprobante es de los pedidos
+    // que se cobran desde QEP (cotización y manual).
+    [Fact]
+    public void CreateExternalAcceptsAPaidStatusWithoutProofs()
+    {
+        var order = Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
+
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Empty(order.PaymentProofs);
+    }
+
+    [Fact]
+    public void CreateExternalRejectsTheQuotationSource()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Quotation, "#1", ShippingDetails.None, null, null));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+    }
+
+    // Un pedido que se guarda nunca nace sin cuenta de cobro: sólo el cálculo previo puede (Order.Preview).
+    [Fact]
+    public void CreateManualRequiresTheBillingAccount()
+    {
+        Assert.Throws<ArgumentNullException>(() => Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, null!, ShippingDetails.None, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
+    }
+
+    [Fact]
+    public void CreateExternalRequiresTheBillingAccount()
+    {
+        Assert.Throws<ArgumentNullException>(() => Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, null!, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null));
+    }
+
+    [Fact]
+    public void APreviewWithoutAnAccountIsPricedInTheHeaderCurrency()
+    {
+        var header = Header() with { Currency = "USD" };
+
+        var order = Order.Preview(
+            OrderId.New(), TenantId, "PREVIEW", header, QuotationParties.Empty, billingAccount: null,
+            ShippingDetails.None, [Line(quantity: 2m, unitPrice: 11_900m)], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
+
+        Assert.Null(order.BillingAccount);
+        Assert.Equal(("USD", OrderSource.Manual), (order.Currency, order.Source));
+        Assert.Equal(2, Assert.Single(order.Items).Quantity);
+        Assert.True(order.Total > 0);
+    }
+
+    // Con cuenta, el cálculo previo es el de siempre: la moneda la fija la cuenta, no el encabezado.
+    [Fact]
+    public void APreviewWithAnAccountTakesTheAccountCurrency()
+    {
+        var account = Account with { Currency = "USD" };
+
+        var order = Order.Preview(
+            OrderId.New(), TenantId, "PREVIEW", Header(), QuotationParties.Empty, account, ShippingDetails.None, [Line()],
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now);
+
+        Assert.Equal("USD", order.Currency);
+        Assert.Equal(account.CompanyId, order.BillingAccount?.CompanyId);
+    }
+
+    [Fact]
+    public void RetentionAppliesToTheSubtotalWhenTheCustomerWithholds()
+    {
+        var order = NewOrder(header: Header(withRetention: true), lines: [Line(quantity: 10m, unitPrice: 11_900m)]);
+
+        Assert.Equal(100_000m, order.Subtotal);
+        Assert.Equal(2_500m, order.RetentionAmount);
+        Assert.Equal(116_500m, order.NetTotal);
+    }
+
+    [Fact]
+    public void RecalculatePaymentStatusUsesTheOrdersOwnNetTotal()
+    {
+        var order = NewOrder(OrderPaymentStatus.PaymentPending, proofs: [], lines: [Line(quantity: 2m, unitPrice: 11_900m)]);
+        order.AttachPaymentProofs([new OrderPaymentProofInput(Guid.CreateVersion7(), 10_000m)], ConvertedBy, Now);
+
+        order.RecalculatePaymentStatus(Now);
+        Assert.Equal(OrderPaymentStatus.PartialPaymentReceived, order.PaymentStatus);
+
+        order.AttachPaymentProofs([new OrderPaymentProofInput(Guid.CreateVersion7(), 13_800m)], ConvertedBy, Now);
+        order.RecalculatePaymentStatus(Now);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+    }
+
+    [Fact]
+    public void AddingAndRemovingLinesRecalculatesAndKeepsTheLastOne()
+    {
+        var order = NewOrder(OrderPaymentStatus.PaymentPending, proofs: [], lines: [Line()]);
+        var first = Assert.Single(order.Items);
+
+        order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now);
+        Assert.Equal(2, order.Items.Count);
+        Assert.Equal(23_800m + 5_000m, order.Total);
+
+        order.RemoveItem(first.Id, ConvertedBy, Now);
+        var error = Assert.Throws<QuotationsDomainException>(() => order.RemoveItem(order.Items.Single().Id, ConvertedBy, Now));
+        Assert.Equal("order.item.last_item_required", error.Code);
+    }
+
+    [Fact]
+    public void ItemsCannotChangeOnceTheOrderIsApproved()
+    {
+        var order = NewOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+    }
+
+    // Portado de QuotationProductSnapshotTests (spec 2026-10-15 §4.5): una línea que se suma al pedido
+    // no tiene un envío que la congele; se congela al capturar, y las que ya tenían foto no se tocan.
+    [Fact]
+    public void CaptureProductSnapshotsFreezesOnlyTheLinesWithoutOne()
+    {
+        var frozen = Guid.CreateVersion7();
+        var added = Guid.CreateVersion7();
+        var order = NewOrder(
+            lines: [new OrderLineInput(frozen, frozen, 1m, 1_000m, 0m, 19, new QuotationProductSnapshot("A-001", "Tornillo"))]);
+        order.AddItem(OrderItemId.New(), added, added, 1m, 1_000m, 0m, 19, ConvertedBy, Now.AddHours(1));
+        var version = order.Version;
+
+        order.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [frozen] = new("A-999", "Otro"),
+            [added] = new("B-002", "Tuerca"),
+        });
+
+        Assert.Equal("A-001", order.Items.Single(item => item.ProductId == frozen).ProductCode);
+        Assert.Equal("B-002", order.Items.Single(item => item.ProductId == added).ProductCode);
+        // No es una edición: la versión ya la subió la línea que se agregó.
+        Assert.Equal(version, order.Version);
+    }
+
+    // Spec de Shopify §6.3 (vía spec 2026-10-15 §5.4): el estado de pago que avisa la plataforma manda
+    // sólo mientras el pedido no tenga comprobantes propios.
+    [Fact]
+    public void SyncExternalPaymentStatusChangesAnOrderWithoutProofs()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+        var version = order.Version;
+
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.FullPaymentReceived, Now.AddHours(1));
+
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+        Assert.Equal(version + 1, order.Version);
+    }
+
+    [Fact]
+    public void SyncExternalPaymentStatusIsRejectedWhenTheOrderHasProofs()
+    {
+        var order = NewOrder();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, Now.AddHours(1)));
+
+        Assert.Equal("order.order.payment_has_proofs", error.Code);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+    }
+
+    [Fact]
+    public void SyncExternalPaymentStatusWithTheSameStatusIsNotAnEdit()
+    {
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
+        var version = order.Version;
+
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, Now.AddHours(1));
+
+        Assert.Equal(version, order.Version);
+    }
+
+    [Fact]
+    public void FromQuotationCopiesHeaderPartiesAndLinesAndMatchesItsTotals()
+    {
+        var quotation = ConvertedQuotation();
+
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, "Pago verificado",
+            ConvertedBy, [], Now);
+
+        Assert.Equal((OrderSource.Quotation, (QuotationId?)quotation.Id), (order.Source, order.QuotationId));
+        Assert.Equal((quotation.Subtotal, quotation.TaxAmount, quotation.Total, quotation.RetentionAmount, quotation.NetTotal),
+            (order.Subtotal, order.TaxAmount, order.Total, order.RetentionAmount, order.NetTotal));
+        Assert.Equal("Pago verificado", order.Notes);
+        var item = Assert.Single(order.Items);
+        Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
+        Assert.Equal("Bodega", order.Shipping!.Name);
+        Assert.True(order.AppliesRetention);
+    }
+
+    [Fact]
+    public void FromQuotationInheritsTheQuotationNotesWhenTheRequestOmitsThem()
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), OrderPaymentStatus.PaymentPending, null,
+            ConvertedBy, [], Now);
+
+        Assert.Equal("Entregar en portería", order.Notes);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void FromQuotationWithEmptyNotesLeavesTheOrderWithoutNotes(string notes)
+    {
+        var order = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(), OrderPaymentStatus.PaymentPending, notes,
+            ConvertedBy, [], Now);
+
+        Assert.Null(order.Notes);
+    }
+
+    private static Quotation ConvertedQuotation()
+    {
+        var quotation = Quotation.Create(
+            QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), "Transferencia",
+            "Entregar en portería",
+            new QuotationParties(null, new QuotationPartyDetails
+            {
+                Name = "Bodega",
+                Phone = "3001234567",
+                Email = "bodega@x.co",
+                Address = "Cl 1",
+                DepartmentId = Guid.CreateVersion7(),
+                CityId = Guid.CreateVersion7(),
+            }),
+            Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
+        quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [quotation.Items.Single().VariantId] = new("ABC", "Aceite"),
+        });
+
+        return quotation;
+    }
 
     [Fact]
     public void CreateStartsPendingWithItsProofs()
@@ -34,7 +442,7 @@ public sealed class OrderTests
         Assert.Equal(OrderStatus.Pending, order.Status);
         Assert.Null(order.ApprovedAt);
         Assert.Null(order.ApprovedBy);
-        Assert.Equal(QuotationId, order.QuotationId);
+        Assert.Null(order.QuotationId);
         Assert.Equal(ConvertedBy, order.ConvertedBy);
         Assert.Equal(Now, order.ConvertedAt);
         Assert.Null(order.RitualCollectionSyncId);
@@ -51,9 +459,10 @@ public sealed class OrderTests
     public void CreateRejectsBlankOrderNumber(string number)
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            Order.Create(
-                OrderId.New(), TenantId, number, QuotationId, OrderPaymentStatus.FullPaymentReceived,
-                null, ConvertedBy, [new OrderPaymentProofInput(Guid.CreateVersion7(), 1m)], Now));
+            Order.CreateManual(
+                OrderId.New(), TenantId, number, Header(), QuotationParties.Empty, Account, ShippingDetails.None, [Line()],
+                OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy,
+                [new OrderPaymentProofInput(Guid.CreateVersion7(), 1m)], Now));
 
         Assert.Equal("order.order.number_required", error.Code);
     }
@@ -423,17 +832,19 @@ public sealed class OrderTests
 
     // A pedido (2026-09): agregar un producto desde "Editar" pedido sube el total de la
     // cotización; lo cargado en comprobantes no cambia, pero el estado de pago sí puede.
+    // El neto del pedido por defecto es 23.800 (ver NewOrder): el monto adeudado sale del pedido,
+    // no de un parámetro.
     [Theory]
-    [InlineData(50_000, 100_000, OrderPaymentStatus.PartialPaymentReceived)]
-    [InlineData(100_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
-    [InlineData(120_000, 100_000, OrderPaymentStatus.FullPaymentReceived)]
-    public void RecalculatePaymentStatusComparesProofsAgainstTheNewTotal(
-        decimal proofAmount, decimal amountDue, OrderPaymentStatus expected)
+    [InlineData(10_000, OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(23_800, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(30_000, OrderPaymentStatus.FullPaymentReceived)]
+    public void RecalculatePaymentStatusComparesProofsAgainstTheOrdersNetTotal(
+        decimal proofAmount, OrderPaymentStatus expected)
     {
         var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
         var later = Now.AddDays(1);
 
-        order.RecalculatePaymentStatus(amountDue, QuotationCurrency.Cop, later);
+        order.RecalculatePaymentStatus(later);
 
         Assert.Equal(expected, order.PaymentStatus);
         Assert.Equal(later, order.UpdatedAt);
@@ -441,22 +852,22 @@ public sealed class OrderTests
     }
 
     // Hotfix 2026-10-19: la retención (2,5 % redondeado a centavos) deja el neto con fracción de
-    // peso. La pantalla lo muestra en pesos enteros —un neto de 97.529,25 se ve como $97.529— y la
-    // persona carga eso; comparar contra los centavos lo dejaba en pago parcial. En USD los
-    // centavos sí se cobran, así que ahí uno de menos sigue siendo parcial.
+    // peso. La pantalla lo muestra en pesos enteros y la persona carga eso; comparar contra los
+    // centavos lo dejaba en pago parcial. Un peso de menos sigue siendo parcial.
     [Theory]
-    [InlineData(97_529, 97_529.25, QuotationCurrency.Cop, OrderPaymentStatus.FullPaymentReceived)]
-    [InlineData(97_530, 97_529.50, QuotationCurrency.Cop, OrderPaymentStatus.FullPaymentReceived)]
-    [InlineData(97_529, 97_529.50, QuotationCurrency.Cop, OrderPaymentStatus.PartialPaymentReceived)]
-    [InlineData(97_528, 97_529.25, QuotationCurrency.Cop, OrderPaymentStatus.PartialPaymentReceived)]
-    [InlineData(975.24, 975.25, QuotationCurrency.Usd, OrderPaymentStatus.PartialPaymentReceived)]
-    [InlineData(975.25, 975.25, QuotationCurrency.Usd, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(116_529, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(116_528, OrderPaymentStatus.PartialPaymentReceived)]
     public void RecalculatePaymentStatusComparesAgainstTheNetAsTheCurrencyDisplaysIt(
-        decimal proofAmount, decimal amountDue, QuotationCurrency currency, OrderPaymentStatus expected)
+        decimal proofAmount, OrderPaymentStatus expected)
     {
-        var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)]);
+        var order = NewOrder(
+            OrderPaymentStatus.PaymentPending,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), proofAmount)],
+            lines: [Line(quantity: 1m, unitPrice: 119_030m)],
+            header: Header(withRetention: true));
+        Assert.Equal(116_529.37m, order.NetTotal);
 
-        order.RecalculatePaymentStatus(amountDue, currency, Now.AddDays(1));
+        order.RecalculatePaymentStatus(Now.AddDays(1));
 
         Assert.Equal(expected, order.PaymentStatus);
     }
@@ -466,7 +877,7 @@ public sealed class OrderTests
     {
         var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
 
-        order.RecalculatePaymentStatus(100_000m, QuotationCurrency.Cop, Now.AddDays(1));
+        order.RecalculatePaymentStatus(Now.AddDays(1));
 
         Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
     }
@@ -481,7 +892,7 @@ public sealed class OrderTests
         order.Approve(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, Now.AddDays(1)));
+            order.RecalculatePaymentStatus(Now.AddDays(1)));
 
         Assert.Equal("order.order.not_pending", error.Code);
     }
@@ -585,6 +996,32 @@ public sealed class OrderTests
         Assert.Equal(3, order.Version);
     }
 
+    // Mandarle al cliente un pedido anulado se lee como vigente: es lo único que frena el envío.
+    [Fact]
+    public void ACancelledOrderCannotBeSent()
+    {
+        var order = NewOrder();
+        order.Cancel(ConvertedBy, "El cliente desistió", Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(order.EnsureSendable);
+
+        Assert.Equal("order.order.already_cancelled", error.Code);
+    }
+
+    [Fact]
+    public void PendingApprovedAndInvoicedOrdersCanBeSent()
+    {
+        var order = NewOrder();
+        order.EnsureSendable();
+        order.Approve(ConvertedBy, Now);
+        order.EnsureSendable();
+        order.Invoice(ConvertedBy, Now);
+
+        order.EnsureSendable();
+
+        Assert.Equal(OrderStatus.Invoiced, order.Status);
+    }
+
     // Anular dos veces reescribiría quién, cuándo y por qué se anuló.
     [Fact]
     public void CancelTwiceIsRejectedAndKeepsTheFirstCancellation()
@@ -660,7 +1097,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 later));
         var recalculate = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, later));
+            order.RecalculatePaymentStatus(later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var approve = Assert.Throws<QuotationsDomainException>(() =>
@@ -826,16 +1263,14 @@ public sealed class OrderTests
         Assert.Null(order.Notes);
     }
 
+    // P2 del plan: las notas del pedido heredan las de la cotización, que no tienen tope.
     [Fact]
-    public void UpdateNotesRejectsNotesLongerThanTheLimit()
+    public void UpdateNotesAcceptsLongNotes()
     {
         var order = NewOrder();
 
-        var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.UpdateNotes(new string('a', Order.NotesMaxLength + 1), Now.AddDays(1)));
-
-        Assert.Equal("order.order.notes_too_long", error.Code);
-        Assert.Equal(1, order.Version);
+        Assert.True(order.UpdateNotes(new string('a', 2_000), Now.AddDays(1)));
+        Assert.Equal(2_000, order.Notes!.Length);
     }
 
     [Fact]
@@ -848,6 +1283,178 @@ public sealed class OrderTests
             order.UpdateNotes("Otra nota", Now.AddDays(1)));
 
         Assert.Equal("order.order.not_pending", error.Code);
+    }
+
+    // Spec 2026-10-26 §4.4 y §4.6: la parte de envío de un pedido externo y su ciudad corregible.
+    private static readonly Guid DepartmentA = Guid.CreateVersion7();
+    private static readonly Guid CityA = Guid.CreateVersion7();
+    private static readonly Guid CityB = Guid.CreateVersion7();
+
+    private static QuotationPartyDetails ShippingParty(Guid? cityId = null, string? email = "ana@correo.co") => new()
+    {
+        Name = "Ana Pérez",
+        Phone = "3001112233",
+        Email = email,
+        Address = "Cra 5 # 1-2",
+        DepartmentId = DepartmentA,
+        CityId = cityId ?? CityA,
+    };
+
+    private const string RawAddressPrefix = "Dirección de envío de Shopify:";
+
+    private static Order NewShopifyOrder(string? notes = null, QuotationParties? parties = null) =>
+        Order.CreateExternal(
+            OrderId.New(), TenantId, "PED-2026-0003", Header(), parties ?? QuotationParties.Empty, Account, [Line()],
+            OrderPaymentStatus.PaymentPending, notes, ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
+            ShippingDetails.None, null, null);
+
+    [Fact]
+    public void AttachExternalShippingAddsThePartyAndDropsTheRawAddressLine()
+    {
+        var order = NewShopifyOrder("Shopify #1001\nNota\nDirección de envío de Shopify: Cra 5, CALLI");
+        var later = Now.AddHours(1);
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, later);
+
+        Assert.True(changed);
+        Assert.Equal("Shopify #1001\nNota", order.Notes);
+        Assert.NotNull(order.Shipping);
+        Assert.Equal(ShippingParty(), order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void AttachExternalShippingWithTheSamePartyIsANoOp()
+    {
+        var order = NewShopifyOrder();
+        order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1));
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+    }
+
+    [Fact]
+    public void AttachExternalShippingOverAnotherPartyIsShippingPartyPresent()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_present", error.Code);
+    }
+
+    // Spec 2026-10-26 §4.4 y desvío S1 (un pedido no edita sus partes): la misma parte en otra ciudad la puso un intento anterior
+    // del mismo trabajo, con la ciudad que el sinónimo tenía entonces. Es la misma escritura: no la toca, y el consumidor guarda
+    // la ciudad que quedó (y la recorrige si el sinónimo ya apunta a otra).
+    [Fact]
+    public void AttachExternalShippingOverOurPartyInAnotherCityIsANoOp()
+    {
+        var order = NewShopifyOrder();
+        order.AttachExternalShipping(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1));
+
+        var changed = order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
+    }
+
+    // Review Focus 3: sólo se agrega la parte mientras el pedido está pendiente.
+    [Fact]
+    public void AttachExternalShippingOnANonPendingOrderIsNotPending()
+    {
+        var order = NewShopifyOrder();
+        order.Approve(ConvertedBy, Now);
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Null(order.Shipping);
+    }
+
+    [Fact]
+    public void AttachExternalShippingNeedsACompleteParty()
+    {
+        var order = NewShopifyOrder("Nota");
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.AttachExternalShipping(ShippingParty(email: null), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.shipping.party_incomplete", error.Code);
+        Assert.Null(order.Shipping);
+        Assert.Equal(1, order.Version);
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityChangesOnlyCityAndDepartment()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+        var newDepartment = Guid.CreateVersion7();
+        var later = Now.AddHours(1);
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), newDepartment, CityB, later);
+
+        Assert.True(changed);
+        Assert.Equal(ShippingParty(CityB) with { DepartmentId = newDepartment }, order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    // Review Focus 4: si alguien tocó la parte, ya no es la que Shopify guardó y no se corrige.
+    [Fact]
+    public void CorrectExternalShippingCityWithAnEditedPartyIsShippingPartyChanged()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty() with { Phone = "3009998877" }));
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1)));
+
+        Assert.Equal("order.order.shipping_party_changed", error.Code);
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityAlreadyAtTheTargetIsANoOp()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityA, Now.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+    }
+
+    // Spec 2026-10-26 §4.6: el trabajo que recorrige puede caer después de que Quotations guardó y antes de que Shopify
+    // actualizara su huella. Al reintentar manda la huella vieja y encuentra la parte ya en la ciudad nueva: es el mismo cambio,
+    // no una edición de otra persona.
+    // Lo mismo con una ciudad que no es ni la esperada ni la de destino: un intento anterior la llevó a la que el sinónimo tenía
+    // entonces. No la toca; el consumidor guarda la que quedó y su paso 5 siembra la recorrección.
+    [Fact]
+    public void CorrectExternalShippingCityOfOurPartyInAThirdCityIsANoOp()
+    {
+        var cityC = Guid.CreateVersion7();
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty(cityC)));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(1, order.Version);
+        Assert.Equal(ShippingParty(cityC), order.Shipping!.ToDetails());
+    }
+
+    [Fact]
+    public void CorrectExternalShippingCityRetriedAfterItWasAppliedIsANoOp()
+    {
+        var order = NewShopifyOrder(parties: new QuotationParties(null, ShippingParty()));
+        order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(1));
+
+        var changed = order.CorrectExternalShippingCity(ShippingParty(), DepartmentA, CityB, Now.AddHours(2));
+
+        Assert.False(changed);
+        Assert.Equal(2, order.Version);
+        Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
     }
 
     // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3: se factura un aprobado, queda quién
@@ -1039,7 +1646,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 later));
         var recalculate = Assert.Throws<QuotationsDomainException>(() =>
-            order.RecalculatePaymentStatus(200_000m, QuotationCurrency.Cop, later));
+            order.RecalculatePaymentStatus(later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var approve = Assert.Throws<QuotationsDomainException>(() =>
@@ -1164,50 +1771,5 @@ public sealed class OrderTests
         var corrected = Assert.Single(order.PaymentProofs);
         Assert.Equal(60_000m, corrected.Amount);
         Assert.Equal(paidOn, corrected.PaidOn);
-    }
-    // Hotfix 2026-10-15: al convertir, el pedido hereda la nota de la cotización si quien convierte
-    // no escribió observaciones propias. Sin esto, la nota se quedaba en la cotización y ni el
-    // pedido ni la columna "Observaciones" del Excel la tenían.
-    [Fact]
-    public void NotesOnConversionCopiesTheQuotationsNotesWhenNoneWereWritten()
-    {
-        Assert.Equal("Entregar el lunes", Order.NotesOnConversion(null, "  Entregar el lunes  "));
-        Assert.Equal("Entregar el lunes", Order.NotesOnConversion("   ", "Entregar el lunes"));
-    }
-
-    [Fact]
-    public void NotesOnConversionKeepsWhatWasWrittenWhenConverting()
-    {
-        Assert.Equal("Pago por transferencia", Order.NotesOnConversion("Pago por transferencia", "Entregar el lunes"));
-    }
-
-    [Fact]
-    public void NotesOnConversionIsNullWithoutNotesAnywhere()
-    {
-        Assert.Null(Order.NotesOnConversion(null, null));
-        Assert.Null(Order.NotesOnConversion("", "   "));
-    }
-
-    // La nota de la cotización no tiene tope y la del pedido sí: copiarla entera haría fallar la
-    // conversión con un error sobre un campo que nadie escribió. Se recorta al tope del pedido.
-    [Fact]
-    public void NotesOnConversionCutsAQuotationNoteLongerThanTheOrdersLimit()
-    {
-        var notes = Order.NotesOnConversion(null, new string('a', Order.NotesMaxLength + 20));
-
-        Assert.Equal(new string('a', Order.NotesMaxLength), notes);
-        var order = NewOrder(notes: notes);
-        Assert.Equal(Order.NotesMaxLength, order.Notes!.Length);
-    }
-
-    // Un emoji son dos char: cortar entre los dos dejaría un carácter inválido en la base.
-    [Fact]
-    public void NotesOnConversionDoesNotSplitACharacterAtTheLimit()
-    {
-        var quotationNotes = new string('a', Order.NotesMaxLength - 1) + "😀" + "b";
-
-        var notes = Order.NotesOnConversion(null, quotationNotes);
-
-        Assert.Equal(new string('a', Order.NotesMaxLength - 1), notes);
     }
 }

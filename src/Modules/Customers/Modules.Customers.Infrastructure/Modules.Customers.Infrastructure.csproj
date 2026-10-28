@@ -5,6 +5,9 @@
          armado de desplegables/rangos con nombre se prueba unitariamente. Mismo patron que
          Geography. -->
     <InternalsVisibleTo Include="Modules.Customers.UnitTests" />
+    <!-- CustomerPhoneDirectoryTests resuelve CustomerPhoneBackfillWorker del host y corre
+         RunOnceAsync a mano: el worker es internal y no es API pública del módulo. -->
+    <InternalsVisibleTo Include="Modules.Customers.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Customers.Application\Modules.Customers.Application.csproj" />
@@ -13,11 +16,13 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="ClosedXML" />
+    <PackageReference Include="libphonenumber-csharp" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 </Project>

@@ -68,12 +68,40 @@ public sealed class PriceChangeReportSummaryHandlerTests
         Assert.Empty(source.SummarizedCriteria);
     }
 
-    /// <summary>Los tres campos del histórico, y no más: el resumen filtra exactamente por lo
+    [Fact]
+    public async Task SummarizingRejectsACurrencyOutsideTheCatalogue()
+    {
+        var source = new FakePriceChangeReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            handler.HandleAsync(
+                new GetPriceChangeReportSummaryQuery(Filter(currency: "XYZ")),
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "Currency");
+        Assert.Empty(source.SummarizedCriteria);
+    }
+
+    [Fact]
+    public async Task SummarizingNormalizesTheCurrencyBeforeAskingTheSource()
+    {
+        var source = new FakePriceChangeReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        await handler.HandleAsync(
+            new GetPriceChangeReportSummaryQuery(Filter(currency: "usd")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("USD", Assert.Single(source.SummarizedCriteria).Currency);
+    }
+
+    /// <summary>Los dos campos del histórico, y no más: el resumen filtra exactamente por lo
     /// mismo que el listado.</summary>
     [Fact]
-    public async Task SummarizingAcceptsTheThreeRealFields()
+    public async Task SummarizingAcceptsTheTwoRealFields()
     {
-        foreach (var field in new[] { "PriceBaseUsd", "PriceBaseCop", "ScaleDiscount" })
+        foreach (var field in new[] { "PriceBase", "ScaleDiscount" })
         {
             var source = new FakePriceChangeReportSource();
             var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
@@ -105,6 +133,63 @@ public sealed class PriceChangeReportSummaryHandlerTests
         Assert.Equal(148, summary.ChangeCount);
         Assert.Equal(96, summary.IncreaseCount);
         Assert.Equal(52, summary.DecreaseCount);
+    }
+
+    /// <summary>El filtro por variante (spec 2026-10-20 §3.5) tiene que llegar al origen, y a los
+    /// dos: la ventana anterior se consulta con el mismo criterio, o el delta compararía una
+    /// variante contra el catálogo entero.</summary>
+    [Fact]
+    public async Task TheVariantFilterReachesTheSourceInBothWindows()
+    {
+        var variantId = Guid.Parse("01900000-0000-7000-8000-0000000000b1");
+        var source = new FakePriceChangeReportSource
+        {
+            PrecedingAggregate = FakePriceChangeReportSource.EmptyAggregate(),
+        };
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        await handler.HandleAsync(
+            new GetPriceChangeReportSummaryQuery(Filter(
+                from: new DateOnly(2026, 9, 1),
+                to: new DateOnly(2026, 9, 30),
+                variantId: variantId)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, source.SummarizedCriteria.Count);
+        Assert.All(source.SummarizedCriteria, criteria => Assert.Equal(variantId, criteria.VariantId));
+    }
+
+    /// <summary>El desglose por variante viaja tal cual lo arma el origen: el handler no lo
+    /// recorta ni lo reordena.</summary>
+    [Fact]
+    public async Task TheVariantBreakdownOfEachProductIsPassedThrough()
+    {
+        var productId = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
+        var source = new FakePriceChangeReportSource
+        {
+            Aggregate = FakePriceChangeReportSource.EmptyAggregate(changeCount: 12) with
+            {
+                ProductCount = 1,
+                ByProduct =
+                [
+                    new PriceChangeProductEntryDto(
+                        productId, "Camiseta", null, EntityCount: 1, Count: 12,
+                        [
+                            new PriceChangeVariantEntryDto(Guid.CreateVersion7(), "Camiseta – M", "CAM-M", 5),
+                            new PriceChangeVariantEntryDto(Guid.CreateVersion7(), "Camiseta – L", "CAM-L", 7),
+                        ]),
+                ],
+            },
+        };
+        var handler = Handler(source, Tenant, ReportingPermissions.PriceChangeRead);
+
+        var summary = await handler.HandleAsync(
+            new GetPriceChangeReportSummaryQuery(Filter()),
+            TestContext.Current.CancellationToken);
+
+        var entry = Assert.Single(summary.ByProduct);
+        Assert.Equal(["CAM-M", "CAM-L"], entry.Variants.Select(variant => variant.Code));
+        Assert.Equal(entry.Count, entry.Variants.Sum(variant => variant.Count));
     }
 
     [Fact]
@@ -206,6 +291,8 @@ public sealed class PriceChangeReportSummaryHandlerTests
         DateOnly? to = null,
         Guid? productId = null,
         Guid? changedBy = null,
-        string? field = null) =>
-        new(Tenant, from, to, productId, changedBy, field);
+        string? field = null,
+        string? currency = null,
+        Guid? variantId = null) =>
+        new(Tenant, from, to, productId, changedBy, field, currency, variantId);
 }

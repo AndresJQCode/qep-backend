@@ -40,6 +40,9 @@ public static class OrdersExportColumnCatalog
         new("document", "Documento", 16),
         new("order_number", "Pedido", 18),
         new("address", "Direccion", 40),
+        // Observaciones: `Order.Notes`. Al convertir, el pedido hereda las notas de la cotización (spec
+        // 2026-10-15 §6.4), así que un pedido convertido exporta lo mismo que antes; si alguien edita las
+        // notas del pedido después, sale lo editado.
         new("notes", "Observaciones", 40),
         new("phone", "Telefono", 16),
         new("email", "Email", 30),
@@ -108,6 +111,29 @@ public static class OrdersExportColumnCatalog
         // 0, no vacía: el dominio la deja en 0 y ese 0 dice la verdad. Visible por defecto, mismo
         // criterio que "order_total": Effective la agrega al final de todo layout guardado.
         new("retention_amount", "Retencion", 16),
+        // Spec 2026-10-17 flete §7 (D-F10): el flete del pedido, al final como toda columna nueva.
+        // "Valor Flete" es visible; el desglose, el modo de pago del flete y la contraentrega salen
+        // ocultos para que ningún Excel que ya existe cambie más de una columna.
+        new("freight_amount", "Valor Flete", 16),
+        new("freight_without_tax", "Flete sin IVA", 16, DefaultVisible: false),
+        new("freight_tax", "IVA Flete", 16, DefaultVisible: false),
+        new("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false),
+        new("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false),
+        // Spec 2026-10-20 variantes §7: el nombre visible de la variante que vendió la línea («Camiseta – M»;
+        // en un producto sin opciones, el nombre del producto). Sale de la foto de la línea, no del catálogo
+        // de hoy. «Cod. Producto» ya lleva el `Code` de la variante. Oculta por defecto y al final, mismo
+        // criterio que «coordinadora_city»: ningún Excel que ya existe —tampoco la hoja «MIGRACION 1» del ERP,
+        // que importa por encabezado— gana una columna que nadie pidió; el tenant la prende si la quiere.
+        new("variant", "Variante", 36, DefaultVisible: false),
+        // Spec 2026-10-26 tipo de persona: la del mismo sujeto que describe «Documento de identidad»
+        // (consumidor final, parte de facturación o cliente; ver BilledPersonTypeFor). Oculta por defecto y
+        // al final, mismo criterio que «variant»: el layout sembrado de origen-botanico la prende.
+        new("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
+        // Ajuste 2026-10-28: la razón social de la ficha del cliente (`Customer.BusinessName`), repetida en
+        // cada línea. No es la de quien se factura: «Cliente» ya resuelve ese nombre, y esta sale igual
+        // aunque el pedido facture a una parte propia o al consumidor final. Vacía si la ficha no la tiene.
+        // Oculta por defecto y al final, mismo criterio que «customer_person_type».
+        new("business_name", "Razon social", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

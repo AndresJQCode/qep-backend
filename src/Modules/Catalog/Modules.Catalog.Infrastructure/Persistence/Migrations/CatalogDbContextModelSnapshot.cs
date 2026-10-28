@@ -17,10 +17,83 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Modules.Catalog.Domain.OptionDefinition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_option_definitions_tenant");
+
+                    b.ToTable("option_definitions", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.OptionValue", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<Guid>("OptionDefinitionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("option_definition_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OptionDefinitionId")
+                        .HasDatabaseName("IX_option_values_option_definition");
+
+                    b.ToTable("option_values", "catalog");
+                });
 
             modelBuilder.Entity("Modules.Catalog.Domain.PriceScale", b =>
                 {
@@ -37,16 +110,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("discount");
 
-                    b.Property<decimal?>("FinalCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("final_cop");
-
-                    b.Property<decimal?>("FinalUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("final_usd");
-
                     b.Property<int>("FromUnit")
                         .HasColumnType("integer")
                         .HasColumnName("from_unit");
@@ -54,10 +117,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.Property<int?>("Multiple")
                         .HasColumnType("integer")
                         .HasColumnName("multiple");
-
-                    b.Property<Guid>("ProductId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("product_id");
 
                     b.Property<string>("Restriction")
                         .HasMaxLength(20)
@@ -72,10 +131,14 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("to_unit");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("ProductId")
-                        .HasDatabaseName("IX_product_price_scales_product");
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_product_price_scales_variant");
 
                     b.ToTable("product_price_scales", "catalog");
                 });
@@ -86,11 +149,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("character varying(60)")
-                        .HasColumnName("code");
+                    b.Property<Guid?>("CategoryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("category_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -101,10 +162,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("description");
 
-                    b.Property<Guid?>("ImageFileId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("image_file_id");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
@@ -114,23 +171,6 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("name");
-
-                    b.PrimitiveCollection<int[]>("PackagingUnits")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer[]")
-                        .HasColumnName("packaging_units")
-                        .HasDefaultValueSql("'{}'");
-
-                    b.Property<decimal?>("PriceBaseCop")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_base_cop");
-
-                    b.Property<decimal?>("PriceBaseUsd")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price_base_usd");
 
                     b.Property<Guid?>("TaxRateId")
                         .HasColumnType("uuid")
@@ -151,11 +191,8 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Code")
-                        .HasDatabaseName("IX_products_code_trgm");
-
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Code"), "gin");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Code"), new[] { "gin_trgm_ops" });
+                    b.HasIndex("CategoryId")
+                        .HasDatabaseName("IX_products_category");
 
                     b.HasIndex("Name")
                         .HasDatabaseName("IX_products_name_trgm");
@@ -168,11 +205,81 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_products_tenant");
 
-                    b.HasIndex("TenantId", "Code")
-                        .IsUnique()
-                        .HasDatabaseName("IX_products_tenant_code");
-
                     b.ToTable("products", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductCategory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_id");
+
+                    b.Property<int?>("PosQuickAccessPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("pos_quick_access_position");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentId")
+                        .HasDatabaseName("IX_product_categories_parent");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_product_categories_tenant");
+
+                    b.ToTable("product_categories", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductGalleryImage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("FileId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("file_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_product_gallery_images_product");
+
+                    b.ToTable("product_gallery_images", "catalog");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.ProductPriceChange", b =>
@@ -188,6 +295,11 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ChangedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("changed_by");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency");
 
                     b.Property<string>("Field")
                         .IsRequired()
@@ -221,6 +333,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProductId");
@@ -228,10 +344,87 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_product_price_changes_tenant");
 
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_product_price_changes_variant");
+
                     b.HasIndex("TenantId", "ChangedAt")
                         .HasDatabaseName("IX_product_price_changes_tenant_changed_at");
 
                     b.ToTable("product_price_changes", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductVariant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Barcode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("barcode");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("code");
+
+                    b.Property<string>("CombinationKey")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("combination_key");
+
+                    b.Property<Guid?>("GalleryImageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("gallery_image_id");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.PrimitiveCollection<int[]>("PackagingUnits")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer[]")
+                        .HasColumnName("packaging_units")
+                        .HasDefaultValueSql("'{}'");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .HasDatabaseName("IX_product_variants_code_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Code"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Code"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex("GalleryImageId");
+
+                    b.HasIndex("ProductId", "CombinationKey")
+                        .HasDatabaseName("IX_product_variants_product_combination");
+
+                    b.HasIndex("TenantId", "Barcode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_product_variants_tenant_barcode")
+                        .HasFilter("barcode IS NOT NULL");
+
+                    b.HasIndex("TenantId", "Code")
+                        .IsUnique()
+                        .HasDatabaseName("IX_product_variants_tenant_code");
+
+                    b.ToTable("product_variants", "catalog");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.TaxRate", b =>
@@ -331,21 +524,85 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Catalog.Domain.OptionValue", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.OptionDefinition", null)
+                        .WithMany("Values")
+                        .HasForeignKey("OptionDefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Catalog.Domain.PriceScale", b =>
                 {
-                    b.HasOne("Modules.Catalog.Domain.Product", null)
+                    b.HasOne("Modules.Catalog.Domain.ProductVariant", null)
                         .WithMany("PriceScales")
-                        .HasForeignKey("ProductId")
+                        .HasForeignKey("VariantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
                 {
+                    b.HasOne("Modules.Catalog.Domain.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Modules.Catalog.Domain.TaxRate", null)
                         .WithMany()
                         .HasForeignKey("TaxRateId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.OwnsMany("Modules.Catalog.Domain.ProductOption", "_options", b1 =>
+                        {
+                            b1.Property<Guid>("ProductId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("product_id");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<Guid>("OptionDefinitionId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("option_definition_id");
+
+                            b1.HasKey("ProductId", "Position");
+
+                            b1.HasIndex("OptionDefinitionId")
+                                .HasDatabaseName("IX_product_options_option_definition");
+
+                            b1.ToTable("product_options", "catalog");
+
+                            b1.HasOne("Modules.Catalog.Domain.OptionDefinition", null)
+                                .WithMany()
+                                .HasForeignKey("OptionDefinitionId")
+                                .OnDelete(DeleteBehavior.Restrict)
+                                .IsRequired();
+
+                            b1.WithOwner()
+                                .HasForeignKey("ProductId");
+                        });
+
+                    b.Navigation("_options");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductCategory", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.ProductCategory", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductGalleryImage", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.Product", null)
+                        .WithMany("Gallery")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.ProductPriceChange", b =>
@@ -355,9 +612,103 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ProductId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("Modules.Catalog.Domain.ProductVariant", null)
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductVariant", b =>
+                {
+                    b.HasOne("Modules.Catalog.Domain.ProductGalleryImage", null)
+                        .WithMany()
+                        .HasForeignKey("GalleryImageId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Modules.Catalog.Domain.Product", null)
+                        .WithMany("Variants")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsMany("Modules.Catalog.Domain.ProductPrice", "Prices", b1 =>
+                        {
+                            b1.Property<Guid>("VariantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("variant_id");
+
+                            b1.Property<string>("Currency")
+                                .HasMaxLength(3)
+                                .HasColumnType("character(3)")
+                                .HasColumnName("currency");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount");
+
+                            b1.HasKey("VariantId", "Currency");
+
+                            b1.ToTable("product_prices", "catalog", t =>
+                                {
+                                    t.HasCheckConstraint("CK_product_prices_amount_not_negative", "amount >= 0");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("VariantId");
+                        });
+
+                    b.OwnsMany("Modules.Catalog.Domain.ProductVariantOptionValue", "_optionValues", b1 =>
+                        {
+                            b1.Property<Guid>("VariantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("variant_id");
+
+                            b1.Property<int>("Position")
+                                .HasColumnType("integer")
+                                .HasColumnName("position");
+
+                            b1.Property<Guid>("OptionValueId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("option_value_id");
+
+                            b1.HasKey("VariantId", "Position");
+
+                            b1.HasIndex("OptionValueId")
+                                .HasDatabaseName("IX_product_variant_option_values_option_value");
+
+                            b1.ToTable("product_variant_option_values", "catalog");
+
+                            b1.HasOne("Modules.Catalog.Domain.OptionValue", null)
+                                .WithMany()
+                                .HasForeignKey("OptionValueId")
+                                .OnDelete(DeleteBehavior.Restrict)
+                                .IsRequired();
+
+                            b1.WithOwner()
+                                .HasForeignKey("VariantId");
+                        });
+
+                    b.Navigation("Prices");
+
+                    b.Navigation("_optionValues");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.OptionDefinition", b =>
+                {
+                    b.Navigation("Values");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Domain.Product", b =>
+                {
+                    b.Navigation("Gallery");
+
+                    b.Navigation("Variants");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.ProductVariant", b =>
                 {
                     b.Navigation("PriceScales");
                 });

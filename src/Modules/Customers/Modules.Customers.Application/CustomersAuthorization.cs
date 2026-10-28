@@ -8,6 +8,18 @@ namespace Modules.Customers.Application;
 // Devolver 403 y no 404 es deliberado: un 404 filtraria si el cliente de otro tenant existe.
 internal static class CustomersAuthorization
 {
+    // Sólo el tenant, para los casos de uso cuyo permiso depende de otra cosa (borrar una nota: el autor con
+    // CustomerManage, o quien modera). Quien llame decide después qué permiso mira, pero nunca antes de esto.
+    public static void EnsureTenant(IExecutionContext executionContext, Guid tenantId)
+    {
+        if (executionContext.TenantId.Value != tenantId)
+        {
+            throw new RequestForbiddenException(
+                "authorization.denied",
+                "The subject cannot perform this customers operation for this tenant.");
+        }
+    }
+
     public static void EnsureAuthorized(
         IExecutionContext executionContext,
         Guid tenantId,

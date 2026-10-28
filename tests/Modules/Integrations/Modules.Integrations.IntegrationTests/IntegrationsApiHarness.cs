@@ -1,0 +1,724 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.ExternalApi;
+using Modules.Integrations.Infrastructure.Meta;
+using Modules.Integrations.Infrastructure.Shopify;
+using Modules.Integrations.Infrastructure.Zenvia;
+using Npgsql;
+using Testcontainers.PostgreSql;
+
+namespace Modules.Integrations.IntegrationTests;
+
+/// <summary>
+/// Lo que comparten las pruebas de Integrations (spec 2026-10-08). Viene de <c>WhatsAppTestHarness</c>
+/// (6612298): centinela, Zenvia de mentira, logs capturados y llaves fijadas. El host fija todo lo que
+/// activa una integración externa o un secreto; nunca lo hereda de los user-secrets de quien corre las
+/// pruebas (memoria «user-secrets rompen las pruebas de integración»).
+/// </summary>
+internal static class IntegrationsApiHarness
+{
+    /// <summary>Un token inventado y fácil de buscar: la prueba de fugas lo persigue por respuestas,
+    /// logs, auditoría, outbox y <c>platform.request_failures</c>. ASCII visible, sin espacios.</summary>
+    public const string SentinelApiToken = "zenvia-token-SENTINEL-7f3a9c";
+
+    /// <summary>Un cuerpo de Zenvia inventado: no puede aparecer en ningún camino de salida.</summary>
+    public const string SentinelZenviaBody = "zenvia-body-SENTINEL-5b2d1e";
+
+    public const string MetaAppId = "100200300";
+
+    public const string MetaConfigId = "400500600";
+
+    /// <summary>Centinelas: la prueba de fugas los persigue igual que al token de Zenvia.</summary>
+    public const string SentinelMetaAppSecret = "meta-app-secret-SENTINEL-9e8d7c";
+
+    public const string SentinelMetaVerifyToken = "meta-verify-token-SENTINEL-6b5a4f-0123456789";
+
+    public const string FromNumber = "573001234567";
+    public const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
+
+    /// <summary>Spec 2026-10-14 (V-1 cerrada): el caso de uso Instagram tiene su propio id y su propio secreto.</summary>
+    public const string InstagramAppId = "700800900";
+
+    public const string SentinelInstagramAppSecret = "ig-app-secret-SENTINEL-4d3c2b";
+
+    public const string InstagramRedirectUri = "https://qep.qcode.co/settings/integrations/instagram/callback";
+
+    /// <summary>Un secreto inventado de «API externa»: no puede aparecer en ninguna respuesta.</summary>
+    public const string SentinelExternalApiKey = "external-api-key-SENTINEL-9c4f1a";
+
+    public const string ZenviaBaseUrl = "https://zenvia.test";
+
+    /// <summary>Spec 2026-10-15 §4.2: la app de Shopify, fijada y nunca heredada. Con el par, shopify es visible (D-M3);
+    /// el secreto es centinela, como los de Meta.</summary>
+    public const string ShopifyClientId = "shopify-client-id-test";
+
+    public const string SentinelShopifyClientSecret = "shopify-client-secret-SENTINEL-8a7b6c";
+
+    public const string ShopifyRedirectUri = "https://qep.qcode.co/shopify/callback";
+
+    public const string ShopifyWebhookCallbackUrl = "https://qep-api.qcode.co/api/webhooks/shopify";
+
+    /// <summary>La llave con la que el host cifra. Calculada, no escrita: un literal con forma de llave
+    /// en el repo termina copiado a un ambiente. Bytes 0..31.</summary>
+    public static string TestSecretProtectionKey { get; } =
+        Convert.ToBase64String(Enumerable.Range(0, 32).Select(index => (byte)index).ToArray());
+
+    public static readonly string[] ReadPermissions = [IntegrationsPermissions.ConnectionRead];
+
+    public static readonly string[] ManagePermissions =
+        [IntegrationsPermissions.ConnectionRead, IntegrationsPermissions.ConnectionManage];
+
+    public static string CatalogUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/catalog";
+
+    public static string ConnectionsUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/connections";
+
+    public static string ConnectionUrl(Guid tenantId, Guid connectionId) => $"{ConnectionsUrl(tenantId)}/{connectionId}";
+
+    public static string InstagramConnectUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/instagram/connect";
+
+    private const string TemplateDatabase = "qep_template";
+
+    // Un solo contenedor por ensamblado, con una plantilla ya migrada. Antes cada prueba arrancaba su
+    // contenedor y su host migraba los 13 módulos —por eso Quotations tarda 15 minutos—; ahora cada
+    // prueba clona la plantilla (CREATE DATABASE … TEMPLATE, decenas de milisegundos) y el arranque
+    // de su host sólo comprueba que no hay migraciones pendientes. El aislamiento es el mismo: una
+    // base por prueba, que se borra al terminar.
+    private static readonly Lazy<Task<TestServer>> SharedServer = new(StartServerAsync);
+
+    // Postgres rechaza dos CREATE DATABASE simultáneos desde la misma plantilla ("source database
+    // is being accessed by other users"): los clones van de a uno.
+    private static readonly SemaphoreSlim CloneGate = new(1, 1);
+
+    /// <summary>Una base limpia y migrada para esta prueba. Se borra en <c>DisposeAsync</c>.</summary>
+    public static async Task<TestDatabase> StartDatabaseAsync()
+    {
+        var server = await SharedServer.Value;
+        var name = $"t_{Guid.CreateVersion7():N}";
+        await CloneGate.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await ExecuteAdminAsync(server, $"CREATE DATABASE \"{name}\" TEMPLATE \"{TemplateDatabase}\"");
+        }
+        finally
+        {
+            CloneGate.Release();
+        }
+
+        return new TestDatabase(server, name);
+    }
+
+    private static async Task<TestServer> StartServerAsync()
+    {
+        // Sin Docker (QEP_TEST_POSTGRES con la cadena de admin de un servidor ya levantado) se usa ese servidor: la
+        // plantilla se recrea en cada corrida para que no herede migraciones viejas.
+        var server = await StartContainerOrExternalAsync();
+        if (server.Container is null)
+        {
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{TemplateDatabase}\" WITH (FORCE)");
+        }
+
+        await ExecuteAdminAsync(server, $"CREATE DATABASE \"{TemplateDatabase}\"");
+
+        // El host migra al arrancar (los *DatabaseInitializer de cada módulo): arrancarlo una vez
+        // contra la plantilla la deja con todas las migraciones, igual que cada prueba la tenía antes.
+        var templateConnectionString = ConnectionStringFor(server, TemplateDatabase);
+        using (var factory = new QepApiFactory(templateConnectionString))
+        using (factory.CreateClient())
+        {
+        }
+
+        // Una conexión viva a la plantilla haría fallar todos los clones.
+        NpgsqlConnection.ClearAllPools();
+        await ExecuteAdminAsync(server, $"ALTER DATABASE \"{TemplateDatabase}\" WITH ALLOW_CONNECTIONS false");
+        return server;
+    }
+
+    /// <summary>El servidor de las pruebas: el contenedor de Testcontainers o, con <c>QEP_TEST_POSTGRES</c> (la cadena
+    /// de conexión de administración de un PostgreSQL ya levantado, con permiso de crear bases), ese servidor, para
+    /// correr la suite donde no hay Docker. <see cref="Container"/> es <c>null</c> en el segundo caso.</summary>
+    internal sealed record TestServer(string AdminConnectionString, PostgreSqlContainer? Container);
+
+    private static async Task<TestServer> StartContainerOrExternalAsync()
+    {
+        if (Environment.GetEnvironmentVariable("QEP_TEST_POSTGRES") is { Length: > 0 } external)
+        {
+            return new TestServer(external, null);
+        }
+
+        // Sin el token de una prueba: el servidor es de todas, y cancelar la primera no puede
+        // dejar a las demás sin base.
+        var container = new PostgreSqlBuilder("postgres:18-alpine")
+            .WithDatabase("qep")
+            .WithUsername("qep")
+            .WithPassword("qep-integration")
+            // Clases en paralelo, cada una con su host y su pool: el límite por defecto (100) se agota (53300).
+            .WithCommand("-c", "max_connections=400")
+            .Build();
+        await container.StartAsync(CancellationToken.None);
+        return new TestServer(container.GetConnectionString(), container);
+    }
+
+    private static string ConnectionStringFor(TestServer server, string database) =>
+        new NpgsqlConnectionStringBuilder(server.AdminConnectionString) { Database = database }.ConnectionString;
+
+    private static async Task ExecuteAdminAsync(TestServer server, string sql)
+    {
+        // Contra la base "qep" del contenedor, nunca contra la plantilla ni contra la de una prueba.
+        await using var connection = new NpgsqlConnection(server.AdminConnectionString);
+        await connection.OpenAsync(CancellationToken.None);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    /// <summary>La base de una prueba. Expone lo mismo que las pruebas le pedían al contenedor.</summary>
+    public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
+    {
+        public string GetConnectionString() => ConnectionStringFor(server, name);
+
+        public async ValueTask DisposeAsync()
+        {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
+            // FORCE: un worker del host que todavía no soltó su conexión no puede dejar la base viva.
+            await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
+        }
+    }
+
+    public sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
+    {
+        /// <summary>Lo que sale hacia Zenvia lo ve este handler; las pruebas cambian su respuesta.</summary>
+        public FakeZenviaHandler ZenviaHandler { get; } = new();
+
+        /// <summary>Lo que sale hacia Graph (signup y probador de whatsapp-cloud) lo ve este handler: ninguna
+        /// prueba llega a graph.facebook.com.</summary>
+        public FakeMetaGraphHandler MetaHandler { get; } = new();
+
+        /// <summary>Lo que sale hacia graph.instagram.com y api.instagram.com (conexión, probador y refresco de
+        /// instagram) lo ve este otro: ninguna prueba llega a Instagram.</summary>
+        public FakeMetaGraphHandler InstagramHandler { get; } = new();
+
+        /// <summary>Lo que sale hacia las tiendas de Shopify (canje, Admin API, webhooks) lo ve este: ninguna prueba llega a
+        /// *.myshopify.com.</summary>
+        public FakeShopifyHandler ShopifyHandler { get; } = new();
+
+        /// <summary>Lo que sale hacia la API de una conexión <c>external-api</c> (su probador, D-H3) lo ve este: ninguna prueba
+        /// sale a la red. Reemplaza al handler con la política anti-SSRF, que se prueba aparte (<c>ExternalApiUrlPolicyTests</c>).</summary>
+        public FakeExternalApiHandler ExternalApiHandler { get; } = new();
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseEnvironment("Development");
+            // Pool acotado sólo en pruebas: un host no puede acaparar las conexiones del contenedor compartido.
+            builder.UseSetting("ConnectionStrings:QepDatabase", new NpgsqlConnectionStringBuilder(connectionString) { MaxPoolSize = 80 }.ConnectionString);
+            builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
+            builder.UseSetting("Storage:R2:AccountId", "test-account");
+            builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
+            builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
+            builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fijados, nunca heredados (mismo criterio que PosApiHarness y QuotationsApiHarness).
+            builder.UseSetting("Notifications:EmailProvider", "log");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
+            builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
+            builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            builder.UseSetting("Seed:ExportLoad:Quotations", "0");
+            // El signup concede los seis módulos de fábrica, quotations incluido: Zenvia es visible.
+            builder.UseSetting("Entitlements:GrantDefaultModulesOnSignup", "true");
+            // Spec 2026-10-08, «Pruebas»: "test" es la activa; "k1" —el id que el README sugiere para
+            // local— se vacía para que una llave mal pegada en la máquina de quien corre no las tumbe.
+            builder.UseSetting("Integrations:SecretProtection:ActiveKeyId", "test");
+            builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
+            builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
+            builder.UseSetting("Integrations:Zenvia:BaseUrl", ZenviaBaseUrl);
+            // Spec 2026-10-09 §9: fijadas, nunca heredadas. Con las cinco, whatsapp-cloud es visible
+            // (D-M3); las pruebas que quieren el caso contrario las vacían con WithoutMetaApp.
+            builder.UseSetting("Meta:App:AppId", MetaAppId);
+            builder.UseSetting("Meta:App:ConfigId", MetaConfigId);
+            builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
+            builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
+            // Spec 2026-10-14 §9: el caso de uso Instagram, fijado y nunca heredado; con las dos claves, instagram es
+            // visible. Las pruebas del caso contrario lo vacían con WithoutMetaInstagram.
+            builder.UseSetting("Meta:Instagram:AppId", InstagramAppId);
+            builder.UseSetting("Meta:Instagram:AppSecret", SentinelInstagramAppSecret);
+            builder.UseSetting("Meta:Instagram:GraphApiVersion", "v24.0");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:0", "https://qep.qcode.co");
+            builder.UseSetting("Meta:Instagram:AllowedRedirectOrigins:1", "http://localhost:3002");
+            // Spec 2026-10-15 §4.2: sin ClientId y ClientSecret, fuera de Production, shopify no aparece.
+            builder.UseSetting("Shopify:App:ClientId", ShopifyClientId);
+            builder.UseSetting("Shopify:App:ClientSecret", SentinelShopifyClientSecret);
+            builder.UseSetting("Shopify:App:AllowedRedirectOrigins:0", "https://qep.qcode.co");
+            builder.UseSetting("Shopify:App:AllowedRedirectOrigins:1", "http://localhost:3002");
+            // El enlace y el probador registran los webhooks contra esta URL (D-S17); FakeShopifyHandler la ve en cada alta.
+            builder.UseSetting("Shopify:App:WebhookCallbackUrl", ShopifyWebhookCallbackUrl);
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddHttpClient(ZenviaConnectionTester.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ZenviaHandler);
+                services.AddHttpClient(MetaGraphClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                services.AddHttpClient(InstagramGraphClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => InstagramHandler);
+                services.AddHttpClient(ShopifyAdminGateway.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ShopifyHandler);
+                services.AddHttpClient(ExternalApiConnectionTester.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => ExternalApiHandler);
+            });
+        }
+    }
+
+    /// <summary>Spec 2026-10-21 D-H1: el cuerpo de una conexión «API externa».</summary>
+    public static object ExternalApiBody(
+        string name = "Clientes", string? baseUrl = "https://api-clasic.qcode.co", string? authHeader = "x-api-key",
+        string? apiKey = SentinelExternalApiKey) =>
+        new
+        {
+            providerKey = "external-api",
+            name,
+            fields = new Dictionary<string, string?> { ["baseUrl"] = baseUrl, ["authHeader"] = authHeader },
+            secrets = new Dictionary<string, string?> { ["apiKey"] = apiKey },
+        };
+
+    /// <summary>Un tenant real con <c>automations</c> (que arrastra a <c>messaging</c>): <c>external-api</c> no pide habilitación.</summary>
+    public static async Task<RegisteredTenant> RegisterAutomationsTenantAsync(WebApplicationFactory<Program> factory, string connectionString)
+    {
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        await EnableModuleAsync(connectionString, tenant.TenantId, "automations");
+        return tenant;
+    }
+
+    internal sealed record RegisteredTenant(Guid TenantId, Guid OwnerUserId, string Email);
+
+    public static HttpClient CreateClient(
+        WebApplicationFactory<Program> factory, Guid subjectId, Guid tenantId, params string[] permissions)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Subject-Id", subjectId.ToString());
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString());
+        if (permissions.Length > 0)
+        {
+            client.DefaultRequestHeaders.Add("X-Permissions", string.Join(',', permissions));
+        }
+
+        return client;
+    }
+
+    /// <summary>Copia de <c>PosApiHarness.RegisterTenantAsync</c>: un tenant real, con el dueño y su
+    /// membresía activa (de ahí sale <c>createdBy</c>).</summary>
+    public static async Task<RegisteredTenant> RegisterTenantAsync(WebApplicationFactory<Program> factory)
+    {
+        var email = $"owner-{Guid.CreateVersion7():N}@example.com";
+        using var bootstrap = CreateClient(factory, Guid.CreateVersion7(), Guid.CreateVersion7());
+        bootstrap.DefaultRequestHeaders.Add("X-Email", email);
+        bootstrap.DefaultRequestHeaders.Add("X-Email-Verified", "true");
+
+        var response = await bootstrap.PostAsJsonAsync(
+            "/api/v1/auth/register-tenant",
+            new
+            {
+                displayName = "Integrations Test Org",
+                slug = $"org-{Guid.NewGuid():N}"[..12],
+                defaultCulture = "es-CO",
+                timeZone = "America/Bogota",
+                dateFormat = "yyyy-MM-dd",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var registered = await response.Content.ReadFromJsonAsync<RegisterTenantResponseDto>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(registered);
+        return new RegisteredTenant(registered.TenantId, registered.OwnerUserId, email);
+    }
+
+    public static Task<Guid> OwnerMembershipIdAsync(string connectionString, RegisteredTenant tenant) =>
+        ScalarAsync<Guid>(
+            connectionString,
+            "SELECT id FROM tenancy.memberships WHERE tenant_id = @tenantId AND user_id = @userId",
+            ("tenantId", tenant.TenantId),
+            ("userId", tenant.OwnerUserId));
+
+    /// <summary>Objeto anónimo a propósito: así una prueba manda exactamente lo que quiere.</summary>
+    public static object ZenviaBody(
+        string name = "WhatsApp sede norte", string? apiToken = SentinelApiToken, string? fromNumber = FromNumber,
+        string? templateId = TemplateId) =>
+        new
+        {
+            providerKey = "zenvia",
+            name,
+            fields = new Dictionary<string, string?> { ["fromNumber"] = fromNumber, ["templateId"] = templateId },
+            secrets = new Dictionary<string, string?> { ["apiToken"] = apiToken },
+        };
+
+    public static async Task<HttpResponseMessage> SendAsync(
+        HttpClient client, HttpMethod method, string url, object? body = null, string? ifMatch = null)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        request.Headers.TryAddWithoutValidation("X-Qep-Client", "web");
+        if (ifMatch is not null)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<ConnectionResponse> CreateConnectionAsync(
+        HttpClient client, Guid tenantId, string name = "WhatsApp sede norte", string apiToken = SentinelApiToken)
+    {
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenantId), ZenviaBody(name, apiToken));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(connection);
+        return connection;
+    }
+
+    /// <summary>El <c>code</c> y las claves de <c>errors</c> de un ProblemDetails.</summary>
+    public static async Task<(string? Code, string[] ErrorKeys)> ProblemAsync(HttpResponseMessage response)
+    {
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var root = document.RootElement;
+        var code = root.TryGetProperty("code", out var codeElement) ? codeElement.GetString() : null;
+        var keys = root.TryGetProperty("errors", out var errors)
+            ? errors.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal).ToArray()
+            : Array.Empty<string>();
+        return (code, keys);
+    }
+
+    /// <summary>Spec 2026-10-08 (consola): apagar un módulo deja la fila inactiva.</summary>
+    public static Task<int> SetModuleStatusAsync(string connectionString, Guid tenantId, string moduleKey, string status) =>
+        ExecuteAsync(
+            connectionString,
+            "UPDATE tenancy.tenant_modules SET status = @status, status_changed_at = now() WHERE tenant_id = @tenantId AND module_key = @moduleKey",
+            ("status", status),
+            ("tenantId", tenantId),
+            ("moduleKey", moduleKey));
+
+    /// <summary>Prende un módulo que no viene con el signup (messaging, pos), como PosApiHarness.EnablePosAsync.</summary>
+    public static Task<int> EnableModuleAsync(string connectionString, Guid tenantId, string moduleKey) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, @moduleKey, now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            ("tenantId", tenantId),
+            ("moduleKey", moduleKey));
+
+    /// <summary>Plan 2026-10-21: el operador habilita un proveedor (fila <c>active</c> en <c>tenancy.tenant_providers</c>).
+    /// Sin fila, un tenant real tiene Zenvia deshabilitado (D2).</summary>
+    public static Task<int> EnableProviderAsync(string connectionString, Guid tenantId, string providerKey) =>
+        SetProviderStatusAsync(connectionString, tenantId, providerKey, "active");
+
+    /// <summary>Deshabilitar no borra: la fila queda <c>inactive</c>, como en la consola.</summary>
+    public static Task<int> DisableProviderAsync(string connectionString, Guid tenantId, string providerKey) =>
+        SetProviderStatusAsync(connectionString, tenantId, providerKey, "inactive");
+
+    private static Task<int> SetProviderStatusAsync(string connectionString, Guid tenantId, string providerKey, string status) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_providers (tenant_id, provider_key, status, enabled_at, status_changed_at)
+            VALUES (@tenantId, @providerKey, @status, now(), now())
+            ON CONFLICT (tenant_id, provider_key) DO UPDATE SET status = excluded.status, status_changed_at = now()
+            """,
+            ("tenantId", tenantId),
+            ("providerKey", providerKey),
+            ("status", status));
+
+    /// <summary>Un tenant real con Zenvia habilitado: el arreglo de toda prueba que crea o usa una conexión de Zenvia
+    /// por la API (plan 2026-10-21). Las que prueban el caso deshabilitado usan <see cref="RegisterTenantAsync"/>.</summary>
+    public static async Task<RegisteredTenant> RegisterZenviaTenantAsync(
+        WebApplicationFactory<Program> factory, string connectionString)
+    {
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableProviderAsync(connectionString, tenant.TenantId, IntegrationProviders.Zenvia.Key);
+        return tenant;
+    }
+
+    public static async Task<T> ScalarAsync<T>(
+        string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    public static async Task<int> ExecuteAsync(
+        string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static Task<long> CountConnectionsAsync(string connectionString, Guid tenantId) =>
+        ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM integrations.connections WHERE tenant_id = @tenantId",
+            ("tenantId", tenantId));
+
+    /// <summary>Una conexión de Zenvia escrita directo por el repositorio del host (sin HTTP ni prueba
+    /// contra el proveedor), cifrada con la llave activa de ese host.</summary>
+    public static async Task<Guid> SeedConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string apiToken = SentinelApiToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Zenvia,
+            tenantId,
+            name,
+            new Dictionary<string, string> { [ZenviaFieldKeys.FromNumber] = FromNumber, [ZenviaFieldKeys.TemplateId] = IntegrationsApiHarness.TemplateId },
+            new Dictionary<string, string> { [ZenviaFieldKeys.ApiToken] = apiToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
+    public const string SentinelMetaAccessToken = "meta-access-token-SENTINEL-2c3d4e";
+
+    public const string SentinelMetaCode = "meta-code-SENTINEL-4d5e6f";
+
+    public static string EmbeddedSignupUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup";
+
+    public static object SignupBody(string name = "Ventas", string @event = "FINISH", string? phoneNumberId = "111", string wabaId = "222", string? pin = null) =>
+        new { name, path = @event == "FINISH" ? "new_number" : "existing_business_app", @event, code = SentinelMetaCode, wabaId, phoneNumberId, businessId = "333", pin };
+
+    /// <summary>Graph feliz para FINISH: canje, register, subscribed_apps y lectura del número.</summary>
+    public static void ScriptHappySignup(FakeMetaGraphHandler meta, string phoneNumberId = "111", string wabaId = "222")
+    {
+        meta.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}","token_type":"bearer"}""");
+        meta.Respond($"/{phoneNumberId}/register", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{wabaId}/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond($"/{phoneNumberId}\\?fields=", HttpStatusCode.OK, """{"display_phone_number":"+57 300 123 4567","verified_name":"Origen Botánico","quality_rating":"GREEN","status":"CONNECTED","id":"111"}""");
+    }
+
+    /// <summary>Una conexión whatsapp-cloud con su ruta, escrita directo por el repositorio (sin Meta).</summary>
+    public static async Task<Guid> SeedWhatsAppConnectionAsync(
+        WebApplicationFactory<Program> host, Guid tenantId, string name, string phoneNumberId, string wabaId,
+        string accessToken = SentinelMetaAccessToken)
+    {
+        using var scope = host.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.WhatsAppCloud,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 300 123 4567",
+                [WhatsAppCloudFieldKeys.VerifiedName] = "Prueba",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = phoneNumberId,
+                [WhatsAppCloudFieldKeys.WabaId] = wabaId,
+                [WhatsAppCloudFieldKeys.QualityRating] = "GREEN",
+            },
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.AccessToken] = accessToken },
+            protector.Protect,
+            Guid.CreateVersion7(),
+            DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+            IntegrationConnectionRoute.Create(IntegrationProviders.WhatsAppCloud.Key, phoneNumberId, wabaId, tenantId, connection.Id));
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>()
+            .SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
+    /// <summary>Un proveedor de logs más: LoggerFactory recibe todos los ILoggerProvider registrados,
+    /// así que esto ve lo mismo que la consola.</summary>
+    public static WebApplicationFactory<Program> WithCapturedLogs(
+        this WebApplicationFactory<Program> factory, CapturedLogs logs) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddSingleton<ILoggerProvider>(logs)));
+
+    /// <summary>Pisa la llave activa y declara las que se pasen. Se aplica después del ConfigureWebHost
+    /// del harness, así que gana.</summary>
+    public static WebApplicationFactory<Program> WithSecretProtection(
+        this WebApplicationFactory<Program> factory, string activeKeyId, params (string Id, string Value)[] keys) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Integrations:SecretProtection:ActiveKeyId", activeKeyId);
+            foreach (var (id, value) in keys)
+            {
+                builder.UseSetting($"Integrations:SecretProtection:Keys:{id}", value);
+            }
+        });
+
+    private static readonly string[] MetaAppRequiredKeys = ["AppId", "ConfigId", "AppSecret", "WebhookVerifyToken"];
+
+    /// <summary>Vacía la sección Meta:App (D-M3): whatsapp-cloud desaparece del catálogo.</summary>
+    public static WebApplicationFactory<Program> WithoutMetaInstagram(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Meta:Instagram:AppId", string.Empty);
+            builder.UseSetting("Meta:Instagram:AppSecret", string.Empty);
+        });
+
+    /// <summary>
+    /// Auth real con el stub apagado, como corre producción: así se registra <c>RequireCsrfHeaderMiddleware</c>, que en
+    /// modo stub ni existe (CLAUDE.md). Sigue en Development, con una audiencia inventada porque la rama real la exige. Ningún request de esta variante puede autenticarse: sirve para
+    /// las rutas anónimas.
+    /// </summary>
+    public static WebApplicationFactory<Program> WithRealAuthentication(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Authentication:UseDevelopmentStub", "false");
+            builder.UseSetting("Authentication:Audience", "qep-integrations-tests");
+        });
+
+    public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            foreach (var key in MetaAppRequiredKeys)
+            {
+                builder.UseSetting($"Meta:App:{key}", string.Empty);
+            }
+        });
+
+    /// <summary>Mensaje y detalle de todas las fallas guardadas: lo que lee la pantalla de Log.</summary>
+    public static Task<string> RequestFailuresTextAsync(string connectionString) =>
+        ScalarAsync<string>(
+            connectionString,
+            "SELECT coalesce(string_agg(message || ' ' || detail, ' '), '') FROM platform.request_failures");
+
+    /// <summary>Todo lo que Integrations dejó en auditoría y outbox, como texto.</summary>
+    public static Task<string> AuditAndOutboxTextAsync(string connectionString) =>
+        ScalarAsync<string>(
+            connectionString,
+            """
+            SELECT coalesce((SELECT string_agg(action || ' ' || resource_id || ' ' || changed_fields::text, ' ')
+                             FROM audit.entries WHERE source = 'integrations'), '')
+                || ' '
+                || coalesce((SELECT string_agg(payload::text, ' ')
+                             FROM platform.outbox_messages WHERE event_name LIKE 'integrations.%'), '')
+            """);
+
+    private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
+}
+
+internal sealed record ZenviaRequest(HttpMethod Method, Uri? Uri, string? Token, string UserAgent);
+
+/// <summary>Zenvia de mentira: anota cada request y responde lo que la prueba pida. Lo comparte el host
+/// entero; <see cref="HttpMessageHandler"/> no guarda estado al desecharse, así que sobrevive a que
+/// IHttpClientFactory recicle su cadena.</summary>
+internal sealed class FakeZenviaHandler : HttpMessageHandler
+{
+    public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
+    public string Body { get; set; } = "[]";
+
+    public Exception? Throw { get; set; }
+
+    public ConcurrentQueue<ZenviaRequest> Requests { get; } = new();
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Requests.Enqueue(new ZenviaRequest(
+            request.Method,
+            request.RequestUri,
+            request.Headers.TryGetValues("X-API-TOKEN", out var tokens) ? tokens.FirstOrDefault() : null,
+            request.Headers.UserAgent.ToString()));
+        if (Throw is { } failure)
+        {
+            throw failure;
+        }
+
+        return Task.FromResult(new HttpResponseMessage(Status) { Content = new StringContent(Body) });
+    }
+}
+
+internal sealed record ExternalApiRequest(HttpMethod Method, Uri? Uri, IReadOnlyDictionary<string, string> Headers);
+
+/// <summary>La API de una conexión <c>external-api</c>, de mentira: anota cada request (con sus headers, para ver la clave) y
+/// responde lo que la prueba pida.</summary>
+internal sealed class FakeExternalApiHandler : HttpMessageHandler
+{
+    public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
+    public string Body { get; set; } = "{}";
+
+    public ConcurrentQueue<ExternalApiRequest> Requests { get; } = new();
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        Requests.Enqueue(new ExternalApiRequest(
+            request.Method,
+            request.RequestUri,
+            request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase)));
+        return Task.FromResult(new HttpResponseMessage(Status) { Content = new StringContent(Body) });
+    }
+}
+
+/// <summary>Todo lo que se registra, ya formateado y con la excepción entera (mensaje, internas y
+/// pila): es lo mismo que guarda el log JSON de producción.</summary>
+internal sealed class CapturedLogs : ILoggerProvider
+{
+    private readonly ConcurrentQueue<string> _entries = new();
+    private readonly ConcurrentQueue<string> _categories = new();
+
+    public IReadOnlyCollection<string> Entries => _entries;
+
+    /// <summary>Categoría de cada entrada registrada (una por entrada, con repetidas): sirve para probar
+    /// qué componente NO está logueando, p. ej. los handlers de logging de IHttpClientFactory.</summary>
+    public IReadOnlyCollection<string> Categories => _categories;
+
+    public string AllText => string.Join('\n', _entries);
+
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries, _categories);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class CapturingLogger(
+        string categoryName, ConcurrentQueue<string> entries, ConcurrentQueue<string> categories) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            categories.Enqueue(categoryName);
+            entries.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : "\n" + exception));
+        }
+    }
+}

@@ -43,6 +43,9 @@ internal sealed class RecordingTenancyUnitOfWork(List<string> steps) : ITenancyU
     public Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<ITenantChangeScope> BeginTenantChangeScopeAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed record LogoStorageCall(string Method, Guid FileId, CancellationToken Token);
@@ -97,6 +100,9 @@ internal sealed class RecordingAuditRecorder : IAuditRecorder
 {
     public List<string> Actions { get; } = [];
 
+    /// <summary>Lo que la consola de operador afirma de cada registro (spec 2026-10-08 §5).</summary>
+    public List<(Guid? TenantId, Guid ActorId, string Action, string ResourceType, string ResourceId, IReadOnlyCollection<string> ChangedFields)> Entries { get; } = [];
+
     public void Record(
         Guid? tenantId,
         Guid actorId,
@@ -107,8 +113,11 @@ internal sealed class RecordingAuditRecorder : IAuditRecorder
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt,
         AuditActorType actorType = AuditActorType.Human,
-        string source = "") =>
+        string source = "")
+    {
         Actions.Add(action);
+        Entries.Add((tenantId, actorId, action, resourceType, resourceId, changedFields));
+    }
 }
 
 internal sealed class RecordingOutboxWriter : IOutboxWriter

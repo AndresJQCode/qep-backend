@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Domain;
 
@@ -22,6 +23,12 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
 
     internal DbSet<OrderPaymentProof> OrderPaymentProofs => Set<OrderPaymentProof>();
 
+    internal DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
+    internal DbSet<OrderParty> OrderParties => Set<OrderParty>();
+
+    public DbSet<OrderHistoryEntry> OrderHistoryEntries => Set<OrderHistoryEntry>();
+
     internal DbSet<OrderNumberCounter> OrderNumberCounters => Set<OrderNumberCounter>();
 
     internal DbSet<QuotationPdf> QuotationPdfs => Set<QuotationPdf>();
@@ -31,6 +38,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     internal DbSet<ExportJob> ExportJobs => Set<ExportJob>();
 
     internal DbSet<OrdersExportLayout> OrdersExportLayouts => Set<OrdersExportLayout>();
+
+    internal DbSet<TenantQuotationSettingsRow> TenantQuotationSettings => Set<TenantQuotationSettingsRow>();
+
+    internal DbSet<TenantMinimumTotalRow> TenantMinimumTotals => Set<TenantMinimumTotalRow>();
+
+    internal DbSet<TenantWhatsAppChannelRow> TenantWhatsAppChannels => Set<TenantWhatsAppChannelRow>();
+
+    internal DbSet<Carrier> Carriers => Set<Carrier>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -43,16 +58,23 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         ConfigureDocumentNumberingFormat(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderPaymentProof(modelBuilder);
+        ConfigureOrderItem(modelBuilder);
+        ConfigureOrderParty(modelBuilder);
+        ConfigureOrderHistoryEntry(modelBuilder);
         ConfigureOrderNumberCounter(modelBuilder);
         ConfigureExportJob(modelBuilder);
         ConfigureOrdersExportLayout(modelBuilder);
+        ConfigureQuotationSettings(modelBuilder);
+        ConfigureTenantWhatsAppChannel(modelBuilder);
+        ConfigureCarrier(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
     private static void ConfigureQuotation(ModelBuilder modelBuilder)
     {
         var quotation = modelBuilder.Entity<Quotation>();
-        quotation.ToTable("quotations", "quotations");
+        quotation.ToTable("quotations", "quotations", table =>
+            table.HasCheckConstraint("CK_quotations_freight_charge_mode", FreightChargeModeCheck));
         quotation.HasKey(value => value.Id);
         quotation.Property(value => value.Id)
             .HasColumnName("id")
@@ -76,14 +98,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("global_scale_floor");
         quotation.Property(value => value.CreatedAt).HasColumnName("created_at");
         quotation.Property(value => value.ValidUntil).HasColumnName("valid_until");
-        // El codigo ISO y no el nombre del miembro del enum: la columna dice COP/USD, que es lo
-        // que dice la cuenta bancaria de la empresa de la que sale y lo que espera cualquiera que
-        // lea la tabla a mano. Texto y no entero, mismo criterio que Status.
+        // The ISO code as text (COP/USD/EUR): what the company bank account says and what anyone
+        // reading the table expects. A plain string since spec 2026-10-08 D6 — no enum to convert.
         quotation.Property(value => value.Currency)
             .HasColumnName("currency")
-            .HasConversion(
-                currency => currency.ToCode(),
-                code => QuotationCurrencies.FromCode(code))
             .HasMaxLength(3);
         quotation.Property(value => value.PaymentMethod)
             .HasColumnName("payment_method")
@@ -103,6 +121,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("is_store_pickup");
         quotation.Property(value => value.IsRetail)
             .HasColumnName("is_retail");
+        // La regla de redondeo con que se preció el documento (spec 2026-10-27 §4): dos columnas nulas, que
+        // EF lee y escribe por el campo. Nulas = documento anterior a la regla. El modo viaja por nombre.
+        quotation.Ignore(value => value.PriceRounding);
+        quotation.Property<int?>("_priceRoundingDecimals")
+            .HasColumnName("price_rounding_decimals")
+            .HasColumnType("smallint");
+        quotation.Property<PriceRoundingMode?>("_priceRoundingMode")
+            .HasColumnName("price_rounding_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         quotation.Property(value => value.BillsToFinalConsumer)
             .HasColumnName("bills_to_final_consumer");
         quotation.Property(value => value.CustomerWithRetention)
@@ -132,6 +160,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
+        ConfigureFreight(quotation);
 
         // Owned y no tabla aparte: es a lo sumo una cuenta por cotizacion, y una tabla hija con
         // una fila como maximo solo agrega un JOIN. Las cuatro columnas viven en `quotations`.
@@ -175,6 +204,48 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasDatabaseName("IX_quotations_tenant_number");
     }
 
+    private const string FreightChargeModeCheck =
+        "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')";
+
+    /// <summary>
+    /// El envío de cotización y pedido (spec 2026-10-17): las mismas ocho columnas en los dos. Los
+    /// montos, el porcentaje y el recaudo son NOT NULL con default —las filas anteriores quedan "sin
+    /// envío" y su total no cambia—; la transportadora y el modo, nulos. `carrier_id` no tiene FK:
+    /// el documento guarda además el nombre (`carrier_name`) como foto, y una transportadora puede
+    /// desactivarse sin tocar lo ya emitido. `ProductsTotal` y `ShippingDetails` se derivan y no se
+    /// persisten.
+    /// </summary>
+    private static void ConfigureFreight<TDocument>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TDocument> document)
+        where TDocument : class
+    {
+        document.Property<Guid?>("CarrierId").HasColumnName("carrier_id");
+        document.Property<string?>("CarrierName").HasColumnName("carrier_name").HasMaxLength(CarrierName.MaxLength);
+        document.Property<FreightChargeMode?>("FreightChargeMode")
+            .HasColumnName("freight_charge_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        document.Property<decimal>("FreightAmount")
+            .HasColumnName("freight_amount")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<int>("FreightTaxPercentage")
+            .HasColumnName("freight_tax_percentage")
+            .HasDefaultValue(0);
+        document.Property<decimal>("FreightSubtotal")
+            .HasColumnName("freight_subtotal")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<decimal>("FreightTaxAmount")
+            .HasColumnName("freight_tax_amount")
+            .HasPrecision(14, 2)
+            .HasDefaultValue(0m);
+        document.Property<bool>("CashOnDelivery")
+            .HasColumnName("cash_on_delivery")
+            .HasDefaultValue(false);
+        document.Ignore("ProductsTotal");
+        document.Ignore("ShippingDetails");
+    }
+
     private static void ConfigureQuotationItem(ModelBuilder modelBuilder)
     {
         var item = modelBuilder.Entity<QuotationItem>();
@@ -187,6 +258,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
             .HasConversion(id => id.Value, value => new QuotationId(value));
+        // La variante que vende la línea (spec 2026-10-20 §4). Sin FK, igual que product_id: este
+        // módulo no referencia las tablas de Catalog. NOT NULL desde AddVariantToLines, que rellenó
+        // las líneas viejas con product_id (la variante por defecto nació con el id del producto).
+        item.Property(value => value.VariantId).HasColumnName("variant_id");
         item.Property(value => value.ProductId).HasColumnName("product_id");
         // Nulas: un borrador y las líneas enviadas antes de la columna leen el producto en vivo.
         item.Property(value => value.ProductCode)
@@ -217,6 +292,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         item.HasIndex(value => value.QuotationId).HasDatabaseName("IX_quotation_items_quotation");
+        // Para «¿está en uso esta variante?» de Catalog (CatalogVariantUsageChecker en Bootstrapper),
+        // que corre en cada GET y PUT de producto con `variant_id = ANY(@ids)`: sin índice, cada
+        // detalle de producto recorre todas las líneas de todos los tenants.
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_quotation_items_variant");
 
         // CASCADE: una linea no tiene sentido sin su cotizacion -- no es catalogo compartido, es
         // parte del mismo agregado. Mismo criterio que PriceScale -> Product en Catalog.
@@ -250,6 +329,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.IdentificationNumber)
             .HasColumnName("identification_number")
             .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
+        // Nullable también en la base: la fila sin tipo es la de antes de la columna, y se lee igual
+        // (spec 2026-10-26, sin backfill). Guardados como texto para que el valor se lea en la base.
+        party.Property(value => value.PersonType)
+            .HasColumnName("person_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        party.Property(value => value.IdentificationType)
+            .HasColumnName("identification_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         party.Property(value => value.Phone)
             .HasColumnName("phone")
             .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);
@@ -334,6 +423,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .IsRequired();
         pdf.Property(value => value.QuotationVersion).HasColumnName("quotation_version");
         pdf.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
+        pdf.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(16);
         pdf.Property(value => value.GeneratedAt).HasColumnName("generated_at");
 
         // El tenant no es parte de la clave --la cotizacion ya es unica-- pero toda consulta de
@@ -398,7 +488,11 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
     private static void ConfigureOrder(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<Order>();
-        order.ToTable("orders", "quotations");
+        order.ToTable("orders", "quotations", table =>
+        {
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+            table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
+        });
         order.HasKey(value => value.Id);
         order.Property(value => value.Id)
             .HasColumnName("id")
@@ -408,9 +502,75 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.OrderNumber)
             .HasColumnName("order_number")
             .HasMaxLength(Order.OrderNumberMaxLength);
+        // Spec 2026-10-15 §4.1: opcional. Un pedido manual o externo no tiene cotización.
         order.Property(value => value.QuotationId)
             .HasColumnName("quotation_id")
-            .HasConversion(id => id.Value, value => new QuotationId(value));
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new QuotationId(value.Value) : null);
+        order.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        order.Property(value => value.ExternalReference)
+            .HasColumnName("external_reference")
+            .HasMaxLength(Order.ExternalReferenceMaxLength);
+        order.Property(value => value.ExternalKey)
+            .HasColumnName("external_key")
+            .HasMaxLength(Order.ExternalKeyMaxLength);
+        order.Property(value => value.ExternalShippingTitle)
+            .HasColumnName("external_shipping_title")
+            .HasMaxLength(Order.ExternalShippingTitleMaxLength);
+        order.Property(value => value.ClientId).HasColumnName("client_id");
+        order.Property(value => value.AdvisorId)
+            .HasColumnName("advisor_id")
+            .HasConversion(id => id.Value, value => new MemberId(value));
+        order.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
+        order.Property(value => value.PaymentMethod)
+            .HasColumnName("payment_method")
+            .HasMaxLength(Order.PaymentMethodMaxLength);
+        order.Property(value => value.IsRetail).HasColumnName("is_retail");
+        // La regla de redondeo con que se preció el documento (spec 2026-10-27 §4): dos columnas nulas, que
+        // EF lee y escribe por el campo. Nulas = documento anterior a la regla. El modo viaja por nombre.
+        order.Ignore(value => value.PriceRounding);
+        order.Property<int?>("_priceRoundingDecimals")
+            .HasColumnName("price_rounding_decimals")
+            .HasColumnType("smallint");
+        order.Property<PriceRoundingMode?>("_priceRoundingMode")
+            .HasColumnName("price_rounding_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        order.Property(value => value.GlobalScaleFloor).HasColumnName("global_scale_floor");
+        order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
+        order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");
+        order.Property(value => value.BillsToFinalConsumer).HasColumnName("bills_to_final_consumer");
+        order.Property(value => value.PartyWithRetention).HasColumnName("party_with_retention");
+        order.Property(value => value.PartyVatSurplus).HasColumnName("party_vat_surplus");
+        order.Property(value => value.CustomerWithRetention).HasColumnName("customer_with_retention");
+        order.Property(value => value.CustomerVatSurplus).HasColumnName("customer_vat_surplus");
+        order.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        order.Property(value => value.TaxPercentage).HasColumnName("tax_percentage").HasPrecision(5, 2);
+        order.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
+        order.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
+        order.Property(value => value.Total).HasColumnName("total").HasPrecision(14, 2);
+        order.Property(value => value.RetentionAmount).HasColumnName("retention_amount").HasPrecision(14, 2);
+        order.Property(value => value.NetTotal).HasColumnName("net_total").HasPrecision(14, 2);
+        order.OwnsOne(value => value.BillingAccount, billing =>
+        {
+            billing.Property(value => value.CompanyId).HasColumnName("billing_company_id");
+            billing.Property(value => value.BankName)
+                .HasColumnName("billing_bank_name")
+                .HasMaxLength(QuotationBillingAccount.BankNameMaxLength);
+            billing.Property(value => value.AccountNumber)
+                .HasColumnName("billing_account_number")
+                .HasMaxLength(QuotationBillingAccount.AccountNumberMaxLength);
+            billing.Property(value => value.Currency)
+                .HasColumnName("billing_account_currency")
+                .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+        });
+        order.Navigation(value => value.BillingAccount).IsRequired();
+        order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
+        order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()
@@ -419,7 +579,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("payment_status")
             .HasConversion<string>()
             .HasMaxLength(30);
-        order.Property(value => value.Notes).HasColumnName("notes").HasMaxLength(Order.NotesMaxLength);
+        // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
+        order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
@@ -458,15 +619,29 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
+        ConfigureFreight(order);
 
         order.Navigation(value => value.PaymentProofs)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         order.HasIndex(value => value.TenantId).HasDatabaseName("IX_orders_tenant");
-        // 1:1 con la cotizacion de origen (modelo-datos-cotizaciones.md §2.4).
+        // Único parcial (spec 2026-10-15 §9): una cotización tiene a lo sumo un pedido; los
+        // pedidos sin cotización no compiten entre sí.
         order.HasIndex(value => value.QuotationId)
             .IsUnique()
+            .HasFilter("quotation_id IS NOT NULL")
             .HasDatabaseName("IX_orders_quotation");
+        // Los filtros de la lista y del Excel (cliente, CUC → ids de cliente, asesor) y el de
+        // origen aplican sobre el pedido, ya no sobre la cotización.
+        order.HasIndex(value => new { value.TenantId, value.ClientId }).HasDatabaseName("IX_orders_tenant_client");
+        order.HasIndex(value => new { value.TenantId, value.AdvisorId }).HasDatabaseName("IX_orders_tenant_advisor");
+        order.HasIndex(value => new { value.TenantId, value.Source }).HasDatabaseName("IX_orders_tenant_source");
+        // Spec de Shopify D-S23: la idempotencia del camino externo. Parcial, para que los pedidos sin clave
+        // (cotización y manuales) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
+        order.HasIndex(value => new { value.TenantId, value.Source, value.ExternalKey })
+            .IsUnique()
+            .HasFilter("external_key IS NOT NULL")
+            .HasDatabaseName("IX_orders_tenant_external_key");
         // La unicidad que promete el numero de pedido. Nombrado a proposito, misma leccion de
         // SDD-CT-06 que IX_quotations_tenant_number.
         order.HasIndex(value => new { value.TenantId, value.OrderNumber })
@@ -484,7 +659,149 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.HasOne<Quotation>()
             .WithMany()
             .HasForeignKey(value => value.QuotationId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrderItem(ModelBuilder modelBuilder)
+    {
+        var item = modelBuilder.Entity<OrderItem>();
+        item.ToTable("order_items", "quotations");
+        item.HasKey(value => value.Id);
+        item.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderItemId(value))
+            .ValueGeneratedNever();
+        item.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        // Igual que en quotation_items: la variante de la línea, sin FK, NOT NULL desde AddVariantToLines.
+        item.Property(value => value.VariantId).HasColumnName("variant_id");
+        item.Property(value => value.ProductId).HasColumnName("product_id");
+        item.Property(value => value.ProductCode)
+            .HasColumnName("product_code")
+            .HasMaxLength(QuotationProductSnapshot.CodeMaxLength);
+        item.Property(value => value.ProductName)
+            .HasColumnName("product_name")
+            .HasMaxLength(QuotationProductSnapshot.NameMaxLength);
+        item.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(10, 2);
+        item.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(14, 2);
+        item.Property(value => value.DiscountOrigin)
+            .HasColumnName("discount_origin")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+        item.Property(value => value.DiscountPercentage)
+            .HasColumnName("discount_percentage")
+            .HasPrecision(5, 2);
+        item.Property(value => value.DiscountAmount)
+            .HasColumnName("discount_amount")
+            .HasPrecision(14, 2);
+        item.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        item.Property(value => value.TaxPercentage).HasColumnName("tax_percentage");
+        item.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
+        item.Property(value => value.Position).HasColumnName("position");
+        item.Property(value => value.CreatedAt).HasColumnName("created_at");
+        item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        item.Ignore(value => value.Amounts);
+        item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
+        // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.
+        item.HasIndex(value => value.VariantId).HasDatabaseName("IX_order_items_variant");
+
+        item.HasOne<Order>()
+            .WithMany(order => order.Items)
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureOrderParty(ModelBuilder modelBuilder)
+    {
+        var party = modelBuilder.Entity<OrderParty>();
+        party.ToTable("order_parties", "quotations");
+        party.HasKey(value => value.Id);
+        party.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderPartyId(value))
+            .ValueGeneratedNever();
+        party.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        party.Property(value => value.Role)
+            .HasColumnName("role")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        party.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(QuotationPartyDetails.NameMaxLength);
+        party.Property(value => value.IdentificationNumber)
+            .HasColumnName("identification_number")
+            .HasMaxLength(QuotationPartyDetails.IdentificationNumberMaxLength);
+        // Nullable también en la base: la fila sin tipo es la de antes de la columna, y se lee igual
+        // (spec 2026-10-26, sin backfill). Guardados como texto para que el valor se lea en la base.
+        party.Property(value => value.PersonType)
+            .HasColumnName("person_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        party.Property(value => value.IdentificationType)
+            .HasColumnName("identification_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        party.Property(value => value.Phone)
+            .HasColumnName("phone")
+            .HasMaxLength(QuotationPartyDetails.PhoneMaxLength);
+        party.Property(value => value.Email)
+            .HasColumnName("email")
+            .HasMaxLength(QuotationPartyDetails.EmailMaxLength);
+        party.Property(value => value.Address)
+            .HasColumnName("address")
+            .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
+        party.Property(value => value.DepartmentId).HasColumnName("department_id");
+        party.Property(value => value.CityId).HasColumnName("city_id");
+
+        party.HasIndex(value => new { value.OrderId, value.Role })
+            .IsUnique()
+            .HasDatabaseName("IX_order_parties_order_role");
+
+        party.HasOne<Order>()
+            .WithMany(order => order.Parties)
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureOrderHistoryEntry(ModelBuilder modelBuilder)
+    {
+        var entry = modelBuilder.Entity<OrderHistoryEntry>();
+        entry.ToTable("order_history", "quotations");
+        entry.HasKey(value => value.Id);
+        entry.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OrderHistoryEntryId(value))
+            .ValueGeneratedNever();
+        entry.Property(value => value.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(id => id.Value, value => new OrderId(value));
+        entry.Property(value => value.EventType)
+            .HasColumnName("event_type")
+            .HasConversion<string>()
+            .HasMaxLength(50);
+        entry.Property(value => value.EventAt).HasColumnName("event_at");
+        entry.Property(value => value.MemberId)
+            .HasColumnName("member_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        entry.Property(value => value.Details)
+            .HasColumnName("details")
+            .HasMaxLength(OrderHistoryEntry.DetailsMaxLength);
+        entry.Property(value => value.CreatedAt).HasColumnName("created_at");
+
+        entry.HasIndex(value => new { value.OrderId, value.EventAt })
+            .HasDatabaseName("IX_order_history_order_event_at");
+
+        entry.HasOne<Order>()
+            .WithMany()
+            .HasForeignKey(value => value.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureOrderPaymentProof(ModelBuilder modelBuilder)
@@ -586,6 +903,116 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         job.HasIndex(value => new { value.TenantId, value.RequestedBy, value.Status })
             .HasDatabaseName("IX_export_jobs_requester")
             .HasFilter(ActiveExportJobFilter);
+    }
+
+    /// <summary>
+    /// Las transportadoras del tenant (spec 2026-10-17). Los nombres —el propio y los alias— viven en
+    /// `carrier_names` con su forma normalizada: el índice único por tenant es el que impide que dos
+    /// transportadoras se llamen igual, y QuotationsUnitOfWork lo traduce por nombre. Se borran con la
+    /// transportadora (CASCADE): no significan nada sin ella.
+    /// </summary>
+    private static void ConfigureCarrier(ModelBuilder modelBuilder)
+    {
+        var carrier = modelBuilder.Entity<Carrier>();
+        carrier.ToTable("carriers", "quotations");
+        carrier.HasKey(value => value.Id);
+        carrier.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new CarrierId(value))
+            .ValueGeneratedNever();
+        carrier.Property(value => value.TenantId).HasColumnName("tenant_id");
+        carrier.Property(value => value.Name).HasColumnName("name").HasMaxLength(CarrierName.MaxLength);
+        carrier.Property(value => value.SupportsCashOnDelivery).HasColumnName("supports_cash_on_delivery");
+        carrier.Property(value => value.SortOrder).HasColumnName("sort_order");
+        carrier.Property(value => value.IsActive).HasColumnName("is_active");
+        carrier.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        carrier.Property(value => value.CreatedAt).HasColumnName("created_at");
+        carrier.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Se deriva de Names: la fuente es carrier_names.
+        carrier.Ignore(value => value.ExternalNames);
+        carrier.HasIndex(value => new { value.TenantId, value.SortOrder }).HasDatabaseName("IX_carriers_tenant_sort");
+
+        carrier.OwnsMany(value => value.Names, names =>
+        {
+            names.ToTable("carrier_names", "quotations", table =>
+                table.HasCheckConstraint("CK_carrier_names_kind", "kind IN ('Name','External')"));
+            names.WithOwner().HasForeignKey("CarrierId");
+            names.Property<CarrierId>("CarrierId").HasColumnName("carrier_id");
+            names.HasKey("CarrierId", nameof(CarrierNameEntry.NormalizedName));
+            names.Property(value => value.TenantId).HasColumnName("tenant_id");
+            names.Property(value => value.Kind)
+                .HasColumnName("kind")
+                .HasConversion<string>()
+                .HasMaxLength(16);
+            names.Property(value => value.Value).HasColumnName("value").HasMaxLength(CarrierName.ExternalMaxLength);
+            names.Property(value => value.NormalizedName)
+                .HasColumnName("normalized_name")
+                .HasMaxLength(CarrierName.ExternalMaxLength);
+            names.HasIndex(value => new { value.TenantId, value.NormalizedName })
+                .IsUnique()
+                .HasDatabaseName("IX_carrier_names_tenant_name");
+        });
+        carrier.Navigation(value => value.Names).UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    private static void ConfigureQuotationSettings(ModelBuilder modelBuilder)
+    {
+        var settings = modelBuilder.Entity<TenantQuotationSettingsRow>();
+        settings.ToTable("tenant_quotation_settings", "quotations", table =>
+        {
+            table.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
+            // Sólo nombres del enum, como CK_quotations_freight_charge_mode: lo que no los cumpla es un bug.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_disabled_freight_charge_modes",
+                "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+            // §4.4.1: el por defecto es un nombre del enum y nunca uno de los apagados de la misma fila.
+            table.HasCheckConstraint(
+                "CK_tenant_quotation_settings_default_freight_charge_mode",
+                "default_freight_charge_mode IS NULL OR (default_freight_charge_mode IN ('Charged', 'OnDelivery', 'Free') "
+                + "AND NOT default_freight_charge_mode = ANY (disabled_freight_charge_modes))");
+        });
+        settings.HasKey(value => value.TenantId);
+        settings.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        settings.Property(value => value.MinimumUnits).HasColumnName("minimum_units");
+        settings.Property(value => value.FreightTaxRateId).HasColumnName("freight_tax_rate_id");
+        settings.Property(value => value.DisabledFreightChargeModes)
+            .HasColumnName("disabled_freight_charge_modes")
+            .HasColumnType("text[]")
+            .HasDefaultValueSql("'{}'::text[]")
+            .IsRequired();
+        settings.Property(value => value.DefaultFreightChargeMode)
+            .HasColumnName("default_freight_charge_mode")
+            .HasMaxLength(16);
+
+        var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
+        totals.ToTable("tenant_minimum_totals", "quotations", table =>
+            table.HasCheckConstraint("CK_tenant_minimum_totals_amount_not_negative", "amount >= 0"));
+        totals.HasKey(value => new { value.TenantId, value.Currency });
+        totals.Property(value => value.TenantId).HasColumnName("tenant_id");
+        totals.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasColumnType("character(3)")
+            .HasMaxLength(3);
+        totals.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+        // Same schema, same module: a real FK. CASCADE because a total means nothing without its
+        // tenant's settings row.
+        totals.HasOne<TenantQuotationSettingsRow>()
+            .WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // La conexión de WhatsApp elegida por el tenant (spec 2026-10-21 D5–D10): una por tenant, así que la PK es el tenant.
+    // Sin FK: la conexión es de Integrations y el miembro, de Tenancy.
+    private static void ConfigureTenantWhatsAppChannel(ModelBuilder modelBuilder)
+    {
+        var channel = modelBuilder.Entity<TenantWhatsAppChannelRow>();
+        channel.ToTable("tenant_whatsapp_channels", "quotations");
+        channel.HasKey(value => value.TenantId);
+        channel.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
+        channel.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        channel.Property(value => value.ChosenAt).HasColumnName("chosen_at");
+        channel.Property(value => value.ChosenByMemberId).HasColumnName("chosen_by_member_id");
     }
 
     /// <summary>

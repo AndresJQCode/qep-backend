@@ -101,7 +101,7 @@ public sealed class OrdersReportSummaryHandlerTests
         Assert.Single(source.SummarizedCriteria);
         Assert.Null(summary.Previous);
         Assert.Equal(12, summary.OrderCount);
-        Assert.Equal(1_200m, summary.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 1_200m)], summary.Totals);
     }
 
     /// <summary>
@@ -133,7 +133,7 @@ public sealed class OrdersReportSummaryHandlerTests
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(20, summary.Previous.Count);
-        Assert.Equal(2_500m, summary.Previous.Total);
+        Assert.Equal([new ReportMoneyDto("COP", 2_500m)], summary.Previous.Totals);
     }
 
     /// <summary>
@@ -182,6 +182,67 @@ public sealed class OrdersReportSummaryHandlerTests
         Assert.Equal(ReportSummaryRules.RankSize, source.LastRankSize);
     }
 
+    /// <summary>
+    /// <c>BySource</c> y <c>WithoutClient</c> son del periodo pedido y el handler los copia tal
+    /// cual: no los recalcula ni los recorta, y <c>Previous</c> sigue siendo conteo y totales.
+    /// </summary>
+    [Fact]
+    public async Task SummaryCarriesBySourceAndWithoutClientFromTheSource()
+    {
+        IReadOnlyList<ReportSourceSliceDto> bySource =
+        [
+            new("Quotation", 3, [new ReportMoneyDto("COP", 300_000m)]),
+            new("Manual", 0, []),
+            new("Shopify", 1, [new ReportMoneyDto("COP", 120_000m)]),
+            new("Pos", 2, [new ReportMoneyDto("COP", 50_000m)]),
+        ];
+        var withoutClient = new ReportWithoutClientDto(2, [new ReportMoneyDto("COP", 50_000m)]);
+        var source = new FakeOrdersReportSource
+        {
+            Aggregate = Aggregate(orderCount: 6, total: 470_000m) with
+            {
+                BySource = bySource,
+                WithoutClient = withoutClient,
+            },
+        };
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
+
+        var summary = await handler.HandleAsync(
+            new GetOrdersReportSummaryQuery(Filter()), TestContext.Current.CancellationToken);
+
+        Assert.Equal(bySource, summary.BySource);
+        Assert.Equal(withoutClient, summary.WithoutClient);
+    }
+
+    [Fact]
+    public async Task InvalidSourceIsAValidationFailureOnSource()
+    {
+        var source = new FakeOrdersReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            handler.HandleAsync(
+                new GetOrdersReportSummaryQuery(Filter(source: "Store")),
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "Source");
+        Assert.Empty(source.SummarizedCriteria);
+    }
+
+    [Fact]
+    public async Task SummarizingParsesTheSourceFilter()
+    {
+        var source = new FakeOrdersReportSource();
+        var handler = Handler(source, Tenant, ReportingPermissions.OrdersRead);
+
+        await handler.HandleAsync(
+            new GetOrdersReportSummaryQuery(Filter(source: "Pos")),
+            TestContext.Current.CancellationToken);
+
+        var criteria = Assert.Single(source.SummarizedCriteria);
+        Assert.Equal(OrderSourceFilter.Pos, criteria.Source);
+    }
+
     private static GetOrdersReportSummaryHandler Handler(
         IOrdersReportSource source,
         Guid callerTenant,
@@ -197,9 +258,13 @@ public sealed class OrdersReportSummaryHandlerTests
         DateOnly? from = null,
         DateOnly? to = null,
         Guid? advisorId = null,
-        string? paymentStatus = null) =>
-        new(Tenant, from, to, advisorId, ClientId: null, paymentStatus);
+        string? paymentStatus = null,
+        string? source = null) =>
+        new(Tenant, from, to, advisorId, ClientId: null, paymentStatus, source);
 
-    private static OrdersReportAggregate Aggregate(int orderCount = 0, decimal total = 0m) =>
-        new(orderCount, total, 0m, total, [], [], []);
+    private static OrdersReportAggregate Aggregate(int orderCount = 0, decimal total = 0m)
+    {
+        IReadOnlyList<ReportMoneyDto> totals = total == 0m ? [] : [new ReportMoneyDto("COP", total)];
+        return new(orderCount, totals, [], [], [], totals, [], [], [], [], new ReportWithoutClientDto(0, []));
+    }
 }

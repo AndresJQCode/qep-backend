@@ -17,10 +17,59 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<bool>("SupportsCashOnDelivery")
+                        .HasColumnType("boolean")
+                        .HasColumnName("supports_cash_on_delivery");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "SortOrder")
+                        .HasDatabaseName("IX_carriers_tenant_sort");
+
+                    b.ToTable("carriers", "quotations");
+                });
 
             modelBuilder.Entity("Modules.Quotations.Domain.ExportJob", b =>
                 {
@@ -106,6 +155,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid>("AdvisorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("advisor_id");
+
                     b.Property<DateTimeOffset?>("ApprovedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("approved_at");
@@ -113,6 +166,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ApprovedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("approved_by");
+
+                    b.Property<bool>("BillingUsesBusinessName")
+                        .HasColumnType("boolean")
+                        .HasColumnName("billing_uses_business_name");
+
+                    b.Property<bool>("BillsToFinalConsumer")
+                        .HasColumnType("boolean")
+                        .HasColumnName("bills_to_final_consumer");
 
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(500)
@@ -127,6 +188,25 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("cancelled_by");
 
+                    b.Property<Guid?>("CarrierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("carrier_id");
+
+                    b.Property<string>("CarrierName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("carrier_name");
+
+                    b.Property<bool>("CashOnDelivery")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cash_on_delivery");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
                     b.Property<DateTimeOffset>("ConvertedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("converted_at");
@@ -139,6 +219,76 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<bool>("CustomerVatSurplus")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customer_vat_surplus");
+
+                    b.Property<bool>("CustomerWithRetention")
+                        .HasColumnType("boolean")
+                        .HasColumnName("customer_with_retention");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<string>("ExternalKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("external_key");
+
+                    b.Property<string>("ExternalReference")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("external_reference");
+
+                    b.Property<string>("ExternalShippingTitle")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("external_shipping_title");
+
+                    b.Property<decimal>("FreightAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_amount");
+
+                    b.Property<string>("FreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("freight_charge_mode");
+
+                    b.Property<decimal>("FreightSubtotal")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_subtotal");
+
+                    b.Property<decimal>("FreightTaxAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_tax_amount");
+
+                    b.Property<int>("FreightTaxPercentage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("freight_tax_percentage");
+
+                    b.Property<int?>("GlobalScaleFloor")
+                        .HasColumnType("integer")
+                        .HasColumnName("global_scale_floor");
+
                     b.Property<DateTimeOffset?>("InvoicedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("invoiced_at");
@@ -147,9 +297,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("invoiced_by");
 
+                    b.Property<bool>("IsRetail")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_retail");
+
+                    b.Property<bool>("IsStorePickup")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_store_pickup");
+
+                    b.Property<decimal>("NetTotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("net_total");
+
                     b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
+                        .HasColumnType("text")
                         .HasColumnName("notes");
 
                     b.Property<string>("OrderNumber")
@@ -158,20 +320,44 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("order_number");
 
+                    b.Property<bool?>("PartyVatSurplus")
+                        .HasColumnType("boolean")
+                        .HasColumnName("party_vat_surplus");
+
+                    b.Property<bool?>("PartyWithRetention")
+                        .HasColumnType("boolean")
+                        .HasColumnName("party_with_retention");
+
+                    b.Property<string>("PaymentMethod")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("payment_method");
+
                     b.Property<string>("PaymentStatus")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("payment_status");
 
-                    b.Property<Guid>("QuotationId")
+                    b.Property<Guid?>("QuotationId")
                         .HasColumnType("uuid")
                         .HasColumnName("quotation_id");
+
+                    b.Property<decimal>("RetentionAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("retention_amount");
 
                     b.Property<string>("RitualCollectionSyncId")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("ritual_collection_sync_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("source");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -179,9 +365,29 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("tax_amount");
+
+                    b.Property<decimal>("TaxPercentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("tax_percentage");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("total");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -192,23 +398,252 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("QuotationId")
                         .IsUnique()
-                        .HasDatabaseName("IX_orders_quotation");
+                        .HasDatabaseName("IX_orders_quotation")
+                        .HasFilter("quotation_id IS NOT NULL");
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_orders_tenant");
+
+                    b.HasIndex("TenantId", "AdvisorId")
+                        .HasDatabaseName("IX_orders_tenant_advisor");
+
+                    b.HasIndex("TenantId", "ClientId")
+                        .HasDatabaseName("IX_orders_tenant_client");
 
                     b.HasIndex("TenantId", "OrderNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_orders_tenant_number");
 
+                    b.HasIndex("TenantId", "Source")
+                        .HasDatabaseName("IX_orders_tenant_source");
+
                     b.HasIndex("TenantId", "ConvertedAt", "OrderNumber")
                         .HasDatabaseName("IX_orders_tenant_converted_at_number");
 
-                    b.ToTable("orders", "quotations");
+                    b.HasIndex("TenantId", "Source", "ExternalKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_orders_tenant_external_key")
+                        .HasFilter("external_key IS NOT NULL");
+
+                    b.ToTable("orders", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+
+                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderHistoryEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("details");
+
+                    b.Property<DateTimeOffset>("EventAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("event_at");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("event_type");
+
+                    b.Property<Guid?>("MemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("member_id");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "EventAt")
+                        .HasDatabaseName("IX_order_history_order_event_at");
+
+                    b.ToTable("order_history", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("discount_amount");
+
+                    b.Property<string>("DiscountOrigin")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("discount_origin");
+
+                    b.Property<decimal>("DiscountPercentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("discount_percentage");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("ProductCode")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("product_code");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<string>("ProductName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("product_name");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("numeric(10,2)")
+                        .HasColumnName("quantity");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("tax_amount");
+
+                    b.Property<int>("TaxPercentage")
+                        .HasColumnType("integer")
+                        .HasColumnName("tax_percentage");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("unit_price");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_order_items_order");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_order_items_variant");
+
+                    b.ToTable("order_items", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderParty", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("address");
+
+                    b.Property<Guid?>("CityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("city_id");
+
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("department_id");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("email");
+
+                    b.Property<string>("IdentificationNumber")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("identification_number");
+
+                    b.Property<string>("IdentificationType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("phone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("role");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId", "Role")
+                        .IsUnique()
+                        .HasDatabaseName("IX_order_parties_order_role");
+
+                    b.ToTable("order_parties", "quotations");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.OrderPaymentProof", b =>
@@ -308,6 +743,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("bills_to_final_consumer");
 
+                    b.Property<Guid?>("CarrierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("carrier_id");
+
+                    b.Property<string>("CarrierName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("carrier_name");
+
+                    b.Property<bool>("CashOnDelivery")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("cash_on_delivery");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -338,6 +788,38 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
                         .HasColumnName("discount_amount");
+
+                    b.Property<decimal>("FreightAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_amount");
+
+                    b.Property<string>("FreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("freight_charge_mode");
+
+                    b.Property<decimal>("FreightSubtotal")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_subtotal");
+
+                    b.Property<decimal>("FreightTaxAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("freight_tax_amount");
+
+                    b.Property<int>("FreightTaxPercentage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("freight_tax_percentage");
 
                     b.Property<int?>("GlobalScaleFloor")
                         .HasColumnType("integer")
@@ -439,6 +921,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("AdvisorId")
@@ -463,7 +954,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId", "CreatedAt", "QuotationNumber")
                         .HasDatabaseName("IX_quotations_tenant_created_at_number");
 
-                    b.ToTable("quotations", "quotations");
+                    b.ToTable("quotations", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_quotations_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.QuotationHistoryEntry", b =>
@@ -583,10 +1077,17 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<Guid>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("QuotationId")
                         .HasDatabaseName("IX_quotation_items_quotation");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_quotation_items_variant");
 
                     b.ToTable("quotation_items", "quotations");
                 });
@@ -620,10 +1121,20 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
 
+                    b.Property<string>("IdentificationType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
+
                     b.Property<string>("Name")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
                         .HasColumnName("name");
+
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(32)
@@ -662,6 +1173,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("LogoFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("logo_file_id");
+
+                    b.Property<string>("NumberFormat")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("number_format");
 
                     b.Property<long>("QuotationVersion")
                         .HasColumnType("bigint")
@@ -816,12 +1332,208 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantMinimumTotalRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("amount");
+
+                    b.HasKey("TenantId", "Currency");
+
+                    b.ToTable("tenant_minimum_totals", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_minimum_totals_amount_not_negative", "amount >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantQuotationSettingsRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("DefaultFreightChargeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("default_freight_charge_mode");
+
+                    b.PrimitiveCollection<string[]>("DisabledFreightChargeModes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("disabled_freight_charge_modes")
+                        .HasDefaultValueSql("'{}'::text[]");
+
+                    b.Property<Guid?>("FreightTaxRateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("freight_tax_rate_id");
+
+                    b.Property<int>("MinimumUnits")
+                        .HasColumnType("integer")
+                        .HasColumnName("minimum_units");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("tenant_quotation_settings", "quotations", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_default_freight_charge_mode", "default_freight_charge_mode IS NULL OR (default_freight_charge_mode IN ('Charged', 'OnDelivery', 'Free') AND NOT default_freight_charge_mode = ANY (disabled_freight_charge_modes))");
+
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_disabled_freight_charge_modes", "disabled_freight_charge_modes <@ ARRAY['Charged', 'OnDelivery', 'Free']::text[]");
+
+                            t.HasCheckConstraint("CK_tenant_quotation_settings_minimum_units", "minimum_units >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantWhatsAppChannelRow", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("ChosenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("chosen_at");
+
+                    b.Property<Guid>("ChosenByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chosen_by_member_id");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("tenant_whatsapp_channels", "quotations");
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.Carrier", b =>
+                {
+                    b.OwnsMany("Modules.Quotations.Domain.CarrierNameEntry", "Names", b1 =>
+                        {
+                            b1.Property<Guid>("CarrierId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("carrier_id");
+
+                            b1.Property<string>("NormalizedName")
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("normalized_name");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("kind");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.Property<string>("Value")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("value");
+
+                            b1.HasKey("CarrierId", "NormalizedName");
+
+                            b1.HasIndex("TenantId", "NormalizedName")
+                                .IsUnique()
+                                .HasDatabaseName("IX_carrier_names_tenant_name");
+
+                            b1.ToTable("carrier_names", "quotations", t =>
+                                {
+                                    t.HasCheckConstraint("CK_carrier_names_kind", "kind IN ('Name','External')");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("CarrierId");
+                        });
+
+                    b.Navigation("Names");
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
                     b.HasOne("Modules.Quotations.Domain.Quotation", null)
                         .WithMany()
                         .HasForeignKey("QuotationId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.OwnsOne("Modules.Quotations.Domain.QuotationBillingAccount", "BillingAccount", b1 =>
+                        {
+                            b1.Property<Guid>("OrderId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("AccountNumber")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("billing_account_number");
+
+                            b1.Property<string>("BankName")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("billing_bank_name");
+
+                            b1.Property<Guid>("CompanyId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("billing_company_id");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("billing_account_currency");
+
+                            b1.HasKey("OrderId");
+
+                            b1.ToTable("orders", "quotations");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OrderId");
+                        });
+
+                    b.Navigation("BillingAccount")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderHistoryEntry", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderItem", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany("Items")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Quotations.Domain.OrderParty", b =>
+                {
+                    b.HasOne("Modules.Quotations.Domain.Order", null)
+                        .WithMany("Parties")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -951,8 +1663,21 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Modules.Quotations.Infrastructure.Persistence.TenantMinimumTotalRow", b =>
+                {
+                    b.HasOne("Modules.Quotations.Infrastructure.Persistence.TenantQuotationSettingsRow", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Modules.Quotations.Domain.Order", b =>
                 {
+                    b.Navigation("Items");
+
+                    b.Navigation("Parties");
+
                     b.Navigation("PaymentProofs");
                 });
 

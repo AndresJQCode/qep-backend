@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Pricing;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -15,10 +17,10 @@ namespace Modules.Quotations.Domain;
 /// una vez convertida a pedido, anulada o vencida". <see cref="Send"/> sale de Draft o de Sent
 /// (reenvío); <see cref="Void"/> y <see cref="ConvertToOrder"/> también.
 ///
-/// Única excepción (a pedido, 2026-09): <see cref="AddItemAfterConversion"/> suma una línea a
-/// la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin exigir
-/// <see cref="QuotationStatus.Converted"/> en este campo — ver su propio comentario para el
-/// porqué. Sólo sumar, nada de editar cantidad ni quitar.
+/// Convertir es copiar (spec 2026-10-15 §4.4): el pedido nace con sus propias líneas, partes y
+/// totales, y la cotización <see cref="QuotationStatus.Converted"/> queda congelada como el
+/// documento que el cliente vio. Editar el pedido pendiente edita el pedido, nunca esta
+/// cotización.
 /// </summary>
 public sealed class Quotation
 {
@@ -28,6 +30,11 @@ public sealed class Quotation
     private readonly List<QuotationItem> _items = [];
 
     private readonly List<QuotationParty> _parties = [];
+
+    // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
+    // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
+    private int? _priceRoundingDecimals;
+    private PriceRoundingMode? _priceRoundingMode;
 
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
@@ -47,6 +54,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        string defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -72,9 +80,9 @@ public sealed class Quotation
         PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
-        Currency = BillingAccount is null
-            ? QuotationCurrencies.Default
-            : QuotationCurrencies.FromCode(BillingAccount.Currency);
+        // The billing account rules when there is one; otherwise the tenant default, read and
+        // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it).
+        Currency = BillingAccount?.Currency ?? defaultCurrency;
         CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
         CreatedBy = createdBy;
@@ -118,12 +126,10 @@ public sealed class Quotation
     /// —eso lo pisaría el primer recálculo—; es el corte de arriba del recálculo, en
     /// <c>QuotationPricingRecalculation.ApplyAsync</c>.
     ///
-    /// Vive en la cotización y no en el pedido por el mismo motivo que
-    /// <see cref="GlobalScaleFloor"/>: el pedido no tiene líneas propias, las suyas son éstas, y
-    /// las dos pantallas muestran el mismo interruptor.
+    /// El pedido lleva su propio interruptor (<c>Order.IsRetail</c>), copiado al convertir.
     ///
-    /// Es excluyente con <see cref="GlobalScaleFloor"/> — ver <see cref="SetIsRetailCore"/> y
-    /// <see cref="SetGlobalScaleFloorCore"/>.
+    /// Es excluyente con <see cref="GlobalScaleFloor"/> — ver <see cref="SetIsRetail"/> y
+    /// <see cref="SetGlobalScaleFloor"/>.
     /// </summary>
     public bool IsRetail { get; private set; }
 
@@ -180,6 +186,40 @@ public sealed class Quotation
     /// <see cref="Total"/> cuando no hay retención.</summary>
     public decimal NetTotal { get; private set; }
 
+    /// <summary>Subtotal del envío, sin IVA. Cero salvo que el envío se cobre en el documento.</summary>
+    public decimal FreightSubtotal { get; private set; }
+
+    /// <summary>IVA del envío. Cero con excedente de IVA o fuera de COP.</summary>
+    public decimal FreightTaxAmount { get; private set; }
+
+    /// <summary>Lo facturado por los productos, sin el envío.</summary>
+    public decimal ProductsTotal => Subtotal + TaxAmount;
+
+    /// <summary>La transportadora elegida. Sin FK a <c>carriers</c>: la cotización no depende de que la
+    /// transportadora siga igual (spec 2026-10-17 flete §5.1).</summary>
+    public Guid? CarrierId { get; private set; }
+
+    /// <summary>Foto del nombre de la transportadora al elegirla: es lo que se muestra, se exporta y se imprime.</summary>
+    public string? CarrierName { get; private set; }
+
+    /// <summary>Cómo se cobra el envío. Null = sin envío registrado.</summary>
+    public FreightChargeMode? FreightChargeMode { get; private set; }
+
+    /// <summary>El valor del envío con IVA incluido, como lo escribió el asesor. Sólo suma al total con
+    /// <see cref="Domain.FreightChargeMode.Charged"/>.</summary>
+    public decimal FreightAmount { get; private set; }
+
+    /// <summary>Foto de la tasa del envío al fijar el valor; 0 fuera de COP.</summary>
+    public int FreightTaxPercentage { get; private set; }
+
+    /// <summary>Si el pedido que salga de esta cotización se cobra contraentrega (spec §6).</summary>
+    public bool CashOnDelivery { get; private set; }
+
+    /// <summary>Los seis campos del envío juntos. Se llama así, y no <c>Shipping</c>, porque ese nombre ya
+    /// es la parte de entrega (<see cref="Shipping"/>).</summary>
+    public ShippingDetails ShippingDetails =>
+        new(CarrierId, CarrierName, FreightChargeMode, FreightAmount, FreightTaxPercentage, CashOnDelivery);
+
     public string? Notes { get; private set; }
 
     public MemberId CreatedBy { get; private set; }
@@ -221,18 +261,53 @@ public sealed class Quotation
     public QuotationBillingAccount? BillingAccount { get; private set; }
 
     /// <summary>
-    /// La moneda de **toda** la cotización: precios unitarios, descuentos, impuestos y totales.
+    /// ISO 4217 code from the catalogue (Modules.Tenancy.Application.Currencies) of the **whole**
+    /// quotation: unit prices, discounts, taxes and totals.
     ///
     /// La fija la cuenta de cobro (<see cref="BillingAccount"/>): si se factura a una cuenta en
     /// dólares, la cotización entera se expresa en dólares, con el precio en dólares de cada
-    /// producto — no con una conversión, que este módulo no sabe hacer. Sin cuenta elegida es
-    /// <see cref="QuotationCurrencies.Default"/>.
+    /// producto — no con una conversión, que este módulo no sabe hacer. Sin cuenta elegida es la
+    /// moneda por defecto del tenant, que la aplicación lee al crear.
     ///
     /// Quitar la cuenta **no** devuelve la cotización a pesos: los precios que ya se cotizaron
     /// quedan como están, y revalorizarlos por un borrado sería un cambio de totales que nadie
     /// pidió. Vuelve a cambiar recién cuando se elige otra cuenta.
     /// </summary>
-    public QuotationCurrency Currency { get; private set; }
+    public string Currency { get; private set; } = string.Empty;
+
+    /// <summary>La regla de redondeo con la que se preció este documento. Cambiar la regla del tenant
+    /// después no la mueve: sólo la cambia <see cref="UsePriceRounding"/>, que corre dentro del
+    /// recálculo de una edición. Con cualquiera de las dos columnas nula (un documento anterior a la
+    /// regla) es la de siempre de su moneda.</summary>
+    public PriceRounding PriceRounding =>
+        _priceRoundingDecimals is { } decimals && _priceRoundingMode is { } mode
+            ? new PriceRounding(decimals, mode)
+            : PriceRounding.LegacyFor(Currency);
+
+    /// <summary>
+    /// Guarda la regla de redondeo y rehace <b>todas</b> las líneas con su cantidad, precio, descuento,
+    /// origen y tasa actuales. Si es igual a la vigente no hace nada.
+    ///
+    /// **No es una edición.** No toca <see cref="Version"/> ni <c>Updated*</c>, mismo contrato que
+    /// <c>ApplyGroupDiscounts</c>, y no exige un estado editable: la llama sólo el recálculo, que ya
+    /// corre dentro de una edición.
+    /// </summary>
+    public void UsePriceRounding(PriceRounding rounding, DateTimeOffset occurredAt)
+    {
+        if (rounding == PriceRounding)
+        {
+            return;
+        }
+
+        _priceRoundingDecimals = rounding.Decimals;
+        _priceRoundingMode = rounding.Mode;
+        foreach (var item in _items)
+        {
+            item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+        }
+
+        RecalculateTotals();
+    }
 
     /// <summary>
     /// Cuando la facturación sigue los datos del cliente, si el nombre que va en el documento es
@@ -290,13 +365,13 @@ public sealed class Quotation
     /// <summary>Si la retención en la fuente se aplica a esta cotización. Con datos propios de
     /// facturación manda lo que se contestó ahí (<see cref="PartyWithRetention"/>, false mientras
     /// no se conteste); con los datos del cliente, manda <see cref="CustomerWithRetention"/>. En
-    /// ambos casos, no a consumidor final, y nunca en USD: en dólares el IVA no se discrimina
+    /// ambos casos, no a consumidor final, y nunca fuera de COP: ahí el IVA no se discrimina
     /// (<see cref="QuotationItem.TaxAmount"/>), así que no hay base sin IVA sobre la cual retener
     /// (owner, 2026-10-14). Es lo que usa <see cref="RecalculateTotals"/>.</summary>
     public bool AppliesRetention =>
         (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
         && !BillsToFinalConsumer
-        && Currency == QuotationCurrency.Cop;
+        && QuotationItem.ItemizesTaxIn(Currency);
 
     /// <summary>Si el excedente de IVA exime a esta cotización, con el mismo criterio de fuente
     /// que <see cref="AppliesRetention"/> pero para <see cref="PartyVatSurplus"/> /
@@ -339,6 +414,7 @@ public sealed class Quotation
         string? notes,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
+        string defaultCurrency,
         bool customerWithRetention,
         bool customerVatSurplus,
         MemberId createdBy,
@@ -354,6 +430,7 @@ public sealed class Quotation
             notes,
             parties,
             billingAccount,
+            defaultCurrency,
             customerWithRetention,
             customerVatSurplus,
             createdBy,
@@ -367,6 +444,7 @@ public sealed class Quotation
     /// </summary>
     public void AddItem(
         QuotationItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -377,40 +455,7 @@ public sealed class Quotation
     {
         EnsureEditable();
         AddItemCore(
-            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// Agrega una línea a la cotización de un pedido pendiente (a pedido, 2026-09): la pantalla
-    /// del pedido ofrece "Editar" mientras sigue <c>OrderStatus.Pending</c> —sumar productos que
-    /// faltaron al convertir, sin recrear el pedido entero—, y ese estado lo controla
-    /// <c>Order</c>, no este agregado (no tiene referencia a su pedido). El caso de uso ya
-    /// encontró un <c>Order</c> pendiente para esta cotización antes de llamar acá —eso alcanza
-    /// como autorización; este método no vuelve a exigir <see cref="QuotationStatus.Converted"/>.
-    ///
-    /// Repetirlo acá rompía con datos reales: las conversiones de antes del 2026-09-13 no movían
-    /// el estado de la cotización (el campo se agregó ese día, sin backfill), así que hay pedidos
-    /// `Pending` genuinos cuya cotización quedó en `Draft` o `Sent` para siempre. Exigir
-    /// `Converted` los dejaba sin poder editarse — el índice único `Order.QuotationId` ya es la
-    /// garantía real de que esta cotización tiene un pedido, sea cual sea el valor de este campo.
-    ///
-    /// A diferencia de <see cref="AddItem"/>, no hay forma paralela de editar cantidad ni quitar
-    /// líneas acá: sólo sumar. Tocar lo que el cliente ya vio en la cotización que recibió es
-    /// otra decisión, no tomada todavía.
-    /// </summary>
-    public void AddItemAfterConversion(
-        QuotationItemId itemId,
-        Guid productId,
-        decimal quantity,
-        decimal unitPrice,
-        decimal discountPercentage,
-        int taxPercentage,
-        MemberId updatedBy,
-        DateTimeOffset occurredAt)
-    {
-        AddItemCore(
-            itemId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             updatedBy, occurredAt);
     }
 
@@ -424,21 +469,6 @@ public sealed class Quotation
     public void SetGlobalScaleFloor(int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
-        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>,
-    /// sin exigir que la cotización sea editable. Misma excepción y mismo motivo que
-    /// <see cref="AddItemAfterConversion"/>: el estado del pedido lo comprueba su caso de uso.
-    /// </summary>
-    public void SetGlobalScaleFloorAfterConversion(
-        int? floor, MemberId updatedBy, DateTimeOffset occurredAt) =>
-        SetGlobalScaleFloorCore(floor, updatedBy, occurredAt);
-
-    private void SetGlobalScaleFloorCore(
-        int? floor, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
         EnsureGlobalScaleFloorAllowed(floor, IsRetail);
         GlobalScaleFloor = floor;
         Touch(updatedBy, occurredAt);
@@ -451,21 +481,6 @@ public sealed class Quotation
     public void SetIsRetail(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
-        SetIsRetailCore(isRetail, updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// El mismo cambio sobre la cotización de un pedido que sigue <c>OrderStatus.Pending</c>, sin
-    /// exigir que la cotización sea editable. Mismo motivo que
-    /// <see cref="SetGlobalScaleFloorAfterConversion"/>: el estado del pedido lo comprueba su
-    /// caso de uso.
-    /// </summary>
-    public void SetIsRetailAfterConversion(
-        bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt) =>
-        SetIsRetailCore(isRetail, updatedBy, occurredAt);
-
-    private void SetIsRetailCore(bool isRetail, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
         IsRetail = isRetail;
 
         // Prender detal limpia el piso y apagarlo no lo restaura: el piso es una elección del
@@ -478,6 +493,31 @@ public sealed class Quotation
         }
 
         Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Fija la entrega por envío (spec 2026-10-17 flete §5.2). Valida contra la recogida y la moneda que la
+    /// cotización ya tiene, así que el handler lo llama <b>después</b> de <see cref="UpdateDetails"/>; cuando
+    /// la entrega pasa a recogida, le manda <see cref="ShippingDetails.None"/>. <see cref="UpdateDetails"/>
+    /// no valida el envío a propósito: si lo hiciera, pasar a recogida con un envío guardado fallaría antes
+    /// de que se pudiera limpiar.
+    /// </summary>
+    public void SetShipping(ShippingDetails shipping, MemberId updatedBy, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        EnsureEditable();
+        AssignShipping(shipping.Validated(IsStorePickup, Currency, "quotation.quotation"));
+        Touch(updatedBy, occurredAt);
+    }
+
+    private void AssignShipping(ShippingDetails shipping)
+    {
+        CarrierId = shipping.CarrierId;
+        CarrierName = shipping.CarrierName;
+        FreightChargeMode = shipping.ChargeMode;
+        FreightAmount = shipping.FreightAmount;
+        FreightTaxPercentage = shipping.FreightTaxPercentage;
+        CashOnDelivery = shipping.CashOnDelivery;
     }
 
     /// <summary>
@@ -521,6 +561,7 @@ public sealed class Quotation
 
     private void AddItemCore(
         QuotationItemId itemId,
+        Guid variantId,
         Guid productId,
         decimal quantity,
         decimal unitPrice,
@@ -529,20 +570,22 @@ public sealed class Quotation
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
-        // Un producto por cotizacion: dos lineas del mismo producto son la misma linea con la
-        // cantidad partida, y partida ademas rompe el descuento por escala (cada mitad resuelve
-        // su escala por separado y las dos pagan mas caro que la suma junta). Quien quiera mas
-        // unidades cambia la cantidad de la linea que ya existe.
-        if (_items.Any(existing => existing.ProductId == productId))
+        // Una variante por cotizacion (spec 2026-10-20 §4; antes, un producto): dos lineas de la
+        // misma variante son la misma linea con la cantidad partida, y partida ademas rompe el
+        // descuento por escala (cada mitad resuelve su escala por separado y las dos pagan mas caro
+        // que la suma junta). Quien quiera mas unidades cambia la cantidad de la linea que ya
+        // existe. Dos tallas del mismo producto si son dos lineas. El codigo de error se conserva:
+        // es contrato con el frontend.
+        if (_items.Any(existing => existing.VariantId == variantId))
         {
             throw new QuotationsDomainException(
                 "quotation.item.duplicate_product",
-                "The product is already in the quotation.");
+                "La variante ya está en la cotización.");
         }
 
         var item = QuotationItem.Create(
-            itemId, Id, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            _items.Count + 1, Currency, occurredAt);
+            itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
+            _items.Count + 1, Currency, PriceRounding, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
     }
@@ -559,55 +602,13 @@ public sealed class Quotation
     {
         EnsureEditable();
 
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
     public void RemoveItem(QuotationItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
     {
         EnsureEditable();
-
-        _items.Remove(FindItem(itemId));
-        Touch(updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// Cambia la cantidad de una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) —
-    /// mismo endpoint que <see cref="UpdateItemQuantity"/>, sin exigir <see cref="EnsureEditable"/>
-    /// por el mismo motivo que <see cref="AddItemAfterConversion"/>: el caso de uso ya encontró un
-    /// <c>Order</c> pendiente para esta cotización antes de llamar acá.
-    /// </summary>
-    public void UpdateItemQuantityAfterConversion(
-        QuotationItemId itemId,
-        decimal quantity,
-        decimal discountPercentage,
-        int taxPercentage,
-        MemberId updatedBy,
-        DateTimeOffset occurredAt)
-    {
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
-        Touch(updatedBy, occurredAt);
-    }
-
-    /// <summary>
-    /// Quita una línea desde "Editar" pedido pendiente (a pedido, 2026-09-15) — mismo endpoint que
-    /// <see cref="RemoveItem"/>, sin exigir <see cref="EnsureEditable"/>, mismo motivo que
-    /// <see cref="AddItemAfterConversion"/>.
-    ///
-    /// A diferencia de quitar de un borrador, acá no hay un paso posterior (enviar, convertir) que
-    /// vuelva a exigir al menos una línea (<see cref="EnsureConvertibleToOrder"/> ya se pasó): sin
-    /// este chequeo, el pedido se quedaría con una cotización en cero productos y un total en
-    /// cero, sin ninguna vuelta atrás.
-    /// </summary>
-    public void RemoveItemAfterConversion(
-        QuotationItemId itemId, MemberId updatedBy, DateTimeOffset occurredAt)
-    {
-        if (_items.Count == 1)
-        {
-            throw new QuotationsDomainException(
-                "quotation.item.last_item_required",
-                "The last remaining item cannot be removed from the order.");
-        }
 
         _items.Remove(FindItem(itemId));
         Touch(updatedBy, occurredAt);
@@ -641,7 +642,7 @@ public sealed class Quotation
         ValidUntil = validUntil;
         // El guardado manda el encabezado entero, así que un piso ausente es "quitalo" y no "no
         // lo toques" — mismo criterio que ValidUntil o Notes. Lo mismo el detal: ausente es
-        // false. Prender el detal deja el piso en null sin pasar por SetIsRetailCore porque el
+        // false. Prender el detal deja el piso en null sin pasar por SetIsRetail porque el
         // guard de arriba ya garantizó que, con detal, el piso del cuerpo es null.
         IsRetail = isRetail;
         GlobalScaleFloor = globalScaleFloor;
@@ -663,10 +664,8 @@ public sealed class Quotation
     /// moneda; el agregado la vuelve a calcular al aplicar, así que no depende de que el llamador
     /// haya preguntado.
     /// </summary>
-    public QuotationCurrency CurrencyFor(QuotationBillingAccount? billingAccount) =>
-        billingAccount is null
-            ? Currency
-            : QuotationCurrencies.FromCode(billingAccount.Currency);
+    public string CurrencyFor(QuotationBillingAccount? billingAccount) =>
+        billingAccount?.Currency ?? Currency;
 
     // Cambiar de cuenta puede cambiar la moneda, y con ella el precio de cada línea: los importes
     // guardados son el precio del producto en la moneda vieja, no una cifra convertible. Por eso
@@ -684,19 +683,31 @@ public sealed class Quotation
             return;
         }
 
+        // La regla guardada es de la moneda vieja: se descarta y las líneas nacen con la de siempre de
+        // la nueva. La del tenant para esa moneda la baja el recálculo (UsePriceRounding) a continuación.
+        _priceRoundingDecimals = null;
+        _priceRoundingMode = null;
+        var rounding = PriceRounding.LegacyFor(currency);
         foreach (var item in _items)
         {
-            if (repricing is null || !repricing.TryGetValue(item.ProductId, out var pricing))
+            if (repricing is null || !repricing.TryGetValue(item.VariantId, out var pricing))
             {
                 throw new QuotationsDomainException(
                     "quotation.quotation.repricing_incomplete",
                     "Every line needs a price in the new currency before the quotation can change currency.");
             }
 
-            item.Reprice(pricing, currency, occurredAt);
+            item.Reprice(pricing, currency, rounding, occurredAt);
         }
 
         Currency = currency;
+
+        // D-F15: el envío no tiene de dónde re-preciarse en la moneda nueva. Se limpian el valor y el modo
+        // para que el asesor lo vuelva a escribir; la transportadora y la contraentrega no dependen de la
+        // moneda y se conservan.
+        FreightChargeMode = null;
+        FreightAmount = 0m;
+        FreightTaxPercentage = 0;
     }
 
     /// <summary>
@@ -770,25 +781,12 @@ public sealed class Quotation
         Version++;
     }
 
-    /// <summary>
-    /// Congela código y nombre de las líneas que se le sumaron al pedido después de convertir
-    /// (<see cref="AddItemAfterConversion"/>): esas no tienen un envío ni una conversión posterior
-    /// que lo haga. Las que ya los tienen no se tocan.
-    ///
-    /// Mismo criterio que las demás variantes <c>*AfterConversion</c>: no exige estado, porque el
-    /// pedido pendiente lo comprobó el caso de uso. Y como <see cref="ApplyGroupDiscounts"/>, no es
-    /// una edición: no toca <see cref="Version"/> ni <see cref="UpdatedAt"/>, que ya los movió la
-    /// línea que se agregó.
-    /// </summary>
-    public void CaptureProductSnapshotsAfterConversion(
-        IReadOnlyDictionary<Guid, QuotationProductSnapshot> products) =>
-        CaptureProductSnapshots(products);
-
+    // Por id de variante: la foto es la de la variante que vende la línea (spec 2026-10-20 §4).
     private void CaptureProductSnapshots(IReadOnlyDictionary<Guid, QuotationProductSnapshot> products)
     {
         foreach (var item in _items)
         {
-            if (products.TryGetValue(item.ProductId, out var product))
+            if (products.TryGetValue(item.VariantId, out var product))
             {
                 item.CaptureProduct(product);
             }
@@ -1023,7 +1021,7 @@ public sealed class Quotation
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, PriceRounding, occurredAt);
             }
         }
 
@@ -1100,7 +1098,7 @@ public sealed class Quotation
     private bool BillingLacksIdentification =>
         Billing is { } billing
         && !string.IsNullOrWhiteSpace(billing.Name)
-        && string.IsNullOrWhiteSpace(billing.IdentificationNumber);
+        && (string.IsNullOrWhiteSpace(billing.IdentificationNumber) || billing.IdentificationType is null);
 
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
@@ -1154,30 +1152,25 @@ public sealed class Quotation
         Version++;
     }
 
+    // La aritmética vive en DocumentTotals (spec 2026-10-15 §4.3): el pedido suma con la misma
+    // regla, y un cambio de redondeo cambia los dos documentos a la vez.
     private void RecalculateTotals()
     {
-        Subtotal = Round(_items.Sum(item => item.Subtotal));
-        DiscountAmount = Round(_items.Sum(item => item.DiscountAmount));
-
-        // Un cliente con excedente de IVA no paga IVA en la cotización, cualquiera sea la tasa
-        // de cada línea — el impuesto de cada QuotationItem queda intacto (sigue reflejando la
-        // tasa real del producto), pero el encabezado lo ignora entero. Salvo que la factura
-        // salga a consumidor final: ahí el excedente no aplica (AppliesVatSurplus).
-        var rawTaxAmount = Round(_items.Sum(item => item.TaxAmount));
-        TaxAmount = AppliesVatSurplus ? 0m : rawTaxAmount;
-        TaxPercentage = Subtotal > 0 ? Round(TaxAmount / Subtotal * 100m) : 0m;
-
-        Total = Subtotal + TaxAmount;
-
-        // Retención en la fuente: 2.5% de lo facturado sin IVA. Resta del neto a cobrar, no de
-        // Total — Total sigue siendo lo facturado, RetentionAmount es lo que el cliente le
-        // retiene al vendedor y no paga en efectivo.
-        RetentionAmount = AppliesRetention ? Round(Subtotal * 0.025m) : 0m;
-        NetTotal = Total - RetentionAmount;
+        var totals = DocumentTotals.Compute(
+            _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
+            AppliesVatSurplus,
+            AppliesRetention);
+        Subtotal = totals.Subtotal;
+        DiscountAmount = totals.DiscountAmount;
+        TaxAmount = totals.TaxAmount;
+        TaxPercentage = totals.TaxPercentage;
+        Total = totals.Total;
+        RetentionAmount = totals.RetentionAmount;
+        NetTotal = totals.NetTotal;
+        FreightSubtotal = totals.FreightSubtotal;
+        FreightTaxAmount = totals.FreightTaxAmount;
     }
-
-    private static decimal Round(decimal value) =>
-        Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private static string NormalizeQuotationNumber(string quotationNumber)
     {

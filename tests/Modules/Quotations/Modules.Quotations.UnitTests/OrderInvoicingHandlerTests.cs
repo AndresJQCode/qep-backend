@@ -32,12 +32,12 @@ public sealed class OrderInvoicingHandlerTests
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(
-                new InvoiceOrderCommand(TenantId, row.Order.Id.Value),
+                new InvoiceOrderCommand(TenantId, row.Id.Value),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(OrderStatus.Approved, row.Order.Status);
-        Assert.Null(row.Order.InvoicedAt);
+        Assert.Equal(OrderStatus.Approved, row.Status);
+        Assert.Null(row.InvoicedAt);
         Assert.Empty(audit.Actions);
     }
 
@@ -51,7 +51,7 @@ public sealed class OrderInvoicingHandlerTests
                 SubjectId, TenantId, "quotations.order.invoice"));
 
         var invoiced = await handler.HandleAsync(
-            new InvoiceOrderCommand(TenantId, row.Order.Id.Value),
+            new InvoiceOrderCommand(TenantId, row.Id.Value),
             TestContext.Current.CancellationToken);
 
         Assert.Equal("Invoiced", invoiced.Status);
@@ -71,12 +71,12 @@ public sealed class OrderInvoicingHandlerTests
 
         var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
             handler.HandleAsync(
-                new RevertOrderInvoicingCommand(TenantId, row.Order.Id.Value),
+                new RevertOrderInvoicingCommand(TenantId, row.Id.Value),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(OrderStatus.Invoiced, row.Order.Status);
-        Assert.Equal(BillerId, row.Order.InvoicedBy);
+        Assert.Equal(OrderStatus.Invoiced, row.Status);
+        Assert.Equal(BillerId, row.InvoicedBy);
         Assert.Empty(audit.Actions);
     }
 
@@ -90,7 +90,7 @@ public sealed class OrderInvoicingHandlerTests
                 SubjectId, TenantId, "quotations.order.invoice"));
 
         var reverted = await handler.HandleAsync(
-            new RevertOrderInvoicingCommand(TenantId, row.Order.Id.Value),
+            new RevertOrderInvoicingCommand(TenantId, row.Id.Value),
             TestContext.Current.CancellationToken);
 
         Assert.Equal("Approved", reverted.Status);
@@ -100,7 +100,7 @@ public sealed class OrderInvoicingHandlerTests
     }
 
     private static InvoiceOrderHandler NewInvoiceHandler(
-        OrderWithQuotation row,
+        Order row,
         RecordingQuotationAuditPublisher audit,
         IExecutionContext executionContext) =>
         new(
@@ -112,7 +112,7 @@ public sealed class OrderInvoicingHandlerTests
             new FixedClock(Now));
 
     private static RevertOrderInvoicingHandler NewRevertHandler(
-        OrderWithQuotation row,
+        Order row,
         RecordingQuotationAuditPublisher audit,
         IExecutionContext executionContext) =>
         new(
@@ -123,43 +123,20 @@ public sealed class OrderInvoicingHandlerTests
             executionContext,
             new FixedClock(Now));
 
-    private static OrderWithQuotation NewApprovedRow()
+    private static Order NewApprovedRow()
     {
-        var quotation = Quotation.Create(
-            QuotationId.New(),
-            TenantId,
-            "QUO-2026-0001",
-            Guid.CreateVersion7(),
-            AdvisorId,
-            new DateOnly(2026, 10, 30),
-            paymentMethod: null,
-            notes: null,
-            QuotationParties.Empty,
-            billingAccount: null,
-            customerWithRetention: false,
-            customerVatSurplus: false,
-            AdvisorId,
-            Now);
-
-        var order = Order.Create(
-            OrderId.New(),
-            TenantId,
-            "PED-2026-0001",
-            quotation.Id,
-            OrderPaymentStatus.FullPaymentReceived,
-            notes: null,
-            AdvisorId,
-            [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
-            Now);
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now,
+            paymentStatus: OrderPaymentStatus.FullPaymentReceived,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
         order.Approve(AdvisorId, Now);
-
-        return new OrderWithQuotation(order, quotation);
+        return order;
     }
 
-    private static OrderWithQuotation NewInvoicedRow()
+    private static Order NewInvoicedRow()
     {
         var row = NewApprovedRow();
-        row.Order.Invoice(BillerId, Now);
+        row.Invoice(BillerId, Now);
         return row;
     }
 

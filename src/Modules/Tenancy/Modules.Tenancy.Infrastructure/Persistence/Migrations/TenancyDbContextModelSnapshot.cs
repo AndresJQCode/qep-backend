@@ -18,7 +18,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -184,6 +184,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -200,6 +206,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("default_culture");
 
+                    b.Property<string>("DefaultCurrency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("default_currency");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -215,9 +227,21 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("logo_public_key");
 
+                    b.Property<string>("NumberFormat")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("number_format");
+
                     b.Property<Guid>("OwnerMembershipId")
                         .HasColumnType("uuid")
                         .HasColumnName("owner_membership_id");
+
+                    b.Property<string>("PersonTypeRequirement")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("person_type_requirement");
 
                     b.Property<string>("Slug")
                         .IsRequired()
@@ -252,6 +276,201 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("tenants", "tenancy");
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<Guid>("BatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("FromStatus")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("from_status");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("ModuleKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("module_key");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("note");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("ProviderKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider_key");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("ToStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("to_status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "OccurredAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("IX_tenant_changes_tenant_id_occurred_at");
+
+                    b.ToTable("tenant_changes", "tenancy", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_changes_kind", "kind IN ('module','tenant_status','provider')");
+
+                            t.HasCheckConstraint("CK_tenant_changes_module_key", "(kind = 'module') = (module_key IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_tenant_changes_provider_key", "(kind = 'provider') = (provider_key IS NOT NULL) AND (provider_key IS NULL OR provider_key IN ('zenvia'))");
+
+                            t.HasCheckConstraint("CK_tenant_changes_reason", "reason IN ('contract','courtesy','nonpayment','cancellation','correction')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("ModuleKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("module_key");
+
+                    b.Property<DateTimeOffset>("EnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enabled_at");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status")
+                        .HasDefaultValueSql("'active'");
+
+                    b.Property<DateTimeOffset>("StatusChangedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.HasKey("TenantId", "ModuleKey");
+
+                    b.ToTable("tenant_modules", "tenancy", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers')");
+
+                            t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator')");
+
+                            t.HasCheckConstraint("CK_tenant_modules_status", "status IN ('active','inactive')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantPriceRounding", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<short>("Decimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("decimals");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("mode");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Currency");
+
+                    b.ToTable("tenant_price_roundings", "tenancy");
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantProvider", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("ProviderKey")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("provider_key");
+
+                    b.Property<DateTimeOffset>("EnabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("enabled_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at");
+
+                    b.HasKey("TenantId", "ProviderKey");
+
+                    b.ToTable("tenant_providers", "tenancy", t =>
+                        {
+                            t.HasCheckConstraint("CK_tenant_providers_provider_key", "provider_key IN ('zenvia')");
+
+                            t.HasCheckConstraint("CK_tenant_providers_status", "status IN ('active','inactive')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Tenancy.Infrastructure.Persistence.InboxMessage", b =>
@@ -349,6 +568,51 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("tenant_settings_change_log", "tenancy");
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.Membership", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantChange", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantPriceRounding", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantProvider", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

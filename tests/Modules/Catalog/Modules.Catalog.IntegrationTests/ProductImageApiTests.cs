@@ -55,12 +55,7 @@ public sealed class ProductImageApiTests
 
         var foreignImage = await UploadImageAsync(other, OtherTenantId, database, "ajena.png");
 
-        var response = await CreateProductAsync(owner, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = foreignImage
-        });
+        var response = await CreateProductAsync(owner, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: foreignImage));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -80,13 +75,7 @@ public sealed class ProductImageApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = Guid.CreateVersion7(),
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: Guid.CreateVersion7()));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -106,13 +95,7 @@ public sealed class ProductImageApiTests
 
         var pending = await CreateUploadSessionAsync(client, TenantId, "pendiente.png", "image/png");
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = pending,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: pending));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -133,13 +116,7 @@ public sealed class ProductImageApiTests
         var pdf = await UploadFileAsync(
             client, TenantId, database, "ficha.pdf", "application/pdf");
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = pdf,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: pdf));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -159,13 +136,7 @@ public sealed class ProductImageApiTests
 
         var image = await UploadImageAsync(client, TenantId, database, "portada.png");
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = image,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", imageFileId: image));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -188,25 +159,21 @@ public sealed class ProductImageApiTests
 
         var image = await UploadImageAsync(client, TenantId, database, "portada.png");
 
-        var withoutImage = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
-        {
-            name = "Sin portada",
-            code = "SP-001",
-            pricing = new { baseUsd = 10m }
-        }));
+        var withoutImage = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Sin portada", "SP-001")));
         Assert.Null(withoutImage.ImageFileId);
 
         var assigned = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{withoutImage.Id}",
-            new { name = "Sin portada", code = "SP-001", imageFileId = image, pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(withoutImage, "Sin portada", "SP-001", imageFileId: image),
             TestContext.Current.CancellationToken));
         Assert.Equal(image, assigned.ImageFileId);
 
         var cleared = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{withoutImage.Id}",
-            new { name = "Sin portada", code = "SP-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(assigned, "Sin portada", "SP-001"),
             TestContext.Current.CancellationToken));
         Assert.Null(cleared.ImageFileId);
+        Assert.Empty(cleared.Gallery);
     }
 
     // CA-CAT-05-07: hoy este archivo quedaba como User, porque el endpoint caía en silencio a ese
@@ -294,13 +261,10 @@ public sealed class ProductImageApiTests
             await PublishAsync(database, image);
         }
 
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            imageFileId = image,
-            pricing = new { baseUsd = 10m }
-        }));
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            imageFileId: image)));
 
         var fetched = await ReadProductAsync(await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
@@ -336,22 +300,10 @@ public sealed class ProductImageApiTests
         await PublishAsync(database, first);
         await PublishAsync(database, second);
 
-        await CreateProductAsync(client, TenantId, new
-        {
-            name = "Con portada",
-            code = "CP-001",
-            imageFileId = first,
-            pricing = new { baseUsd = 10m }
-        });
-        await CreateProductAsync(client, TenantId, new
-        {
-            name = "Con otra portada",
-            code = "CP-002",
-            imageFileId = second,
-            pricing = new { baseUsd = 10m }
-        });
+        await CreateProductAsync(client, TenantId, ProductBodies.Create("Con portada", "CP-001", imageFileId: first));
+        await CreateProductAsync(client, TenantId, ProductBodies.Create("Con otra portada", "CP-002", imageFileId: second));
         await CreateProductAsync(
-            client, TenantId, new { name = "Sin portada", code = "SP-001", pricing = new { baseUsd = 10m } });
+            client, TenantId, ProductBodies.Create("Sin portada", "SP-001"));
 
         var products = await ListAsync(client, TenantId);
 
@@ -402,9 +354,13 @@ public sealed class ProductImageApiTests
             await using var command = new NpgsqlCommand(
                 """
                 INSERT INTO catalog.products
-                    (id, tenant_id, name, code, is_active, version, created_at, updated_at,
-                     image_file_id)
-                VALUES (@id, @tenantId, 'Heredado', 'HE-001', true, 1, now(), now(), @imageId)
+                    (id, tenant_id, name, is_active, version, created_at, updated_at)
+                VALUES (@id, @tenantId, 'Heredado', true, 1, now(), now());
+                INSERT INTO catalog.product_variants
+                    (id, product_id, tenant_id, code, combination_key, is_active, position)
+                VALUES (@id, @id, @tenantId, 'HE-001', '', true, 0);
+                INSERT INTO catalog.product_gallery_images (id, product_id, file_id, position)
+                VALUES (gen_random_uuid(), @id, @imageId, 0);
                 """,
                 connection);
             command.Parameters.AddWithValue("id", legacyId);
@@ -530,7 +486,7 @@ public sealed class ProductImageApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyCollection<ProductResponse>> ListAsync(
+    private static async Task<IReadOnlyCollection<ProductListItemDto>> ListAsync(
         HttpClient client,
         string tenantId)
     {

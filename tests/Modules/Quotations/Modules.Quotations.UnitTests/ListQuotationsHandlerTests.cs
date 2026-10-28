@@ -123,11 +123,11 @@ public sealed class ListQuotationsHandlerTests
     [Fact]
     public async Task ListCarriesTheOrderOfEachConvertedQuotation()
     {
-        var converted = NewQuotation("QUO-2026-0001", ClientId);
+        var converted = NewQuotation("QUO-2026-0001", ClientId, complete: true);
         var order = NewOrder(converted);
         var handler = NewHandler(
             NewCustomerLookup(),
-            [new OrderWithQuotation(order, converted)],
+            [order],
             converted,
             NewQuotation("QUO-2026-0002", ClientId));
 
@@ -182,10 +182,10 @@ public sealed class ListQuotationsHandlerTests
     [Fact]
     public async Task ListHidesTheOrderFromSomeoneWhoCannotReadOrders()
     {
-        var converted = NewQuotation("QUO-2026-0001", ClientId);
+        var converted = NewQuotation("QUO-2026-0001", ClientId, complete: true);
         var handler = new ListQuotationsHandler(
             new StubQuotationListRepository(converted),
-            new StubOrderListRepository(new OrderWithQuotation(NewOrder(converted), converted)),
+            new StubOrderListRepository(NewOrder(converted)),
             NewCustomerLookup(),
             new StubQuotationAdvisorLookup(),
             new StubExecutionContext(SubjectId, TenantId, OrdersPermissions.OrderRead),
@@ -222,6 +222,7 @@ public sealed class ListQuotationsHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: complete ? BillingAccount : null,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -231,7 +232,7 @@ public sealed class ListQuotationsHandlerTests
         {
             quotation.AddItem(
                 QuotationItemId.New(),
-                Guid.CreateVersion7(),
+                Guid.CreateVersion7(), Guid.CreateVersion7(),
                 quantity: 1,
                 unitPrice: 119_000m,
                 discountPercentage: 0m,
@@ -243,12 +244,13 @@ public sealed class ListQuotationsHandlerTests
         return quotation;
     }
 
+    // La copia del pedido necesita una cotización completa (cuenta de cobro y una línea).
     private static Order NewOrder(Quotation quotation) =>
-        Order.Create(
+        Order.FromQuotation(
             OrderId.New(),
             TenantId,
             "PED-2026-0001",
-            quotation.Id,
+            quotation,
             OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
@@ -261,7 +263,7 @@ public sealed class ListQuotationsHandlerTests
 
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
-        OrderWithQuotation[] orders,
+        Order[] orders,
         params Quotation[] quotations) =>
         NewHandler(
             customers,
@@ -278,7 +280,7 @@ public sealed class ListQuotationsHandlerTests
     private static ListQuotationsHandler NewHandler(
         StubQuotationCustomerLookup customers,
         StubQuotationAdvisorLookup advisors,
-        OrderWithQuotation[] orders,
+        Order[] orders,
         Quotation[] quotations) =>
         new(new StubQuotationListRepository(quotations),
             new StubOrderListRepository(orders),

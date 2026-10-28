@@ -527,6 +527,8 @@ public sealed class TenantLogoApiTests
                 defaultCulture = "es-CO",
                 timeZone = "America/Bogota",
                 dateFormat = "dd/MM/yyyy",
+                defaultCurrency = "COP",
+                numberFormat = "1.234,56",
             }),
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
@@ -698,6 +700,13 @@ public sealed class TenantLogoApiTests
             _objects[key] = content.ToArray();
             return Task.CompletedTask;
         }
+
+        public Task UploadAsync(
+            string key, Stream content, long contentLength, string contentType, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoredObjectStream?> OpenReadAsync(string key, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public void Upload(string key, byte[] content) => _objects[key] = content.ToArray();
     }

@@ -3,16 +3,19 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Infrastructure.Seed;
 
 /// <summary>
 /// La mitad de Catalog de la semilla de arranque. Construye los agregados con
-/// <c>TaxRate.Create</c> y <c>Product.Create</c> —cada producto con sus cinco escalas de
-/// precio por cantidad—, así que todos los invariantes del dominio siguen valiendo — lo único
-/// que se saltea respecto de un POST es la capa HTTP.
+/// <c>TaxRate.Create</c> y <c>Product.Create</c> —cada producto sin opciones, con su variante
+/// por defecto y las cinco escalas de precio por cantidad de esa variante—, así que todos los
+/// invariantes del dominio siguen valiendo — lo único que se saltea respecto de un POST es la
+/// capa HTTP. La variante por defecto toma el id del producto (<c>Product.Create</c>) y el
+/// <c>sku</c> del JSON como <c>Code</c>.
 ///
-/// Idempotente por código de producto y por nombre de tasa, mismo criterio que
+/// Idempotente por el <c>Code</c> de la variante y por nombre de tasa, mismo criterio que
 /// <c>GeographySeeder</c> con <c>DivipolaCode</c>. Sólo crea: un producto que ya existe no se
 /// toca, ni siquiera para completarle escalas que le falten.
 /// </summary>
@@ -45,9 +48,9 @@ public static class CatalogSeeder
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        var existingCodes = await dbContext.Products
-            .Where(product => product.TenantId == tenantId)
-            .Select(product => product.Code)
+        var existingCodes = await dbContext.ProductVariants
+            .Where(variant => variant.TenantId == tenantId)
+            .Select(variant => variant.Code)
             .ToListAsync(cancellationToken);
         var existing = new HashSet<string>(existingCodes, StringComparer.Ordinal);
 
@@ -63,17 +66,21 @@ public static class CatalogSeeder
                 ProductId.New(),
                 tenantId,
                 product.Name,
-                product.Sku,
                 new ProductDetails { TaxRateId = taxRate.Id },
-                new ProductPricing
+                new ProductVariantInput
                 {
-                    BaseUsd = product.PriceUsd,
-                    BaseCop = product.PriceCop,
-                    Scales = product.Scales
-                        .Select(scale => ToPriceScaleInput(product, scale))
-                        .ToList(),
-                    PackagingUnits = product.PackagingUnits ?? [],
+                    Code = product.Sku,
+                    Pricing = new ProductPricing
+                    {
+                        Prices = product.Prices.ToDictionary(
+                            entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
+                        Scales = product.Scales
+                            .Select(scale => ToPriceScaleInput(product, scale))
+                            .ToList(),
+                        PackagingUnits = product.PackagingUnits ?? [],
+                    },
                 },
+                [],
                 now));
             added = true;
         }
@@ -84,9 +91,6 @@ public static class CatalogSeeder
         }
     }
 
-    // El seeder hace de cliente: PriceScale.Create no calcula los finales, espera que quien
-    // manda la escala los traiga y sólo los valida contra base × (1 − descuento%). Se calculan
-    // con el mismo PriceScale.FinalFor que usa esa validación, así que no pueden discrepar.
     private static PriceScaleInput ToPriceScaleInput(
         CatalogSeedProduct product, CatalogSeedScale scale)
     {
@@ -105,8 +109,6 @@ public static class CatalogSeeder
             scale.Discount,
             restriction,
             scale.Multiple,
-            PriceScale.FinalFor(product.PriceUsd, scale.Discount),
-            PriceScale.FinalFor(product.PriceCop, scale.Discount),
             scale.AllowGrouping);
     }
 

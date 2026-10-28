@@ -2,6 +2,8 @@ namespace Modules.Quotations.Application;
 
 public sealed record QuotationItemDto(
     Guid Id,
+    /// <summary>La variante que vende la línea (spec 2026-10-20 §4); <c>ProductId</c> es su producto.</summary>
+    Guid VariantId,
     Guid ProductId,
     decimal Quantity,
     decimal UnitPrice,
@@ -9,7 +11,7 @@ public sealed record QuotationItemDto(
     decimal DiscountAmount,
     /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
     /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
-    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento) y no quien lo muestra: la pantalla y el PDF lo
     /// derivaban cada uno por su cuenta.</summary>
     decimal DiscountedUnitPrice,
     decimal Subtotal,
@@ -38,7 +40,7 @@ public sealed record QuotationDto(
     DateTimeOffset CreatedAt,
     DateOnly? ValidUntil,
     string? PaymentMethod,
-    /// <summary>La moneda de todos los importes de abajo: "COP" o "USD". La fija la cuenta de
+    /// <summary>La moneda de todos los importes de abajo: un código del catálogo de monedas. La fija la cuenta de
     /// cobro de la cotizacion.</summary>
     string Currency,
     decimal Subtotal,
@@ -95,15 +97,19 @@ public sealed record QuotationDto(
     /// <summary>Si convertir en pedido es posible: enviada, sin cambios desde ese envío, con
     /// productos, vigencia, forma de pago y cuenta de cobro.</summary>
     bool CanBeConvertedToOrder,
-    /// <summary>En qué anda la cotización contra la compra mínima que habilita los descuentos por
-    /// volumen. Viaja **siempre**, alcanzada o no.</summary>
-    QuotationMinimumPurchaseDto MinimumPurchase,
     IReadOnlyCollection<QuotationItemDto> Items,
     /// <summary>La versión del agregado con la que se leyó, para mandarla en <c>If-Match</c> al
     /// guardar de una vez (<c>PUT /quotations/{quotationId}</c>). Ya existía en el dominio
     /// (<c>Quotation.Version</c>) y no salía de la aplicación: sin ella la pantalla no tiene con
     /// qué probar que está guardando sobre lo que leyó. Va al final por ser aditiva.</summary>
     long Version,
+    /// <summary>La entrega por envío, con forma fija también en recogida. Ver <see cref="ShippingDto"/>.</summary>
+    ShippingDto Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>; 0 salvo <c>Charged</c>. Junto a <c>Subtotal</c> y
+    /// <c>TaxAmount</c>, que siguen siendo sólo productos, explica el total (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
+    decimal FreightTaxAmount,
     /// <summary>El piso de escala global elegido, o null. Ver
     /// <c>Quotation.GlobalScaleFloor</c>. Con default para no tocar las construcciones que ya
     /// existen: solo QuotationMapping.ToDto lo llena.</summary>
@@ -135,20 +141,27 @@ public sealed record QuotationDto(
 /// cumplida es true, y los dos faltantes son 0.</param>
 /// <param name="Units">Suma de las cantidades de todas las líneas.</param>
 /// <param name="MinimumUnits">Las unidades que habilitan el descuento por sí solas.</param>
+/// <param name="Currency">The quotation currency, so the screen formats both totals without asking.</param>
 /// <param name="MinimumTotal">El total que habilita el descuento por sí solo, **en la moneda de
-/// la cotización** (<c>Currency</c>). No es una conversión: este módulo no tiene tabla de cambio,
-/// así que el mínimo en dólares es un número propio.</param>
+/// la cotización** (<paramref name="Currency"/>). No es una conversión: este módulo no tiene tabla
+/// de cambio, así que el mínimo de cada moneda es un número propio del tenant. Null when the
+/// tenant has no minimum total for this currency: the gate only opens by units (spec D7).</param>
 /// <param name="MissingUnits">Cuántas unidades faltan para <paramref name="MinimumUnits"/>. 0
 /// cuando <paramref name="Met"/>.</param>
 /// <param name="MissingTotal">Cuánta plata falta para <paramref name="MinimumTotal"/>, contra el
-/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>.</param>
+/// total ya descontado y con IVA. 0 cuando <paramref name="Met"/>. Null when the tenant has no
+/// minimum total for this currency: the gate only opens by units (spec D7).</param>
 public sealed record QuotationMinimumPurchaseDto(
     bool Met,
     decimal Units,
     decimal MinimumUnits,
-    decimal MinimumTotal,
+    string Currency,
+    decimal? MinimumTotal,
     decimal MissingUnits,
-    decimal MissingTotal);
+    decimal? MissingTotal);
+
+/// <summary>The tenant's minimum purchase (spec 2026-10-08, D7), totals in catalogue order.</summary>
+public sealed record QuotationSettingsDto(int MinimumUnits, IReadOnlyDictionary<string, decimal> MinimumTotals);
 
 /// <summary>Una parte (facturación o entrega) tal como sale hacia el cliente HTTP. Role es texto
 /// y no el enum del dominio, mismo criterio que Status.</summary>
@@ -161,7 +174,11 @@ public sealed record QuotationPartyDto(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>"Natural" o "Juridica"; sólo en facturación (spec 2026-10-26), siempre null en la entrega.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE"; sólo en facturación, siempre null en la entrega.</summary>
+    string? IdentificationType = null);
 
 /// <summary>La cuenta con la que se factura, tal como sale hacia el cliente HTTP. Es la copia
 /// guardada, no lo que la empresa tenga hoy.</summary>
@@ -197,7 +214,12 @@ public sealed record QuotationPartyRequest(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>"Natural" o "Juridica" (spec 2026-10-26). Sólo en facturación; en la entrega se ignora.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE": el tipo de <c>IdentificationNumber</c>. En facturación con
+    /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
+    string? IdentificationType = null);
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
@@ -231,13 +253,101 @@ public sealed record QuotationPartiesRequest(
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
     bool? BillingVatSurplus = null);
 
+/// <summary>
+/// El cuerpo de <c>POST /quotations</c> y de <c>POST /quotations/preview</c> (spec 2026-10-18 §7.2). Crear y calcular
+/// sin id existen para que "Nueva cotización" pinte el documento entero antes de que exista; sin esto la pantalla
+/// tiene que crear un borrador para poder calcularlo. <c>Items</c> es la lista completa de líneas con producto y
+/// cantidad; precio, escala, descuentos y tasa los resuelve el backend. Ausentes, los tres campos dan lo de antes:
+/// sin líneas, sin piso, no detal.
+/// </summary>
 public sealed record CreateQuotationRequest(
     Guid ClientId,
     DateOnly? ValidUntil,
     string? PaymentMethod,
     string? Notes,
     QuotationPartiesRequest? Parties,
-    QuotationBillingAccountRequest? BillingAccount);
+    QuotationBillingAccountRequest? BillingAccount,
+    /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>.</summary>
+    ShippingRequest? Shipping = null,
+    /// <summary>Las líneas con variante y cantidad, igual que en el guardado. Null o ausente es "sin líneas".</summary>
+    IReadOnlyList<QuotationEditItemRequest>? Items = null,
+    /// <summary>El piso de escala global; null es "sin piso".</summary>
+    int? GlobalScaleFloor = null,
+    /// <summary>Cotización detal: ninguna línea recibe descuento. Con un piso no nulo es 422
+    /// <c>quotation.retail.floor_not_allowed</c>.</summary>
+    bool IsRetail = false);
+
+/// <summary>
+/// La entrega por envío de una cotización tal como la pide el editor (spec 2026-10-17 §5.1). Viaja aparte de
+/// <see cref="QuotationPartiesRequest"/> porque ese record también lo usa el borrador de un pedido externo, que
+/// no recibe envío en este spec.
+///
+/// <b>Null en el cuerpo es "no lo toques"</b>, a diferencia del resto del encabezado: un frontend que todavía no
+/// lo manda no borra el envío guardado. La excepción es pasar a recoger en tienda, que lo limpia igual.
+/// </summary>
+/// <param name="CarrierId">La transportadora del tenant, o null para ninguna. Independiente del modo.</param>
+/// <param name="FreightChargeMode">El nombre del enum: <c>Charged</c>, <c>OnDelivery</c> o <c>Free</c>; null es
+/// "sin envío registrado".</param>
+/// <param name="FreightAmount">El valor con IVA incluido. Con <c>Free</c> se ignora y queda en 0.</param>
+/// <param name="CashOnDelivery">Si el pedido se cobra contraentrega. No exige transportadora.</param>
+public sealed record ShippingRequest(
+    Guid? CarrierId,
+    string? FreightChargeMode,
+    decimal FreightAmount,
+    bool CashOnDelivery);
+
+/// <summary>
+/// La entrega por envío de un documento, con forma fija también en recogida (spec 2026-10-17 §7).
+///
+/// BFF: la pantalla dibuja la tarjeta de entrega y la fila de totales sin recalcular nada. Por eso viajan
+/// resueltos el nombre de la transportadora (la foto, no el de hoy), el subtotal y el IVA del envío, y
+/// <see cref="IsStorePickup"/> repetido acá aunque ya esté en el documento: la tarjeta lee un solo objeto.
+/// </summary>
+/// <param name="Carrier">Null en recogida, sin transportadora y en documentos anteriores al envío.</param>
+/// <param name="ChargeMode">El nombre del enum (<c>Charged</c>, <c>OnDelivery</c>, <c>Free</c>): el diccionario
+/// lo tiene el frontend. Null es "sin envío registrado".</param>
+/// <param name="FreightAmount">El valor con IVA incluido que escribió el asesor; con <c>OnDelivery</c> es
+/// informativo y no suma.</param>
+/// <param name="FreightTaxPercentage">La foto de la tasa del envío al fijar el valor; 0 fuera de COP.</param>
+public sealed record ShippingDto(
+    bool IsStorePickup,
+    ShippingCarrierDto? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery);
+
+/// <summary>La transportadora elegida: el id y la foto del nombre al elegirla.</summary>
+public sealed record ShippingCarrierDto(Guid Id, string Name);
+
+/// <summary>Gemelo HTTP de <see cref="ShippingDto"/> —mismos campos, mismo significado— por la regla de este
+/// archivo: ningún <c>*Response</c> referencia un <c>*Dto</c> (ver <see cref="QuotationMinimumPurchaseResponse"/>).
+/// El motivo BFF de su forma está en <see cref="ShippingDto"/>.</summary>
+public sealed record ShippingResponse(
+    bool IsStorePickup,
+    ShippingCarrierResponse? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery)
+{
+    /// <summary>Copia campo por campo. Pública porque la fila del listado se arma en el proyecto Api.</summary>
+    public static ShippingResponse From(ShippingDto shipping) => new(
+        shipping.IsStorePickup,
+        shipping.Carrier is { } carrier ? new ShippingCarrierResponse(carrier.Id, carrier.Name) : null,
+        shipping.ChargeMode,
+        shipping.FreightAmount,
+        shipping.FreightTaxPercentage,
+        shipping.FreightSubtotal,
+        shipping.FreightTaxAmount,
+        shipping.CashOnDelivery);
+}
+
+public sealed record ShippingCarrierResponse(Guid Id, string Name);
 
 /// <summary>
 /// US-2 (revisada): cambiar el cliente de una cotización editable. Endpoint propio y no un campo
@@ -247,14 +357,16 @@ public sealed record CreateQuotationRequest(
 /// </summary>
 public sealed record ChangeQuotationClientRequest(Guid ClientId);
 
-public sealed record AddQuotationItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>Agrega una línea. <c>variantId</c> y no <c>productId</c> (spec 2026-10-20 §4): para un
+/// producto sin opciones, el id de su variante por defecto.</summary>
+public sealed record AddQuotationItemRequest(Guid VariantId, decimal Quantity);
 
 
 public sealed record UpdateQuotationItemRequest(decimal Quantity);
 
 /// <summary>Una línea a agregar, tal como viaja en el request de la tanda — mismo par que
 /// <see cref="AddQuotationItemRequest"/>.</summary>
-public sealed record BatchQuotationItemAdditionRequest(Guid ProductId, decimal Quantity);
+public sealed record BatchQuotationItemAdditionRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>El "Guardar" de la modal de agregar productos: varias altas y bajas de una sola
 /// vez. Ver <see cref="BatchUpdateQuotationItemsCommand"/>.</summary>
@@ -262,10 +374,11 @@ public sealed record BatchUpdateQuotationItemsRequest(
     IReadOnlyList<BatchQuotationItemAdditionRequest> ToAdd,
     IReadOnlyList<Guid> ToRemoveItemIds);
 
-/// <summary>Una línea del estado deseado de la cotización. Se direcciona por <c>productId</c> y no
-/// por <c>itemId</c>: la lista es el estado deseado, y el id de línea sólo lo conoce quien ya la
-/// tiene guardada.</summary>
-public sealed record QuotationEditItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>Una línea del estado deseado de la cotización. Se direcciona por <c>variantId</c> (spec
+/// 2026-10-20 §4; antes <c>productId</c>) y no por <c>itemId</c>: la lista es el estado deseado, y el
+/// id de línea sólo lo conoce quien ya la tiene guardada. Dos tallas del mismo producto son dos
+/// líneas.</summary>
+public sealed record QuotationEditItemRequest(Guid VariantId, decimal Quantity);
 
 /// <summary>
 /// El estado deseado completo de una cotización editable: mismo cuerpo para
@@ -288,7 +401,10 @@ public sealed record SaveQuotationRequest(
     /// <summary>Cotización detal: con true ninguna línea recibe descuento. Ausente se lee como
     /// false, mismo criterio que el piso. Se aplica antes que el piso: true con un piso no nulo
     /// en el mismo cuerpo es 422 quotation.retail.floor_not_allowed.</summary>
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>La entrega por envío. <b>Ausente deja la guardada</b> (un frontend viejo no la borra), salvo
+    /// que la entrega pase a recoger en tienda: entonces se limpia. Ver <see cref="ShippingRequest"/>.</summary>
+    ShippingRequest? Shipping = null);
 
 /// <summary>US-12: el PDF ya se subió a Storage (flujo de carga firmada ya existente) antes de
 /// esta llamada; acá sólo se referencia el archivo resultante.</summary>
@@ -306,10 +422,15 @@ public sealed record SaveQuotationRequest(
 /// <b>El cuerpo entero es opcional</b>: el frontend manda <c>POST .../send</c> sin nada cuando no
 /// hay a quien elegir. Ver <c>SendWorksWithoutABody</c> — un cuerpo requerido aca rompio el envio
 /// con 500.
+///
+/// <c>ConnectionId</c> (spec 2026-10-21 §4.2) es la conexión de WhatsApp por la que sale, y sólo hace falta cuando el
+/// tenant tiene varias disponibles y todavía no eligió: esa primera elección se guarda con el envío. Con una elección
+/// ya guardada, mandar otra es <c>channel_already_set</c>; el cambio se hace desde Configuración.
 /// </summary>
 public sealed record SendQuotationRequest(
     Guid? PdfFileId = null,
-    string? Recipient = null);
+    string? Recipient = null,
+    Guid? ConnectionId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
@@ -333,7 +454,14 @@ public sealed record QuotationClientResponse(
     /// <summary>Última edición de la ficha. La pantalla la usa para decir desde cuándo un
     /// cliente está inactivo.</summary>
     DateTimeOffset UpdatedAt,
-    IReadOnlyCollection<QuotationClientAddressResponse> Addresses);
+    IReadOnlyCollection<QuotationClientAddressResponse> Addresses,
+    /// <summary>País del cliente (ISO 3166-1 alfa-2), el que decide si a quien se factura aplica la regla
+    /// colombiana (spec 2026-10-26). Null cuando quien arma la referencia no lo trae.</summary>
+    string? Country = null,
+    /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE" de la ficha del cliente. Null si no lo tiene.</summary>
+    string? IdentificationType = null);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,
@@ -422,9 +550,9 @@ public sealed record QuotationResponse(
     bool CanBeSent,
     bool HasChangesSinceSent,
     bool CanBeConvertedToOrder,
-    /// <summary>En qué anda la cotización contra la compra mínima. Misma posición que en
-    /// <see cref="QuotationDto.MinimumPurchase"/> para que las dos formas se lean en
-    /// paralelo.</summary>
+    /// <summary>Where the quotation stands against the minimum purchase. Computed by
+    /// <c>QuotationResponseComposer</c> from the tenant settings, not carried by
+    /// <c>QuotationDto</c> (plan decision A13).</summary>
     QuotationMinimumPurchaseResponse MinimumPurchase,
     IReadOnlyCollection<QuotationItemResponse> Items,
     /// <summary>Lo que la pantalla tiene que devolver en <c>If-Match</c> al guardar de una vez
@@ -447,7 +575,15 @@ public sealed record QuotationResponse(
     /// las escalas de los productos que esta cotizacion tiene cargados, ordenados ascendente.
     /// **Completo incluso vacio** — una coleccion que desaparece obliga a la pantalla a
     /// reconstruirla desde las escalas linea por linea.</summary>
-    IReadOnlyCollection<int> AvailableGlobalScaleFloors);
+    IReadOnlyCollection<int> AvailableGlobalScaleFloors,
+    /// <summary>La entrega por envío, con forma fija también en recogida. El motivo BFF está en
+    /// <see cref="ShippingDto"/>.</summary>
+    ShippingResponse Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>. Un total que no cierra se explica con un campo:
+    /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
+    decimal FreightTaxAmount);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -464,9 +600,13 @@ public sealed record QuotationMinimumPurchaseResponse(
     bool Met,
     decimal Units,
     decimal MinimumUnits,
-    decimal MinimumTotal,
+    /// <summary>The quotation currency, so the screen formats both totals without asking.</summary>
+    string Currency,
+    /// <summary>Null when the tenant has no minimum total for this currency: the gate only opens by units (spec D7).</summary>
+    decimal? MinimumTotal,
     decimal MissingUnits,
-    decimal MissingTotal);
+    /// <summary>Null when the tenant has no minimum total for this currency: the gate only opens by units (spec D7).</summary>
+    decimal? MissingTotal);
 
 /// <summary>
 /// La cuenta con la que se factura, ya resuelta para la pantalla: la copia guardada más la razón
@@ -494,7 +634,9 @@ public sealed record QuotationPartyResponse(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    string? PersonType = null,
+    string? IdentificationType = null);
 
 public sealed record QuotationListItemResponse(
     Guid Id,
@@ -521,7 +663,10 @@ public sealed record QuotationListItemResponse(
     /// <summary>El pedido que salió de esta cotización. <c>null</c> es "sin convertir".</summary>
     Guid? OrderId,
     /// <summary><c>Pending</c> o <c>Approved</c>; <c>null</c> sin pedido.</summary>
-    string? OrderStatus);
+    string? OrderStatus,
+    /// <summary>La entrega por envío de la fila, misma forma que en el detalle: la grilla muestra
+    /// transportadora y contraentrega sin pedir la cotización entera.</summary>
+    ShippingResponse Shipping);
 
 /// <summary>El sobre del historial. Colección envuelta y no un array desnudo, mismo criterio que
 /// el resto de las colecciones de la API.</summary>
@@ -551,10 +696,17 @@ public sealed record GlobalScaleFloorMissResponse(
 
 public sealed record QuotationItemResponse(
     Guid Id,
+    /// <summary>La variante que vende la línea (spec 2026-10-20 §4): es lo que la pantalla manda de
+    /// vuelta como <c>variantId</c> al guardar la lista de líneas, así que viaja aunque el nombre ya
+    /// la describa.</summary>
+    Guid VariantId,
+    /// <summary>El producto dueño de la variante. Viaja para que la pantalla pueda agrupar o enlazar
+    /// al producto sin conocer la variante.</summary>
     Guid ProductId,
-    /// <summary>Nombre, código, portada y escalas del producto, resueltos por el backend. Sin
-    /// esto la pantalla tenía que traerse el catálogo entero para poner un nombre en cada
-    /// línea. Vacíos si el producto ya no existe.</summary>
+    /// <summary>Nombre visible, código, portada y escalas de la variante, resueltos por el backend
+    /// (spec 2026-10-20 §3.4: «Camiseta – M», el <c>Code</c> de la variante, su foto o la principal
+    /// del producto). Sin esto la pantalla tenía que traerse el catálogo entero para poner un nombre
+    /// en cada línea. Vacíos si la variante ya no existe.</summary>
     string ProductName,
     string ProductCode,
     string? ProductImageUrl,

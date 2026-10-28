@@ -110,6 +110,7 @@ public sealed class UpdateOrdersExportLayoutValidator : AbstractValidator<Update
 /// </summary>
 public sealed class UpdateOrdersExportLayoutHandler(
     IOrdersExportLayoutRepository repository,
+    ITenantModules tenantModules,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -123,9 +124,12 @@ public sealed class UpdateOrdersExportLayoutHandler(
         UpdateOrdersExportLayoutCommand command,
         CancellationToken cancellationToken)
     {
-        // B1: autorización antes que el validador (ver el comentario de la clase).
+        // B1: autorización antes que el validador (ver el comentario de la clase). Spec 2026-10-07:
+        // el módulo también, por la misma razón — un 422 confirmaría que el cuerpo se leyó.
         QuotationsAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, TenancyPermissions.SettingsUpdate);
+        await TenantModuleGuard.EnsureEnabledAsync(
+            tenantModules, command.TenantId, Modules.Tenancy.Domain.TenantModuleKeys.Orders, cancellationToken);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var now = clock.UtcNow;

@@ -27,6 +27,12 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
     /// </summary>
     private const string AdvisorCodeIndex = "IX_memberships_tenant_id_advisor_code";
 
+    /// <summary>PK de tenant_modules (AddTenantModules). Se reconoce por nombre, no sólo por el 23505.</summary>
+    private const string TenantModulesPrimaryKey = "PK_tenant_modules";
+
+    /// <summary>PK de tenant_providers (AddTenantProviders, plan 2026-10-21). Mismo criterio que la de módulos.</summary>
+    private const string TenantProvidersPrimaryKey = "PK_tenant_providers";
+
     public async Task<IUserLifecycleScope> BeginUserLifecycleScopeAsync(
         string email,
         CancellationToken cancellationToken)
@@ -38,10 +44,23 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         await dbContext.Database.ExecuteSqlAsync(
             $"SELECT pg_advisory_xact_lock(hashtext({UserLifecycleLockKey.For(email)}))",
             cancellationToken);
-        return new UserLifecycleScope(transaction);
+        return new LockedTransactionScope(transaction);
     }
 
-    private sealed class UserLifecycleScope(IDbContextTransaction transaction) : IUserLifecycleScope
+    public async Task<ITenantChangeScope> BeginTenantChangeScopeAsync(
+        TenantId tenantId,
+        CancellationToken cancellationToken)
+    {
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlAsync(
+            // Forma de dos claves: un espacio aparte del de UserLifecycleLockKey (ver TenantChangeLock).
+            $"SELECT pg_advisory_xact_lock({TenantChangeLock.Namespace}, hashtext({TenantChangeLock.KeyFor(tenantId.Value)}))",
+            cancellationToken);
+        return new LockedTransactionScope(transaction);
+    }
+
+    // Antes UserLifecycleScope: las dos operaciones son una transacción con un lock adentro.
+    private sealed class LockedTransactionScope(IDbContextTransaction transaction) : IUserLifecycleScope, ITenantChangeScope
     {
         public Task CommitAsync(CancellationToken cancellationToken) =>
             transaction.CommitAsync(cancellationToken);
@@ -60,7 +79,7 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
-                "Tenant settings changed while the update was being committed.",
+                "The tenant changed while the update was being committed.",
                 exception);
         }
         // SDD-CT-06. Registrarse con un slug que alguien ya tomó es un error normal de usuario, no
@@ -93,6 +112,32 @@ internal sealed class TenancyUnitOfWork(TenancyDbContext dbContext) : ITenancyUn
             throw new TenantDomainException(
                 "tenancy.membership.advisor_code_taken",
                 "The advisor code is already in use in this tenant.");
+        }
+        // Spec 2026-10-08 §3: dos activaciones simultáneas de una clave sin fila. El candado de la consola
+        // lo evita; esto cubre a cualquier otro camino que inserte la misma clave. Sin la traducción, 500.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: TenantModulesPrimaryKey,
+            })
+        {
+            throw new TenantDomainException(
+                TenantModuleChangeBatch.NoChangesCode,
+                "The module row already exists.");
+        }
+        // Lo mismo con los proveedores: dos habilitaciones simultáneas de un proveedor sin fila. El candado de
+        // la consola lo evita; esto cubre a cualquier otro camino que inserte la misma clave.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException
+            {
+                SqlState: UniqueViolation,
+                ConstraintName: TenantProvidersPrimaryKey,
+            })
+        {
+            throw new TenantDomainException(
+                TenantProviderChange.NoChangesCode,
+                "The provider row already exists.");
         }
     }
 }

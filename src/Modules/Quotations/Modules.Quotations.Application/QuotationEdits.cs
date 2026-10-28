@@ -49,6 +49,12 @@ public interface IQuotationEdits : IQuotationHeaderEdits
     /// rechaza con <c>quotation.retail.floor_not_allowed</c>.
     /// </summary>
     bool IsRetail { get; }
+
+    /// <summary>
+    /// La entrega por envío (spec 2026-10-17 §5.4). A diferencia del resto del encabezado, <b>null es "no lo
+    /// toques"</b>: un frontend viejo no lo borra. Pasar a recoger en tienda lo limpia igual (P4).
+    /// </summary>
+    ShippingRequest? Shipping { get; }
 }
 
 /// <summary>
@@ -101,6 +107,29 @@ internal sealed class QuotationPartiesRequestValidator : AbstractValidator<Quota
                 && !parties.BillsToFinalConsumer
                 && !string.IsNullOrWhiteSpace(parties.Billing?.Name));
 
+        // El tipo de documento se exige donde se exige el número (spec 2026-10-26): son un solo dato.
+        RuleFor(parties => parties.Billing!.IdentificationType)
+            .NotEmpty()
+            .WithMessage("The identification type is required when billing to someone else.")
+            .When(parties =>
+                requireBillingIdentification
+                && !parties.BillsToFinalConsumer
+                && !string.IsNullOrWhiteSpace(parties.Billing?.Name));
+
+        // Un valor fuera de la lista es un error de campo y no una excepción de dominio: así el formulario
+        // marca el input. Vale también para el cálculo previo, que no exige el campo pero no lo acepta mal escrito.
+        RuleFor(parties => parties.Billing!.IdentificationType)
+            .Must(type => PartyFiscalTypesParser.SupportedIdentificationTypes
+                .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage("The identification type must be one of NIT, CC, CE or PASAPORTE.")
+            .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.IdentificationType));
+
+        RuleFor(parties => parties.Billing!.PersonType)
+            .Must(type => PartyFiscalTypesParser.SupportedPersonTypes
+                .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
+            .WithMessage("The person type must be one of Natural or Juridica.")
+            .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.PersonType));
+
         // Contra el valor recortado, que es lo que el dominio guarda y compara.
         RuleFor(parties => parties.Billing!.IdentificationNumber)
             .Must(number => number!.Trim().Length <= QuotationPartyDetails.IdentificationNumberMaxLength)
@@ -131,16 +160,21 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
             .SetValidator(new QuotationPartiesRequestValidator(requireBillingIdentification))
             .When(edits => edits.Parties is not null);
 
+        RuleFor(edits => edits.Shipping!)
+            .SetValidator(new ShippingRequestValidator())
+            .When(edits => edits.Shipping is not null);
+
         RuleForEach(edits => edits.Items).ChildRules(item =>
         {
-            item.RuleFor(line => line.ProductId).NotEmpty();
+            item.RuleFor(line => line.VariantId).NotEmpty();
             item.RuleFor(line => line.Quantity).GreaterThan(0m);
         });
-        // El dominio ya prohíbe dos líneas del mismo producto (quotation.item.duplicate_product),
+        // El dominio ya prohíbe dos líneas de la misma variante (quotation.item.duplicate_product),
         // pero acá la lista es la clave del diff: repetida, una de las dos se perdería en silencio.
+        // Por variante (spec 2026-10-20 §4): dos tallas del mismo producto sí pueden venir juntas.
         RuleFor(edits => edits.Items)
-            .Must(items => items.Select(line => line.ProductId).Distinct().Count() == items.Count)
-            .WithMessage("The same product cannot appear more than once.");
+            .Must(items => items.Select(line => line.VariantId).Distinct().Count() == items.Count)
+            .WithMessage("La misma variante no puede aparecer más de una vez.");
     }
 }
 

@@ -4,6 +4,7 @@ using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -44,30 +45,71 @@ internal static class CustomersApiHarness
 
     // Este harness usa un tenant que no pasa por el registro. ExportCustomersHandler nombra el
     // archivo con la hora del tenant (spec 2026-09-17, punto 8a), y sin su fila en
-    // tenancy.tenants TenantClock responde tenancy.tenant.not_found. Idempotente: una prueba que
-    // ya sembro el tenant (o que reusa la misma base) no lo duplica.
+    // tenancy.tenants TenantClock responde tenancy.tenant.not_found.
+    //
+    // Spec 2026-10-07: con fila, el stub enmascara, así que el tenant también necesita sus módulos.
+    // Los siete y no sólo customers: TenantId (...0001) es el tenant de desarrollo que comparten
+    // TODAS las pruebas de Customers, y una vez sembrado el stub lo enmascara para cualquier request
+    // contra esta base, pida el permiso que pida. Inserta sólo las claves que faltan (ON CONFLICT DO
+    // NOTHING), así que se puede llamar dos veces sobre la misma base, o sobre un tenant ya sembrado
+    // sin módulos, sin duplicar ni fallar.
     public static async Task SeedTenantAsync(QepApiFactory factory, string tenantId = TenantId)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
         var id = new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId));
+        var now = DateTimeOffset.UtcNow;
         var existing = await tenancy.Tenants.FindAsync(
             [id], TestContext.Current.CancellationToken);
-        if (existing is not null)
+        if (existing is null)
         {
-            return;
+            tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
+                id,
+                "customers-export-tests",
+                "Customers Export Tests",
+                "es-CO",
+                "America/Bogota",
+                "yyyy-MM-dd",
+                Modules.Tenancy.Domain.MembershipId.New(),
+                now));
+            await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        tenancy.Tenants.Add(Modules.Tenancy.Domain.Tenant.Create(
-            id,
-            "customers-export-tests",
-            "Customers Export Tests",
-            "es-CO",
-            "America/Bogota",
-            "yyyy-MM-dd",
-            Modules.Tenancy.Domain.MembershipId.New(),
-            DateTimeOffset.UtcNow));
-        await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
+        foreach (var key in Modules.Tenancy.Domain.TenantModuleKeys.All)
+        {
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+                VALUES ({id.Value}, {key.Value}, {now}, {Modules.Tenancy.Domain.TenantModuleSources.Seed})
+                ON CONFLICT (tenant_id, module_key) DO NOTHING
+                """,
+                TestContext.Current.CancellationToken);
+        }
+    }
+
+    // Cambia el formato de fecha del tenant sembrado (D-R7, spec 2026-10-23). Va después de
+    // SeedTenantAsync: antes no hay fila que actualizar.
+    public static async Task SetTenantDateFormatAsync(
+        QepApiFactory factory, string dateFormat, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = Guid.Parse(tenantId);
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE tenancy.tenants SET date_format = {dateFormat} WHERE id = {id}",
+            TestContext.Current.CancellationToken);
+    }
+
+    // Spec 2026-10-26: fija el requisito de tipo de persona del tenant sembrado. Va después de SeedTenantAsync.
+    public static async Task SetTenantPersonTypeRequirementAsync(
+        QepApiFactory factory, string requirement, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = Guid.Parse(tenantId);
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE tenancy.tenants SET person_type_requirement = {requirement} WHERE id = {id}",
+            TestContext.Current.CancellationToken);
     }
 
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta
@@ -294,7 +336,7 @@ internal static class CustomersApiHarness
     /// </summary>
     public static object NewCustomerBody(
         Guid cityId,
-        Guid classificationId,
+        Guid? classificationId,
         string name = "Verde Esencial S.A.S.",
         string identificationType = "NIT",
         string identificationNumber = "900.123.456-1",
@@ -351,7 +393,7 @@ internal static class CustomersApiHarness
     public static async Task<CustomerResponse> CreateCustomerAsync(
         HttpClient client,
         Guid cityId,
-        Guid classificationId,
+        Guid? classificationId,
         string name = "Verde Esencial S.A.S.",
         string identificationNumber = "900.123.456-1",
         string tenantId = TenantId)
@@ -370,6 +412,23 @@ internal static class CustomersApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         return customer;
+    }
+
+    /// <summary>Deja una fila como la deja la fusion: apunta al que queda, con la fecha, inactiva y con la version subida.
+    /// Las pruebas de escrituras y de lecturas sobre un fusionado la usan sin pasar por la ruta de fusion.</summary>
+    public static async Task MarkMergedAsync(string connectionString, Guid mergedId, Guid survivorId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE customers.customers
+            SET merged_into_id = @survivor, merged_at = now(), is_active = false, version = version + 1
+            WHERE id = @merged
+            """;
+        command.Parameters.AddWithValue("survivor", survivorId);
+        command.Parameters.AddWithValue("merged", mergedId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
     public static async Task<CustomersResponse> ListAsync(HttpClient client, string query)

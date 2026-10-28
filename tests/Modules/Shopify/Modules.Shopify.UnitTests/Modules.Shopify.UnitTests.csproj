@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Pedidos de Shopify en REST (webhook) y GraphQL (conciliación); sintéticos hasta V-9. -->
+    <None Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Shopify\Modules.Shopify.Application\Modules.Shopify.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Shopify\Modules.Shopify.Domain\Modules.Shopify.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Shopify\Modules.Shopify.Infrastructure\Modules.Shopify.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

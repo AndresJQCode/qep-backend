@@ -17,6 +17,10 @@ public sealed class TenantTests
             "en-US",
             "America/New_York",
             "MM/dd/yyyy",
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
+            tenant.Country,
+            tenant.PersonTypeRequirement,
             CreatedAt.AddMinutes(5));
 
         Assert.True(changed);
@@ -29,6 +33,134 @@ public sealed class TenantTests
     }
 
     [Fact]
+    public void CreateDefaultsToPesosAndCommaDecimal()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Equal("COP", tenant.DefaultCurrency);
+        Assert.Equal(TenantNumberFormats.CommaDecimal, tenant.NumberFormat);
+    }
+
+    [Fact]
+    public void UpdateSettingsChangesCurrencyAndNumberFormatAndTracksThem()
+    {
+        var tenant = CreateTenant();
+
+        var changed = tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            "usd", "1,234.56", tenant.Country, tenant.PersonTypeRequirement, CreatedAt.AddMinutes(5));
+
+        Assert.True(changed);
+        Assert.Equal("USD", tenant.DefaultCurrency);
+        Assert.Equal("1,234.56", tenant.NumberFormat);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["defaultCurrency", "numberFormat"], settingsUpdated.ChangedFields);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithAMalformedCurrencyThrowsAndChangesNothing()
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            "US", tenant.NumberFormat, tenant.Country, tenant.PersonTypeRequirement, CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.default_currency.invalid", exception.Code);
+        Assert.Equal("COP", tenant.DefaultCurrency);
+        Assert.Equal(1, tenant.Version);
+    }
+
+    // Los tenants que ya existían antes del país son colombianos: la migración rellena con el
+    // mismo valor que Create, así que un tenant nuevo y uno viejo no se distinguen.
+    [Fact]
+    public void CreateDefaultsToColombia()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Equal("CO", tenant.Country);
+    }
+
+    [Fact]
+    public void UpdateSettingsChangesTheCountryNormalizedAndTracksIt()
+    {
+        var tenant = CreateTenant();
+
+        var changed = tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, " mx ", tenant.PersonTypeRequirement, CreatedAt.AddMinutes(5));
+
+        Assert.True(changed);
+        Assert.Equal("MX", tenant.Country);
+        Assert.Equal(2, tenant.Version);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["country"], settingsUpdated.ChangedFields);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("C")]
+    [InlineData("COL")]
+    [InlineData("C1")]
+    public void UpdateSettingsWithAMalformedCountryThrowsAndChangesNothing(string country)
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() => tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, country, tenant.PersonTypeRequirement, CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.country.invalid", exception.Code);
+        Assert.Equal("CO", tenant.Country);
+        Assert.Equal(1, tenant.Version);
+    }
+
+    // Spec 2026-10-26: un tenant nuevo no exige tipo de persona; la migración rellena con el mismo
+    // «Never», así que uno nuevo y uno viejo no se distinguen.
+    [Fact]
+    public void PersonTypeRequirementStartsAtNever()
+    {
+        var tenant = CreateTenant();
+
+        Assert.Equal(PersonTypeRequirement.Never, tenant.PersonTypeRequirement);
+    }
+
+    [Fact]
+    public void UpdateSettingsChangesThePersonTypeRequirementAndTracksIt()
+    {
+        var tenant = CreateTenant();
+
+        var changed = tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, tenant.Country,
+            PersonTypeRequirement.OnOrderApproval, CreatedAt.AddMinutes(5));
+
+        Assert.True(changed);
+        Assert.Equal(PersonTypeRequirement.OnOrderApproval, tenant.PersonTypeRequirement);
+        Assert.Equal(2, tenant.Version);
+        var settingsUpdated = Assert.IsType<TenantSettingsUpdatedDomainEvent>(Assert.Single(tenant.DomainEvents));
+        Assert.Equal(["personTypeRequirement"], settingsUpdated.ChangedFields);
+    }
+
+    // Lo guardado sólo cuenta si el tenant es colombiano (regla única del país, Global Constraints).
+    [Theory]
+    [InlineData("CO", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.OnCustomerSave)]
+    [InlineData("co", PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.OnOrderApproval)]
+    [InlineData("ES", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.Never)]
+    [InlineData(null, PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.Never)]
+    public void EffectiveIsNeverOutsideColombia(
+        string? country, PersonTypeRequirement stored, PersonTypeRequirement expected) =>
+        Assert.Equal(expected, PersonTypeRequirementPolicy.Effective(country, stored));
+
+    [Theory]
+    [InlineData("co", true)]
+    [InlineData("CO", true)]
+    [InlineData("ES", false)]
+    [InlineData(null, false)]
+    public void IsColombianIgnoresCase(string? country, bool expected) =>
+        Assert.Equal(expected, PersonTypeRequirementPolicy.IsColombian(country));
+
+    [Fact]
     public void UpdateSettingsWithoutChangesDoesNotRaiseEvent()
     {
         var tenant = CreateTenant();
@@ -38,6 +170,10 @@ public sealed class TenantTests
             tenant.DefaultCulture,
             tenant.TimeZone,
             tenant.DateFormat,
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
+            tenant.Country,
+            tenant.PersonTypeRequirement,
             CreatedAt.AddMinutes(5));
 
         Assert.False(changed);
@@ -60,6 +196,50 @@ public sealed class TenantTests
                 CreatedAt));
 
         Assert.Equal("tenancy.settings.culture.invalid", exception.Code);
+    }
+
+    // The browser formats every local date and time with `Intl.DateTimeFormat({ timeZone })`,
+    // which only understands IANA ids. `FindSystemTimeZoneById` also resolves Windows ids, so
+    // without the IANA check "SA Pacific Standard Time" would be stored and break every screen.
+    [Theory]
+    [InlineData("SA Pacific Standard Time")]
+    [InlineData("Mars/Olympus_Mons")]
+    [InlineData("")]
+    public void CreateWithANonIanaTimeZoneThrowsDomainException(string timeZone)
+    {
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            Tenant.Create(
+                TenantId.New(),
+                "qcode-demo",
+                "QCode Demo",
+                "es-CO",
+                timeZone,
+                "yyyy-MM-dd",
+                MembershipId.New(),
+                CreatedAt));
+
+        Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);
+    }
+
+    [Fact]
+    public void UpdateSettingsWithAWindowsTimeZoneIdThrowsDomainException()
+    {
+        var tenant = CreateTenant();
+
+        var exception = Assert.Throws<TenantDomainException>(() =>
+            tenant.UpdateSettings(
+                tenant.DisplayName,
+                tenant.DefaultCulture,
+                "SA Pacific Standard Time",
+                tenant.DateFormat,
+                tenant.DefaultCurrency,
+                tenant.NumberFormat,
+                tenant.Country,
+                tenant.PersonTypeRequirement,
+                CreatedAt.AddMinutes(5)));
+
+        Assert.Equal("tenancy.settings.time_zone.invalid", exception.Code);
+        Assert.Equal("America/Bogota", tenant.TimeZone);
     }
 
     private static readonly MembershipId OwnerMembershipId = MembershipId.New();
@@ -171,4 +351,11 @@ public sealed class TenantTests
 
         Assert.False(tenant.IsOwner(MembershipId.New()));
     }
+
+    [Theory]
+    [InlineData("a", "Acme", "tenancy.slug.invalid")]
+    [InlineData("acme", "x", "tenancy.settings.display_name.invalid")]
+    public void EnsureValidRegistrationThrowsTheSameCodesAsCreate(string slug, string name, string code)
+        => Assert.Equal(code, Assert.Throws<TenantDomainException>(() =>
+            Tenant.EnsureValidRegistration(slug, name, "es-CO", "America/Bogota", "dd/MM/yyyy")).Code);
 }

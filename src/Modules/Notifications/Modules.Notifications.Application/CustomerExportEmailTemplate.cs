@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 
 namespace Modules.Notifications.Application;
@@ -21,15 +20,15 @@ public static class CustomerExportEmailTemplate
         string fileName,
         int customerCount,
         DateTimeOffset expiresAt,
-        TimeZoneInfo timeZone)
+        EmailRegionalFormat format)
     {
         const string subject = "Tu exportación de clientes está lista";
 
         // En la hora del tenant del export y sin etiqueta de huso (spec 2026-09-17, punto 8b): es la
-        // hora que la persona ve en su reloj.
-        var expiry = TimeZoneInfo.ConvertTime(expiresAt, timeZone)
-            .ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
-        var customers = customerCount == 1 ? "1 cliente" : $"{customerCount} clientes";
+        // hora que la persona ve en su reloj. El patrón de la fecha es el del tenant (spec 2026-10-23,
+        // D-R2) y se escribe con InvariantCulture: la `/` es el separador de la cultura, no un literal.
+        var expiry = format.Expiry(expiresAt);
+        var customers = customerCount == 1 ? "1 cliente" : $"{format.Count(customerCount)} clientes";
 
         // El cuerpo HTML lleva la URL **escapada**; el de texto plano, cruda. No es simetria
         // rota: una URL prefirmada separa sus parametros `X-Amz-*` con `&`, y un `&` sin

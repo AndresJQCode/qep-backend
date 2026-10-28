@@ -1,4 +1,5 @@
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -12,8 +13,10 @@ internal static class ProductPricingMapping
 {
     public static ProductPricing ToDomain(this ProductPricingRequest request) => new()
     {
-        BaseUsd = request.BaseUsd,
-        BaseCop = request.BaseCop,
+        // The validator already failed unknown codes with a field key. Normalize is the net for
+        // any caller that skips it, and the reason the aggregate only checks the shape.
+        Prices = (request.Prices ?? new Dictionary<string, decimal>())
+            .ToDictionary(entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal),
         Scales = (request.Scales ?? []).Select(ToDomain).ToArray(),
         PackagingUnits = (request.PackagingUnits ?? []).ToArray()
     };
@@ -24,8 +27,6 @@ internal static class ProductPricingMapping
         request.Discount,
         ParseRestriction(request.Restriction),
         request.Multiple,
-        request.FinalUsd,
-        request.FinalCop,
         request.AllowGrouping ?? false);
 
     // Sin mapa por campo a propósito: es el mismo criterio que ya usa el dominio para sus

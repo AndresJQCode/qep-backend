@@ -1,0 +1,87 @@
+using BuildingBlocks.Application;
+using Microsoft.EntityFrameworkCore;
+using Modules.Automations.Application;
+using Modules.Automations.Domain;
+using Npgsql;
+
+namespace Modules.Automations.Infrastructure.Persistence;
+
+/// <summary>Copia de <c>PipelineUnitOfWork</c>: cada 23505 se traduce por el nombre del índice, nunca sólo por SqlState (CLAUDE.md).
+/// Nombre de chatbot o de plantilla repetido y conexión ya ocupada → 409; la versión vieja y dos publicaciones que proponen el mismo
+/// número (<c>IX_chatbot_versions_chatbot_number</c>) → <c>concurrency.conflict</c> (412). Traducido acá porque Application no
+/// referencia Npgsql.</summary>
+internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IAutomationsUnitOfWork
+{
+    /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
+    /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008). Internal para las pruebas que toman el lock desde otra
+    /// conexión.</summary>
+    internal const int ConversationLockNamespace = 20261022;
+
+    public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+    // Precedente: OrphanUserCleanupWorker. El lock se libera con la transacción, así que sin una abierta no serializaría nada. Ruling
+    // P2-R45: la variante try, que no espera; la forma de dos claves es la misma de antes.
+    public async Task<bool> TryLockConversationAsync(Guid conversationId, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("TryLockConversationAsync exige la transacción de BeginTransactionAsync.");
+        }
+
+        // Forma de dos claves: es un espacio aparte del de una sola clave, donde viven UserLifecycleLockKey y PosSaleIdLock, así que
+        // ningún hash de ellos puede chocar con el de una conversación (mismo criterio de TenantChangeLock.cs:3-13).
+        var taken = await dbContext.Database.SqlQuery<bool>(
+            $"SELECT pg_try_advisory_xact_lock({ConversationLockNamespace}, hashtext({conversationId.ToString()})) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return taken.Single();
+    }
+
+    public async Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            // Con la transacción de la unidad abierta, guardar es confirmar (el handle sin confirmar deshace al disponerse).
+            if (dbContext.Database.CurrentTransaction is { } transaction)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+        }
+        // Antes que la rama de DbUpdateException: DbUpdateConcurrencyException hereda de ella.
+        catch (DbUpdateConcurrencyException exception)
+        {
+            throw Concurrency(exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.ChatbotNameIndex))
+        {
+            throw new ResourceConflictException(AutomationsErrorCodes.ChatbotNameTaken, "Ya existe un chatbot con ese nombre.", exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.ActiveConnectionIndex))
+        {
+            throw new ResourceConflictException(
+                AutomationsErrorCodes.ChatbotConnectionTaken, "Otro chatbot activo ya atiende esa conexión.", exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.LiveRunIndex))
+        {
+            throw new ResourceConflictException(
+                AutomationsErrorCodes.RunAlreadyLive, "La conversación ya tiene una corrida viva.", exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.TemplateNameIndex))
+        {
+            throw new ResourceConflictException(AutomationsErrorCodes.TemplateNameTaken, "Ya existe una plantilla con ese nombre.", exception);
+        }
+        catch (DbUpdateException exception) when (IsUnique(exception, AutomationsDbContext.VersionNumberIndex))
+        {
+            throw Concurrency(exception);
+        }
+    }
+
+    private static RequestConcurrencyException Concurrency(Exception inner) =>
+        new("concurrency.conflict", "The chatbot changed while the operation was being committed.", inner);
+
+    private static bool IsUnique(DbUpdateException exception, string indexName) =>
+        exception.InnerException is PostgresException postgres &&
+        postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+        string.Equals(postgres.ConstraintName, indexName, StringComparison.Ordinal);
+}

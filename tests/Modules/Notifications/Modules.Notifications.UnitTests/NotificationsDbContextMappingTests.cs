@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Modules.Notifications.Domain;
 using Modules.Notifications.Infrastructure.Persistence;
 
 namespace Modules.Notifications.UnitTests;
@@ -44,5 +45,15 @@ public sealed class NotificationsDbContextMappingTests
         var attempts = inbox.FindProperty(nameof(NotificationInboxMessage.Attempts))!;
         Assert.False(attempts.IsNullable);
         Assert.Equal(1, attempts.GetDefaultValue());
+    }
+
+    [Fact]
+    public void TheNotificationTenantIsOptional()
+    {
+        using var context = new NotificationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        Assert.True(model.FindEntityType(typeof(Notification))!
+            .FindProperty(nameof(Notification.TenantId))!.IsNullable);
     }
 }

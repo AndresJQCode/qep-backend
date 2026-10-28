@@ -1,0 +1,145 @@
+{
+  "_source": "synthetic, replace per V-9",
+  "id": "gid://shopify/Order/5550000000007",
+  "name": "#1007",
+  "email": "laura.gomez@example.com",
+  "phone": "+573001112233",
+  "createdAt": "2026-10-01T15:00:00Z",
+  "updatedAt": "2026-10-01T15:05:30Z",
+  "cancelledAt": null,
+  "cancelReason": null,
+  "displayFinancialStatus": "PAID",
+  "currencyCode": "COP",
+  "totalPriceSet": {
+    "shopMoney": {
+      "amount": "108000.0",
+      "currencyCode": "COP"
+    },
+    "presentmentMoney": {
+      "amount": "108000.0",
+      "currencyCode": "COP"
+    }
+  },
+  "taxesIncluded": true,
+  "test": false,
+  "note": null,
+  "paymentGatewayNames": [
+    "Mercado Pago"
+  ],
+  "customer": {
+    "id": "gid://shopify/Customer/7770000000001",
+    "firstName": "Laura",
+    "lastName": "Gómez",
+    "defaultEmailAddress": {
+      "emailAddress": "laura.gomez@example.com"
+    },
+    "defaultPhoneNumber": {
+      "phoneNumber": "+573001112233"
+    }
+  },
+  "shippingAddress": {
+    "name": "Laura Gómez",
+    "address1": "Calle 10 # 43-20",
+    "address2": "Apto 301",
+    "city": "Medellín",
+    "province": "Antioquia",
+    "provinceCode": "ANT",
+    "countryCodeV2": "CO",
+    "phone": "+573001112233"
+  },
+  "customAttributes": [
+    {
+      "key": "documento",
+      "value": "1036000111"
+    },
+    {
+      "key": "tipo_documento",
+      "value": "CC"
+    }
+  ],
+  "lineItems": {
+    "nodes": [
+      {
+        "sku": "CAM-001",
+        "quantity": 2,
+        "originalUnitPriceSet": {
+          "shopMoney": {
+            "amount": "50000.0",
+            "currencyCode": "COP"
+          },
+          "presentmentMoney": {
+            "amount": "50000.0",
+            "currencyCode": "COP"
+          }
+        },
+        "discountAllocations": []
+      }
+    ]
+  },
+  "shippingLines": {
+    "nodes": [
+      {
+        "code": "express",
+        "title": "Envío express",
+        "discountedPriceSet": {
+          "shopMoney": {
+            "amount": "25000.0",
+            "currencyCode": "COP"
+          },
+          "presentmentMoney": {
+            "amount": "25000.0",
+            "currencyCode": "COP"
+          }
+        },
+        "taxLines": [
+          {
+            "priceSet": {
+              "shopMoney": {
+                "amount": "3991.60",
+                "currencyCode": "COP"
+              },
+              "presentmentMoney": {
+                "amount": "3991.60",
+                "currencyCode": "COP"
+              }
+            },
+            "rate": 0.19,
+            "title": "IVA"
+          }
+        ],
+        "isRemoved": true
+      },
+      {
+        "code": "standard",
+        "title": "Servientrega",
+        "discountedPriceSet": {
+          "shopMoney": {
+            "amount": "8000.0",
+            "currencyCode": "COP"
+          },
+          "presentmentMoney": {
+            "amount": "8000.0",
+            "currencyCode": "COP"
+          }
+        },
+        "taxLines": [
+          {
+            "priceSet": {
+              "shopMoney": {
+                "amount": "1277.31",
+                "currencyCode": "COP"
+              },
+              "presentmentMoney": {
+                "amount": "1277.31",
+                "currencyCode": "COP"
+              }
+            },
+            "rate": 0.19,
+            "title": "IVA"
+          }
+        ],
+        "isRemoved": false
+      }
+    ]
+  }
+}

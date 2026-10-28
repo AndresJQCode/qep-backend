@@ -1,14 +1,17 @@
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Puerto hacia el módulo Catalog (US-3/US-4: precio base y escalas de precio por cantidad del
-/// producto). Mismo criterio de aislamiento que <see cref="IQuotationCustomerLookup"/> — el
-/// adaptador vive en <c>Bootstrapper</c>.
+/// Puerto hacia el módulo Catalog (US-3/US-4: precio base y escalas de precio por cantidad). Mismo
+/// criterio de aislamiento que <see cref="IQuotationCustomerLookup"/> — el adaptador vive en
+/// <c>Bootstrapper</c>.
 ///
-/// Expone las **dos** monedas que el catálogo guarda, no una: la cotización se expresa en la
-/// moneda de su cuenta de cobro (<c>Quotation.Currency</c>), y cuál de los dos precios aplica lo
-/// decide <see cref="QuotationProductPricingResolver"/>. Un producto sin precio en la moneda de
-/// la cotización no se puede cotizar ahí — no hay tabla de cambio y este módulo no convierte.
+/// Por **variante** (spec 2026-10-20 §4): precio, escalas y empaques son de la variante que vende
+/// la línea; la tasa de impuesto sigue siendo del producto (spec §2, «IVA por variante» fuera).
+///
+/// Exposes **every** base price the catalogue holds, one per currency: the quotation is expressed
+/// in its billing account currency (<c>Quotation.Currency</c>) and
+/// <see cref="QuotationProductPricingResolver"/> takes that one and no other. A variant without a
+/// price in that currency cannot be quoted there — there is no conversion.
 ///
 /// <see cref="FindManyAsync"/> existe para revalorizar: cambiar la moneda de una cotización
 /// obliga a volver a pedir el precio de **cada** línea, y una consulta por línea convierte un
@@ -16,27 +19,38 @@ namespace Modules.Quotations.Application;
 /// </summary>
 public interface IQuotationProductPricingLookup
 {
-    Task<QuotationProductPricingRef?> FindAsync(
-        Guid tenantId, Guid productId, CancellationToken cancellationToken);
+    /// <summary>La variante, activa o no (<see cref="QuotationVariantPricingRef.IsActive"/> lo
+    /// dice); null si no existe en el tenant.</summary>
+    Task<QuotationVariantPricingRef?> FindVariantAsync(
+        Guid tenantId, Guid variantId, CancellationToken cancellationToken);
 
-    Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+    /// <summary>Por id de variante, activas e inactivas; un id que no existe en el tenant no
+    /// aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
         Guid tenantId,
-        IReadOnlyCollection<Guid> productIds,
+        IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken);
 }
 
+/// <param name="ProductId">El producto dueño: la línea lo guarda junto a la variante (spec §4) y
+/// la petición sólo trae el id de la variante.</param>
+/// <param name="Name">El nombre visible de la variante (spec §3.4), ya armado. Para el resumen del
+/// historial ("Agregó Camiseta – M x3"). Viaja con el precio y no por su propia consulta: el
+/// producto ya se carga entero para cotizarlo.</param>
+/// <param name="Code">El <c>Code</c> de la variante.</param>
+/// <param name="IsActive">Vendible: el producto **y** la variante están activos. Una variante
+/// activa de un producto inactivo no se vende, igual que hoy no se vende un producto inactivo.</param>
 /// <param name="TaxPercentage">La tasa de impuesto del producto
 /// (<c>Catalog.TaxRate.Percentage</c>). Null si el producto no tiene tasa asignada — se resuelve
 /// a 0% (RN-013, el gap que <c>Catalog.TaxRate</c> dejaba abierto a propósito).</param>
-public sealed record QuotationProductPricingRef(
-    Guid Id,
+public sealed record QuotationVariantPricingRef(
+    Guid VariantId,
+    Guid ProductId,
     Guid TenantId,
-    /// <summary>Para el resumen del historial ("Agregó Bebidas x3"). Viaja con el precio y no
-    /// por su propia consulta: el producto ya se carga entero para cotizarlo.</summary>
     string Name,
+    string Code,
     bool IsActive,
-    decimal? UnitPriceCop,
-    decimal? UnitPriceUsd,
+    IReadOnlyDictionary<string, decimal> Prices,
     IReadOnlyCollection<QuotationPriceScaleRef> Scales,
     int? TaxPercentage);
 
@@ -59,11 +73,12 @@ public enum QuotationPriceScaleRestriction
 /// <param name="Multiple">Poblado sólo cuando <paramref name="Restriction"/> es
 /// <c>Multiple</c>. La exclusión mutua con <paramref name="PackagingUnits"/> la garantiza el
 /// adaptador de <c>Bootstrapper</c> (<c>QuotationPriceScaleMapping</c>), que sólo copia los
-/// empaques del producto en las escalas <c>PackagingUnit</c>; Catalog ya no la ve, porque los
+/// empaques de la variante en las escalas <c>PackagingUnit</c>; Catalog ya no la ve, porque los
 /// empaques dejaron de ser de la escala.</param>
-/// <param name="PackagingUnits">Los empaques del **producto**, no de la escala: Catalog los
-/// guarda una vez por producto desde el 2026-10-01, y el adaptador de <c>Bootstrapper</c> los
-/// copia en cada escala <c>PackagingUnit</c> para que la regla no necesite el producto. Vacío en
+/// <param name="PackagingUnits">Los empaques de la **variante**, no de la escala: Catalog los
+/// guarda una vez por variante (spec 2026-10-20 §2; por producto entre el 2026-10-01 y las
+/// variantes), y el adaptador de <c>Bootstrapper</c> los copia en cada escala <c>PackagingUnit</c>
+/// para que la regla no necesite la variante. Vacío en
 /// cualquier otra restricción.</param>
 /// <param name="AllowGrouping">Si las cantidades de varias líneas que caen en esta misma escala
 /// se suman para validar el múltiplo. Siempre <c>false</c> con <c>PackagingUnit</c>: lo hace

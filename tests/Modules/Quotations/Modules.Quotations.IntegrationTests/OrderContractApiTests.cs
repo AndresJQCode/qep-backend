@@ -41,9 +41,11 @@ public sealed class OrderContractApiTests
         Assert.Equal(HttpStatusCode.Created, converted.StatusCode);
         using var created = JsonDocument.Parse(
             await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        var orderId = created.RootElement.GetProperty("id").GetGuid();
-        var orderNumber = created.RootElement.GetProperty("orderNumber").GetString();
-        Assert.False(created.RootElement.TryGetProperty("saleNumber", out var ignoredSaleNumber));
+        // Spec 2026-10-15 §8: la conversión responde el detalle, con el pedido en `order`.
+        var createdOrder = created.RootElement.GetProperty("order");
+        var orderId = createdOrder.GetProperty("id").GetGuid();
+        var orderNumber = createdOrder.GetProperty("orderNumber").GetString();
+        Assert.False(createdOrder.TryGetProperty("saleNumber", out var ignoredSaleNumber));
         // El pedido ya tiene id propio: el Location apunta a su recurso canónico bajo /orders, no
         // a la cotización que lo originó.
         Assert.Equal(
@@ -52,7 +54,8 @@ public sealed class OrderContractApiTests
 
         using (var byQuotation = await GetJsonAsync(client, $"{QuotationsUrl(tenantId)}/{quotation.Id}/order"))
         {
-            Assert.Equal(orderNumber, byQuotation.RootElement.GetProperty("orderNumber").GetString());
+            // D-O7: el mismo detalle que GET /orders/{orderId}.
+            Assert.Equal(orderNumber, byQuotation.RootElement.GetProperty("order").GetProperty("orderNumber").GetString());
         }
 
         using (var list = await GetJsonAsync(client, $"/api/v1/tenants/{tenantId}/orders?orderNumber={orderNumber}"))
@@ -65,9 +68,11 @@ public sealed class OrderContractApiTests
         {
             Assert.False(detail.RootElement.TryGetProperty("sale", out var ignoredSale));
             Assert.Equal(orderNumber, detail.RootElement.GetProperty("order").GetProperty("orderNumber").GetString());
-            var composed = detail.RootElement.GetProperty("quotation");
-            Assert.Equal(quotation.Id, composed.GetProperty("id").GetGuid());
-            Assert.False(composed.GetProperty("canBeConvertedToOrder").GetBoolean());
+            // Spec 2026-10-15 §6.2: la cotización ya no viaja; sólo su id y número.
+            Assert.False(detail.RootElement.TryGetProperty("quotation", out var ignoredQuotation));
+            var source = detail.RootElement.GetProperty("sourceQuotation");
+            Assert.Equal(quotation.Id, source.GetProperty("id").GetGuid());
+            Assert.Equal(quotation.QuotationNumber, source.GetProperty("quotationNumber").GetString());
         }
 
         using (var quotations = await GetJsonAsync(client, $"{QuotationsUrl(tenantId)}?status=Converted"))
@@ -111,7 +116,7 @@ public sealed class OrderContractApiTests
         converted.EnsureSuccessStatusCode();
         using var created = JsonDocument.Parse(
             await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        var orderId = created.RootElement.GetProperty("id").GetGuid();
+        var orderId = created.RootElement.GetProperty("order").GetProperty("id").GetGuid();
         var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
 
         var proofs = await client.PostAsJsonAsync(

@@ -26,6 +26,8 @@ public interface IFileResourceRepository
         // CAT-09: a qué entidad pertenecen los archivos que se piden. null = sin filtrar por
         // dueño, que es el comportamiento que este método tuvo hasta ahora.
         FileOwnerFilter? owner,
+        // Spec 2026-10-07: los tipos de dueño cuyo módulo está apagado. Vacío = sin excluir.
+        IReadOnlyCollection<FileOwnerType> excludedOwnerTypes,
         int page,
         int pageSize,
         CancellationToken cancellationToken);

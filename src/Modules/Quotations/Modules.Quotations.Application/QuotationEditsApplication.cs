@@ -4,11 +4,12 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Lo que quedó cambiado, para que el guardado sepa qué historial y qué auditoría
-/// escribir. <paramref name="HeaderSummary"/> es null cuando el encabezado llegó igual a como
-/// estaba — mismo criterio que <c>SaveQuotationHandler</c>: apretar Guardar sin cambiar nada no
-/// es un evento del historial.</summary>
+/// escribir. Las dos fotos del encabezado viajan en vez del resumen ya armado: el texto lleva el
+/// formato del tenant (spec 2026-10-23 D-R6), y sólo el guardado lo lee —el cálculo previo, que
+/// comparte este paso, no escribe historial y no gana una lectura de Tenancy.</summary>
 internal sealed record QuotationEditsOutcome(
-    string? HeaderSummary,
+    QuotationHeaderSnapshot HeaderBefore,
+    QuotationHeaderSnapshot HeaderAfter,
     IReadOnlyList<QuotationItemEdit> ItemEdits);
 
 /// <summary>
@@ -29,6 +30,9 @@ internal static class QuotationEditsApplication
         IQuotationCustomerLookup customerLookup,
         IQuotationCompanyLookup companyLookup,
         IQuotationProductPricingLookup pricingLookup,
+        IQuotationSettingsStore settingsStore,
+        ITenantPriceRounding priceRounding,
+        ShippingResolver shippingResolver,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -50,13 +54,14 @@ internal static class QuotationEditsApplication
         // (UpdateQuotation.cs:69-79), así una línea sin precio en la moneda nueva corta el guardado
         // completo en vez de dejar la cotización con dos monedas adentro.
         var currency = quotation.CurrencyFor(billingAccount);
-        var repricing = currency == quotation.Currency
+        var changesCurrency = currency != quotation.Currency;
+        var repricing = !changesCurrency
             ? null
             : await QuotationProductPricingResolver.ResolveManyAsync(
                 pricingLookup,
                 tenantId,
                 quotation.Items
-                    .Select(item => (item.ProductId, item.Quantity))
+                    .Select(item => (item.VariantId, item.Quantity))
                     .ToArray(),
                 currency, edits.IsRetail,
                 cancellationToken);
@@ -77,8 +82,25 @@ internal static class QuotationEditsApplication
             edits.GlobalScaleFloor,
             updatedBy,
             now);
-        var headerSummary = QuotationChangeSummary.HeaderChanged(
-            before, QuotationHeaderSnapshot.Of(quotation));
+        // El envío después del encabezado: valida contra la recogida y la moneda que acaban de quedar, y
+        // antes de la foto de después, para que el historial cuente el cambio de transportadora o de valor.
+        //
+        // D-F15 (R15): si el guardado cambia la moneda, el formulario igual reenvía el `shipping` que tenía en
+        // pantalla, con el valor en la moneda vieja. Aplicarlo deshacería la limpieza de ApplyBillingAccount
+        // (15.000 COP pasarían a ser 15.000 USD). Se descartan el modo y el valor del cuerpo; la transportadora
+        // y la contraentrega no dependen de la moneda y sí se aplican.
+        var shippingRequest = changesCurrency && edits.Shipping is { } requested
+            ? requested with { FreightChargeMode = null, FreightAmount = 0m }
+            : edits.Shipping;
+        var shipping = await shippingResolver.ResolveAsync(
+            tenantId, shippingRequest, quotation.ShippingDetails, quotation.IsStorePickup, quotation.Currency,
+            "quotation.quotation", cancellationToken);
+        if (shipping is not null)
+        {
+            quotation.SetShipping(shipping, updatedBy, now);
+        }
+
+        var after = QuotationHeaderSnapshot.Of(quotation);
 
         var itemEdits = await QuotationItemEdits.ApplyAsync(
             quotation, edits.Items, pricingLookup, tenantId, updatedBy, now, edits.IsRetail, cancellationToken);
@@ -87,8 +109,8 @@ internal static class QuotationEditsApplication
         // que resolverlo en medio del diff lo calcularía contra un estado a medio aplicar. Y el
         // mínimo de compra se mide sobre el total resultante.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, tenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, tenantId, quotation, now, cancellationToken);
 
-        return new QuotationEditsOutcome(headerSummary, itemEdits);
+        return new QuotationEditsOutcome(before, after, itemEdits);
     }
 }

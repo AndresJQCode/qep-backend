@@ -27,6 +27,14 @@ internal sealed class NotificationsOptionsValidator(IHostEnvironment environment
             failures.Add("Notifications:InvitationUrl must be an absolute URL.");
         }
 
+        if (string.IsNullOrWhiteSpace(options.AppBaseUrl)
+            || !Uri.TryCreate(options.AppBaseUrl, UriKind.Absolute, out var appBaseUrl)
+            || (appBaseUrl.Scheme != Uri.UriSchemeHttp
+                && appBaseUrl.Scheme != Uri.UriSchemeHttps))
+        {
+            failures.Add("Notifications:AppBaseUrl must be an absolute URL.");
+        }
+
         if (!KnownProviders.Contains(options.EmailProvider, StringComparer.OrdinalIgnoreCase))
         {
             failures.Add(

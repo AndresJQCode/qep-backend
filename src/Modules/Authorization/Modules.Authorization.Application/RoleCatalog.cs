@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Authorization.Application;
 
@@ -16,12 +17,20 @@ public sealed record RoleDefinition(
     string RiskLevel,
     IReadOnlyCollection<string> Permissions);
 
+/// <param name="RequiredModules">
+/// Los módulos que exige el permiso, en conjunción (spec 2026-10-07, «Mapa permiso → módulo»).
+/// <c>[]</c> es núcleo. <c>null</c> es «sin mapear» y sólo lo produce el fallback de metadata de
+/// <see cref="RoleCatalog"/>: un permiso sin mapear se enmascara siempre. Posicional y sin default
+/// para que el compilador obligue a declararlo donde nace el permiso. No entra en
+/// <c>CatalogVersion</c>: el hash describe el catálogo del build, no el de un tenant.
+/// </param>
 public sealed record PermissionDefinition(
     string Permission,
     string DisplayName,
     string Description,
     string Category,
-    string RiskLevel);
+    string RiskLevel,
+    IReadOnlyCollection<TenantModuleKey>? RequiredModules);
 
 /// <summary>Resuelve una referencia de rol de una membresía a los permisos que concede.</summary>
 public interface IRoleCatalog
@@ -77,7 +86,8 @@ public sealed class RoleCatalog : IRoleCatalog
                     permission,
                     "Permission registered by a module without catalog metadata.",
                     "uncategorized",
-                    "medium"))
+                    "medium",
+                    RequiredModules: null))
             .OrderBy(permission => permission.Permission, StringComparer.Ordinal)
             .ToArray();
         CatalogVersion = ComputeCatalogVersion(_roleDefinitions, _permissionDefinitions);

@@ -8,8 +8,11 @@ using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
+using Microsoft.Extensions.Options;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
+using Modules.Automations.Api;
+using Modules.Automations.Infrastructure;
 using Modules.Catalog.Api;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Api;
@@ -19,14 +22,28 @@ using Modules.Customers.Infrastructure;
 using Modules.Geography.Api;
 using Modules.Geography.Infrastructure;
 using Modules.Identity.Infrastructure;
+using Modules.Integrations.Api;
+using Modules.Integrations.Infrastructure;
+using Modules.Messaging.Api;
+using Modules.Messaging.Api.Realtime;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pipeline.Api;
+using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Api;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Api;
+using Modules.Pos.Infrastructure;
 using Modules.Quotations.Api;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Api;
+using Modules.Shopify.Api;
+using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Suppliers.Api;
+using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
 using Scalar.AspNetCore;
@@ -41,9 +58,12 @@ builder.Services.AddOpenApi();
 builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
+builder.Services.AddScoped<SessionEstablisher>();
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
+// Spec 2026-10-14 (Mensajería en tiempo real): SignalR y el sink que lleva al hub lo que Infrastructure escucha por NOTIFY.
+builder.Services.AddMessagingRealtime();
 
 // Superficies públicas/sin autenticar: ventana fija por IP del cliente —la que deja
 // UseForwardedHeaders detrás del ingress, no la del nodo—, generosa para tráfico real
@@ -63,6 +83,38 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+
+    // Endpoints de credenciales: 10 por minuto por IP y por endpoint. La clave usa el PATRÓN de ruta,
+    // no el path, para que /invitations/{token}/accept-with-password no abra una partición por token.
+    options.AddPolicy(
+        RateLimiterPolicies.Credentials,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{httpContext.Connection.RemoteIpAddress}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
+    // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
+    // salen de MessagingWebhookOptions ya bindeadas y validadas al arrancar (> 0); la fábrica de la
+    // partición corre una sola vez, con el primer request.
+    options.AddPolicy(
+        RateLimiterPolicies.Webhook,
+        httpContext => RateLimitPartition.GetConcurrencyLimiter(
+            partitionKey: "webhook",
+            factory: _ =>
+            {
+                var webhook = httpContext.RequestServices.GetRequiredService<IOptions<MessagingWebhookOptions>>().Value;
+                return new ConcurrencyLimiterOptions
+                {
+                    PermitLimit = webhook.ConcurrencyLimit,
+                    QueueLimit = webhook.QueueLimit,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                };
+            }));
 });
 
 var app = builder.Build();
@@ -119,26 +171,57 @@ app.MapScalarApiReference("/scalar/v1")
 app.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }))
     .AllowAnonymous();
 app.MapQepReadiness();
+// Junto a los health checks y no con los módulos: es infraestructura, como ellos. Ver VersionEndpoints.
+app.MapVersionEndpoint();
 app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
+app.MapPasswordAuthEndpoints();
 app.MapAuthorizationCatalogEndpoints();
+app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
+app.MapCurrencyEndpoints();
+app.MapOperatorEndpoints();
 app.MapMembershipEndpoints();
 app.MapInvitationEndpoints();
 app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
+app.MapCatalogOptionEndpoints();
+app.MapCatalogCategoryEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
+app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
+// Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
+app.MapCityOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
+app.MapQuotationSettingsEndpoints();
+app.MapWhatsAppChannelEndpoints();
+app.MapCarrierEndpoints();
 app.MapReportingEndpoints();
 app.MapPlatformEndpoints();
+app.MapPosEndpoints();
+app.MapIntegrationsEndpoints();
+// Spec 2026-10-15 §4.3: el inicio anónimo de la instalación de Shopify, con el limitador por IP de las superficies públicas.
+app.MapShopifyInstallEndpoints(RateLimiterPolicies.Public);
+app.MapWhatsAppWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-14 §6.2: el webhook de Instagram, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
+app.MapInstagramWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-15 §5.1: el webhook de Shopify, con el mismo limitador y la misma exención de CSRF (prefijo /api/webhooks/).
+app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
+// Spec 2026-10-15 §7: las rutas por tenant de Shopify: la configuración de la tienda, la bandeja y «Sincronizar ahora».
+app.MapShopifyEndpoints();
+app.MapMessagingEndpoints();
+app.MapMessagingHub();
+app.MapPipelineEndpoints();
+// Spec 2026-10-21 §4.4: el constructor de chatbots.
+app.MapAutomationsEndpoints();
+app.MapSupplierEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -172,10 +255,43 @@ await app.Services.InitializeCustomersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 await app.Services.InitializeCompaniesDatabaseAsync(
     app.Lifetime.ApplicationStopping);
+// Después de Geography: suppliers.suppliers lleva una FK real a geography.cities.
+await app.Services.InitializeSuppliersDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
 // Despues de Catalog y Customers: quotations referencia sus datos (producto, cliente) por id
 // suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del
 // grupo de modulos de negocio por consistencia con el resto de este archivo.
 await app.Services.InitializeQuotationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+// Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
+// decisión 8), así que esa tabla tiene que existir cuando esta migración corre.
+await app.Services.InitializePosDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
+// audit.entries, que crea la migración de Audit.
+await app.Services.InitializeIntegrationsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Messaging (spec 2026-10-09): después de Audit (escribe en audit.entries); no tiene FKs a otros
+// esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
+// btree_gin) van en public, como las de Customers y Catalog.
+await app.Services.InitializeMessagingDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Pipeline (spec 2026-10-13): después de Audit (escribe en audit.entries) y de Tenancy (lee platform.outbox_messages). Sin FKs
+// a otros esquemas: clientes, conversaciones, membresías y cotizaciones son referencias blandas.
+await app.Services.InitializePipelineDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
+// pedido, asesor y empresa son referencias blandas.
+await app.Services.InitializeShopifyDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
+// Audit (escribe en audit.entries).
+await app.Services.InitializeAutomationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

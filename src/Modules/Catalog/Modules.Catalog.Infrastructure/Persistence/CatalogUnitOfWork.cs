@@ -1,23 +1,37 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Npgsql;
 
 namespace Modules.Catalog.Infrastructure.Persistence;
 
-internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUnitOfWork
+internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock) : ICatalogUnitOfWork
 {
     // Discriminar por nombre de índice y no sólo por SqlState es deliberado: 23505 sólo dice
     // que se violó algún índice único, y responder catalog.product.code_taken para otro
     // mandaría al llamador a corregir el campo equivocado. Esa es la lección con la que se
     // cerró SDD-CT-06, donde otro índice único reportaba el código de dominio equivocado.
-    private const string ProductCodeIndex = "IX_products_tenant_code";
+    // Desde las variantes (2026-10-20) el código vive en product_variants; el código de dominio no
+    // cambia, porque para quien llena el formulario es el mismo error.
+    private const string ProductCodeIndex = "IX_product_variants_tenant_code";
+    private const string VariantBarcodeIndex = "IX_product_variants_tenant_barcode";
     private const string TaxRateNameIndex = "IX_tax_rates_tenant_name";
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
+    private const string CategoryNameIndex = "IX_product_categories_tenant_parent_name";
+    private const string ProductCategoryForeignKey = "FK_products_product_categories_category_id";
+    private const string CategoryParentForeignKey = "FK_product_categories_product_categories_parent_id";
+    private const string OptionNameIndex = "IX_option_definitions_tenant_name";
+    private const string ProductOptionForeignKey =
+        "FK_product_options_option_definitions_option_definition_id";
+    private const string VariantOptionValueForeignKey =
+        "FK_product_variant_option_values_option_values_option_value_id";
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
+        StampChangedOptions();
+
         try
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
@@ -48,6 +62,19 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
                 "catalog.product.code_taken",
                 "Another product in this tenant already uses that code.");
         }
+        // Rama propia, por la misma razón que la de abajo: cada índice único devuelve su código.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      VariantBarcodeIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.variant.barcode_taken",
+                "Another variant in this tenant already uses that barcode.");
+        }
         // Rama propia y no un `or` con la anterior: son dos índices únicos del mismo esquema y
         // cada uno tiene que devolver su código. Colapsarlos es exactamente el defecto de
         // SDD-CT-06 — mandar a corregir el campo equivocado.
@@ -62,6 +89,48 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
             throw new CatalogDomainException(
                 "catalog.tax_rate.name_taken",
                 "Another tax rate in this tenant already uses that name.");
+        }
+        // El nombre de una categoría choca con una hermana (sin mayúsculas, y raíces entre sí: el
+        // índice es NULLS NOT DISTINCT). Rama propia, como cada índice único del módulo.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      CategoryNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.category.name_taken",
+                "Another category with that name already exists under the same parent.");
+        }
+        // La biblioteca de opciones. Otro índice único, otro código: el nombre de la opción ya existe en
+        // el tenant (sin mayúsculas: el índice es sobre lower(name)). Sin consulta previa en el
+        // handler; el índice es lo único que cierra la carrera de dos POST a la vez.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      OptionNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.option.name_taken",
+                "Another option in this tenant already uses that name.");
+        }
+        // Las FK RESTRICT de product_options y product_variant_option_values, sólo cuando lo que
+        // se estaba guardando era el borrado de una opción o de un valor: es la carrera entre el
+        // «¿está en uso?» del handler y el commit, y sale con el mismo 409 que la consulta. Si la
+        // misma FK salta escribiendo un producto (una opción que no existe), ese caso no es éste
+        // y no se traduce acá: lo resuelve la validación del producto (ProductVariantReferences).
+        catch (DbUpdateException exception)
+            when (IsOptionReferenceViolation(exception) && IsDeletingAnOptionOrValue())
+        {
+            throw new ResourceConflictException(
+                "catalog.option.in_use",
+                "The option or value is used by at least one variant: deactivate it instead.",
+                exception);
         }
         // Hallazgo `B` de la revisión de 4 lentes de CAT-04. La FK que estrena AddProductDetails
         // va con RESTRICT, y su violación no estaba traducida: salía como 500 server.unexpected
@@ -102,15 +171,110 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext) : ICatalogUn
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
         }
+        // La misma FK con la causa opuesta, como la de la tasa: borrando una categoría a la que alguien
+        // le asignó un producto entre la verificación de DeleteCategoryHandler y el commit. Va antes
+        // que la rama de abajo por ser la más específica.
+        catch (DbUpdateException exception)
+            when (IsProductCategoryViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasProducts();
+        }
+        // La FK de la jerarquía, también con dos causas: borrar una padre a la que le acaban de colgar
+        // una hija, o colgar (crear o mover) una hija de una padre que acaban de borrar.
+        catch (DbUpdateException exception)
+            when (IsCategoryParentViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasChildren();
+        }
+        catch (DbUpdateException exception) when (IsCategoryParentViolation(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.category.parent_not_found",
+                "The parent category does not exist.");
+        }
+        // Un producto que apunta a una categoría que no existe: la carrera entre la verificación
+        // del handler y el commit, o un borrado por SQL. Rama propia, nunca un `or` con la de la
+        // tasa: son dos FK y cada una devuelve su código.
+        catch (DbUpdateException exception) when (IsProductCategoryViolation(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.category_not_found",
+                "The category was not found in this tenant.");
+        }
     }
+
+    public async Task<ICatalogTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        new CatalogTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
+
+    private sealed class CatalogTransaction(IDbContextTransaction transaction) : ICatalogTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => transaction.DisposeAsync();
+    }
+
+    // Los mutadores de OptionDefinition no reciben la hora (Rename, SetActive, AddValue...), pero
+    // todos suben la Version, así que una opción cambiada siempre llega Modified. El sello va acá,
+    // una sola vez por guardado, con el reloj del sistema.
+    private void StampChangedOptions()
+    {
+        foreach (var entry in dbContext.ChangeTracker.Entries<OptionDefinition>())
+        {
+            if (entry.State == EntityState.Modified)
+            {
+                entry.Property(option => option.UpdatedAt).CurrentValue = clock.UtcNow;
+            }
+        }
+    }
+
+    // Las tres FK que se traducen acá son ON DELETE RESTRICT, y Postgres no responde lo mismo
+    // según el lado: insertar o actualizar la fila hija da 23503 (foreign_key_violation), pero
+    // borrar la padre que alguien usa da 23001 (restrict_violation). Mirar sólo 23503 deja el
+    // borrado —justo la carrera para la que existe el RESTRICT— saliendo como 500. Mismo criterio
+    // que CompaniesUnitOfWork. El nombre de la constraint sigue siendo lo que decide.
+    private static bool IsForeignKeyOrRestrictViolation(PostgresException postgres) =>
+        postgres.SqlState is PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.RestrictViolation;
+
+    private static bool IsOptionReferenceViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        (string.Equals(postgres.ConstraintName, ProductOptionForeignKey, StringComparison.Ordinal) ||
+         string.Equals(postgres.ConstraintName, VariantOptionValueForeignKey, StringComparison.Ordinal));
+
+    // Por el ChangeTracker y no por exception.Entries: con lotes, las entradas que EF adjunta
+    // dependen de qué sentencia falló, y el valor borrado en cascada puede no estar entre ellas.
+    private bool IsDeletingAnOptionOrValue() =>
+        dbContext.ChangeTracker.Entries().Any(entry =>
+            entry.Entity is OptionDefinition or OptionValue && entry.State == EntityState.Deleted);
 
     private static bool IsProductTaxRateViolation(DbUpdateException exception) =>
         exception.InnerException is PostgresException postgres &&
-        postgres.SqlState == PostgresErrorCodes.ForeignKeyViolation &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
         string.Equals(
             postgres.ConstraintName,
             ProductTaxRateForeignKey,
             StringComparison.Ordinal);
+
+    private static bool IsProductCategoryViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(
+            postgres.ConstraintName,
+            ProductCategoryForeignKey,
+            StringComparison.Ordinal);
+
+    private static bool IsCategoryParentViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(
+            postgres.ConstraintName,
+            CategoryParentForeignKey,
+            StringComparison.Ordinal);
+
+    // Por el ChangeTracker, como IsDeletingAnOptionOrValue: la entrada que EF adjunta a la excepción
+    // depende de qué sentencia del lote falló.
+    private bool IsDeletingACategory() =>
+        dbContext.ChangeTracker.Entries<ProductCategory>().Any(entry => entry.State == EntityState.Deleted);
 
     // El estado sigue siendo Deleted cuando SaveChanges falla: EF sólo lo pasa a Detached después
     // de un commit exitoso. Si eso cambiara, esta rama dejaría de entrar y el caso volvería a

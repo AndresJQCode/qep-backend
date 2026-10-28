@@ -15,7 +15,7 @@ namespace Modules.Reporting.Application;
 /// precio" en cambio significa lo mismo sin importar en qué moneda estaba cada fila. Por eso todo
 /// lo que se cuenta acá son **filas**, nunca importes, y por eso este resumen no reusa
 /// <see cref="ReportMonthlyPointDto"/> ni <see cref="ReportRankEntryDto"/>, que llevan un
-/// <c>Total</c> que aquí sería siempre mentira o siempre cero.
+/// <c>Totals</c> por moneda que aquí serían siempre mentira o siempre vacíos.
 ///
 /// <see cref="ProductCount"/> son los productos distintos tocados en el periodo — el denominador
 /// que le falta a <see cref="ChangeCount"/> para saber si fueron muchos cambios sobre pocos
@@ -41,29 +41,53 @@ public sealed record PriceChangeReportSummaryDto(
 public sealed record ReportCountPointDto(int Year, int Month, int Count);
 
 /// <summary>
-/// Un campo del histórico con cuántas veces se tocó.
-///
-/// <c>Field</c> viaja como el nombre del enum (<c>PriceBaseUsd</c>), igual que en
-/// <see cref="PriceChangeReportItemDto"/>: la traducción es del frontend, que ya tiene el
-/// diccionario. **Vienen los tres siempre**, incluso en cero — mismo criterio que
-/// <see cref="ReportStatusSliceDto"/>: un campo que desaparece de la respuesta obligaría a la
-/// pantalla a saber cuáles existen para dibujar el que falta.
+/// A field — and for PriceBase a currency — with how many times it changed. One PriceBase slice
+/// per catalogue currency plus the ScaleDiscount slice, all present even at zero: the catalogue
+/// is fixed per deploy, so the screen never has to know which slices exist (same criterion as
+/// <see cref="ReportStatusSliceDto"/>).
 /// </summary>
-public sealed record PriceChangeFieldSliceDto(string Field, int Count);
+public sealed record PriceChangeFieldSliceDto(string Field, string? Currency, int Count);
 
 /// <summary>
 /// Un producto del ranking de los más retocados, o la fila "Otros".
 ///
 /// Mismas reglas que <see cref="ReportRankEntryDto"/> —<c>ProductId</c> nulo es el resto plegado,
-/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Total</c>: ver el encabezado de
-/// <see cref="PriceChangeReportSummaryDto"/>. El código viaja además del nombre porque es como se
-/// identifica un producto en el resto del reporte.
+/// <c>EntityCount</c> dice cuántos productos agrupa— pero sin <c>Totals</c>: ver el encabezado de
+/// <see cref="PriceChangeReportSummaryDto"/>.
+///
+/// **El ranking sigue siendo por producto, con el desglose por variante adentro** (spec 2026-10-20
+/// §3.5: el owner pidió las dos cosas). <c>Variants</c> es una colección de tamaño fijo por
+/// producto y viaja **completa, incluso en cero**: trae **todas** las variantes del producto,
+/// activas e inactivas (las que cuenta <c>VariantCount</c> del catálogo), con <c>Count</c> en cero
+/// las que no tuvieron cambios en la ventana filtrada. Un elemento que desaparece obligaría a la
+/// pantalla a conocer las variantes del producto para dibujar la que falta («M: 5, L: 7, XL: 0»),
+/// y con un filtro activo (<c>variantId</c>, campo o moneda) las demás siguen ahí, en cero, para
+/// que el desglose se lea igual con y sin filtro. Los <c>Count</c> suman exactamente el <c>Count</c>
+/// del producto. En la fila "Otros" la colección viaja vacía, nunca nula: lo plegado no se
+/// desglosa.
+///
+/// <c>ProductCode</c> es el <c>Code</c> de la única variante del producto, y nulo cuando el
+/// producto tiene varias (mismo criterio que el listado del catálogo): el producto ya no tiene un
+/// código propio que inventar, y el de cada variante viaja en <c>Variants</c>.
 /// </summary>
 public sealed record PriceChangeProductEntryDto(
     Guid? ProductId,
     string? ProductName,
     string? ProductCode,
     int EntityCount,
+    int Count,
+    IReadOnlyList<PriceChangeVariantEntryDto> Variants);
+
+/// <summary>
+/// Una variante dentro del desglose de un producto del ranking; <c>Count</c> puede ser cero. <c>Name</c> es el nombre visible
+/// (spec §3.4) y <c>Code</c> el de la variante, que es como se reconoce en el resto del reporte.
+/// Ordenadas como el producto presenta sus variantes, no por cantidad: así la pantalla repinta
+/// M, L, XL en el orden del formulario y el cliente no reordena.
+/// </summary>
+public sealed record PriceChangeVariantEntryDto(
+    Guid VariantId,
+    string Name,
+    string Code,
     int Count);
 
 /// <summary>

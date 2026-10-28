@@ -10,7 +10,7 @@ public sealed record ConvertQuotationToOrderCommand(
     Guid QuotationId,
     string PaymentStatus,
     string? Notes,
-    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDto>;
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>;
 
 public sealed class ConvertQuotationToOrderValidator : AbstractValidator<ConvertQuotationToOrderCommand>
 {
@@ -23,9 +23,8 @@ public sealed class ConvertQuotationToOrderValidator : AbstractValidator<Convert
             .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
             .WithMessage(
                 $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
-        RuleFor(command => command.Notes)
-            .MaximumLength(Order.NotesMaxLength)
-            .When(command => command.Notes is not null);
+        // Las notas del pedido no tienen tope (plan 2026-10-15, P2). `Notes` nulo hereda las de la
+        // cotización; ver Order.FromQuotation.
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
 
         // Revisión final (I2): un archivo, un adjunto (D16). Dos veces el mismo archivo tendría dos copias
@@ -56,15 +55,17 @@ public sealed class ConvertQuotationToOrderHandler(
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
+    IQuotationLifecycleEventPublisher lifecycleEvents,
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock,
+    ITenantDirectory tenantDirectory,
     IValidator<ConvertQuotationToOrderCommand> validator)
-    : ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>
+    : ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>
 {
-    public async Task<OrderDto> HandleAsync(
+    public async Task<OrderDetailDto> HandleAsync(
         ConvertQuotationToOrderCommand command,
         CancellationToken cancellationToken)
     {
@@ -107,6 +108,9 @@ public sealed class ConvertQuotationToOrderHandler(
         // de pedir el número: una cotización ya convertida, anulada o incompleta sale 422 sin tocar
         // el contador. ConvertToOrder las vuelve a revisar más abajo, pero para entonces ya pasaron.
         quotation.EnsureConvertibleToOrder();
+        // Antes de pedir el número, como las demás precondiciones: el 422 no gasta el consecutivo.
+        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
+            tenantDirectory, command.TenantId, quotation, cancellationToken);
 
         // Convertir también saca del borrador: las líneas que todavía no congelaron su producto
         // (un borrador convertido sin enviarse, o una enviada antes del snapshot) lo congelan acá.
@@ -144,20 +148,26 @@ public sealed class ConvertQuotationToOrderHandler(
             // auditoría (quotation.quotation.approved) no cambian de nombre: son contrato, no el
             // nombre del estado.
             quotation.ConvertToOrder(convertedBy, now, products);
-            order = Order.Create(
+            // Spec 2026-10-15 §4.4: el pedido nace como copia independiente de la cotización.
+            order = Order.FromQuotation(
                 OrderId.New(),
                 command.TenantId,
                 orderNumber,
-                quotation.Id,
+                quotation,
                 paymentStatus,
-                // Sin observaciones propias, el pedido hereda la nota de la cotización (hotfix
-                // 2026-10-15).
-                Order.NotesOnConversion(command.Notes, quotation.Notes),
+                command.Notes,
                 convertedBy,
                 proofs,
                 now);
 
             orderRepository.Add(order);
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(),
+                order.Id,
+                OrderHistoryEventType.Created,
+                convertedBy,
+                OrderChangeSummary.CreatedFromQuotation(quotation.QuotationNumber),
+                now));
             quotationRepository.AddHistoryEntry(QuotationHistoryEntry.Create(
                 QuotationHistoryEntryId.New(),
                 quotation.Id,
@@ -180,6 +190,9 @@ public sealed class ConvertQuotationToOrderHandler(
                 paymentProofEvents.PublishAttached(command.TenantId, order.Id, attached, now);
             }
 
+            // Spec 2026-10-13 §4.5 y D25: dentro de la transacción del contador, con la cotización ya Converted y el pedido creado.
+            lifecycleEvents.PublishConverted(quotation, order, now);
+            lifecycleEvents.PublishOrderCreated(order, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -192,6 +205,7 @@ public sealed class ConvertQuotationToOrderHandler(
             throw;
         }
 
-        return order.ToDto();
+        // Spec 2026-10-15 §8: la pantalla de conversión dibuja el resumen con esta respuesta.
+        return await OrderDetails.LoadAsync(orderRepository, quotationRepository, command.TenantId, order, cancellationToken);
     }
 }

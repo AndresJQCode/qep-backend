@@ -37,8 +37,8 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        // 49 del catálogo (desde el ajuste 2026-10-06) + 1 fija.
-        Assert.Equal(50, dto.Columns.Count);
+        // 57 del catálogo (desde «Razon social», 2026-10-28) + 1 fija.
+        Assert.Equal(58, dto.Columns.Count);
         Assert.Equal("Fixed", dto.Columns[0].Kind);
         Assert.Equal("Correo", dto.Columns[19].Header);
         var stored = Assert.Single(repository.Layouts);
@@ -159,6 +159,27 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
             handler.HandleAsync(NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken));
 
         Assert.Equal(0, repository.FindCalls);
+    }
+
+    [Fact]
+    public async Task WithoutOrdersItIsForbiddenBeforeValidatingOrReading()
+    {
+        var repository = new InMemoryOrdersExportLayoutRepository();
+        var audit = new RecordingExportAuditPublisher();
+        var unitOfWork = new CountingQuotationsUnitOfWork();
+        var modules = FixedTenantModules.WithoutOrders;
+        var handler = NewHandler(repository, audit, unitOfWork, tenantModules: modules);
+        var columns = DefaultInputs();
+        columns[3] = columns[3] with { Header = "   " };
+
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            handler.HandleAsync(NewCommand(columns, expectedVersion: 1), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.module_not_enabled", error.Code);
+        Assert.Equal(1, modules.FindCalls);
+        Assert.Equal(0, repository.FindCalls);
+        Assert.Empty(audit.Entries);
+        Assert.Equal(0, unitOfWork.Saves);
     }
 
     [Fact]
@@ -310,9 +331,11 @@ public sealed class UpdateOrdersExportLayoutHandlerTests
         InMemoryOrdersExportLayoutRepository repository,
         RecordingExportAuditPublisher audit,
         CountingQuotationsUnitOfWork unitOfWork,
-        IExecutionContext? executionContext = null) =>
+        IExecutionContext? executionContext = null,
+        ITenantModules? tenantModules = null) =>
         new(
             repository,
+            tenantModules ?? FixedTenantModules.Simulated,
             unitOfWork,
             audit,
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),

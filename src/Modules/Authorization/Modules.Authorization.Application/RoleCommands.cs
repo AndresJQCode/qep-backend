@@ -54,6 +54,23 @@ internal static class RoleWriteRules
     }
 
     /// <summary>
+    /// Spec 2026-10-08 D11: <c>operator.*</c> sólo vive en roles de sistema. Se rechaza en cualquier
+    /// tenant, el operador incluido, y antes que <see cref="EnsureKnownPermissions"/>: el admin de
+    /// fábrica los concede, así que para el catálogo son "conocidos".
+    /// </summary>
+    public static void EnsureNoOperatorPermissions(IReadOnlyCollection<string> permissions)
+    {
+        var reserved = permissions.FirstOrDefault(
+            permission => OperatorPermissionFilter.IsOperatorPermission(permission.Trim()));
+        if (reserved is not null)
+        {
+            throw new AuthorizationDomainException(
+                "authorization.role.permission_operator_only",
+                $"The permission '{reserved}' can only be granted by a system role.");
+        }
+    }
+
+    /// <summary>
     /// Un rol sólo puede conceder permisos que el catálogo declara.
     /// </summary>
     /// <remarks>
@@ -103,6 +120,7 @@ public sealed class CreateRoleHandler(
         CancellationToken cancellationToken)
     {
         RoleWriteRules.EnsureAuthorized(executionContext, command.TenantId);
+        RoleWriteRules.EnsureNoOperatorPermissions(command.Permissions);
         RoleWriteRules.EnsureKnownPermissions(systemCatalog, command.Permissions);
 
         // `Role.Create` normaliza la clave, así que se busca la normalizada: preguntar por
@@ -147,6 +165,7 @@ public sealed class UpdateRoleHandler(
         CancellationToken cancellationToken)
     {
         RoleWriteRules.EnsureAuthorized(executionContext, command.TenantId);
+        RoleWriteRules.EnsureNoOperatorPermissions(command.Permissions);
         RoleWriteRules.EnsureKnownPermissions(systemCatalog, command.Permissions);
 
         var role = await RoleWriteRules.LoadAsync(

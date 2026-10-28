@@ -21,6 +21,99 @@ public static class TenancySeeder
     public const string SeedTenantSlug = "origen-botanico";
     public const string SeedTenantDisplayName = "Origen botánico";
 
+    /// <summary>
+    /// El tenant operador (QCode, spec 2026-10-08). Constante por la misma razón que
+    /// <see cref="SeedTenantId"/>, y además porque es el valor por defecto de
+    /// <c>Platform:OperatorTenantId</c> en <c>appsettings.json</c>: si se mueve uno, se mueve el otro.
+    /// `...0006` no choca con la semilla (`...0003`) ni con la carga de exportación (`...0004` y
+    /// `...0005`).
+    /// </summary>
+    public static readonly Guid OperatorTenantId =
+        Guid.Parse("01900000-0000-7000-8000-000000000006");
+
+    public const string OperatorTenantSlug = "qcode";
+    public const string OperatorTenantDisplayName = "QCode";
+
+    /// <summary>
+    /// Qué encuentra la semilla del tenant operador antes de crear nada. Se mira primero para no
+    /// crear el usuario dueño de un tenant que no se va a poder crear.
+    /// </summary>
+    public enum OperatorTenantSeedState
+    {
+        /// <summary>Ni el id ni el slug existen: se puede sembrar.</summary>
+        Missing,
+
+        /// <summary>El tenant ya está: la semilla no toca nada.</summary>
+        AlreadySeeded,
+
+        /// <summary>
+        /// Otro tenant —por ejemplo QCode registrado por el signup— ya tiene el slug. Crearlo
+        /// reventaría contra <c>IX_tenants_slug</c> y tumbaría el arranque de cada pod.
+        /// </summary>
+        SlugTaken,
+    }
+
+    public static async Task<(OperatorTenantSeedState State, Guid? SlugHolderId)> InspectOperatorTenantAsync(
+        this IServiceProvider services,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+
+        var id = new TenantId(OperatorTenantId);
+        var found = await dbContext.Tenants
+            .AsNoTracking()
+            .Where(tenant => tenant.Id == id || tenant.Slug == OperatorTenantSlug)
+            .Select(tenant => tenant.Id)
+            .ToListAsync(cancellationToken);
+
+        if (found.Contains(id))
+        {
+            return (OperatorTenantSeedState.AlreadySeeded, null);
+        }
+
+        return found.Count == 0
+            ? (OperatorTenantSeedState.Missing, null)
+            : (OperatorTenantSeedState.SlugTaken, found[0].Value);
+    }
+
+    /// <summary>
+    /// true si el usuario tiene una membresía —en cualquier estado— en un tenant que no es el
+    /// operador. La semilla se niega a hacer operador a alguien que ya pertenece a otro tenant: un
+    /// email reutilizado o mal tipeado le daría poder sobre toda la plataforma sin que se note. El
+    /// tenant operador se excluye para que el pod que pierde una carrera de arranque no confunda la
+    /// membresía que acaba de crear el otro con una ajena.
+    /// </summary>
+    public static async Task<bool> HasMembershipOutsideOperatorTenantAsync(
+        this IServiceProvider services,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+
+        var operatorTenant = new TenantId(OperatorTenantId);
+        return await dbContext.Memberships.AnyAsync(
+            membership => membership.UserId == userId && membership.TenantId != operatorTenant,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Siembra QCode con todos los módulos y su dueño admin, por el mismo camino que Origen
+    /// botánico. Idempotente por id, como el resto.
+    /// </summary>
+    public static Task<Guid> SeedOperatorTenantWithOwnerAsync(
+        this IServiceProvider services,
+        Guid ownerUserId,
+        CancellationToken cancellationToken = default) =>
+        services.SeedTenantWithOwnerAsync(
+            OperatorTenantId,
+            OperatorTenantSlug,
+            OperatorTenantDisplayName,
+            ownerUserId,
+            Membership.RegistrationOrigin,
+            cancellationToken);
+
     public static Task<Guid> SeedTenantWithOwnerAsync(
         this IServiceProvider services,
         Guid ownerUserId,
@@ -93,6 +186,14 @@ public static class TenancySeeder
             ["admin"],
             origin,
             now));
+
+        // Spec 2026-10-07, «Semilla»: todos, pos y messaging incluidos, en la misma escritura que el tenant.
+        // Sólo al crear: si el tenant ya existía el método devolvió arriba, y una base local vieja
+        // prende pos con el SQL de «Operación» (README § Módulos por tenant).
+        foreach (var key in TenantModuleKeys.All)
+        {
+            dbContext.TenantModules.Add(TenantModule.Create(id, key, TenantModuleSources.Seed, now, note: null));
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return ownerMembershipId.Value;

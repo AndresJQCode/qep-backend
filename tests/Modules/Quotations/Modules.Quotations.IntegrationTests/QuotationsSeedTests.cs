@@ -92,12 +92,43 @@ public sealed class QuotationsSeedTests
         "Documento (P5)", "Pedido (P6)", "V. Consignacion (P7)", "Direccion (P8)", "Observaciones",
         "Guia P9", "Telefono (P10)", "valor flete", "# Rotulos", "Email", "GeneraGuia",
         "GeneraFactura", "Nit",
+        // Spec 2026-10-26 tipo de persona: visible, justo detrás de "Nit".
+        "Tipo de persona",
         // Ajuste 2026-10-05: visible por decisión del owner, al final y con su nombre por defecto.
         "Total facturado",
         // Ajuste 2026-10-06: visible como "Total facturado", detrás de ella y con su nombre por
         // defecto.
         "Retencion",
     ];
+
+    // Spec 2026-10-20 variantes §7: la columna nueva «Variante» del catálogo no pisa ningún encabezado de
+    // la hoja del ERP («MIGRACION 1»), que importa por encabezado, y nace oculta: la hoja sembrada no
+    // gana una columna que su ERP no espera. La mitad con la fila sembrada es
+    // SeedConfiguresTheOrdersExportLayoutOfTheSeedTenant (todo el catálogo en la lista, sólo
+    // SeededLayoutHeaders visibles). No necesita base de datos.
+    [Fact]
+    public void OrdersExportNewVariantColumnDoesNotCollideWithSeededHeaders()
+    {
+        var variant = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "variant");
+
+        Assert.False(variant.DefaultVisible);
+        Assert.DoesNotContain(
+            SeededLayoutHeaders,
+            header => string.Equals(header, variant.DefaultHeader, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Spec 2026-10-26 tipo de persona: la columna nueva del catálogo nace oculta, pero la hoja sembrada la
+    // muestra, y su encabezado no puede chocar con ningún otro visible. No necesita base de datos.
+    [Fact]
+    public void OrdersExportPersonTypeColumnDoesNotCollideWithSeededHeaders()
+    {
+        var personType = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "customer_person_type");
+
+        Assert.False(personType.DefaultVisible);
+        Assert.Equal(
+            1,
+            SeededLayoutHeaders.Count(header => string.Equals(header, personType.DefaultHeader, StringComparison.OrdinalIgnoreCase)));
+    }
 
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por
     // Replace, así que queda en versión 2 como un primer PUT.
@@ -131,6 +162,14 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             "company_tax_id",
             Assert.Single(layout.Columns, column => column.Header == "Nit").Key);
+        // Spec 2026-10-26 tipo de persona: visible y justo detrás de "Nit".
+        var visibleColumns = layout.Columns.Where(column => column.Visible).ToList();
+        var personType = Assert.Single(layout.Columns, column => column.Header == "Tipo de persona");
+        Assert.Equal("customer_person_type", personType.Key);
+        Assert.True(personType.Visible);
+        Assert.Equal(
+            visibleColumns.IndexOf(Assert.Single(visibleColumns, column => column.Header == "Nit")) + 1,
+            visibleColumns.IndexOf(personType));
         // Ajuste 2026-09-26: "IVA" es la tasa de cada línea (tax_rate), no un 0.19 fijo: hay
         // productos con otra tarifa. "tax" (el monto) sigue oculta, con su nombre por defecto.
         Assert.Equal(

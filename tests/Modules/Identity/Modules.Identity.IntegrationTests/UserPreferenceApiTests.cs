@@ -213,6 +213,59 @@ public sealed class UserPreferenceApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    private sealed record FullBody(string ColorScheme, string Mode, bool MessageSound);
+
+    // Spec 2026-10-14 (Mensajería en tiempo real), decisión 7 y contrato §2.2: `messageSound` viaja con el tema; el PUT
+    // acepta cada campo por separado y conserva lo que no viene, para que el interruptor del sonido y el tema de otra
+    // pestaña no se pisen.
+    [Fact]
+    public async Task GetCarriesTheMessageSoundOnByDefault()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var body = await client.GetFromJsonAsync<FullBody>(Endpoint, TestContext.Current.CancellationToken);
+
+        Assert.True(body!.MessageSound);
+    }
+
+    [Fact]
+    public async Task EachFieldIsSavedOnItsOwnAndTheOthersAreKept()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+
+        var muted = await client.PutAsJsonAsync(Endpoint, new { messageSound = false }, TestContext.Current.CancellationToken);
+        var themed = await client.PutAsJsonAsync(Endpoint, new { colorScheme = "ocean", mode = "dark" }, TestContext.Current.CancellationToken);
+        var read = await client.GetFromJsonAsync<FullBody>(Endpoint, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, muted.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, themed.StatusCode);
+        Assert.Equal(new FullBody("ocean", "dark", false), read);
+    }
+
+    [Fact]
+    public async Task ASoundOnlyPutKeepsTheThemeAndAnEmptyBodyIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedUserAsync(factory, SubjectId);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        await client.PutAsJsonAsync(Endpoint, new { colorScheme = "indigo", mode = "dark" }, TestContext.Current.CancellationToken);
+
+        var muted = await client.PutAsJsonAsync(Endpoint, new { messageSound = false }, TestContext.Current.CancellationToken);
+        var empty = await client.PutAsJsonAsync(Endpoint, new { }, TestContext.Current.CancellationToken);
+        var read = await client.GetFromJsonAsync<FullBody>(Endpoint, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, muted.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, empty.StatusCode);
+        Assert.Equal(new FullBody("indigo", "dark", false), read);
+    }
+
     /// <summary>
     /// La preferencia tiene FK a <c>identity.users</c>, y el subject que inventa el stub no
     /// existe en la base. Sin esto, todo <c>PUT</c> revienta contra la clave foránea con un

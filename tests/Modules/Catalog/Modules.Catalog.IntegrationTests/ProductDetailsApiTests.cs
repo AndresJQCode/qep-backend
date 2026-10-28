@@ -93,15 +93,13 @@ public sealed class ProductDetailsApiTests
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
         var image = await UploadImageAsync(client, TenantId, database);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            description = "Cera de soja, 200 g",
-            imageFileId = image,
-            taxRateId,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            description: "Cera de soja, 200 g",
+            taxRateId: taxRateId,
+            imageFileId: image));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
@@ -127,13 +125,14 @@ public sealed class ProductDetailsApiTests
 
         var response = await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } });
+            ProductBodies.Create("Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
         Assert.Null(created.Description);
         Assert.Null(created.ImageFileId);
         Assert.Null(created.TaxRateId);
+        Assert.Null(created.CategoryId);
     }
 
     // CA-CAT-04-03: se puede limpiar, no sólo setear. Sin esta prueba, una implementación que
@@ -146,19 +145,17 @@ public sealed class ProductDetailsApiTests
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA general", 19);
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            description = "Cera de soja",
-            imageFileId = await UploadImageAsync(client, TenantId, database),
-            taxRateId,
-            pricing = new { baseUsd = 10m }
-        }));
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            description: "Cera de soja",
+            taxRateId: taxRateId,
+            imageFileId: await UploadImageAsync(client, TenantId, database))));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } }),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -166,6 +163,120 @@ public sealed class ProductDetailsApiTests
         Assert.Null(updated.Description);
         Assert.Null(updated.ImageFileId);
         Assert.Null(updated.TaxRateId);
+        Assert.Null(updated.CategoryId);
+    }
+
+    [Fact]
+    public async Task CreateWithACategoryPersistsItAndEveryReadReturnsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var categoryId = await SeedCategoryAsync(factory, TenantId, "Bebidas");
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: categoryId));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await ReadProductAsync(response);
+        Assert.Equal(categoryId, created.CategoryId);
+
+        // Releído desde la base, no desde la respuesta de la escritura.
+        var fetched = await ReadProductAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            TestContext.Current.CancellationToken));
+        Assert.Equal(categoryId, fetched.CategoryId);
+
+        var listed = Assert.Single(await ListAsync(client, TenantId));
+        Assert.Equal(categoryId, listed.CategoryId);
+    }
+
+    [Fact]
+    public async Task UpdateSetsAndThenClearsTheCategory()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var categoryId = await SeedCategoryAsync(factory, TenantId, "Bebidas");
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Jugo de mora", "JM-001")));
+        Assert.Null(created.CategoryId);
+
+        var set = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Jugo de mora", "JM-001", categoryId: categoryId),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, set.StatusCode);
+        var withCategory = await ReadProductAsync(set);
+        Assert.Equal(categoryId, withCategory.CategoryId);
+
+        var cleared = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(withCategory, "Jugo de mora", "JM-001", categoryId: null),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        Assert.Null((await ReadProductAsync(cleared)).CategoryId);
+    }
+
+    [Fact]
+    public async Task AnUnknownOrForeignCategoryIsCategoryNotFoundOnCreateAndUpdate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var foreignCategoryId = await SeedCategoryAsync(factory, OtherTenantId, "Ajena");
+
+        var unknown = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: Guid.CreateVersion7()));
+        await AssertCategoryNotFoundAsync(unknown);
+
+        var foreign = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Jugo de mora", "JM-001", categoryId: foreignCategoryId));
+        await AssertCategoryNotFoundAsync(foreign);
+
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Jugo de mora", "JM-001")));
+        var update = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Jugo de mora", "JM-001", categoryId: foreignCategoryId),
+            TestContext.Current.CancellationToken);
+        await AssertCategoryNotFoundAsync(update);
+
+        var fetched = await ReadProductAsync(await client.GetAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            TestContext.Current.CancellationToken));
+        Assert.Null(fetched.CategoryId);
+    }
+
+    private static async Task AssertCategoryNotFoundAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.product.category_not_found",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+    }
+
+    // El endpoint de categorías llega en otra tarea: por ahora se siembra por el repositorio.
+    private static async Task<Guid> SeedCategoryAsync(
+        QepApiFactory factory, string tenantId, string name, Guid? parentId = null)
+    {
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+
+        var category = ProductCategory.Create(
+            ProductCategoryId.New(),
+            Guid.Parse(tenantId),
+            name,
+            parentId is { } p ? new ProductCategoryId(p) : null,
+            DateTimeOffset.UtcNow);
+        repository.Add(category);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return category.Id.Value;
     }
 
     /// <summary>
@@ -189,13 +300,11 @@ public sealed class ProductDetailsApiTests
         // La tasa existe de verdad — en el otro tenant. La FK la aceptaría.
         var foreignTaxRateId = await CreateTaxRateAsync(other, OtherTenantId, "IVA ajeno", 19);
 
-        var response = await CreateProductAsync(owner, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId = foreignTaxRateId,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(owner, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: foreignTaxRateId));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -214,13 +323,11 @@ public sealed class ProductDetailsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, All);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId = Guid.CreateVersion7(),
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: Guid.CreateVersion7()));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains(
@@ -245,13 +352,11 @@ public sealed class ProductDetailsApiTests
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
 
-        var response = await CreateProductAsync(client, TenantId, new
-        {
-            name = "Vela de soja",
-            code = "VS-001",
-            taxRateId,
-            pricing = new { baseUsd = 10m }
-        });
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: taxRateId));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal(taxRateId, (await ReadProductAsync(response)).TaxRateId);
@@ -267,17 +372,16 @@ public sealed class ProductDetailsApiTests
 
         var created = await ReadProductAsync(await CreateProductAsync(
             client, TenantId,
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } }));
+            ProductBodies.Create("Vela de soja", "VS-001", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } })));
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new
-            {
-                name = "Vela de soja",
-                code = "VS-001",
-                description = "Cera de soja, 200 g",
-                pricing = new { baseUsd = 10m }
-            },
+            ProductBodies.Update(
+                created,
+                "Vela de soja",
+                "VS-001",
+                pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+                description: "Cera de soja, 200 g"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -311,8 +415,11 @@ public sealed class ProductDetailsApiTests
             await using var command = new NpgsqlCommand(
                 """
                 INSERT INTO catalog.products
-                    (id, tenant_id, name, code, is_active, version, created_at, updated_at)
-                VALUES (@id, @tenantId, 'Producto viejo', 'OLD-001', true, 1, now(), now())
+                    (id, tenant_id, name, is_active, version, created_at, updated_at)
+                VALUES (@id, @tenantId, 'Producto viejo', true, 1, now(), now());
+                INSERT INTO catalog.product_variants
+                    (id, product_id, tenant_id, code, combination_key, is_active, position)
+                VALUES (@id, @id, @tenantId, 'OLD-001', '', true, 0);
                 """,
                 connection);
             command.Parameters.AddWithValue("id", legacyId);
@@ -359,15 +466,53 @@ public sealed class ProductDetailsApiTests
             ProductId.New(),
             Guid.Parse(TenantId),
             "Vela de soja",
-            "VS-001",
             ProductDetails.Empty with { TaxRateId = TaxRateId.New() },
-            new ProductPricing { BaseUsd = 10m },
+            new ProductVariantInput { Code = "VS-001", Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } } }, [],
             DateTimeOffset.UtcNow));
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
             async () => await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("catalog.product.tax_rate_not_found", error.Code);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-07 (POS), decisión 30: el lector teclea el Code de la variante y el escaneo es una
+    /// búsqueda por el índice único, exacta y con mayúsculas — no el ILIKE '%x%' con COUNT de
+    /// SearchAsync. Devuelve también los inactivos: la caja los muestra marcados en vez de decir
+    /// que no existen. Y no cruza tenants.
+    /// </summary>
+    [Fact]
+    public async Task FindByCodeMatchesTheExactCodeOnly()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        Assert.Empty(await ListAsync(client, TenantId));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>();
+        var product = Product.Create(
+            ProductId.New(),
+            Guid.Parse(TenantId),
+            "Shampoo 400 ml",
+            ProductDetails.Empty,
+            new ProductVariantInput { Code = "SH-400", Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["COP"] = 11_900m } } }, [],
+            DateTimeOffset.UtcNow);
+        repository.Add(product);
+        await unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var exact = await repository.FindVariantByCodeAsync(Guid.Parse(TenantId), "SH-400", TestContext.Current.CancellationToken);
+        var lowercase = await repository.FindVariantByCodeAsync(Guid.Parse(TenantId), "sh-400", TestContext.Current.CancellationToken);
+        var partial = await repository.FindVariantByCodeAsync(Guid.Parse(TenantId), "SH-40", TestContext.Current.CancellationToken);
+        var otherTenant = await repository.FindVariantByCodeAsync(Guid.Parse(OtherTenantId), "SH-400", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(exact);
+        Assert.Equal(product.Id, exact.Id);
+        Assert.Null(lowercase);
+        Assert.Null(partial);
+        Assert.Null(otherTenant);
     }
 
     private static async Task<Guid> CreateTaxRateAsync(
@@ -412,7 +557,7 @@ public sealed class ProductDetailsApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyCollection<ProductResponse>> ListAsync(
+    private static async Task<IReadOnlyCollection<ProductListItemDto>> ListAsync(
         HttpClient client,
         string tenantId)
     {

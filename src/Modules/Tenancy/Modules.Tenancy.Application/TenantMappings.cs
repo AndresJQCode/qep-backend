@@ -11,8 +11,12 @@ internal static class TenantMappings
             tenant.DefaultCulture,
             tenant.TimeZone,
             tenant.DateFormat,
+            tenant.DefaultCurrency,
+            tenant.NumberFormat,
+            tenant.Country,
             tenant.Version,
-            LogoOf(tenant, logoStorage));
+            LogoOf(tenant, logoStorage),
+            tenant.PersonTypeRequirement.ToString());
 
     private static TenantLogoDto? LogoOf(Tenant tenant, ITenantLogoStorage logoStorage) =>
         tenant.LogoFileId is { } fileId

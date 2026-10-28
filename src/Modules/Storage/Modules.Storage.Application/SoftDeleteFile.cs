@@ -9,6 +9,7 @@ public sealed record SoftDeleteFileCommand(Guid TenantId, Guid FileResourceId)
 
 public sealed class SoftDeleteFileHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IStorageUnitOfWork unitOfWork,
     FilePublication filePublication,
     IEnumerable<IFileReferenceProbe> fileReferenceProbes,
@@ -31,6 +32,10 @@ public sealed class SoftDeleteFileHandler(
             throw new ResourceNotFoundException(
                 "storage.file.not_found", "The file resource was not found.");
         }
+
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         // Spec 2026-09-16, D15: antes de tocar el bucket. La copia pública de un comprobante adjunto
         // es la que enlaza el Excel.

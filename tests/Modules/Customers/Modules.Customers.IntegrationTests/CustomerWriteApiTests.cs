@@ -39,7 +39,7 @@ public sealed class CustomerWriteApiTests
         Assert.NotNull(customer);
         Assert.True(customer.IsActive);
         Assert.True(customer.WithRetention);
-        Assert.Equal(classification.Id, customer.Classification.Id);
+        Assert.Equal(classification.Id, customer.Classification?.Id);
         // `City`/`Department` son nulos para un cliente de afuera (ver los tests de pais al final
         // de este archivo). Este es colombiano, asi que tenerlos resueltos es parte de lo que se
         // afirma: si llegaran nulos, la asercion falla, que es lo correcto.
@@ -79,6 +79,62 @@ public sealed class CustomerWriteApiTests
         var expectedPrefix = $"CLI{city.DepartmentDivipolaCode}";
         Assert.Equal($"{expectedPrefix}000001", first.Cuc);
         Assert.Equal($"{expectedPrefix}000002", second.Cuc);
+    }
+
+    // La clasificacion es opcional: sin ella el cliente nace igual y su CUC no lleva prefijo,
+    // solo departamento y consecutivo.
+    [Fact]
+    public async Task CreateWithoutClassificationEmitsACucWithoutPrefix()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+
+        var customer = await CreateCustomerAsync(client, city.CityId, classificationId: null);
+
+        Assert.Null(customer.Classification);
+        Assert.True(customer.IsComplete);
+        Assert.Equal($"{city.DepartmentDivipolaCode}000001", customer.Cuc);
+    }
+
+    // Quitarla en un PUT le quita el prefijo al CUC; volver a ponerla lo antepone. Los ocho
+    // caracteres estables no se mueven en ningun paso.
+    [Fact]
+    public async Task UpdateCanRemoveAndAssignTheClassification()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var suffix = $"{city.DepartmentDivipolaCode}000001";
+        Assert.Equal($"CLI{suffix}", created.Cuc);
+
+        var removed = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, classificationId: null, name: created.Name),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        var withoutClassification = await removed.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withoutClassification);
+        Assert.Null(withoutClassification.Classification);
+        Assert.Equal(suffix, withoutClassification.Cuc);
+
+        var assigned = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, classification.Id, name: created.Name),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+        var withClassification = await assigned.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withClassification);
+        Assert.Equal(classification.Id, withClassification.Classification?.Id);
+        Assert.Equal($"CLI{suffix}", withClassification.Cuc);
     }
 
     // El consecutivo es un unico contador por tenant, no uno por clasificacion: dos clientes del
@@ -365,12 +421,12 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("Address", await ValidationFieldsAsync(response));
     }
 
-    // Telefono y correo son obligatorios. El formulario manda "" cuando el usuario borra el
-    // input, y ese vacio tiene que volver como validation.failed con el mapa errors --el unico
-    // 422 que el formulario sabe leer para marcar el input--, no como el codigo pelado del
-    // dominio.
+    // El telefono es obligatorio y el correo no. El formulario manda "" cuando el usuario borra el
+    // input: el telefono vacio tiene que volver como validation.failed con el mapa errors --el
+    // unico 422 que el formulario sabe leer para marcar el input--, no como el codigo pelado del
+    // dominio; el correo vacio no se marca.
     [Fact]
-    public async Task CreateWithoutPhoneOrEmailMarksBothFields()
+    public async Task CreateWithoutPhoneMarksOnlyThePhone()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -397,7 +453,7 @@ public sealed class CustomerWriteApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var fields = await ValidationFieldsAsync(response);
         Assert.Contains("Phone", fields);
-        Assert.Contains("Email", fields);
+        Assert.DoesNotContain("Email", fields);
         Assert.Empty((await ListAsync(client, string.Empty)).Items);
     }
 
@@ -453,10 +509,11 @@ public sealed class CustomerWriteApiTests
         Assert.DoesNotContain("errors", body, StringComparison.Ordinal);
     }
 
-    // El PUT reemplaza el recurso entero, pero telefono y correo son obligatorios: llegar vacios
-    // no los limpia, se rechaza con el mapa errors. Con valores, si los reemplaza.
+    // El PUT reemplaza el recurso entero, pero el telefono es obligatorio: llegar vacio no lo
+    // limpia, se rechaza con el mapa errors. El correo es opcional: vacio lo limpia. Con valores,
+    // los reemplaza.
     [Fact]
-    public async Task UpdateRejectsABlankPhoneOrEmailAndReplacesThemWhenGiven()
+    public async Task UpdateRejectsABlankPhoneClearsABlankEmailAndReplacesThemWhenGiven()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -492,7 +549,18 @@ public sealed class CustomerWriteApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
         var fields = await ValidationFieldsAsync(rejected);
         Assert.Contains("Phone", fields);
-        Assert.Contains("Email", fields);
+        Assert.DoesNotContain("Email", fields);
+
+        var cleared = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewCustomerBody(city.CityId, classification.Id, phone: "310 935 2187", email: ""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+        var withoutEmail = await cleared.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(withoutEmail);
+        Assert.Null(withoutEmail.Email);
 
         var response = await client.PutAsJsonAsync(
             $"{CustomersUrl()}/{customer.Id}",
@@ -634,6 +702,7 @@ public sealed class CustomerWriteApiTests
         var classification = await CreateClassificationAsync(client, "Mediano", "CLI");
         var newClassification = await CreateClassificationAsync(client, "Grande", "GRA");
         var created = await CreateCustomerAsync(client, cities[0].CityId, classification.Id);
+        Assert.NotNull(created.Cuc);
         var originalSuffix = created.Cuc[3..];
 
         var response = await client.PutAsJsonAsync(
@@ -645,7 +714,7 @@ public sealed class CustomerWriteApiTests
         var updated = await response.Content.ReadFromJsonAsync<CustomerResponse>(
             TestContext.Current.CancellationToken);
         Assert.NotNull(updated);
-        Assert.Equal(newClassification.Id, updated.Classification.Id);
+        Assert.Equal(newClassification.Id, updated.Classification?.Id);
         // La ciudad nueva es la del domicilio; el CUC conserva el departamento de alta.
         Assert.NotNull(updated.City);
         Assert.Equal(cities[1].CityId, updated.City.Id);
@@ -929,5 +998,108 @@ public sealed class CustomerWriteApiTests
         Assert.Null(updated.City);
         // El CUC no se rehace en un Update: conserva el departamento con el que nacio.
         Assert.Equal(created.Cuc, updated.Cuc);
+    }
+
+    /// <summary>Spec 2026-10-26: el tipo de persona viaja en el alta, se lee igual en la ficha y un PUT sin el lo borra.</summary>
+    [Fact]
+    public async Task PersonTypeRoundTripsThroughPostGetAndPut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var created = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false,
+                personType = "Juridica"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal("Juridica", body.PersonType);
+        Assert.Equal("Juridica", (await GetAsync(client, body.Id)).PersonType);
+
+        // El PUT reemplaza el recurso entero: sin personType, queda en null.
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{body.Id}",
+            NewCustomerBody(city.CityId, classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        Assert.Null((await GetAsync(client, body.Id)).PersonType);
+    }
+
+    [Fact]
+    public async Task JuridicaWithCcIsA422OnIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Laura Perez",
+                identificationType = "CC",
+                identificationNumber = "1020304050",
+                phone = "310 935 2187",
+                email = "laura@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false,
+                personType = "Juridica"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.person_type_requires_nit", text);
+        Assert.Contains("IdentificationType", await ValidationFieldsAsync(response));
+    }
+
+    // Spec 2026-10-26, Tarea 8: el ajuste del tenant (en base) llega hasta el 422 del POST, con el mapa por campo.
+    [Fact]
+    public async Task OnCustomerSaveIsA422OnPersonType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantPersonTypeRequirementAsync(factory, "OnCustomerSave");
+
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.person_type_required", text);
+        Assert.Contains("PersonType", await ValidationFieldsAsync(response));
     }
 }

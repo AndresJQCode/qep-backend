@@ -11,6 +11,9 @@ public sealed record ActivateProductCommand(Guid TenantId, Guid ProductId)
 // Activar algo ya activo lo rechaza el agregado, que es donde vive esa regla.
 public sealed class ActivateProductHandler(
     IProductRepository repository,
+    IOptionDefinitionRepository optionRepository,
+    IProductImageLookup imageLookup,
+    IVariantUsageChecker usageChecker,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -41,6 +44,10 @@ public sealed class ActivateProductHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return product.ToDto();
+        // El detalle completo, como el GET: la pantalla repinta lo que vuelve, y hasta las
+        // variantes devolvía la ficha sin la URL de la imagen.
+        var dtos = await new[] { product }.ToDtosAsync(
+            imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
+        return dtos[0];
     }
 }

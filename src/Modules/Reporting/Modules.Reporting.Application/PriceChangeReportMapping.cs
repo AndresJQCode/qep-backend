@@ -11,9 +11,13 @@ public static class PriceChangeReportMapping
         new(
             row.ChangeId,
             row.ProductId,
+            row.VariantId,
             row.ProductCode,
             row.ProductName,
+            row.VariantName,
             row.Field.ToString(),
+            // Same reasoning as the range below: the contract describes the response, not the table.
+            row.Field == PriceChangeField.PriceBase ? row.Currency : null,
             // El rango solo tiene sentido para el descuento de una escala. Se recorta aca y no se
             // confia en que el origen lo mande limpio: el contrato dice "non-null ONLY when field
             // is ScaleDiscount", y eso es una afirmacion sobre la respuesta, no sobre la tabla.

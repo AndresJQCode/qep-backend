@@ -1,0 +1,15 @@
+using Modules.Pos.Domain;
+
+namespace Modules.Pos.Application;
+
+public interface IPosSaleRepository
+{
+    /// <summary>Con líneas y pagos, rastreada (la anulación la modifica).</summary>
+    Task<PosSale?> FindAsync(Guid tenantId, PosSaleId id, CancellationToken cancellationToken);
+
+    void Add(PosSale sale);
+
+    /// <summary>Por creación descendente; sin líneas, con pagos.</summary>
+    Task<(IReadOnlyList<PosSaleListRow> Items, int Total)> ListAsync(
+        PosSaleFilter filter, CancellationToken cancellationToken);
+}

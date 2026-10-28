@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Quotations.Application;
 using static Modules.Reporting.IntegrationTests.ReportingApiHarness;
 
@@ -39,14 +40,14 @@ public sealed class OrdersReportSummaryApiTests
         Assert.NotNull(summary);
 
         Assert.Equal(1, summary.OrderCount);
-        Assert.Equal(quotation.Subtotal, summary.Subtotal);
-        Assert.Equal(quotation.TaxAmount, summary.TaxAmount);
-        Assert.Equal(quotation.Total, summary.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Subtotal)], summary.Subtotals);
+        Assert.Equal([new MoneyAmount("COP", quotation.TaxAmount)], summary.TaxAmounts);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.Totals);
 
         // La serie mensual: un solo mes, el de la conversion, y sin rellenar los vacios.
         var month = Assert.Single(summary.Monthly);
         Assert.Equal(1, month.Count);
-        Assert.Equal(quotation.Total, month.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], month.Totals);
 
         // El ranking por asesor agrupa sobre una propiedad con conversor de valor (MemberId) y
         // resuelve la etiqueta al email, igual que el listado.
@@ -55,16 +56,81 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal(tenant.OwnerEmail, advisor.Label);
         Assert.Equal(1, advisor.EntityCount);
         Assert.Equal(1, advisor.Count);
-        Assert.Equal(quotation.Total, advisor.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], advisor.Totals);
 
         var rankedClient = Assert.Single(summary.ByClient);
         Assert.Equal(customer.Id, rankedClient.Id);
         Assert.Equal("Verde Esencial S.A.S.", rankedClient.Label);
         Assert.Equal(customer.Cuc, rankedClient.Secondary);
-        Assert.Equal(quotation.Total, rankedClient.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], rankedClient.Totals);
 
         // Sin rango de fechas no hay periodo anterior contra el cual comparar.
         Assert.Null(summary.Previous);
+    }
+
+    /// <summary>
+    /// Review Focus 5 and plan decision A10. A tenant with COP and EUR orders gets one amount per
+    /// currency in every money figure of the summary, never a sum across them. The client ranking
+    /// orders by the total in the tenant default currency (COP), then by count: the EUR client with
+    /// the numerically largest total ranks last, behind the EUR client with two orders.
+    /// </summary>
+    [Fact]
+    public async Task CopAndEurOrdersComeBackAsSeparateTotalsAndRankByTheDefaultCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var pesoCustomer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var bigEuroCustomer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var frequentEuroCustomer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var copProduct = await CreateProductAsync(client, tenant.TenantId);
+        // Numerically larger than the COP order: a ranking that added currencies would put it first.
+        var bigEurProduct = await CreateProductAsync(
+            client, tenant.TenantId, prices: new Dictionary<string, decimal> { ["EUR"] = 900_000m });
+        var smallEurProduct = await CreateProductAsync(
+            client, tenant.TenantId, prices: new Dictionary<string, decimal> { ["EUR"] = 10m });
+        var inPesos = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, pesoCustomer.Id, copProduct);
+        var bigInEuros = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, bigEuroCustomer.Id, bigEurProduct, currency: "EUR");
+        var firstSmallInEuros = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, frequentEuroCustomer.Id, smallEurProduct, currency: "EUR");
+        var secondSmallInEuros = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, frequentEuroCustomer.Id, smallEurProduct, currency: "EUR");
+        QuotationResponse[] inEuros = [bigInEuros, firstSmallInEuros, secondSmallInEuros];
+        foreach (var quotation in inEuros.Prepend(inPesos))
+        {
+            await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        }
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(4, summary.OrderCount);
+        Assert.Equal(
+            [new MoneyAmount("COP", inPesos.Subtotal), new MoneyAmount("EUR", inEuros.Sum(quotation => quotation.Subtotal))],
+            summary.Subtotals);
+        Assert.Equal(
+            [new MoneyAmount("COP", inPesos.TaxAmount), new MoneyAmount("EUR", inEuros.Sum(quotation => quotation.TaxAmount))],
+            summary.TaxAmounts);
+        MoneyAmount[] totals =
+            [new MoneyAmount("COP", inPesos.Total), new MoneyAmount("EUR", inEuros.Sum(quotation => quotation.Total))];
+        Assert.Equal(totals, summary.Totals);
+        Assert.Equal(totals, Assert.Single(summary.Monthly).Totals);
+        // One advisor: its entry carries both currencies, never their sum.
+        Assert.Equal(totals, Assert.Single(summary.ByAdvisor).Totals);
+
+        Assert.Equal(
+            [pesoCustomer.Id, frequentEuroCustomer.Id, bigEuroCustomer.Id],
+            summary.ByClient.Select(entry => entry.Id));
+        Assert.Equal([new MoneyAmount("COP", inPesos.Total)], summary.ByClient[0].Totals);
+        Assert.Equal(2, summary.ByClient[1].Count);
+        Assert.Equal(
+            [new MoneyAmount("EUR", firstSmallInEuros.Total + secondSmallInEuros.Total)],
+            summary.ByClient[1].Totals);
+        Assert.Equal([new MoneyAmount("EUR", bigInEuros.Total)], summary.ByClient[2].Totals);
     }
 
     /// <summary>
@@ -103,9 +169,9 @@ public sealed class OrdersReportSummaryApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
         Assert.Equal(1, summary.OrderCount);
-        Assert.Equal(kept.Subtotal, summary.Subtotal);
-        Assert.Equal(kept.TaxAmount, summary.TaxAmount);
-        Assert.Equal(kept.Total, summary.Total);
+        Assert.Equal([new MoneyAmount("COP", kept.Subtotal)], summary.Subtotals);
+        Assert.Equal([new MoneyAmount("COP", kept.TaxAmount)], summary.TaxAmounts);
+        Assert.Equal([new MoneyAmount("COP", kept.Total)], summary.Totals);
         Assert.Equal(1, Assert.Single(summary.Monthly).Count);
         Assert.Equal(1, Assert.Single(summary.ByAdvisor).Count);
         Assert.Equal(1, Assert.Single(summary.ByClient).Count);
@@ -147,9 +213,9 @@ public sealed class OrdersReportSummaryApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
         Assert.Equal(1, summary.OrderCount);
-        Assert.Equal(quotation.Subtotal, summary.Subtotal);
-        Assert.Equal(quotation.TaxAmount, summary.TaxAmount);
-        Assert.Equal(quotation.Total, summary.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Subtotal)], summary.Subtotals);
+        Assert.Equal([new MoneyAmount("COP", quotation.TaxAmount)], summary.TaxAmounts);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.Totals);
         Assert.Equal(1, Assert.Single(summary.Monthly).Count);
     }
 
@@ -176,7 +242,7 @@ public sealed class OrdersReportSummaryApiTests
         Assert.Equal(1, summary.OrderCount);
         var month = Assert.Single(summary.Monthly);
         Assert.Equal((2026, 12), (month.Year, month.Month));
-        Assert.Equal(quotation.Total, month.Total);
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], month.Totals);
     }
 
     /// <summary>
@@ -201,7 +267,7 @@ public sealed class OrdersReportSummaryApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(summary);
         Assert.Equal(0, summary.OrderCount);
-        Assert.Equal(0m, summary.Total);
+        Assert.Empty(summary.Totals);
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByAdvisor);
         Assert.Empty(summary.ByClient);
@@ -240,7 +306,7 @@ public sealed class OrdersReportSummaryApiTests
 
         Assert.NotNull(summary.Previous);
         Assert.Equal(0, summary.Previous.Count);
-        Assert.Equal(0m, summary.Previous.Total);
+        Assert.Empty(summary.Previous.Totals);
     }
 
     /// <summary>403 y no 404, igual que el listado: un 404 confirmaria que el tenant existe.</summary>
@@ -294,5 +360,141 @@ public sealed class OrdersReportSummaryApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-17 §7. El total ya incluye el envío cobrado; el resumen y la fila del listado
+    /// llevan el subtotal y el IVA del envío por separado, así que
+    /// <c>subtotal + IVA + subtotal del envío + IVA del envío</c> cierra con el total.
+    /// </summary>
+    [Fact]
+    public async Task SummaryClosesWithFreight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, [.. ManagerPermissions, .. FreightSetupPermissions]);
+        using var client = tenant.Client;
+        await ConfigureFreightTaxAsync(client, tenant.TenantId);
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId,
+            shipping: new ShippingRequest(null, "Charged", 15000m, false));
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+        var page = await client.GetFromJsonAsync<ReportPageDto<OrdersReportItem>>(
+            $"{ReportsUrl(tenant.TenantId)}/orders", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal([new MoneyAmount("COP", 12605.04m)], summary.FreightSubtotals);
+        Assert.Equal([new MoneyAmount("COP", 2394.96m)], summary.FreightTaxAmounts);
+        Assert.Equal(
+            summary.Totals.Single().Amount,
+            summary.Subtotals.Single().Amount + summary.TaxAmounts.Single().Amount
+                + summary.FreightSubtotals.Single().Amount + summary.FreightTaxAmounts.Single().Amount);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal(12605.04m, row.FreightSubtotal);
+        Assert.Equal(2394.96m, row.FreightTaxAmount);
+        Assert.Equal(row.Total, row.Subtotal + row.TaxAmount + row.FreightSubtotal + row.FreightTaxAmount);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-23 §2: <c>bySource</c> trae siempre los cuatro orígenes, en orden fijo e
+    /// incluso en cero, y <c>withoutClient</c> viene aunque no haya ventas a consumidor final.
+    /// </summary>
+    [Fact]
+    public async Task BySourceAlwaysCarriesTheFourSourcesInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        var manual = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 1, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.BySource[0].Totals);
+        Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.BySource[1].Totals);
+        Assert.Empty(summary.BySource[2].Totals);
+        Assert.Empty(summary.BySource[3].Totals);
+        Assert.Equal(0, summary.WithoutClient.Count);
+        Assert.Empty(summary.WithoutClient.Totals);
+    }
+
+    /// <summary>Un tenant sin pedidos también trae los cuatro orígenes en cero: la salida temprana
+    /// del cero no puede saltarse la regla de colecciones fijas.</summary>
+    [Fact]
+    public async Task BySourceComesCompleteEvenWithoutOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.All(summary.BySource, slice => Assert.Equal(0, slice.Count));
+        Assert.NotNull(summary.WithoutClient);
+        Assert.Equal(0, summary.WithoutClient.Count);
+    }
+
+    [Fact]
+    public async Task SourceFilterNarrowsTheWholeSummary()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var customer = await CreateActiveCustomerAsync(client, tenant.TenantId);
+        var productId = await CreateProductAsync(client, tenant.TenantId);
+        var quotation = await CreateSentQuotationAsync(
+            client, factory, tenant.TenantId, customer.Id, productId);
+        await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
+        var manual = await CreateManualOrderAsync(client, tenant.TenantId);
+
+        var summary = await client.GetFromJsonAsync<OrdersReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?source=Manual", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(1, summary.OrderCount);
+        Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.Totals);
+        Assert.Equal(0, summary.BySource[0].Count);
+        Assert.Equal(1, summary.BySource[1].Count);
+    }
+
+    /// <summary>El contrato viaja en PascalCase: <c>pos</c> no es <c>Pos</c>. 422 con el campo en
+    /// el mapa <c>errors</c>, para que el frontend marque el control.</summary>
+    [Fact]
+    public async Task UnknownSourceIs422WithTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+
+        var response = await client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/orders/summary?source=pos",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Source", out _));
     }
 }

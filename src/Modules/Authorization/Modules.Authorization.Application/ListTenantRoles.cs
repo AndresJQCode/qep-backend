@@ -18,10 +18,11 @@ public sealed record ListTenantRolesQuery(TenantId TenantId)
 /// </remarks>
 public sealed class ListTenantRolesHandler(
     ITenantRoleCatalog roleCatalog,
-    IExecutionContext executionContext)
+    IExecutionContext executionContext,
+    IOperatorTenant operatorTenant)
     : IQueryHandler<ListTenantRolesQuery, IReadOnlyCollection<TenantRoleDefinition>>
 {
-    public Task<IReadOnlyCollection<TenantRoleDefinition>> HandleAsync(
+    public async Task<IReadOnlyCollection<TenantRoleDefinition>> HandleAsync(
         ListTenantRolesQuery query,
         CancellationToken cancellationToken)
     {
@@ -33,6 +34,12 @@ public sealed class ListTenantRolesHandler(
                 "The subject cannot read the roles of this tenant.");
         }
 
-        return roleCatalog.ListRolesAsync(query.TenantId.Value, cancellationToken);
+        var roles = await roleCatalog.ListRolesAsync(query.TenantId.Value, cancellationToken);
+        // Spec 2026-10-08 §2: el admin de fábrica lleva operator.* y no tiene que aparecer en el
+        // editor de otros tenants. Es la excepción a la regla de no filtrar lo guardado.
+        var isOperator = operatorTenant.IsOperator(query.TenantId.Value);
+        return roles
+            .Select(role => role with { Permissions = OperatorPermissionFilter.Apply(role.Permissions, isOperator) })
+            .ToArray();
     }
 }

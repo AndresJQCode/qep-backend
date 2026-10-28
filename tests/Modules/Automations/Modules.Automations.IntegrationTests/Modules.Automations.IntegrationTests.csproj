@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Un solo archivo del Anexo A: el de las pruebas unitarias, enlazado. -->
+    <EmbeddedResource Include="..\Modules.Automations.UnitTests\Fixtures\annex-a.json" Link="Fixtures\annex-a.json" />
+    <!-- Spec 2026-10-21 Anexo B, el flujo completo de Clasic (política, cliente nuevo, servicio técnico y mantenimiento): lo importa ClasicFlowEndToEndTests. -->
+    <EmbeddedResource Include="Fixtures\clasic.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
+  </ItemGroup>
+</Project>

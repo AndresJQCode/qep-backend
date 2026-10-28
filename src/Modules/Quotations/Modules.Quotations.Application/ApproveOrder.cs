@@ -25,7 +25,9 @@ public sealed class ApproveOrderHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    ITenantDirectory tenantDirectory,
+    IQuotationCustomerLookup customerLookup)
     : ICommandHandler<ApproveOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(
@@ -44,8 +46,18 @@ public sealed class ApproveOrderHandler(
         var approvedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        // Sólo con el pedido pendiente: uno ya aprobado sigue contestando not_pending, no esta exigencia.
+        // Antes de tocar el dominio y de auditar: un 422 aquí no deja historial ni auditoría.
+        if (order.Status == OrderStatus.Pending)
+        {
+            await BilledPersonTypeRequired.EnsureSatisfiedAsync(
+                tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
+        }
+
         var now = clock.UtcNow;
         order.Approve(approvedBy, now);
+        repository.AddHistoryEntry(OrderHistoryEntry.Create(
+            OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Approved, approvedBy, OrderChangeSummary.Approved(), now));
 
         auditPublisher.Publish(
             command.TenantId,

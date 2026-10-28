@@ -16,7 +16,38 @@ public interface ITenantDirectory
 
     Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken);
 
+    /// <summary>La moneda por defecto del tenant (un código del catálogo de monedas), o null si no tiene fila.</summary>
+    Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken);
+
     /// <summary>El logo vigente del tenant, o null sin logo. Es la única lectura que Quotations
     /// necesita de Tenancy para imprimir el logo en el PDF (decisión 9 del spec 2026-09-19).</summary>
     Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-08 §4: el estado del tenant, o null si no tiene fila (el tenant simulado del
+    /// stub). Es el puerto propio del stub para el estado: <see cref="ITenantModules.FindAsync"/> no cambia
+    /// su semántica de null («no enmascarar»), porque usarlo para "inactivo" le daría al stub todo lo de
+    /// X-Permissions sin enmascarar.</summary>
+    Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>El formato regional del tenant en una sola lectura, o null si no tiene fila. Lo usa
+    /// <c>/auth/me</c>: el formato llega a todo miembro sin pedir <c>tenancy.settings.read</c>
+    /// —no es sensible— y antes de la primera pintura de la SPA.</summary>
+    Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Los cuatro valores que deciden cómo se muestran fechas, horas y montos del tenant, más
+/// el país y el requisito de tipo de persona (spec 2026-10-26), que `/auth/me` publica por la misma
+/// razón: `cashier` no puede leer `/settings`. Los dos con default para no tocar a quien sólo arma
+/// el formato regional.</summary>
+public sealed record TenantRegionalSettings(
+    string TimeZone,
+    string DateFormat,
+    string DefaultCurrency,
+    string NumberFormat,
+    string Country = "CO",
+    PersonTypeRequirement PersonTypeRequirement = PersonTypeRequirement.Never)
+{
+    /// <summary>Lo guardado sólo manda si el tenant es colombiano; es lo que se publica.</summary>
+    public PersonTypeRequirement EffectivePersonTypeRequirement =>
+        PersonTypeRequirementPolicy.Effective(Country, PersonTypeRequirement);
 }

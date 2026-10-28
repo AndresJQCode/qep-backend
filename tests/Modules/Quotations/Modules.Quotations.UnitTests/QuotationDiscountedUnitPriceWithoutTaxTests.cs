@@ -39,7 +39,7 @@ public sealed class QuotationDiscountedUnitPriceWithoutTaxTests
         var item = quotation.Items.Single();
 
         Assert.Equal(40_500m, item.DiscountedUnitPriceWithoutTax);
-        Assert.Equal(item.DiscountedUnitPrice, item.DiscountedUnitPriceWithoutTax);
+        Assert.Equal(item.DiscountedUnitPriceUnder(quotation.PriceRounding), item.DiscountedUnitPriceWithoutTax);
     }
 
     // 12 × 35.900 = 430.800; el 15% son 64.620 y se cobran 366.180. IVA: 366.180 × 19 / 119 =
@@ -93,6 +93,7 @@ public sealed class QuotationDiscountedUnitPriceWithoutTaxTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -102,7 +103,7 @@ public sealed class QuotationDiscountedUnitPriceWithoutTaxTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage, int taxPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,

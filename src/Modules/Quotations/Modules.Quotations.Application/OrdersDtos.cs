@@ -3,149 +3,241 @@ namespace Modules.Quotations.Application;
 public sealed record OrderPaymentProofDto(
     Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
+public sealed record OrderHistoryEntryDto(
+    Guid Id, string EventType, DateTimeOffset EventAt, Guid? MemberId, string? Details);
+
+/// <summary>
+/// El pedido con sus datos propios (spec 2026-10-15 §4). Ningún campo es un enum del dominio:
+/// <c>Source</c>, <c>Status</c> y <c>PaymentStatus</c> viajan con el nombre del enum, mismo criterio
+/// que <c>QuotationDto.Status</c>. <c>CustomerVatSurplus</c> es el valor **efectivo**
+/// (<c>Order.AppliesVatSurplus</c>): facturando a consumidor final el IVA se cobra aunque el cliente
+/// tenga excedente, y la pantalla imprime «exento» con sólo ver esto en true. <c>BillingAccount</c> es null
+/// sólo en el cálculo previo sin cuenta (la pantalla precia la línea antes de elegir la empresa que
+/// factura); un pedido guardado siempre la trae.
+/// </summary>
 public sealed record OrderDto(
     Guid Id,
     string OrderNumber,
-    Guid QuotationId,
+    string Source,
+    Guid? QuotationId,
+    string? ExternalReference,
+    Guid ClientId,
+    Guid AdvisorId,
     string Status,
-    // PaymentStatus es texto y no el enum del dominio: ningún DTO expone un enum de dominio
-    // directamente, mismo criterio que QuotationDto.Status.
     string PaymentStatus,
+    string? PaymentMethod,
+    string Currency,
+    bool IsRetail,
+    int? GlobalScaleFloor,
+    bool BillingUsesBusinessName,
+    bool IsStorePickup,
+    bool BillsToFinalConsumer,
+    bool? BillingWithRetention,
+    bool? BillingVatSurplus,
+    bool CustomerVatSurplus,
+    decimal Subtotal,
+    decimal TaxPercentage,
+    decimal TaxAmount,
+    decimal DiscountAmount,
+    decimal Total,
+    decimal RetentionAmount,
+    decimal NetTotal,
     string? Notes,
+    QuotationBillingAccountDto? BillingAccount,
+    IReadOnlyCollection<QuotationPartyDto> Parties,
+    IReadOnlyCollection<QuotationItemDto> Items,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
-    /// <summary>Cuándo se aprobó y quién. Null mientras el pedido sigue pendiente de revisión.
-    /// </summary>
     DateTimeOffset? ApprovedAt,
     Guid? ApprovedBy,
-    /// <summary>Cuándo se anuló, quién (id de membership) y por qué (spec 2026-09-16). Null
-    /// mientras el pedido no se anula.</summary>
     DateTimeOffset? CancelledAt,
     Guid? CancelledBy,
     string? CancellationReason,
-    /// <summary>Cuándo se marcó como facturado y quién (id de membership, spec 2026-10-05). Null
-    /// mientras el pedido no está facturado; revertir la facturación los vuelve a null.</summary>
     DateTimeOffset? InvoicedAt,
     Guid? InvoicedBy,
     string? RitualCollectionSyncId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    /// <summary>El token de concurrencia del pedido (spec 2026-09-17, decisión 6): el frontend lo
-    /// manda en <c>If-Match</c> al guardar la edición. Sube con cada cambio del pedido, no
-    /// necesariamente de a uno.</summary>
     long Version,
-    IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs);
+    IReadOnlyCollection<OrderPaymentProofDto> PaymentProofs,
+    /// <summary>La entrega por envío, con forma fija también en recogida. Ver <see cref="ShippingDto"/>.</summary>
+    ShippingDto Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>; 0 salvo <c>Charged</c>. <c>Subtotal</c> y
+    /// <c>TaxAmount</c> siguen siendo sólo productos (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
+    decimal FreightTaxAmount,
+    /// <summary>Cómo llamó la tienda al envío (spec de Shopify §6.2.5); null fuera del camino externo. En la
+    /// respuesta viaja dentro de <c>shipping</c> (<see cref="OrderShippingResponse"/>).</summary>
+    string? ExternalShippingTitle);
 
-/// <summary>Un comprobante de pago, tal como viaja en el request de conversión (US-14): el
-/// archivo ya se subió a Storage por fuera de este llamado, acá sólo se referencia.
-/// <paramref name="PaidOn"/> es la fecha del soporte que escribe quien lo adjunta (a pedido,
-/// 2026-10-08), fecha ISO sin hora; el pedido la guarda con el comprobante y el Excel la muestra en
-/// «Fecha Pago N». Último y con default: el asistente de conversión y <c>POST /orders/{id}/proofs</c>
-/// comparten este record y hay quien lo construye posicionalmente. Que sea obligatoria queda como
-/// decisión pendiente.</summary>
+/// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
+/// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
+public sealed record OrderDetailDto(
+    OrderDto Order,
+    string? QuotationNumber,
+    IReadOnlyCollection<OrderHistoryEntryDto> History);
+
 public sealed record OrderPaymentProofRequest(Guid FileId, decimal Amount, DateOnly? PaidOn = null);
 
-/// <summary>La corrección de un comprobante que ya existe (a pedido, 2026-09): a diferencia de
-/// <see cref="OrderPaymentProofRequest"/>, lleva el id del comprobante a corregir. El monto
-/// siempre se corrige; <paramref name="NewFileId"/> además reemplaza el archivo (a pedido,
-/// 2026-09-15) cuando el que se subió no era el correcto — null para corregir sólo el
-/// monto. <paramref name="PaidOn"/> (a pedido, 2026-10-08) es la fecha del soporte, igual que en
-/// <see cref="OrderPaymentProofRequest"/>: la pantalla de edición la precarga con la guardada y la
-/// manda junto al monto, así que lo que llega reemplaza lo guardado y null (o ausente) la borra —
-/// no es un PATCH parcial, mismo criterio que <c>Notes</c>. Distinto de <paramref name="NewFileId"/>,
-/// donde null conserva el archivo porque subir uno es caro. Último parámetro, con default, porque
-/// los tres anteriores ya se pasan posicionalmente.</summary>
 public sealed record OrderPaymentProofUpdateRequest(
     Guid ProofId, decimal Amount, Guid? NewFileId = null, DateOnly? PaidOn = null);
 
-/// <summary>US-13 a US-16: el asistente de conversión. No lleva cliente/productos/totales —
-/// todo eso se hereda de la cotización, que ya existe.</summary>
+/// <summary>
+/// El cuerpo de un pedido manual (spec 2026-10-15 §5.2) y de su cálculo previo: el mismo que la
+/// pantalla arma para una cotización, más el estado de pago y los comprobantes, porque un pedido nace
+/// vendido. <c>Items</c> lleva producto y cantidad: el precio, el descuento por escala y la tasa los
+/// resuelve el backend, igual que al convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en
+/// el cálculo previo, que sin ella precia en la moneda por defecto del tenant.
+/// </summary>
+public sealed record CreateOrderRequest(
+    Guid ClientId,
+    string? PaymentMethod,
+    string? Notes,
+    bool IsRetail,
+    int? GlobalScaleFloor,
+    QuotationPartiesRequest? Parties,
+    QuotationBillingAccountRequest? BillingAccount,
+    IReadOnlyList<OrderEditItemRequest> Items,
+    string PaymentStatus,
+    IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
+    /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
+    /// <c>CashOnDelivery</c>, el <c>PaymentStatus</c> tiene que ser <c>PaymentPending</c> (spec 2026-10-17 §6).</summary>
+    ShippingRequest? Shipping = null);
+
 public sealed record ConvertQuotationToOrderRequest(
     string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
 
-/// <summary>Sumar comprobantes a un pedido que ya existe, y de paso corregir el monto de los
-/// que ya tenía cargados (a pedido, 2026-09) — un solo request para las dos cosas, en vez de uno
-/// por cada comprobante que se toca.</summary>
 public sealed record AddOrderPaymentProofsRequest(
     string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
-    /// <summary>Reemplaza <c>Order.Notes</c> entero (a pedido, 2026-09). La pantalla la precarga
-    /// con lo que ya había, así que ausente o null la borra igual que al crear el pedido — no es
-    /// un PATCH parcial.</summary>
     string? Notes = null,
-    /// <summary>Comprobantes ya cargados cuyo monto se corrige (a pedido, 2026-09). El archivo
-    /// no viaja: no cambia, sólo lo hace el importe. Ausente o vacío, no se corrige ninguno.
-    /// Último parámetro a propósito: los tres anteriores ya existían y algún caller los pasa
-    /// posicionalmente — agregar éste al final no les rompe el orden.</summary>
     IReadOnlyCollection<OrderPaymentProofUpdateRequest>? UpdatedProofs = null);
 
-/// <summary>Una línea a agregar a la cotización de un pedido pendiente — mismo par que
-/// <see cref="BatchQuotationItemAdditionRequest"/>, DTO propio porque viaja en un endpoint de
-/// Orders y no de Quotations.</summary>
-public sealed record OrderItemAdditionRequest(Guid ProductId, decimal Quantity);
+/// <summary>Una línea a agregar al pedido, por variante (spec 2026-10-20 §4; antes <c>productId</c>).</summary>
+public sealed record OrderItemAdditionRequest(Guid VariantId, decimal Quantity);
 
-/// <summary>
-/// "Editar" un pedido pendiente para sumarle productos (a pedido, 2026-09): sólo mientras
-/// <see cref="OrderStatus.Pending"/> — ver <see cref="Quotation.AddItemAfterConversion"/> y
-/// <see cref="Order.RecalculatePaymentStatus"/>. Una tanda y no un producto por request, mismo
-/// motivo que <see cref="BatchUpdateQuotationItemsRequest"/>: quien edita puede agregar varios
-/// de una sola vez.
-/// </summary>
 public sealed record AddOrderItemsRequest(IReadOnlyList<OrderItemAdditionRequest> ToAdd);
 
-/// <summary>Anular un pedido (spec 2026-09-16). El motivo viaja nullable a propósito: ausente,
-/// vacío o largo lo rechaza el dominio con su propio código (order.order.cancellation_reason_*),
-/// que es lo que el frontend mapea — no hay validador que lo convierta en validation.failed.</summary>
 public sealed record CancelOrderRequest(string? Reason);
 
-/// <summary>Una línea del estado deseado de «Editar pedido» (spec 2026-09-17).</summary>
-public sealed record OrderEditItemRequest(Guid ProductId, decimal Quantity);
+/// <summary>
+/// <c>POST /orders/{orderId}/send</c>. Mismo contrato que <see cref="SendQuotationRequest"/>:
+/// <paramref name="Recipient"/> es <c>"Customer"</c> (default) o <c>"Billing"</c>, una opción cerrada
+/// que el backend resuelve contra lo que el pedido ya guarda, nunca un teléfono suelto. <b>El cuerpo
+/// entero es opcional</b>: un cuerpo requerido rompió el envío de la cotización con 500
+/// (<c>SendWorksWithoutABody</c>).
+/// </summary>
+public sealed record SendOrderRequest(string? Recipient = null);
 
-/// <summary>Un comprobante nuevo del borrador. <paramref name="FileId"/> se omite en
-/// <c>POST /orders/{orderId}/preview</c>: los archivos se suben recién al guardar.
-/// <paramref name="PaidOn"/>, igual que en <see cref="OrderPaymentProofRequest"/>.</summary>
+/// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
+/// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede
+/// recordar uno distinto del que llegó de la tienda.</summary>
+public sealed record RecognizeOrderCarrierRequest(Guid CarrierId, bool RememberName);
+
+/// <summary>Una línea del estado deseado del pedido, por variante (spec 2026-10-20 §4; antes
+/// <c>productId</c>): dos tallas del mismo producto son dos líneas.</summary>
+public sealed record OrderEditItemRequest(Guid VariantId, decimal Quantity);
+
 public sealed record OrderEditProofAddRequest(Guid? FileId, decimal Amount, DateOnly? PaidOn = null);
 
-/// <summary>Los comprobantes del borrador. Ausentes o null equivalen a vacíos.</summary>
 public sealed record OrderEditProofsRequest(
     IReadOnlyList<OrderEditProofAddRequest>? Add,
     IReadOnlyList<OrderPaymentProofUpdateRequest>? Update,
     IReadOnlyList<Guid>? RemoveIds);
 
-/// <summary>
-/// El estado deseado completo de «Editar pedido» (spec 2026-09-17, decisión 2): mismo cuerpo para
-/// <c>PUT /orders/{orderId}</c> y <c>POST /orders/{orderId}/preview</c>. <c>Items</c> es la lista
-/// completa; <c>Notes</c> reemplaza el campo entero y null lo limpia.
-/// </summary>
+/// <summary>El guardado atómico de «Editar» pedido (spec 2026-09-17). <c>IsRetail</c> y
+/// <c>GlobalScaleFloor</c> son del pedido desde el spec 2026-10-15.</summary>
 public sealed record SaveOrderEditsRequest(
     IReadOnlyList<OrderEditItemRequest>? Items,
     OrderEditProofsRequest? Proofs,
     string? Notes,
-    /// <summary>El piso de escala global de la cotización del pedido, o null para quitarlo. Viaja
-    /// con el resto de la edición: cambiarlo recalcula contra la vista previa, igual que una
-    /// cantidad, y se persiste al guardar.</summary>
     int? GlobalScaleFloor = null,
-    /// <summary>Cotización detal de la cotización del pedido. Ausente se lee como false. Se aplica
-    /// antes que el piso: true con un piso no nulo en el mismo cuerpo es 422
-    /// quotation.retail.floor_not_allowed.</summary>
-    bool IsRetail = false);
+    bool IsRetail = false,
+    /// <summary>El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Ausente deja el guardado</b>: un
+    /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
+    ShippingRequest? Shipping = null,
+    /// <summary>A quién se le factura (spec 2026-10-26). <b>Ausente deja la facturación</b>: un frontend viejo
+    /// no la borra (Desvío 6). Presente, reemplaza el bloque entero: sin <c>Party</c> ni consumidor final
+    /// factura a los datos del cliente.</summary>
+    OrderBillingEditRequest? Billing = null);
 
-/// <summary><c>PaidOn</c> es la fecha del soporte que mandó el frontend al adjuntar (a pedido,
-/// 2026-10-08), o null si el comprobante no la trajo; <c>UploadedAt</c> sigue siendo el instante
-/// de la subida. Las dos viajan: la pantalla muestra la primera y conserva la segunda como
-/// referencia de cuándo se cargó.</summary>
+/// <summary>El bloque de facturación de «Editar pedido»: la parte propia (o ninguna), el consumidor final,
+/// la razón social del cliente y el perfil fiscal de la parte, como en <see cref="QuotationPartiesRequest"/>.</summary>
+public sealed record OrderBillingEditRequest(
+    QuotationPartyRequest? Party,
+    bool BillsToFinalConsumer = false,
+    bool BillingUsesBusinessName = false,
+    bool? BillingWithRetention = null,
+    bool? BillingVatSurplus = null);
+
+/// <summary>
+/// El envío del detalle del pedido: los campos de <see cref="ShippingResponse"/> más
+/// <see cref="ExternalShippingTitle"/>, el nombre con el que la tienda llamó al envío cuando QEP no reconoció la
+/// transportadora (spec de Shopify §6.2.5). BFF: viaja dentro de <c>shipping</c> para que la pantalla ofrezca
+/// «Reconocer este nombre» al lado de «Elegir transportadora» sin leer el espejo de Shopify. Es un tipo aparte y
+/// no un campo nuevo de <see cref="ShippingResponse"/> porque las rutas de cotizaciones no cambian, y la fila de
+/// la lista no lo necesita.
+/// </summary>
+public sealed record OrderShippingResponse(
+    bool IsStorePickup,
+    ShippingCarrierResponse? Carrier,
+    string? ChargeMode,
+    decimal FreightAmount,
+    int FreightTaxPercentage,
+    decimal FreightSubtotal,
+    decimal FreightTaxAmount,
+    bool CashOnDelivery,
+    string? ExternalShippingTitle)
+{
+    public static OrderShippingResponse From(ShippingDto shipping, string? externalShippingTitle)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        var common = ShippingResponse.From(shipping);
+        return new(
+            common.IsStorePickup, common.Carrier, common.ChargeMode, common.FreightAmount, common.FreightTaxPercentage,
+            common.FreightSubtotal, common.FreightTaxAmount, common.CashOnDelivery, externalShippingTitle);
+    }
+}
+
 public sealed record OrderPaymentProofResponse(
     Guid Id, Guid FileId, decimal Amount, DateTimeOffset UploadedAt, DateOnly? PaidOn);
 
+/// <summary>Espeja <see cref="OrderDto"/>, incluido el <c>BillingAccount</c> null del cálculo previo sin
+/// cuenta. Las líneas no viajan acá: van resueltas (nombre, código, imagen, escalas) en
+/// <see cref="OrderDetailResponse.Items"/>.</summary>
 public sealed record OrderResponse(
     Guid Id,
     string OrderNumber,
-    Guid QuotationId,
+    string Source,
+    Guid? QuotationId,
+    string? ExternalReference,
+    Guid ClientId,
+    Guid AdvisorId,
     string Status,
     string PaymentStatus,
+    string? PaymentMethod,
+    string Currency,
+    bool IsRetail,
+    int? GlobalScaleFloor,
+    bool BillingUsesBusinessName,
+    bool IsStorePickup,
+    bool BillsToFinalConsumer,
+    bool? BillingWithRetention,
+    bool? BillingVatSurplus,
+    bool CustomerVatSurplus,
+    decimal Subtotal,
+    decimal TaxPercentage,
+    decimal TaxAmount,
+    decimal DiscountAmount,
+    decimal Total,
+    decimal RetentionAmount,
+    decimal NetTotal,
     string? Notes,
+    QuotationBillingAccountDto? BillingAccount,
+    IReadOnlyCollection<QuotationPartyResponse> Parties,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
     DateTimeOffset? ApprovedAt,
@@ -159,53 +251,61 @@ public sealed record OrderResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long Version,
-    IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs);
+    IReadOnlyCollection<OrderPaymentProofResponse> PaymentProofs,
+    /// <summary>La entrega por envío. El motivo BFF de su forma está en <see cref="ShippingDto"/>; la del pedido
+    /// suma <c>externalShippingTitle</c> (<see cref="OrderShippingResponse"/>).</summary>
+    OrderShippingResponse Shipping,
+    /// <summary>Envío sin IVA que suma a <c>Total</c>. Un total que no cierra se explica con un campo:
+    /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
+    decimal FreightSubtotal,
+    /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
+    decimal FreightTaxAmount);
 
-/// <summary>
-/// Una fila del listado de pedidos (SALE-01). El pedido es 1:1 con su cotizacion y no repite
-/// cliente, asesora, moneda ni totales -- los lee de ella--, asi que la fila los trae ya
-/// resueltos: sin eso, quien pinta la tabla hace un GET por fila contra la cotizacion, y otro
-/// contra Customers para poner un nombre.
-/// </summary>
+/// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
+/// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
+/// <c>ExternalReference</c> van al final para que la tabla dibuje la insignia de origen y el
+/// <c>#1001</c> debajo del número sin pedir el detalle.</summary>
 public sealed record OrderListItemResponse(
     Guid Id,
     string OrderNumber,
-    /// <summary>La cotizacion de origen, para poder abrirla desde la fila.</summary>
-    Guid QuotationId,
-    string QuotationNumber,
+    Guid? QuotationId,
+    string? QuotationNumber,
     Guid ClientId,
-    /// <summary>Null cuando el cliente ya no existe: <c>ClientId</c> es una referencia blanda
-    /// entre modulos y un pedido historico tiene que poder leerse igual.</summary>
     string? ClientName,
     Guid AdvisorId,
-    /// <summary>El nombre de la asesora, o su correo si la membresía no tiene nombre: el mismo
-    /// campo que <see cref="QuotationListItemResponse.AdvisorName"/>, que reemplaza al
-    /// <c>AdvisorEmail</c> de antes (spec 2026-09-11, D1, nota del 2026-09-15). El porqué está en
-    /// <see cref="OrderListItemDto.AdvisorName"/>.</summary>
     string? AdvisorName,
     string Status,
     string PaymentStatus,
-    /// <summary>La forma de pago de la cotizacion de origen -- la columna "Pago" del listado.
-    /// Null en toda cotizacion creada desde que el editor dejo de pedirla, que es la razon por
-    /// la que la columna hoy viene vacia y no un error de esta consulta.</summary>
     string? PaymentMethod,
-    /// <summary>Cuando se convirtio. Es la fecha del pedido: el listado ordena y filtra por
-    /// ella.</summary>
     DateTimeOffset ConvertedAt,
-    /// <summary>La moneda de <c>Total</c>, heredada de la cuenta de cobro de la cotizacion.
-    /// Viaja por fila con el mismo criterio que en cotizaciones.</summary>
     string Currency,
-    decimal Total);
+    decimal Total,
+    string Source,
+    string? ExternalReference,
+    /// <summary>La entrega por envío de la fila, misma forma que en el detalle (con el subtotal y el IVA del
+    /// envío adentro): la grilla muestra transportadora y contraentrega sin pedir el pedido entero.</summary>
+    ShippingResponse Shipping);
+
+public sealed record SourceQuotationResponse(Guid Id, string QuotationNumber);
+
+public sealed record OrderHistoryEntryResponse(
+    Guid Id, string EventType, DateTimeOffset EventAt, Guid? MemberId, string? MemberName, string? Details);
 
 /// <summary>
-/// El detalle de un pedido (SALE-04): el pedido y la cotizacion de la que salio, compuesta igual
-/// que en su propio detalle --cliente resuelto, lineas con nombre y foto del producto, cuenta de
-/// cobro--. Las dos en una respuesta y no dos llamadas encadenadas: el pedido no guarda cliente ni
-/// productos, asi que la pantalla necesita las dos para dibujarse.
+/// El detalle de un pedido para la pantalla (spec 2026-10-15 §6.2): el pedido, el cliente y el asesor
+/// resueltos, la cuenta de cobro con su empresa, las líneas con su producto, la cotización de origen
+/// cuando la hay, el historial y los pisos de escala disponibles. Deja de viajar la cotización.
 /// </summary>
 public sealed record OrderDetailResponse(
     OrderResponse Order,
-    QuotationResponse Quotation);
+    QuotationClientResponse? Client,
+    string? AdvisorName,
+    string? AdvisorEmail,
+    QuotationBillingResponse? BillingAccount,
+    IReadOnlyCollection<QuotationItemResponse> Items,
+    SourceQuotationResponse? SourceQuotation,
+    IReadOnlyCollection<OrderHistoryEntryResponse> History,
+    int[] AvailableFloors);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

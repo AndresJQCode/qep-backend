@@ -78,12 +78,13 @@ public static class ReportingEndpoints
         Guid? advisorId = null,
         Guid? clientId = null,
         string? paymentStatus = null,
+        string? source = null,
         int page = 1,
         int pageSize = ReportPaging.DefaultPageSize)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersReportQuery(
-                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus),
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus, source),
                 page,
                 pageSize),
             cancellationToken);
@@ -103,11 +104,12 @@ public static class ReportingEndpoints
         DateOnly? to = null,
         Guid? advisorId = null,
         Guid? clientId = null,
-        string? paymentStatus = null)
+        string? paymentStatus = null,
+        string? source = null)
     {
         var summary = await dispatcher.QueryAsync(
             new GetOrdersReportSummaryQuery(
-                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus)),
+                new OrdersReportFilter(tenantId, from, to, advisorId, clientId, paymentStatus, source)),
             cancellationToken);
 
         return Results.Ok(summary);
@@ -164,12 +166,15 @@ public static class ReportingEndpoints
         Guid? productId = null,
         Guid? changedBy = null,
         string? field = null,
+        string? currency = null,
         int page = 1,
-        int pageSize = ReportPaging.DefaultPageSize)
+        int pageSize = ReportPaging.DefaultPageSize,
+        Guid? variantId = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListPriceChangeReportQuery(
-                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field),
+                new PriceChangeReportFilter(
+                    tenantId, from, to, productId, changedBy, field, currency, variantId),
                 page,
                 pageSize),
             cancellationToken);
@@ -187,11 +192,14 @@ public static class ReportingEndpoints
         DateOnly? to = null,
         Guid? productId = null,
         Guid? changedBy = null,
-        string? field = null)
+        string? field = null,
+        string? currency = null,
+        Guid? variantId = null)
     {
         var summary = await dispatcher.QueryAsync(
             new GetPriceChangeReportSummaryQuery(
-                new PriceChangeReportFilter(tenantId, from, to, productId, changedBy, field)),
+                new PriceChangeReportFilter(
+                    tenantId, from, to, productId, changedBy, field, currency, variantId)),
             cancellationToken);
 
         return Results.Ok(summary);

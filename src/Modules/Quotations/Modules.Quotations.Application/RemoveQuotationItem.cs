@@ -7,14 +7,18 @@ namespace Modules.Quotations.Application;
 public sealed record RemoveQuotationItemCommand(
     Guid TenantId, Guid QuotationId, Guid ItemId) : ICommand<QuotationDto>;
 
+// Spec 2026-10-15 §4.4: una cotización Converted queda congelada; quitar líneas de un pedido
+// pendiente se hace sobre el pedido (SaveOrderEdits). Ver el comentario gemelo en
+// UpdateQuotationItemHandler.
 public sealed class RemoveQuotationItemHandler(
     IQuotationRepository repository,
-    IOrderRepository orderRepository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
     IQuotationProductPricingLookup pricingLookup,
+    IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock)
@@ -30,23 +34,6 @@ public sealed class RemoveQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
-
-        // Mismo endpoint para dos pantallas (a pedido, 2026-09-15) — ver el comentario gemelo en
-        // UpdateQuotationItemHandler.
-        Order? order = null;
-        if (quotation.Status == QuotationStatus.Converted)
-        {
-            order = await orderRepository.FindByQuotationIdAsync(
-                command.TenantId, quotation.Id, cancellationToken)
-                ?? throw OrderNotFound.For(command.QuotationId);
-
-            if (order.Status != OrderStatus.Pending)
-            {
-                throw new QuotationsDomainException(
-                    "order.order.not_pending",
-                    "Products can only be removed while the order is pending.");
-            }
-        }
 
         // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
         // — ver Quotation.RefreshCustomerTaxProfile.
@@ -64,24 +51,17 @@ public sealed class RemoveQuotationItemHandler(
         // que es lo único que sabe a qué producto apuntaba.
         var removed = quotation.Items.FirstOrDefault(item => item.Id.Value == command.ItemId);
         var products = removed is null
-            ? new Dictionary<Guid, QuotationProductRef>()
+            ? new Dictionary<Guid, QuotationVariantRef>()
             : await productLookup.FindManyAsync(
-                command.TenantId, [removed.ProductId], cancellationToken);
+                command.TenantId, [removed.VariantId], cancellationToken);
         var productName = removed is not null
-            && products.TryGetValue(removed.ProductId, out var product)
+            && products.TryGetValue(removed.VariantId, out var product)
                 ? product.Name
                 : "un producto";
 
         var now = clock.UtcNow;
         // El propio agregado traduce un itemId desconocido a quotation.item.not_found.
-        if (order is not null)
-        {
-            quotation.RemoveItemAfterConversion(new QuotationItemId(command.ItemId), updatedBy, now);
-        }
-        else
-        {
-            quotation.RemoveItem(new QuotationItemId(command.ItemId), updatedBy, now);
-        }
+        quotation.RemoveItem(new QuotationItemId(command.ItemId), updatedBy, now);
 
         repository.AddHistoryEntry(QuotationHistoryEntry.Create(
             QuotationHistoryEntryId.New(),
@@ -93,8 +73,8 @@ public sealed class RemoveQuotationItemHandler(
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
-            order is not null ? "quotation.order.item_removed" : "quotation.quotation.item_removed",
-            order?.Id.ToString() ?? quotation.Id.ToString(),
+            "quotation.quotation.item_removed",
+            quotation.Id.ToString(),
             "success",
             now);
 
@@ -102,9 +82,8 @@ public sealed class RemoveQuotationItemHandler(
         // total del grupo, y puede caerse el mínimo de compra de la cotización entera. Va antes de
         // mirar el total.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, quotation, now, cancellationToken);
 
-        order?.RecalculatePaymentStatus(quotation.NetTotal, quotation.Currency, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return quotation.ToDto();

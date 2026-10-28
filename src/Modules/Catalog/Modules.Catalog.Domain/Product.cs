@@ -18,29 +18,31 @@ public sealed class Product
     public const int MaxPackagingUnits = 10;
     public const int MaxPackagingUnitValue = 100_000;
 
+    // Topes de variantes (spec 2026-10-20 §3.2-§3.3, decisiones 3 y 5 del owner): los de Shopify
+    // para opciones y variantes, así un producto de Shopify siempre cabe; la galería, del owner.
+    public const int MaxOptions = 3;
+    public const int MaxVariants = 2048;
+    public const int MaxGalleryImages = 250;
+
+    private readonly List<ProductVariant> _variants = [];
+    private readonly List<ProductGalleryImage> _gallery = [];
+    private readonly List<ProductOption> _options = [];
+
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
-    private Product()
-    {
-        Name = string.Empty;
-        Code = string.Empty;
-    }
+    private Product() => Name = string.Empty;
 
     private Product(
         ProductId id,
         Guid tenantId,
         string name,
-        string code,
         ProductDetails details,
-        ProductPricing pricing,
         DateTimeOffset occurredAt)
     {
         Id = id;
         TenantId = tenantId;
         Name = name;
-        Code = code;
         Apply(details);
-        ApplyPricing(pricing);
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -53,28 +55,13 @@ public sealed class Product
 
     public string Name { get; private set; }
 
-    /// <summary>Único por tenant; la unicidad vive en IX_products_tenant_code.</summary>
-    public string Code { get; private set; }
-
     public bool IsActive { get; private set; }
 
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
-    // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por el
-    // precio en USD/COP de más abajo.
+    // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por los
+    // precios por moneda, que desde 2026-10-20 son de cada variante.
 
     public string? Description { get; private set; }
-
-    /// <summary>
-    /// Cuál de los archivos del producto es su imagen principal. **Referencia blanda, sin FK.**
-    ///
-    /// `Storage` ya modela la propiedad al revés —`CreateFileRequest` lleva `OwnerId` y
-    /// `OwnerType`— pero eso responde *qué archivos pertenecen a este producto*, que pueden ser
-    /// varios. *Cuál es la portada* es dato del catálogo, no del almacenamiento.
-    ///
-    /// Sin foreign key a propósito: `catalog` no puede referenciar `storage.file_resources` sin
-    /// romper "ningún módulo lee las tablas de otro".
-    /// </summary>
-    public Guid? ImageFileId { get; private set; }
 
     /// <summary>
     /// Tasa de impuesto del producto. La FK de base garantiza que la fila exista, **pero no que
@@ -82,38 +69,41 @@ public sealed class Product
     /// </summary>
     public TaxRateId? TaxRateId { get; private set; }
 
-    // --- CAT-09: precio base y final en dos monedas fijas, más las escalas por cantidad.
-    // Único precio del producto — reemplazó por completo al viejo Price, retirado.
-
-    /// <summary>Precio base en dólares. Junto con <see cref="PriceBaseCop"/>, al menos uno de
-    /// los dos es obligatorio: un producto sin precio en ninguna moneda no es válido.</summary>
-    public decimal? PriceBaseUsd { get; private set; }
-
-    /// <summary>Precio base en pesos colombianos. Ver <see cref="PriceBaseUsd"/>.</summary>
-    public decimal? PriceBaseCop { get; private set; }
-
-    private readonly List<PriceScale> _priceScales = [];
+    /// <summary>
+    /// Categoría del producto. Igual que <see cref="TaxRateId"/>: la FK garantiza que exista, no
+    /// que sea del mismo tenant; eso lo verifica el handler antes de asignarla.
+    /// </summary>
+    public ProductCategoryId? CategoryId { get; private set; }
 
     /// <summary>
-    /// Los tramos de precio por cantidad del producto. Se reemplazan enteros en cada
-    /// <see cref="Update"/> — mismo criterio que los cinco opcionales de <see cref="Apply"/>:
-    /// el verbo PUT reemplaza el recurso completo, así que una escala que no viene en el
-    /// request deja de existir.
+    /// Las opciones de la biblioteca del tenant (<see cref="OptionDefinition"/>) que arman las
+    /// variantes, en orden; a lo sumo <see cref="MaxOptions"/>. Vacía en un producto sin opciones,
+    /// que tiene exactamente una variante: la variante por defecto.
     /// </summary>
-    public IReadOnlyCollection<PriceScale> PriceScales => _priceScales;
+    public IReadOnlyList<Guid> OptionIds =>
+        _options.OrderBy(option => option.Position).Select(option => option.OptionDefinitionId.Value).ToArray();
+
+    /// <summary>Las variantes en orden de presentación (<see cref="ProductVariant.Position"/>).
+    /// Nunca vacía.</summary>
+    public IReadOnlyList<ProductVariant> Variants =>
+        _variants.OrderBy(variant => variant.Position).ToArray();
+
+    /// <summary>Las fotos del producto en orden; la primera es la principal.</summary>
+    public IReadOnlyList<ProductGalleryImage> Gallery =>
+        _gallery.OrderBy(image => image.Position).ToArray();
 
     /// <summary>
-    /// Los empaques en que viene el producto, en unidades: una keratina que llega en cajas de 100
-    /// y de 150 guarda <c>[100, 150]</c>. Entre 1 y <see cref="MaxPackagingUnitValue"/>, a lo sumo
-    /// <see cref="MaxPackagingUnits"/>, sin repetidos y en orden ascendente.
-    ///
-    /// Son del producto y no de la escala desde el 2026-10-01: antes cada escala guardaba un solo
-    /// número, y un producto con dos empaques no tenía cómo decirlo. La escala conserva la
-    /// restricción <see cref="PriceScaleRestriction.PackagingUnit"/>, que ahora significa "usa
-    /// estos empaques". Por eso no pueden estar vacíos mientras una escala la use; al revés sí
-    /// vale — un producto puede declarar sus empaques sin que ninguna escala los exija.
+    /// La imagen principal: el archivo de la primera foto de la <see cref="Gallery"/>. Hasta las
+    /// variantes era un campo propio; ahora se deriva, así que no puede contradecir a la galería.
+    /// Sigue siendo **referencia blanda, sin FK**: <c>catalog</c> no referencia
+    /// <c>storage.file_resources</c>.
     /// </summary>
-    public IReadOnlyList<int> PackagingUnits { get; private set; } = [];
+    public Guid? ImageFileId =>
+        _gallery.Count == 0 ? null : _gallery.MinBy(image => image.Position)!.FileId;
+
+    // Código, código de barras, precios, escalas y empaques son de cada variante (spec 2026-10-20
+    // §3.2): el producto no los expone. Un producto sin opciones los lee de Variants[0], su variante
+    // por defecto, que lleva el mismo id que el producto.
 
     /// <summary>
     /// Token de concurrencia optimista, como en <c>Tenant</c> y <c>Membership</c>. Cada mutación
@@ -132,34 +122,118 @@ public sealed class Product
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// Crea un producto sin opciones, con su variante por defecto. La variante toma el mismo id
+    /// que el producto (<c>defaultVariant.Id</c> se ignora): es lo que hace la migración con los
+    /// productos de antes, y así un producto nuevo y uno migrado se ven igual.
+    /// </summary>
     public static Product Create(
         ProductId id,
         Guid tenantId,
         string name,
-        string code,
         ProductDetails details,
-        ProductPricing pricing,
-        DateTimeOffset occurredAt) =>
-        new(id, tenantId, NormalizeName(name), NormalizeCode(code), details, pricing, occurredAt);
-
-    public void Update(
-        string name,
-        string code,
-        ProductDetails details,
-        ProductPricing pricing,
+        ProductVariantInput defaultVariant,
+        IReadOnlyList<Guid> galleryFileIds,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(defaultVariant);
+
+        ArgumentNullException.ThrowIfNull(galleryFileIds);
+        EnsureGallery(galleryFileIds);
+
+        var product = new Product(id, tenantId, NormalizeName(name), details, occurredAt);
+        product.ReplaceGallery(galleryFileIds);
+        product.ReplaceVariants([defaultVariant with { Id = id.Value }], optionCount: 0, isCreate: true);
+        return product;
+    }
+
+    /// <summary>
+    /// Crea un producto con sus opciones y todas sus variantes de una vez (el POST del
+    /// formulario), con <c>Version = 1</c> como cualquier producto nuevo. La primera variante toma el
+    /// id del producto, igual que la variante por defecto de <see cref="Create(ProductId, Guid, string, ProductDetails, ProductVariantInput, IReadOnlyList{Guid}, DateTimeOffset)"/>;
+    /// el resto nace con id nuevo. Los <c>Id</c> que traigan las variantes se ignoran: en un
+    /// producto nuevo no hay ninguna guardada con la cual emparejar.
+    /// </summary>
+    public static Product Create(
+        ProductId id,
+        Guid tenantId,
+        string name,
+        ProductDetails details,
+        IReadOnlyList<Guid> optionIds,
+        IReadOnlyList<ProductVariantInput> variants,
+        IReadOnlyList<Guid> galleryFileIds,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(optionIds);
+        ArgumentNullException.ThrowIfNull(variants);
+        ArgumentNullException.ThrowIfNull(galleryFileIds);
+
+        var normalizedName = NormalizeName(name);
+        EnsureOptions(optionIds);
+        EnsureGallery(galleryFileIds);
+        EnsureVariantCount(variants);
+
+        var product = new Product(id, tenantId, normalizedName, details, occurredAt);
+        product.ReplaceOptions(optionIds);
+        product.ReplaceGallery(galleryFileIds);
+        product.ReplaceVariants(
+            variants.Select((variant, index) => variant with { Id = index == 0 ? id.Value : null }).ToArray(),
+            optionIds.Count,
+            isCreate: true);
+        return product;
+    }
+
+    /// <summary>
+    /// Reemplaza el recurso entero, como el PUT: nombre, datos opcionales, opciones, variantes y
+    /// galería. Las variantes se emparejan por id (spec §3.3.1); una variante guardada que no
+    /// viene se rechaza con <c>catalog.variant.missing_in_request</c> —no se borra en silencio—,
+    /// salvo que esté en <paramref name="deletedVariantIds"/>.
+    /// Los topes y los ids se validan antes de tocar nada; las reglas entre variantes (combinación,
+    /// código, valores por opción), antes de aplicar la primera. Lo que falla después —precios,
+    /// escalas, empaques de una variante— deja el agregado a medias, como antes de las variantes:
+    /// la excepción aborta la unidad de trabajo y nada se guarda.
+    /// </summary>
+    /// <param name="deletedVariantIds">Variantes guardadas que se borran (spec §3.3). El
+    /// agregado no sabe si una variante está en uso —las líneas viven en otros módulos—, así que
+    /// sólo borra las que el llamador le nombra después de comprobarlo; una ausente que no está
+    /// acá sigue siendo <c>missing_in_request</c>. Una variante en uso no llega por este camino:
+    /// el llamador la manda en <paramref name="variants"/>, inactiva.</param>
+    public void Update(
+        string name,
+        ProductDetails details,
+        IReadOnlyList<Guid> optionIds,
+        IReadOnlyList<ProductVariantInput> variants,
+        IReadOnlyList<Guid> galleryFileIds,
+        DateTimeOffset occurredAt,
+        IReadOnlyCollection<Guid>? deletedVariantIds = null)
+    {
+        ArgumentNullException.ThrowIfNull(optionIds);
+        ArgumentNullException.ThrowIfNull(variants);
+        ArgumentNullException.ThrowIfNull(galleryFileIds);
+        var deleted = (deletedVariantIds ?? []).ToHashSet();
+
         EnsureActive();
 
-        Name = NormalizeName(name);
-        Code = NormalizeCode(code);
+        var normalizedName = NormalizeName(name);
+        EnsureOptions(optionIds);
+        EnsureGallery(galleryFileIds);
+        EnsureVariantCount(variants);
+        EnsureSavedVariantsArePresent(variants, deleted);
+
+        Name = normalizedName;
         Apply(details);
-        ApplyPricing(pricing);
+        ReplaceOptions(optionIds);
+        ReplaceGallery(galleryFileIds);
+        // Antes de ReplaceVariants: una variante borrada libera su código y su combinación para las
+        // del cuerpo. EF borra la fila (y en cascada sus precios, escalas, valores e historial) en el
+        // mismo guardado.
+        _variants.RemoveAll(variant => deleted.Contains(variant.Id.Value));
+        ReplaceVariants(variants, optionIds.Count, isCreate: false);
         Version++;
         UpdatedAt = occurredAt;
     }
 
-    // Asigna los cuatro siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
+    // Asigna todos siempre, incluidos los null. Se puede **limpiar** un campo, no sólo
     // setearlo: una implementación que ignore los null "para no pisar" deja campos imborrables y
     // pasa todas las demás pruebas. Por eso CA-CAT-04-03 existe.
     private void Apply(ProductDetails details)
@@ -167,130 +241,281 @@ public sealed class Product
         var normalized = details.Normalized();
 
         Description = normalized.Description;
-        ImageFileId = normalized.ImageFileId;
         TaxRateId = normalized.TaxRateId;
+        CategoryId = normalized.CategoryId;
     }
 
-    // CAT-09.
-    private void ApplyPricing(ProductPricing pricing)
+    private static void EnsureOptions(IReadOnlyList<Guid> optionIds)
     {
-        EnsurePriceNotNegative(pricing.BaseUsd);
-        EnsurePriceNotNegative(pricing.BaseCop);
-
-        // Incondicional: todo producto necesita precio en al menos una moneda, sin excepción.
-        if (pricing.BaseUsd is null && pricing.BaseCop is null)
+        if (optionIds.Count > MaxOptions)
         {
             throw new CatalogDomainException(
-                "catalog.product.price_base_currency_required",
-                "The product requires a base price in at least one currency.");
+                "catalog.product.option_limit",
+                $"A product cannot have more than {MaxOptions} options.");
         }
 
-        PriceBaseUsd = pricing.BaseUsd;
-        PriceBaseCop = pricing.BaseCop;
-        PackagingUnits = NormalizePackagingUnits(pricing.PackagingUnits);
-
-        ReplaceScales(pricing.Scales);
-
-        // Después de las escalas y no antes: un error propio de una escala (rango, descuento,
-        // múltiplo) dice más que éste, que sólo aplica si la escala ya es válida por su cuenta.
-        if (PackagingUnits.Count == 0
-            && _priceScales.Any(scale => scale.Restriction == PriceScaleRestriction.PackagingUnit))
+        if (optionIds.Distinct().Count() != optionIds.Count)
         {
             throw new CatalogDomainException(
-                "catalog.product.packaging_units_required",
-                "A price scale restricted to the packaging unit requires the product to have at least one packaging unit.");
+                "catalog.product.option_duplicate",
+                "A product cannot use the same option twice.");
         }
     }
 
-    // Rechaza en vez de corregir: un cero, un negativo o un repetido es un error de tipeo, y
-    // descartarlo en silencio le guardaría al usuario algo distinto de lo que cree haber cargado.
-    // Ordenar sí se hace aquí — el orden no cambia el significado del conjunto.
-    //
-    // Los topes (MaxPackagingUnits, MaxPackagingUnitValue) no salen de ningún empaque real: la
-    // regla de Quotations cuenta por restos módulo el empaque menor y recorre cada empaque, así que
-    // sin ellos un dato absurdo aquí se volvería memoria y tiempo en cada cotización.
-    private static int[] NormalizePackagingUnits(IReadOnlyCollection<int> packagingUnits)
+    private static void EnsureGallery(IReadOnlyList<Guid> galleryFileIds)
     {
-        if (packagingUnits.Count > MaxPackagingUnits)
+        if (galleryFileIds.Count > MaxGalleryImages)
         {
             throw new CatalogDomainException(
-                "catalog.product.packaging_units.too_many",
-                $"A product cannot have more than {MaxPackagingUnits} packaging units.");
+                "catalog.product.gallery_limit",
+                $"A product cannot have more than {MaxGalleryImages} images.");
         }
 
-        if (packagingUnits.Any(unit => unit is <= 0 or > MaxPackagingUnitValue))
+        // Rechaza en vez de deduplicar, como los empaques: la misma foto dos veces es un error del
+        // que la mandó, y descartarla en silencio le cambiaría el orden que eligió.
+        if (galleryFileIds.Distinct().Count() != galleryFileIds.Count)
         {
             throw new CatalogDomainException(
-                "catalog.product.packaging_units.invalid",
-                $"Every packaging unit must be between 1 and {MaxPackagingUnitValue}.");
+                "catalog.product.gallery_duplicate",
+                "The product gallery cannot repeat an image.");
+        }
+    }
+
+    private static void EnsureVariantCount(IReadOnlyList<ProductVariantInput> variants)
+    {
+        if (variants.Count == 0)
+        {
+            throw new CatalogDomainException(
+                "catalog.variant.required",
+                "A product requires at least one variant.");
         }
 
-        var sorted = packagingUnits.Order().ToArray();
-        for (var index = 1; index < sorted.Length; index++)
+        if (variants.Count > MaxVariants)
         {
-            if (sorted[index] == sorted[index - 1])
+            throw new CatalogDomainException(
+                "catalog.variant.limit_exceeded",
+                $"A product cannot have more than {MaxVariants} variants.");
+        }
+    }
+
+    private void EnsureSavedVariantsArePresent(
+        IReadOnlyList<ProductVariantInput> variants,
+        IReadOnlyCollection<Guid> deletedVariantIds)
+    {
+        // Con conjuntos: hasta 2.048 variantes por lado, y Exists por cada id sería cuadrático.
+        var savedIds = _variants.Select(saved => saved.Id.Value).ToHashSet();
+        foreach (var id in deletedVariantIds)
+        {
+            if (!savedIds.Contains(id))
             {
                 throw new CatalogDomainException(
-                    "catalog.product.packaging_units.duplicated",
-                    "The packaging units cannot repeat a value.");
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
             }
         }
 
-        return sorted;
+        var requested = new HashSet<Guid>(deletedVariantIds);
+        foreach (var variant in variants)
+        {
+            if (variant.Id is not { } id)
+            {
+                continue;
+            }
+
+            if (!requested.Add(id))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.duplicated_in_request",
+                    "The same variant cannot come twice in the request.");
+            }
+
+            if (!savedIds.Contains(id))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
+            }
+        }
+
+        if (savedIds.Any(id => !requested.Contains(id)))
+        {
+            throw new CatalogDomainException(
+                "catalog.variant.missing_in_request",
+                "Every saved variant must come in the request; a missing one is neither deleted nor kept.");
+        }
     }
 
     /// <summary>
-    /// Reemplaza **sólo** las escalas: los precios base y el resto de los datos maestros
-    /// quedan como estaban. Es lo que necesita copiar las escalas de otro producto.
+    /// Valida las variantes entre sí y después las aplica. Lo de cada variante por su cuenta
+    /// (precios, escalas, empaques) lo valida la variante al aplicarse.
+    /// </summary>
+    private void ReplaceVariants(
+        IReadOnlyList<ProductVariantInput> variants,
+        int optionCount,
+        bool isCreate)
+    {
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        var barcodes = new HashSet<string>(StringComparer.Ordinal);
+        var activeCombinations = new HashSet<string>(StringComparer.Ordinal);
+        var normalized = new List<(ProductVariantInput Input, string Code, string? Barcode, Guid? ImageId)>(variants.Count);
+
+        foreach (var variant in variants)
+        {
+            if (variant.OptionValueIds.Count != optionCount)
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.value_count_mismatch",
+                    "Every variant needs exactly one value per product option.");
+            }
+
+            // Sólo entre activas: quitar una opción puede dejar dos variantes con la misma
+            // combinación, y la que sobra queda inactiva (spec §3.3.1).
+            if (variant.IsActive
+                && !activeCombinations.Add(ProductVariant.CombinationKeyOf(variant.OptionValueIds)))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.combination_duplicate",
+                    "Two active variants of a product cannot have the same combination of values.");
+            }
+
+            var code = ProductVariant.NormalizeCode(variant.Code);
+            // Mismo código que la colisión entre productos (IX de base): para quien llena el
+            // formulario es el mismo error, un código que otro ya usa.
+            if (!codes.Add(code))
+            {
+                throw new CatalogDomainException(
+                    "catalog.product.code_taken",
+                    "Another variant of this product already uses that code.");
+            }
+
+            var barcode = ProductVariant.NormalizeBarcode(variant.Barcode);
+            if (barcode is not null && !barcodes.Add(barcode))
+            {
+                throw new CatalogDomainException(
+                    "catalog.variant.barcode_taken",
+                    "Another variant of this product already uses that barcode.");
+            }
+
+            normalized.Add((variant, code, barcode, ResolveGalleryImage(variant.GalleryFileId)));
+        }
+
+        for (var position = 0; position < normalized.Count; position++)
+        {
+            var (input, code, barcode, imageId) = normalized[position];
+            var target = isCreate || input.Id is null
+                ? null
+                : _variants.Find(saved => saved.Id.Value == input.Id.Value);
+
+            if (target is null)
+            {
+                var variantId = input.Id is { } fixedId && isCreate
+                    ? new VariantId(fixedId)
+                    : VariantId.New();
+                target = ProductVariant.Create(variantId, Id, TenantId);
+                _variants.Add(target);
+            }
+
+            target.Apply(input, code, barcode, position, imageId);
+        }
+    }
+
+    // En el lugar, por posición: la fila se identifica por (producto, posición), y EF seguiría una
+    // borrada y una agregada con la misma clave en el mismo guardado.
+    private void ReplaceOptions(IReadOnlyList<Guid> optionIds)
+    {
+        _options.RemoveAll(option => option.Position >= optionIds.Count);
+        for (var position = 0; position < optionIds.Count; position++)
+        {
+            var existing = _options.Find(option => option.Position == position);
+            if (existing is null)
+            {
+                _options.Add(new ProductOption(new OptionDefinitionId(optionIds[position]), position));
+            }
+            else
+            {
+                existing.OptionDefinitionId = new OptionDefinitionId(optionIds[position]);
+            }
+        }
+    }
+
+    private Guid? ResolveGalleryImage(Guid? fileId)
+    {
+        if (fileId is not { } value)
+        {
+            return null;
+        }
+
+        return _gallery.Find(image => image.FileId == value)?.Id
+            ?? throw new CatalogDomainException(
+                "catalog.variant.image_not_in_gallery",
+                "The variant image must be one of the product gallery images.");
+    }
+
+    // En el lugar: una foto que sigue en la galería conserva su fila (y su id, al que apuntan las
+    // variantes); sólo cambia de posición.
+    private void ReplaceGallery(IReadOnlyList<Guid> galleryFileIds)
+    {
+        _gallery.RemoveAll(image => !galleryFileIds.Contains(image.FileId));
+        for (var position = 0; position < galleryFileIds.Count; position++)
+        {
+            var fileId = galleryFileIds[position];
+            var existing = _gallery.Find(image => image.FileId == fileId);
+            if (existing is null)
+            {
+                _gallery.Add(new ProductGalleryImage(Guid.CreateVersion7(), fileId, position));
+            }
+            else
+            {
+                existing.Position = position;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reemplaza **sólo** las escalas de las variantes indicadas: los precios base y el resto de los
+    /// datos maestros quedan como estaban. Es lo que necesita copiar las escalas de otra variante
+    /// (spec 2026-10-20 §4).
     ///
     /// No pasa por <see cref="Update"/> a propósito. Ese verbo reemplaza el producto entero,
-    /// así que el caso de uso tendría que reenviarle nombre, código y los tres opcionales
-    /// para no borrarlos — y un lote que arrastre mal cualquiera de esos campos los limpia en
-    /// todos los destinos de una vez. Acá no hay nada que arrastrar.
+    /// así que el caso de uso tendría que reenviarle nombre, variantes y galería para no
+    /// borrarlos — y un lote que arrastre mal cualquiera de esos campos los limpia en todos los
+    /// destinos de una vez. Acá no hay nada que arrastrar.
     ///
-    /// Las escalas entrantes se validan contra el precio base **de este** producto, que es la
-    /// razón por la que la copia recalcula el precio final antes de llegar acá. Ver
-    /// <see cref="PriceScaleCopy"/>.
+    /// Recibe **todas** las variantes del producto que la copia toca de una vez, y no una por
+    /// llamada, para que el producto cuente un solo cambio (una sola subida de <see cref="Version"/>)
+    /// por más variantes que reciban escalas. Una variante que no es de este producto da
+    /// <c>catalog.variant.not_found</c>.
     ///
     /// Y quedan **incompletas**: sin restricción, múltiplo, empaque ni agrupación
-    /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce, y por eso
-    /// el nombre dice "copiadas": el formulario pasa por <see cref="Update"/>, que sigue exigiendo
-    /// la restricción.
+    /// (<see cref="PriceScale.CreateIncomplete"/>). Es el único camino que las produce.
     /// </summary>
     public void ApplyCopiedPriceScales(
-        IReadOnlyCollection<PriceScaleInput> scales,
+        IReadOnlyDictionary<VariantId, IReadOnlyCollection<PriceScaleInput>> scalesByVariant,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(scalesByVariant);
         EnsureActive();
 
-        _priceScales.Clear();
-        foreach (var scale in scales)
+        // Primero resolver todas, después mutar: una variante ajena no deja a las anteriores
+        // copiadas a medias en un agregado que el llamador aún podría guardar.
+        var targets = new List<(ProductVariant Variant, IReadOnlyCollection<PriceScaleInput> Scales)>(
+            scalesByVariant.Count);
+        foreach (var (variantId, scales) in scalesByVariant)
         {
-            _priceScales.Add(
-                PriceScale.CreateIncomplete(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
+            var variant = _variants.Find(saved => saved.Id == variantId)
+                ?? throw new CatalogDomainException(
+                    "catalog.variant.not_found",
+                    "The variant does not belong to this product.");
+            targets.Add((variant, scales));
+        }
+
+        foreach (var (variant, scales) in targets)
+        {
+            variant.ApplyCopiedPriceScales(scales);
         }
 
         Version++;
         UpdatedAt = occurredAt;
-    }
-
-    private void ReplaceScales(IReadOnlyCollection<PriceScaleInput> scales)
-    {
-        _priceScales.Clear();
-        foreach (var scale in scales)
-        {
-            _priceScales.Add(PriceScale.Create(Id, TenantId, scale, PriceBaseUsd, PriceBaseCop));
-        }
-    }
-
-    private static void EnsurePriceNotNegative(decimal? value)
-    {
-        if (value < 0m)
-        {
-            throw new CatalogDomainException(
-                "catalog.product.price_negative",
-                "A product price cannot be negative.");
-        }
     }
 
     public void Deactivate(DateTimeOffset occurredAt)
@@ -310,9 +535,10 @@ public sealed class Product
     // La vuelta de Deactivate, que hasta CAT-07 no existia: un producto inactivo era terminal,
     // porque Update abre con EnsureActive() y ningun metodo devolvia IsActive a true.
     //
-    // No revalida la unicidad del codigo a proposito. IX_products_tenant_code es unico **sin
-    // filtro parcial**, asi que desactivar nunca libero el codigo y reactivar no puede colisionar
-    // con nadie. Si alguien le agrega un filtro parcial al indice, CA-CAT-07-09 se cae y avisa.
+    // No revalida la unicidad del codigo a proposito. IX_product_variants_tenant_code (antes
+    // IX_products_tenant_code) es unico **sin filtro parcial**, asi que desactivar nunca libera el
+    // codigo y reactivar no puede colisionar con nadie. Si alguien le agrega un filtro parcial al
+    // indice, CA-CAT-07-09 se cae y avisa.
     public void Activate(DateTimeOffset occurredAt)
     {
         if (IsActive)
@@ -347,15 +573,6 @@ public sealed class Product
             "The product name is required.",
             "catalog.product.name_too_long",
             $"The product name cannot exceed {NameMaxLength} characters.");
-
-    private static string NormalizeCode(string code) =>
-        Normalize(
-            code,
-            CodeMaxLength,
-            "catalog.product.code_required",
-            "The product code is required.",
-            "catalog.product.code_too_long",
-            $"The product code cannot exceed {CodeMaxLength} characters.");
 
     private static string Normalize(
         string value,

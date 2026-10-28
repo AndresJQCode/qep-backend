@@ -1,0 +1,238 @@
+using System.Text.RegularExpressions;
+using Modules.Tenancy.Domain;
+
+namespace Modules.Integrations.Domain;
+
+public enum IntegrationCategory
+{
+    Messaging,
+    Shipping,
+    Ai,
+
+    /// <summary>Spec 2026-10-15 §4.1: tiendas en línea (Shopify) de donde llegan pedidos.</summary>
+    Commerce,
+
+    /// <summary>Spec 2026-10-21 D-H1: APIs externas del tenant que el bloque HTTP de los chatbots consume.</summary>
+    Automation,
+}
+
+public enum FieldKind
+{
+    Text,
+    Secret,
+    Phone,
+    Url,
+}
+
+/// <summary>Spec 2026-10-09 §6.1: cómo se conecta un proveedor. <c>Form</c> es el formulario genérico;
+/// <c>MetaEmbeddedSignup</c> abre el popup de Meta y el backend llena los campos; <c>InstagramLogin</c>
+/// (spec 2026-10-14, decisión 2) manda a la ventana de autorización de Instagram y vuelve con un <c>code</c>
+/// que el backend canjea. <c>ShopifyOAuth</c> (spec 2026-10-15 §4.3) manda a la autorización de la tienda; la URL
+/// la arma el inicio de la instalación porque lleva el dominio y el <c>state</c> de cada intento. En los tres
+/// últimos el backend es dueño de todos los campos.</summary>
+public enum ProviderOnboarding
+{
+    Form,
+    MetaEmbeddedSignup,
+    InstagramLogin,
+    ShopifyOAuth,
+}
+
+/// <summary>
+/// Un campo que el proveedor pide para conectarse (spec 2026-10-08, «Catálogo»). Su clave es la del
+/// JSON y la de <c>fields.&lt;key&gt;</c> en el mapa <c>errors</c>. <see cref="Label"/> e
+/// <see cref="InvalidMessage"/> los ve una persona: en español, tuteando, y nunca con el valor.
+/// </summary>
+public sealed class FieldDefinition
+{
+    public const int KeyMaxLength = 40;
+
+    private static readonly Regex KeyShape = new(
+        @"^[a-zA-Z][a-zA-Z0-9]{1,39}\z",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public FieldDefinition(
+        string key,
+        string label,
+        FieldKind kind,
+        bool required,
+        int maxLength,
+        string? pattern,
+        string invalidMessage,
+        bool isInternal = false)
+    {
+        if (!IsValidKey(key))
+        {
+            throw new ArgumentException($"'{key}' is not a valid field key: it must match {KeyShape}.", nameof(key));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
+        ArgumentException.ThrowIfNullOrWhiteSpace(invalidMessage);
+
+        Key = key;
+        Label = label;
+        Kind = kind;
+        Required = required;
+        MaxLength = maxLength;
+        Pattern = pattern is null ? null : new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        InvalidMessage = invalidMessage;
+        Internal = isInternal;
+    }
+
+    public string Key { get; }
+
+    public string Label { get; }
+
+    public FieldKind Kind { get; }
+
+    public bool Required { get; }
+
+    public int MaxLength { get; }
+
+    public Regex? Pattern { get; }
+
+    public string InvalidMessage { get; }
+
+    /// <summary>Spec 2026-10-09 §6.1: lo llena el backend (Embedded Signup o el probador). No sale en
+    /// <c>GET /catalog</c>, sí en <c>ConnectionResponse</c>, y <c>POST</c>/<c>PUT</c> lo rechazan.</summary>
+    public bool Internal { get; }
+
+    public bool IsSecret => Kind == FieldKind.Secret;
+
+    public static bool IsValidKey(string? key) => key is not null && KeyShape.IsMatch(key);
+
+    public bool IsTooLong(string value) => value.Length > MaxLength;
+
+    /// <summary>
+    /// Sin caracteres de control —un <c>\0</c> en <c>text</c> o en <c>jsonb</c> lo rechaza PostgreSQL
+    /// con un 500 (Review Focus 1)—, sin surrogates sueltos (tampoco son UTF-8 válido) y con el
+    /// patrón del catálogo, si lo hay.
+    /// </summary>
+    public bool HasValidShape(string value) =>
+        // Esta revisión va antes del patrón y no se mueve: un patrón sin ancla estricta no frena un "\n" final.
+        !value.Any(char.IsControl) && !HasLoneSurrogate(value) && (Pattern is null || Pattern.IsMatch(value));
+
+    private static bool HasLoneSurrogate(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+            {
+                i++;
+            }
+            else if (char.IsSurrogate(value[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// Un proveedor del catálogo (spec 2026-10-08, «Catálogo»). Un proveedor nuevo es otra instancia en
+/// <see cref="IntegrationProviders"/>, su probador y sus pruebas, más la migración que cambia el
+/// <c>CHECK</c> de <c>provider_key</c> (D10).
+/// </summary>
+public sealed class IntegrationProvider
+{
+    public const int KeyMaxLength = 32;
+
+    private static readonly Regex KeyShape = new(
+        @"^[a-z0-9-]{2,32}\z",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public IntegrationProvider(
+        string key,
+        string displayName,
+        IntegrationCategory category,
+        IReadOnlyList<TenantModuleKey> consumingModules,
+        IReadOnlyList<FieldDefinition> fields,
+        int maxConnections,
+        ProviderOnboarding onboarding = ProviderOnboarding.Form,
+        bool requiresTenantEnablement = false)
+    {
+        if (!KeyShape.IsMatch(key))
+        {
+            throw new ArgumentException($"'{key}' is not a valid provider key: it must match {KeyShape}.", nameof(key));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
+        if (fields.Count == 0)
+        {
+            throw new ArgumentException("A provider needs at least one field.", nameof(fields));
+        }
+
+        if (fields.Select(field => field.Key).Distinct(StringComparer.Ordinal).Count() != fields.Count)
+        {
+            throw new ArgumentException("Field keys must be unique within a provider.", nameof(fields));
+        }
+
+        Key = key;
+        DisplayName = displayName;
+        Category = category;
+        ConsumingModules = consumingModules.ToArray();
+        Fields = fields.ToArray();
+        PublicFields = Fields.Where(field => !field.IsSecret).ToArray();
+        SecretFields = Fields.Where(field => field.IsSecret).ToArray();
+        MaxConnections = maxConnections;
+        Onboarding = onboarding;
+        RequiresTenantEnablement = requiresTenantEnablement;
+        CatalogFields = Fields.Where(field => !field.Internal).ToArray();
+    }
+
+    public string Key { get; }
+
+    public string DisplayName { get; }
+
+    public IntegrationCategory Category { get; }
+
+    /// <summary>Los módulos que usan este proveedor; vacío = nunca visible.</summary>
+    public IReadOnlyList<TenantModuleKey> ConsumingModules { get; }
+
+    public IReadOnlyList<FieldDefinition> Fields { get; }
+
+    /// <summary>Los que van a <c>fields</c> (jsonb).</summary>
+    public IReadOnlyList<FieldDefinition> PublicFields { get; }
+
+    /// <summary>Los que van a <c>connection_secrets</c>, cifrados.</summary>
+    public IReadOnlyList<FieldDefinition> SecretFields { get; }
+
+    /// <summary>Tope por tenant y proveedor (D1).</summary>
+    public int MaxConnections { get; }
+
+    public ProviderOnboarding Onboarding { get; }
+
+    /// <summary>Spec 2026-10-14 §6.1: con Embedded Signup, Instagram Login o Shopify OAuth los campos los escribe sólo el backend
+    /// (el signup, el probador o el worker de refresco); el formulario no crea ni edita más que el nombre.</summary>
+    public bool IsBackendOwned => Onboarding != ProviderOnboarding.Form;
+
+    /// <summary>Los que dibuja el formulario (sin internos). Secretos incluidos: el formulario los pide como password.</summary>
+    public IReadOnlyList<FieldDefinition> CatalogFields { get; }
+
+    public FieldDefinition? FindField(string key) =>
+        Fields.FirstOrDefault(field => string.Equals(field.Key, key, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Spec 2026-10-08, «Visibilidad»: alguno de sus módulos consumidores está efectivo. Con el stub de
+    /// desarrollo (<paramref name="modules"/> en <c>null</c>), todo; sin consumidores, nunca.
+    /// </summary>
+    public bool IsVisibleFor(TenantModuleSet? modules) =>
+        ConsumingModules.Count > 0 && (modules is null || ConsumingModules.Any(modules.IsEnabled));
+
+    /// <summary>Plan 2026-10-21: además del módulo consumidor, el operador tiene que habilitar el proveedor para el
+    /// tenant (fila <c>active</c> en <c>tenancy.tenant_providers</c>). Su clave tiene que estar en
+    /// <see cref="TenantProviderKeys.All"/>, o nadie podría habilitarlo.</summary>
+    public bool RequiresTenantEnablement { get; }
+
+    /// <summary>
+    /// Plan 2026-10-21: lo que no exige habilitación, siempre; lo demás, si su clave está en las habilitadas. Con el
+    /// stub de desarrollo (<paramref name="enabledProviders"/> en <c>null</c>), todo, como <see cref="IsVisibleFor"/>.
+    /// No reemplaza a la visibilidad: se pregunta después de ella.
+    /// </summary>
+    public bool IsEnabledFor(IReadOnlySet<string>? enabledProviders) =>
+        !RequiresTenantEnablement || enabledProviders is null || enabledProviders.Contains(Key);
+}

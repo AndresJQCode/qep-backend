@@ -92,8 +92,8 @@ public sealed class OrdersExportLayoutTests
         var changed = layout.Replace([Catalog("email", "Correo"), Fixed("Tipo Doc", "FV")], Later);
 
         Assert.True(changed);
-        // 49 del catálogo (desde el ajuste 2026-10-06) + 1 fija.
-        Assert.Equal(50, layout.Columns.Count);
+        // 57 del catálogo (desde «Razon social», 2026-10-28) + 1 fija.
+        Assert.Equal(58, layout.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal(OrdersExportColumnKind.Fixed, layout.Columns[1].Kind);
         Assert.Equal("company", layout.Columns[2].Key);
@@ -192,15 +192,19 @@ public sealed class OrdersExportLayoutTests
         AssertRejected(NewLayout(), columns, "quotations.orders_export_layout.header_duplicated");
     }
 
-    // Hallazgo 5: la regla mira la lista efectiva. Una fija "Email" con la llave `email` omitida
-    // chocaría con la que el catálogo completa al final.
+    // Hallazgo 5, ajustado por el flete (2026-10-17): una fija "EMAIL" con la llave `email` omitida
+    // chocaría con la que el catálogo completa al final. Ya no se rechaza: el efectivo la completa
+    // oculta, así que el layout guardado y el que lee el GET coinciden y el PUT lo acepta.
     [Fact]
-    public void AVisibleFixedHeaderThatMatchesAnOmittedCatalogColumnIsRejected()
+    public void AVisibleFixedHeaderThatMatchesAnOmittedCatalogColumnCompletesItHidden()
     {
         var columns = Defaults().Where(column => column.Key != "email").ToList();
         columns.Add(Fixed("EMAIL", "x"));
+        var layout = NewLayout();
 
-        AssertRejected(NewLayout(), columns, "quotations.orders_export_layout.header_duplicated");
+        Assert.True(layout.Replace(columns, Later));
+
+        Assert.False(layout.Columns.Single(column => column.Key == "email").Visible);
     }
 
     // Entre ocultas puede repetirse, y una oculta puede repetir a una visible: no viajan.
@@ -237,6 +241,24 @@ public sealed class OrdersExportLayoutTests
         Assert.True(layout.Replace(columns, Later));
         Assert.Equal(40, OrdersExportLayout.MaxFixedColumns);
         Assert.Equal(40, layout.Columns.Count(column => column.Kind == OrdersExportColumnKind.Fixed));
+    }
+
+    // Spec 2026-10-17 flete: "Valor Flete" nace visible, pero la hoja "MIGRACION 1" ya tiene la fija
+    // "valor flete". El efectivo completa la del catálogo oculta, y el resultado lo acepta Replace.
+    [Fact]
+    public void AMissingCatalogColumnWhoseHeaderCollidesWithAVisibleOneIsCompletedHidden()
+    {
+        var stored = new[]
+        {
+            OrdersExportColumnSetting.Fixed("valor flete", string.Empty, visible: true),
+            OrdersExportColumnSetting.Catalog("email", "Email", visible: true),
+        };
+
+        var effective = OrdersExportLayout.Effective(stored, OrdersExportColumnCatalog.Columns);
+
+        Assert.False(effective.Single(column => column.Key == "freight_amount").Visible);
+        var layout = NewLayout();
+        Assert.True(layout.Replace(effective, Now));
     }
 
     [Fact]

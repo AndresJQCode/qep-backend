@@ -43,6 +43,8 @@ public static class QuotationsInfrastructureExtensions
         services.AddScoped<IExportEventPublisher, ExportJobEventPublisher>();
         // Spec 2026-09-16, D9: el aviso a Storage de que un pedido adjuntó comprobantes públicos.
         services.AddScoped<IOrderPaymentProofEventPublisher, OrderPaymentProofEventPublisher>();
+        // Spec 2026-10-13 §4.5: enviada, convertida y pedido anulado, para Pipeline. En la misma unidad de trabajo que el cambio.
+        services.AddScoped<IQuotationLifecycleEventPublisher, QuotationLifecycleEventPublisher>();
         services.AddHostedService<ExportJobWorker>();
         // Sin estado: una instancia por proceso alcanza. Cada export crea su propio temporal.
         services.AddSingleton<IExportWorkbookWriter, OpenXmlExportWorkbookWriter>();
@@ -55,6 +57,13 @@ public static class QuotationsInfrastructureExtensions
         // El layout de columnas del Excel de pedidos (spec 2026-09-24): lo leen el PUT/GET del
         // tenant y el processor, cada uno en su scope.
         services.AddScoped<IOrdersExportLayoutRepository, OrdersExportLayoutRepository>();
+        // The tenant's minimum purchase (spec 2026-10-08, D7): read by the recalculation and the
+        // response composer, written by PUT /quotations/settings, all on the request's DbContext.
+        services.AddScoped<IQuotationSettingsStore, QuotationSettingsStore>();
+        // La conexión de WhatsApp que el tenant eligió (spec 2026-10-21 D5–D10): la lee y la guarda el envío.
+        services.AddScoped<IWhatsAppChannelChoiceStore, WhatsAppChannelChoiceStore>();
+        // Las transportadoras del tenant (spec 2026-10-17 §4).
+        services.AddScoped<ICarrierRepository, CarrierRepository>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, QuotationUserReferenceProbe>();
         // Sonda que Storage consulta antes de purgar un comprobante en staging (spec 2026-09-16, D11).
@@ -69,13 +78,13 @@ public static class QuotationsInfrastructureExtensions
         services.AddHostedService<QuotationExpirationWorker>();
 
         AddPdfRenderer(services);
-        AddWhatsAppSender(services, section.GetSection(nameof(QuotationsOptions.WhatsApp)));
+        AddWhatsAppSender(services);
 
         return services;
     }
 
     /// <summary>
-    /// A diferencia de `AddWhatsAppSender` acá no hay registro condicional ni no-op: no
+    /// Igual que `AddWhatsAppSender`, sin registro condicional ni no-op: no
     /// existe un PDF de mentira que sirva. Sin la key, `qcode-pdf` responde 401 y el envío
     /// falla con `quotation.pdf.render_failed` — ruidoso y rastreable, que es lo que se
     /// quiere. En producción `QuotationsOptionsValidator` ni siquiera deja arrancar.
@@ -90,34 +99,23 @@ public static class QuotationsInfrastructureExtensions
                 sp.GetRequiredService<IOptions<QuotationsOptions>>()));
 
     /// <summary>
-    /// `Zenvia` sólo se registra cuando las tres claves están presentes — igual que
-    /// `Notifications:EmailProvider=infobip` requiere sus tres, salvo que acá no hay un switch
-    /// explícito: no configurarlas basta para caer al envío de desarrollo (`LogWhatsAppSender`),
-    /// que no llama a nada externo. Así ningún `WebApplicationFactory` de las pruebas de
-    /// integración —que no configuran Zenvia— tiene que empezar a hacerlo sólo porque "Enviar"
-    /// ahora también manda un WhatsApp.
+    /// Zenvia sin cuenta propia: el token, el número y las plantillas llegan en cada envío
+    /// como el canal del tenant (plan 2026-10-21). No hay sender de log ni cuenta global: sin canal el
+    /// envío responde `quotation.whatsapp.no_channel`, y las pruebas registran dobles sólo en su host
+    /// (spec 2026-10-21 D18). El puerto de Meta (<see cref="IMetaWhatsAppSender"/>) lo registra Bootstrapper.
     /// </summary>
-    private static void AddWhatsAppSender(IServiceCollection services, IConfigurationSection whatsApp)
+    private static void AddWhatsAppSender(IServiceCollection services)
     {
-        var configured =
-            !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.ApiToken)]) &&
-            !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.FromNumber)]) &&
-            !string.IsNullOrWhiteSpace(whatsApp[nameof(WhatsAppOptions.TemplateId)]);
+        // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que
+        // `InfobipEmailChannel` en Notifications, el único otro cliente HTTP saliente del backend.
+        services.AddSingleton<IZenviaWhatsAppSender>(sp =>
+            new ZenviaWhatsAppSender(
+                new HttpClient(),
+                sp.GetRequiredService<IOptions<QuotationsOptions>>(),
+                sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
 
-        if (configured)
-        {
-            // `new HttpClient()` directo, sin `IHttpClientFactory` — mismo criterio que
-            // `InfobipEmailChannel` en Notifications, el único otro cliente HTTP saliente del
-            // backend.
-            services.AddSingleton<IWhatsAppSender>(sp =>
-                new ZenviaWhatsAppSender(
-                    new HttpClient(),
-                    sp.GetRequiredService<IOptions<QuotationsOptions>>(),
-                    sp.GetRequiredService<ILogger<ZenviaWhatsAppSender>>()));
-        }
-        else
-        {
-            services.AddSingleton<IWhatsAppSender, LogWhatsAppSender>();
-        }
+        // El Strategy por proveedor (spec 2026-10-21 D17). Scoped: el puerto de Meta cruza a Mensajería y usa el
+        // DbContext del request.
+        services.AddScoped<IWhatsAppSender, WhatsAppSenderRouter>();
     }
 }

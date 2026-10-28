@@ -1,9 +1,10 @@
 namespace Modules.Catalog.Domain;
 
 /// <summary>
-/// Compara el precio que un <see cref="Product"/> tiene hoy contra el que trae un
+/// Compara el precio que una variante de un <see cref="Product"/> tiene hoy contra el que trae un
 /// <see cref="ProductPricing"/> entrante, y devuelve una fila de histórico por cada valor que
-/// cambió.
+/// cambió. Cada fila lleva la variante cuyo precio cambió (spec 2026-10-20 §3.5): un cambio se
+/// registra **por variante**, y una variante cuyo precio no cambió no deja filas.
 ///
 /// **Puro y estático a propósito.** No toca el producto, no lee la base y no depende del reloj
 /// ni del usuario —los dos llegan por parámetro—, así que se prueba entero en memoria. Y tiene
@@ -12,6 +13,12 @@ namespace Modules.Catalog.Domain;
 /// </summary>
 public static class ProductPriceChangeDetector
 {
+    /// <summary>
+    /// El historial del PUT con variantes: compara cada variante **guardada** que viene
+    /// en el cuerpo contra su propio precio de hoy. Una variante nueva (sin id) no deja filas: nace
+    /// con su precio, igual que un producto nuevo no deja historial al crearse. Una variante
+    /// guardada que no viene no se compara: el agregado la rechaza o la resuelve por su cuenta.
+    /// </summary>
     /// <param name="changedBy">
     /// El sujeto que hace el cambio, que el caso de uso saca de <c>IExecutionContext</c>. No lo
     /// resuelve el dominio: el dominio no sabe quién está pidiendo nada.
@@ -23,61 +30,99 @@ public static class ProductPriceChangeDetector
     /// </param>
     public static IReadOnlyList<ProductPriceChange> Detect(
         Product product,
+        IReadOnlyList<ProductVariantInput> variants,
+        Guid changedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(variants);
+
+        // Un diccionario y no FirstOrDefault en el bucle: Product.Variants ordena y materializa en cada
+        // lectura, y con 2.048 variantes eso era un ordenamiento entero por fila del PUT.
+        var savedById = product.Variants.ToDictionary(saved => saved.Id.Value);
+        var changes = new List<ProductPriceChange>();
+        foreach (var input in variants)
+        {
+            if (input.Id is not { } id || !savedById.TryGetValue(id, out var variant))
+            {
+                continue;
+            }
+
+            changes.AddRange(BuildChanges(product, variant, input.Pricing, changedBy, occurredAt));
+        }
+
+        return changes;
+    }
+
+    /// <summary>
+    /// El historial de **una** variante: la que la copia de escalas está por pisar. La copia
+    /// trabaja de variante a variantes de uno o varios productos, así que no tiene una lista de
+    /// <see cref="ProductVariantInput"/> que comparar sino el <see cref="ProductPricing"/> que
+    /// <see cref="PriceScaleCopy.ToPricingFor"/> armó para cada destino. <paramref name="variant"/>
+    /// tiene que ser una variante de <paramref name="product"/>: las filas llevan el id de las dos.
+    /// </summary>
+    public static IReadOnlyList<ProductPriceChange> DetectForVariant(
+        Product product,
+        ProductVariant variant,
         ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
         ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(variant);
         ArgumentNullException.ThrowIfNull(newPricing);
 
+        if (variant.ProductId != product.Id)
+        {
+            throw new ArgumentException("The variant does not belong to the product.", nameof(variant));
+        }
+
+        return BuildChanges(product, variant, newPricing, changedBy, occurredAt);
+    }
+
+    private static List<ProductPriceChange> BuildChanges(
+        Product product,
+        ProductVariant variant,
+        ProductPricing newPricing,
+        Guid changedBy,
+        DateTimeOffset occurredAt)
+    {
         var changes = new List<ProductPriceChange>();
 
-        AddBasePriceChange(
-            changes,
-            product,
-            ProductPriceField.PriceBaseUsd,
-            product.PriceBaseUsd,
-            newPricing.BaseUsd,
-            changedBy,
-            occurredAt);
-        AddBasePriceChange(
-            changes,
-            product,
-            ProductPriceField.PriceBaseCop,
-            product.PriceBaseCop,
-            newPricing.BaseCop,
-            changedBy,
-            occurredAt);
-        AddScaleDiscountChanges(changes, product, newPricing, changedBy, occurredAt);
+        AddBasePriceChanges(changes, product, variant, newPricing, changedBy, occurredAt);
+        AddScaleDiscountChanges(changes, product, variant, newPricing, changedBy, occurredAt);
 
         return changes;
     }
 
-    // `!=` sobre `decimal?` compara por valor y no por representación: 100m y 100.00m son el
-    // mismo número con distinta escala decimal, y un formulario que reenvía el precio con otro
-    // formato no cambió el precio. Los dos null tampoco son un cambio; uno solo sí lo es.
-    private static void AddBasePriceChange(
+    // One row per currency whose amount changed, appeared or disappeared (spec D3). Ordinal order
+    // so the same PUT always writes the same rows. `!=` on decimal? compares by value: 100m and
+    // 100.00m are the same price.
+    private static void AddBasePriceChanges(
         List<ProductPriceChange> changes,
         Product product,
-        ProductPriceField field,
-        decimal? previousValue,
-        decimal? newValue,
+        ProductVariant variant,
+        ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
-        if (previousValue == newValue)
-        {
-            return;
-        }
+        var currencies = variant.Prices
+            .Select(price => price.Currency)
+            .Union(newPricing.Prices.Keys)
+            .Order(StringComparer.Ordinal);
 
-        changes.Add(ProductPriceChange.ForBasePrice(
-            product.TenantId,
-            product.Id,
-            field,
-            previousValue,
-            newValue,
-            changedBy,
-            occurredAt));
+        foreach (var currency in currencies)
+        {
+            var previousValue = variant.PriceIn(currency);
+            decimal? newValue = newPricing.Prices.TryGetValue(currency, out var amount) ? amount : null;
+            if (previousValue == newValue)
+            {
+                continue;
+            }
+
+            changes.Add(ProductPriceChange.ForBasePrice(
+                product.TenantId, product.Id, variant.Id, currency, previousValue, newValue, changedBy, occurredAt));
+        }
     }
 
     // Las escalas se aparean por su rango `(FromUnit, ToUnit)` y no por id: un `PUT` las
@@ -88,12 +133,13 @@ public static class ProductPriceChangeDetector
     private static void AddScaleDiscountChanges(
         List<ProductPriceChange> changes,
         Product product,
+        ProductVariant variant,
         ProductPricing newPricing,
         Guid changedBy,
         DateTimeOffset occurredAt)
     {
         var previousDiscounts = IndexByRange(
-            product.PriceScales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
+            variant.PriceScales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
         var newDiscounts = IndexByRange(
             newPricing.Scales.Select(scale => (scale.FromUnit, scale.ToUnit, scale.Discount)));
 
@@ -120,6 +166,7 @@ public static class ProductPriceChangeDetector
             changes.Add(ProductPriceChange.ForScaleDiscount(
                 product.TenantId,
                 product.Id,
+                variant.Id,
                 range.FromUnit,
                 range.ToUnit,
                 // Un rango nuevo entra con `PreviousValue` nulo; uno que desapareció sale con

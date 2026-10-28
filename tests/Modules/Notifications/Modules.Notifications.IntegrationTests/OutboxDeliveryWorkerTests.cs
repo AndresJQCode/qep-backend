@@ -1,7 +1,10 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Modules.Notifications.Application;
+using Modules.Notifications.Domain;
+using Modules.Notifications.Infrastructure.Persistence;
 using Modules.Notifications.Infrastructure.Messaging;
 using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness;
 
@@ -198,6 +201,30 @@ public sealed class OutboxDeliveryWorkerTests
         var inbox = await FindInboxAsync(database.GetConnectionString(), Consumer, broken);
         Assert.Equal(1, inbox?.Attempts);
         Assert.Null(inbox?.ProcessedAt);
+    }
+
+    // Un correo sin tenant (registro, restablecimiento) nunca debe aparecer en un listado filtrado por tenant:
+    // NULL no es igual a ningún valor en SQL.
+    [Fact]
+    public async Task ATenantlessNotificationNeverMatchesATenantFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new NotificationsApiFactory(database.GetConnectionString(), new RecordingEmailChannel());
+        _ = factory.Services;
+        var tenantId = Guid.NewGuid();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<NotificationsDbContext>();
+        var now = DateTimeOffset.UtcNow;
+        context.Notifications.Add(Notification.CreateEmail(null, Guid.NewGuid(), "a@x.com", TemplateRef, now));
+        context.Notifications.Add(Notification.CreateEmail(tenantId, Guid.NewGuid(), "b@x.com", TemplateRef, now));
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var matches = await context.Notifications
+            .Where(n => n.TenantId == tenantId)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(matches);
+        Assert.Equal(2, await context.Notifications.CountAsync(TestContext.Current.CancellationToken));
     }
 
     private static string FailedPayload(Guid tenantId, Guid subjectId) =>

@@ -1,4 +1,3 @@
-using System.Globalization;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -28,17 +27,17 @@ public static class QuotationChangeSummary
     /// acá y no en PostgreSQL, que respondería con un 500 en vez de guardar la fila.</summary>
     public const int MaxLength = 500;
 
-    public static string Created(string? clientName, QuotationCurrency currency) =>
+    public static string Created(string? clientName, string currency) =>
         Trim(clientName is null
-            ? $"Cotización creada en {currency.ToCode()}."
-            : $"Cotización creada para {clientName}, en {currency.ToCode()}.");
+            ? $"Cotización creada en {currency}."
+            : $"Cotización creada para {clientName}, en {currency}.");
 
-    public static string ItemAdded(string productName, decimal quantity) =>
-        Trim($"Agregó {productName} x{Number(quantity)}.");
+    public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
+        Trim($"Agregó {productName} x{format.Number(quantity)}.");
 
     public static string ItemQuantityChanged(
-        string productName, decimal from, decimal to) =>
-        Trim($"Cambió la cantidad de {productName}: {Number(from)} → {Number(to)}.");
+        string productName, decimal from, decimal to, HistoryFormat format) =>
+        Trim($"Cambió la cantidad de {productName}: {format.Number(from)} → {format.Number(to)}.");
 
     public static string ItemRemoved(string productName) =>
         Trim($"Quitó {productName}.");
@@ -86,8 +85,8 @@ public static class QuotationChangeSummary
     /// escala anterior no le dice nada a quien lee el historial, y la entrada previa ya esta
     /// ahi arriba.
     /// </summary>
-    public static string GlobalScaleFloorChanged(int? floor) => floor is { } value
-        ? $"Aplicó el descuento global de la escala desde {value} unidades."
+    public static string GlobalScaleFloorChanged(int? floor, HistoryFormat format) => floor is { } value
+        ? $"Aplicó el descuento global de la escala desde {format.Number(value)} unidades."
         : "Quitó el descuento global de escala.";
 
     /// <summary>
@@ -115,7 +114,7 @@ public static class QuotationChangeSummary
     /// historial en ruido.
     /// </summary>
     public static string? HeaderChanged(
-        QuotationHeaderSnapshot before, QuotationHeaderSnapshot after)
+        QuotationHeaderSnapshot before, QuotationHeaderSnapshot after, HistoryFormat format)
     {
         var changes = new List<string>();
 
@@ -123,9 +122,9 @@ public static class QuotationChangeSummary
         {
             // "vigencia (sin vigencia)" se leia como un error de redaccion. Borrarla es un gesto
             // propio y se dice como tal.
-            changes.Add(after.ValidUntil is null
+            changes.Add(after.ValidUntil is not { } validUntil
                 ? "quitó la vigencia"
-                : $"vigencia ({Date(after.ValidUntil)})");
+                : $"vigencia ({format.Date(validUntil)})");
         }
 
         if (before.PaymentMethod != after.PaymentMethod)
@@ -154,7 +153,7 @@ public static class QuotationChangeSummary
         if (before.GlobalScaleFloor != after.GlobalScaleFloor)
         {
             changes.Add(after.GlobalScaleFloor is { } floor
-                ? $"descuento global (escala desde {floor} unidades)"
+                ? $"descuento global (escala desde {format.Number(floor)} unidades)"
                 : "quitó el descuento global");
         }
 
@@ -201,6 +200,13 @@ public static class QuotationChangeSummary
             AppendParty(changes, "envío", before.Shipping, after.Shipping);
         }
 
+        // Pasar a recoger en tienda limpia el envío, y la fila de arriba ya lo dice: contarlo campo por campo
+        // sería ruido.
+        if (!after.IsStorePickup)
+        {
+            AppendFreight(changes, before.Freight, after.Freight, format);
+        }
+
         if (before.BillingAccount != after.BillingAccount)
         {
             changes.Add(after.BillingAccount is null
@@ -213,12 +219,60 @@ public static class QuotationChangeSummary
         if (before.Currency != after.Currency)
         {
             changes.Add(
-                $"moneda ({before.Currency.ToCode()} → {after.Currency.ToCode()}), " +
+                $"moneda ({before.Currency} → {after.Currency}), " +
                 "con los precios de todas las líneas revalorizados");
         }
 
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
     }
+
+    // Spec 2026-10-17 §5.4: transportadora, modo, valor y contraentrega. El valor se dice porque es la
+    // noticia, como la cantidad de una línea; cambiar a gratis o quitar el modo ya lleva el valor a 0 y no
+    // se repite.
+    // Interno porque el historial del pedido cuenta el mismo cambio con los mismos textos (OrderChangeSummary).
+    internal static void AppendFreight(
+        List<string> changes, ShippingDetails before, ShippingDetails after, HistoryFormat format)
+    {
+        if (before.CarrierId != after.CarrierId)
+        {
+            changes.Add(after.CarrierId is null
+                ? "quitó la transportadora"
+                : $"transportadora ({after.CarrierName})");
+        }
+
+        var modeChanged = before.ChargeMode != after.ChargeMode;
+        if (modeChanged)
+        {
+            changes.Add(after.ChargeMode is { } mode
+                ? $"cobro del envío ({ChargeModeLabel(mode)})"
+                : "quitó el cobro del envío");
+        }
+
+        if (before.FreightAmount != after.FreightAmount)
+        {
+            if (after.FreightAmount != 0)
+            {
+                changes.Add($"valor del envío ({format.Number(after.FreightAmount)})");
+            }
+            else if (!modeChanged)
+            {
+                changes.Add("quitó el valor del envío");
+            }
+        }
+
+        if (before.CashOnDelivery != after.CashOnDelivery)
+        {
+            changes.Add(after.CashOnDelivery ? "contraentrega" : "quitó la contraentrega");
+        }
+    }
+
+    private static string ChargeModeLabel(FreightChargeMode mode) => mode switch
+    {
+        FreightChargeMode.Charged => "cobrado",
+        FreightChargeMode.OnDelivery => "al cobro",
+        FreightChargeMode.Free => "gratis",
+        _ => mode.ToString(),
+    };
 
     private static void AppendParty(
         List<string> changes, string label, string? before, string? after)
@@ -242,16 +296,6 @@ public static class QuotationChangeSummary
             ? $"{account.BankName} {account.Currency}"
             : $"{account.BankName} ···{account.AccountNumber[^4..]} {account.Currency}";
 
-    private static string Date(DateOnly? value) =>
-        value?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty;
-
-    // Sin ceros a la derecha: "x3" y no "x3,00". La cantidad es decimal porque hay productos que
-    // se venden fraccionados, pero la mayoría son enteros y el historial se lee mejor así.
-    private static string Number(decimal value) =>
-        value == decimal.Truncate(value)
-            ? decimal.Truncate(value).ToString(CultureInfo.InvariantCulture)
-            : value.ToString("0.##", CultureInfo.InvariantCulture);
-
     private static string Trim(string summary) =>
         summary.Length <= MaxLength ? summary : summary[..(MaxLength - 1)] + "…";
 }
@@ -268,14 +312,23 @@ public sealed record QuotationHeaderSnapshot(
     string? Billing,
     string? Shipping,
     QuotationBillingAccountSummary? BillingAccount,
-    QuotationCurrency Currency,
+    string Currency,
     bool IsStorePickup,
     bool BillsToFinalConsumer,
     bool? BillingWithRetention,
     bool? BillingVatSurplus,
     int? GlobalScaleFloor = null,
-    bool IsRetail = false)
+    bool IsRetail = false,
+    Guid? CarrierId = null,
+    string? CarrierName = null,
+    FreightChargeMode? FreightChargeMode = null,
+    decimal FreightAmount = 0m,
+    bool CashOnDelivery = false)
 {
+    /// <summary>Lo que el historial compara del envío. La tasa no va: no es una elección de quien edita.</summary>
+    internal ShippingDetails Freight =>
+        new(CarrierId, CarrierName, FreightChargeMode, FreightAmount, 0, CashOnDelivery);
+
     public static QuotationHeaderSnapshot Of(Quotation quotation) => new(
         quotation.ValidUntil,
         quotation.PaymentMethod,
@@ -292,7 +345,12 @@ public sealed record QuotationHeaderSnapshot(
         quotation.PartyWithRetention,
         quotation.PartyVatSurplus,
         quotation.GlobalScaleFloor,
-        quotation.IsRetail);
+        quotation.IsRetail,
+        quotation.CarrierId,
+        quotation.CarrierName,
+        quotation.FreightChargeMode,
+        quotation.FreightAmount,
+        quotation.CashOnDelivery);
 
     private static string? Describe(QuotationParty? party) =>
         party is null

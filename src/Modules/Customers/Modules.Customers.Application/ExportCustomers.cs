@@ -1,6 +1,7 @@
 using BuildingBlocks.Application;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.Application;
 
@@ -37,6 +38,7 @@ public sealed class ExportCustomersHandler(
     ICustomerExportEventPublisher exportEventPublisher,
     ICustomersAuditPublisher auditPublisher,
     ICustomersUnitOfWork unitOfWork,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     ITenantClock tenantClock)
     : ICommandHandler<ExportCustomersCommand, ExportCustomersResult>
@@ -75,8 +77,12 @@ public sealed class ExportCustomersHandler(
         // auditoría y el evento siguen con el instante UTC.
         var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
         var occurredAt = calendar.UtcNow;
+        // Las fechas de texto van en el formato de fecha del tenant (spec 2026-10-23, D-R7).
+        var settings = await tenantDirectory.GetRegionalSettingsAsync(
+            new TenantId(command.TenantId), cancellationToken);
+        var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
         var items = await ToDtosAsync(command.TenantId, customers, cancellationToken);
-        var file = exportBuilder.Build(items, calendar, cancellationToken);
+        var file = exportBuilder.Build(items, calendar, dateTimePattern, cancellationToken);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
@@ -156,8 +162,10 @@ public sealed class ExportCustomersHandler(
                 .Concat(CustomerCityIds.OfDomicile(customer)))
             .Distinct()
             .ToArray();
+        // Spec 2026-10-10 §6.2: un incompleto no tiene clasificación; el Where garantiza el valor.
         var classificationIds = customers
-            .Select(customer => customer.ClassificationId)
+            .Where(customer => customer.ClassificationId is not null)
+            .Select(customer => customer.ClassificationId!.Value)
             .Distinct()
             .ToArray();
 
@@ -171,14 +179,17 @@ public sealed class ExportCustomersHandler(
         foreach (var customer in customers)
         {
             var city = CustomerCityIds.ResolveDomicile(customer, citiesById);
-            var classification = classificationsById.TryGetValue(
-                customer.ClassificationId, out var classificationValue)
-                ? classificationValue
-                : throw new InvalidOperationException(
-                    $"Classification '{customer.ClassificationId}' referenced by customer " +
-                    $"'{customer.Id}' was not found.");
+            ClientClassification? classification = null;
+            if (customer.ClassificationId is { } classificationId)
+            {
+                classification = classificationsById.TryGetValue(classificationId, out var classificationValue)
+                    ? classificationValue
+                    : throw new InvalidOperationException(
+                        $"Classification '{classificationId}' referenced by customer " +
+                        $"'{customer.Id}' was not found.");
+            }
 
-            items.Add(customer.ToDto(city, classification, citiesById));
+            items.Add(customer.ToDto(city, classification, citiesById, []));
         }
 
         return items;

@@ -85,6 +85,13 @@ public sealed class CustomerAddress
         UpdatedAt = occurredAt;
     }
 
+    // Sólo cambia la ciudad: el resto de la dirección es de quien la escribió (Customer.CorrectCity).
+    internal void MoveToCity(Guid cityId, DateTimeOffset occurredAt)
+    {
+        CityId = cityId;
+        UpdatedAt = occurredAt;
+    }
+
     // Solo el agregado decide cual es la principal: hacerlo publico permitiria dejar dos, o
     // ninguna, sin que nadie lo note hasta que una cotizacion no sepa a donde entregar.
     internal void MarkPrincipal(bool isPrincipal, DateTimeOffset occurredAt)

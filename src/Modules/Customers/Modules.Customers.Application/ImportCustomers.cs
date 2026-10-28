@@ -87,8 +87,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                     "The identification number cannot exceed " +
                     $"{CustomerIdentification.NumberMaxLength} characters.");
 
-        // Telefono y correo son obligatorios (CustomerContactInfo). Se rechazan como fila, con su
-        // codigo, por la misma razon que la direccion: si llegaran vacios al dominio, la
+        // El telefono es obligatorio (CustomerContactInfo). Se rechaza como fila, con su codigo,
+        // por la misma razon que la direccion: si llegara vacio al dominio, la
         // CustomersDomainException reventaria a mitad del archivo y se llevaria el lote entero.
         RuleFor(row => row.Phone)
             .NotEmpty()
@@ -112,14 +112,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithMessage(
                     $"The address cannot exceed {CustomerContactInfo.AddressMaxLength} characters.");
 
-        // Requerido y formato en dos RuleFor, mismo motivo que IdentificationType mas arriba: el
-        // When() del formato apagaria un NotEmpty() encadenado delante. Con la celda vacia se
-        // reporta solo email_required, no ademas email_invalid.
-        RuleFor(row => row.Email)
-            .NotEmpty()
-                .WithErrorCode("customers.import.row.email_required")
-                .WithMessage("The email is required.");
-
+        // El correo es opcional, igual que en el formulario (CustomerContactInfo): una celda vacia
+        // no rechaza la fila; si viene, tiene que ser una direccion.
         RuleFor(row => row.Email)
             .MaximumLength(CustomerContactInfo.EmailMaxLength)
                 .WithErrorCode("customers.import.row.email_too_long")
@@ -188,7 +182,8 @@ public sealed class ImportCustomersHandler(
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<ExcelCustomerRow> rowValidator)
+    IValidator<ExcelCustomerRow> rowValidator,
+    IPhoneNumberNormalizer phoneNormalizer)
     : ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>
 {
     /// <summary>
@@ -405,6 +400,7 @@ public sealed class ImportCustomersHandler(
 
         var targetIdsBySuffix = await customerRepository.FindIdsByCucSuffixAsync(
             tenantId, suffixes, cancellationToken);
+        var survivorCucs = await SurvivorCucsAsync(tenantId, targetIdsBySuffix.Values, cancellationToken);
 
         var resolved = new List<CandidateRow>(candidates.Count);
         foreach (var candidate in candidates)
@@ -417,6 +413,22 @@ public sealed class ImportCustomersHandler(
 
             if (targetIdsBySuffix.TryGetValue(Customer.StableSuffixOf(candidate.Cuc), out var targetId))
             {
+                // Spec 2026-10-24 §3.3 (D-F6): el CUC impreso de un fusionado no lo actualiza. Se decide acá, antes de
+                // RemoveExistingIdentificationsAsync, para que la fila diga «fusionado» y traiga el CUC del que quedó aunque
+                // su documento sea el del que quedó (ese sería un identification_taken que manda a corregir el campo que
+                // está bien). También va antes del chequeo de inactivo: un fusionado siempre lo está.
+                if (survivorCucs.TryGetValue(targetId, out var survivorCuc))
+                {
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.customer_merged",
+                        $"The customer with that Cuc was merged into {survivorCuc}.",
+                        nameof(ExcelCustomerRow.Cuc),
+                        ToRowData(candidate.SourceRow),
+                        survivorCuc));
+                    continue;
+                }
+
                 resolved.Add(candidate.WithTargetId(targetId));
             }
             else
@@ -431,6 +443,27 @@ public sealed class ImportCustomersHandler(
         }
 
         return resolved;
+    }
+
+    /// <summary>De los clientes que resolvieron un CUC, los fusionados con el CUC del que quedó (dos consultas batch, no una
+    /// por fila). El que quedó siempre es completo (<c>survivor_incomplete</c>), así que trae CUC; si faltara, el campo va
+    /// en null y la fila igual falla como fusionada.</summary>
+    private async Task<IReadOnlyDictionary<CustomerId, string?>> SurvivorCucsAsync(
+        Guid tenantId, IEnumerable<CustomerId> targetIds, CancellationToken cancellationToken)
+    {
+        var targets = await customerRepository.FindManyAsync(tenantId, targetIds.Distinct().ToArray(), cancellationToken);
+        var survivorOf = targets.Values
+            .Where(customer => customer.MergedIntoId.HasValue)
+            .ToDictionary(customer => customer.Id, customer => customer.MergedIntoId.GetValueOrDefault());
+        if (survivorOf.Count == 0)
+        {
+            return new Dictionary<CustomerId, string?>();
+        }
+
+        var survivors = await customerRepository.FindManyAsync(tenantId, survivorOf.Values.Distinct().ToArray(), cancellationToken);
+        return survivorOf.ToDictionary(
+            pair => pair.Key,
+            pair => survivors.TryGetValue(pair.Value, out var survivor) ? survivor.Cuc : null);
     }
 
     /// <summary>
@@ -519,6 +552,7 @@ public sealed class ImportCustomersHandler(
                     ?? throw new InvalidOperationException(
                         $"Customer '{targetId}' resolved by Cuc suffix was not found when applying the update.");
 
+                // Un fusionado ya salió como customer_merged en ResolveCucTargetsAsync (spec 2026-10-24 §3.3).
                 // Mismo chequeo que UpdateCustomerHandler hace via Customer.Update, pero
                 // adelantado: Update() lanza CustomersDomainException si el cliente esta
                 // inactivo, y esta funcion no tiene un try/catch por fila — dejarlo pasar
@@ -534,6 +568,19 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
+                // Una jurídica se identifica con NIT: Update lanzaría la excepción de dominio y, como arriba,
+                // no hay try/catch por fila — se adelanta para reportar sólo esa fila (spec 2026-10-26).
+                if (customer.PersonType == PersonType.Juridica && candidate.Type != IdentificationType.Nit)
+                {
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.person_type_requires_nit",
+                        "The customer is a legal entity and is identified by its NIT.",
+                        nameof(ExcelCustomerRow.IdentificationType),
+                        ToRowData(candidate.SourceRow)));
+                    continue;
+                }
+
                 // La fila actualiza el domicilio del cliente (address, ciudad) y el resto de la
                 // ficha; la libreta de envio no se toca, mismo criterio que UpdateCustomerHandler
                 // (spec 2026-09-18).
@@ -541,6 +588,8 @@ public sealed class ImportCustomersHandler(
                     candidate.Name,
                     candidate.BusinessName,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    // La planilla no trae tipo de persona: reimportar no borra el que ya tenía (spec 2026-10-26).
+                    customer.PersonType,
                     // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
                     // Ciudad, resueltas contra DIVIPOLA por FindCityByNameAsync, y la plantilla
                     // valida la ciudad con una lista cerrada que depende del departamento elegido.
@@ -560,10 +609,12 @@ public sealed class ImportCustomersHandler(
                         VatSurplus = candidate.VatSurplus
                     },
                     candidate.Classification.Prefix,
-                    now);
+                    now,
+                    phoneNormalizer);
 
                 imported.Add(new ImportedCustomerRow(
-                    candidate.RowNumber, customer.Cuc, candidate.Name, "updated"));
+                    // Update exige una ficha completa (EnsureComplete), y una completa siempre tiene CUC.
+                    candidate.RowNumber, customer.Cuc!, candidate.Name, "updated"));
                 continue;
             }
 
@@ -586,6 +637,8 @@ public sealed class ImportCustomersHandler(
                     Phone = candidate.Phone
                 },
                 new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                // La planilla no trae tipo de persona (spec 2026-10-26).
+                null,
                 // Solo colombiana, por lo mismo que la rama de actualizacion de arriba.
                 new CustomerContactInfo
                 {
@@ -601,7 +654,8 @@ public sealed class ImportCustomersHandler(
                     WithRetention = candidate.WithRetention,
                     VatSurplus = candidate.VatSurplus
                 },
-                now);
+                now,
+                phoneNormalizer);
 
             customerRepository.Add(newCustomer);
             imported.Add(new ImportedCustomerRow(candidate.RowNumber, cuc, candidate.Name, "created"));

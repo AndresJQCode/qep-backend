@@ -64,7 +64,8 @@ public sealed class QuotationDiscountedUnitPriceTests
                 "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new UnknownProductLookup(),
-            new UnresolvedCompanyLookup());
+            new UnresolvedCompanyLookup(),
+            new FixedQuotationSettingsStore());
 
         var response = await composer.ComposeAsync(
             TenantId, quotation.ToDto(), TestContext.Current.CancellationToken);
@@ -95,6 +96,7 @@ public sealed class QuotationDiscountedUnitPriceTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -104,7 +106,7 @@ public sealed class QuotationDiscountedUnitPriceTests
         Quotation quotation, decimal quantity, decimal unitPrice, decimal discountPercentage) =>
         quotation.AddItem(
             QuotationItemId.New(),
-            Guid.CreateVersion7(),
+            Guid.CreateVersion7(), Guid.CreateVersion7(),
             quantity,
             unitPrice,
             discountPercentage,
@@ -117,12 +119,12 @@ public sealed class QuotationDiscountedUnitPriceTests
     // respuesta son los importes de la línea, que es lo que se está probando.
     private sealed class UnknownProductLookup : IQuotationProductLookup
     {
-        public Task<IReadOnlyDictionary<Guid, QuotationProductRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductRef>>(
-                new Dictionary<Guid, QuotationProductRef>());
+            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantRef>>(
+                new Dictionary<Guid, QuotationVariantRef>());
     }
 
     private sealed class UnresolvedCompanyLookup : IQuotationCompanyLookup

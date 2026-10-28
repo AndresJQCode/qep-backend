@@ -2,7 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
+using Modules.Catalog.Domain;
+using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -72,7 +76,7 @@ public sealed class TaxRateDeletionApiTests
         var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19);
         var created = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-001", taxRateId, pricing = new { baseUsd = 10m } },
+            ProductBodies.Create("Vela de soja", "VS-001", taxRateId: taxRateId),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
 
@@ -219,6 +223,37 @@ public sealed class TaxRateDeletionApiTests
             StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// La carrera de verdad, un nivel más adentro que la de arriba. Por HTTP el producto
+    /// insertado por SQL ya está comprometido cuando el handler pregunta «¿la usa alguien?», así
+    /// que la consulta lo ve y la FK nunca salta. Acá la tasa se carga y se marca borrada
+    /// **antes** de que el producto exista, y el guardado choca con la FK `RESTRICT`. Postgres
+    /// responde 23001 (`restrict_violation`), no 23503: si la unidad de trabajo sólo mira 23503,
+    /// la violación sale cruda como 500.
+    /// </summary>
+    [Fact]
+    public async Task ARestrictViolationOnDeleteSaysInUse()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        var taxRateId = await CreateTaxRateAsync(client, TenantId, "IVA en carrera", 19);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+        var taxRate = await dbContext.TaxRates.SingleAsync(
+            rate => rate.Id == new TaxRateId(taxRateId),
+            TestContext.Current.CancellationToken);
+        await InsertProductWithTaxRateAsync(database, taxRateId);
+        dbContext.TaxRates.Remove(taxRate);
+
+        var error = await Assert.ThrowsAsync<CatalogDomainException>(() =>
+            scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("catalog.tax_rate.in_use", error.Code);
+    }
+
     private static Task<HttpResponseMessage> DeleteTaxRateAsync(
         HttpClient client,
         string tenantId,
@@ -268,9 +303,11 @@ public sealed class TaxRateDeletionApiTests
         await using var command = new NpgsqlCommand(
             """
             INSERT INTO catalog.products
-                (id, tenant_id, name, code, is_active, version, created_at, updated_at,
-                 tax_rate_id)
-            VALUES (@id, @tenantId, 'Producto en carrera', 'PC-001', true, 1, now(), now(), @taxRateId)
+                (id, tenant_id, name, is_active, version, created_at, updated_at, tax_rate_id)
+            VALUES (@id, @tenantId, 'Producto en carrera', true, 1, now(), now(), @taxRateId);
+            INSERT INTO catalog.product_variants
+                (id, product_id, tenant_id, code, combination_key, is_active, position)
+            VALUES (@id, @id, @tenantId, 'PC-001', '', true, 0);
             """,
             connection);
         command.Parameters.AddWithValue("id", Guid.CreateVersion7());

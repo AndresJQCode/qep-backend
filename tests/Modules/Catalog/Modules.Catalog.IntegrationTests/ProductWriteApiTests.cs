@@ -205,7 +205,7 @@ public sealed class ProductWriteApiTests
 
         var update = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{missing}",
-            new { name = "Vela", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(1, Guid.CreateVersion7(), "Vela", "VS-001"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NotFound, update.StatusCode);
 
@@ -229,13 +229,15 @@ public sealed class ProductWriteApiTests
 
         var response = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de cera", code = "VC-002", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(created, "Vela de cera", "VC-002"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var updated = await ReadProductAsync(response);
         Assert.Equal("Vela de cera", updated.Name);
-        Assert.Equal("VC-002", updated.Code);
+        Assert.Equal("VC-002", updated.Only().Code);
+        Assert.Equal(created.Only().Id, updated.Only().Id);
+        Assert.Equal(created.Version + 1, updated.Version);
         Assert.True(updated.UpdatedAt >= created.UpdatedAt);
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -354,6 +356,33 @@ public sealed class ProductWriteApiTests
         Assert.Empty(percent);
     }
 
+    // Variantes, Tarea 12 (spec 2026-10-20 §5): `search` también encuentra por el código de barras
+    // de una variante —lo pide la búsqueda del POS, que usa esta misma consulta—, en parte y sin
+    // distinguir mayúsculas, como el nombre y el Code. Las cajas separadas (name/code) no lo miran.
+    [Fact]
+    public async Task SearchAlsoFindsByTheBarcodeOfAVariant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        (await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products",
+            ProductBodies.Create("Camiseta", "CAM-001", barcode: "7701234567890"),
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001");
+
+        var whole = await ListAsync(client, TenantId, "7701234567890");
+        var part = await ListAsync(client, TenantId, "4567");
+        var byCodeBox = await client.GetFromJsonAsync<ProductsResponse>(
+            $"/api/v1/tenants/{TenantId}/catalog/products?code=7701234567890",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("CAM-001", Assert.Single(whole).Code);
+        Assert.Equal("CAM-001", Assert.Single(part).Code);
+        Assert.Empty(byCodeBox!.Items);
+    }
+
     // Las dos cajas separadas del listado (CAT-FILTROS-01), combinadas con AND cuando se
     // llenan las dos — mismo criterio que ListCombinesTheThreeFiltersWithAnd en Customers.
     [Fact]
@@ -427,8 +456,19 @@ public sealed class ProductWriteApiTests
 
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
         stale.Update(
-            "Vela de soja premium", "VS-002", ProductDetails.Empty,
-            new ProductPricing { BaseUsd = 10m }, DateTimeOffset.UtcNow);
+            "Vela de soja premium",
+            ProductDetails.Empty,
+            [],
+            [
+                new ProductVariantInput
+                {
+                    Id = stale.Variants.Single().Id.Value,
+                    Code = "VS-002",
+                    Pricing = new ProductPricing { Prices = new Dictionary<string, decimal> { ["USD"] = 10m } }
+                }
+            ],
+            [],
+            DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));
@@ -440,7 +480,7 @@ public sealed class ProductWriteApiTests
                 TestContext.Current.CancellationToken));
         Assert.False(current.IsActive);
         Assert.Equal("Vela de soja", current.Name);
-        Assert.Equal("VS-001", current.Code);
+        Assert.Equal("VS-001", current.Only().Code);
     }
 
     // El total cuenta las coincidencias, no la página — mismo criterio que
@@ -512,7 +552,7 @@ public sealed class ProductWriteApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code, pricing = new { baseUsd = 10m } },
+            ProductBodies.Create(name, code),
             TestContext.Current.CancellationToken);
 
     private static async Task<ProductResponse> ReadProductAsync(HttpResponseMessage response)
@@ -523,7 +563,7 @@ public sealed class ProductWriteApiTests
         return product;
     }
 
-    private static async Task<IReadOnlyCollection<ProductResponse>> ListAsync(
+    private static async Task<IReadOnlyCollection<ProductListItemDto>> ListAsync(
         HttpClient client,
         string tenantId,
         string? search)

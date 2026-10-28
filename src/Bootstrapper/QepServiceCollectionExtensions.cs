@@ -1,4 +1,5 @@
 using Bootstrapper.Authentication;
+using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Application;
@@ -17,6 +18,10 @@ using Microsoft.IdentityModel.Tokens;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
+using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
+using Modules.Automations.Infrastructure;
+using Modules.Automations.Infrastructure.Http;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure;
 using Modules.Companies.Application;
@@ -25,18 +30,34 @@ using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
+using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
+using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Infrastructure;
+using Modules.Integrations.Infrastructure.ExternalApi;
+using Modules.Messaging.Application;
+using Modules.Messaging.Infrastructure;
 using Modules.Notifications.Infrastructure;
+using Modules.Pipeline.Application;
+using Modules.Pipeline.Infrastructure;
 using Modules.Platform.Application;
 using Modules.Platform.Infrastructure;
+using Modules.Pos.Application;
+using Modules.Pos.Infrastructure;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure;
 using Modules.Reporting.Application;
 using Modules.Reporting.Infrastructure;
+using Modules.Shopify.Application;
+using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
+using Modules.Suppliers.Application;
+using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
 
@@ -59,11 +80,36 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateTenantSettingsCommand, TenantSettingsDto>,
             UpdateTenantSettingsHandler>();
         services.AddScoped<
+            IQueryHandler<GetPriceRoundingQuery, PriceRoundingSettingsDto>,
+            GetPriceRoundingHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdatePriceRoundingCommand, PriceRoundingSettingsDto>,
+            UpdatePriceRoundingHandler>();
+        services.AddScoped<
             ICommandHandler<SetTenantLogoCommand, TenantSettingsDto>,
             SetTenantLogoHandler>();
         services.AddScoped<
             ICommandHandler<RemoveTenantLogoCommand, TenantSettingsDto>,
             RemoveTenantLogoHandler>();
+        // Spec 2026-10-08 §5: la consola de operador.
+        services.AddScoped<
+            IQueryHandler<ListOperatorTenantsQuery, OperatorTenantPageDto>,
+            ListOperatorTenantsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetOperatorTenantQuery, OperatorTenantDetailDto>,
+            GetOperatorTenantHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>,
+            ChangeTenantModulesHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeTenantProviderCommand, OperatorTenantDetailDto>,
+            ChangeTenantProviderHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeTenantStatusCommand, OperatorTenantDetailDto>,
+            ChangeTenantStatusHandler>();
+        services.AddScoped<
+            IQueryHandler<ListTenantHistoryQuery, OperatorHistoryPageDto>,
+            ListTenantHistoryHandler>();
         services.AddScoped<
             ICommandHandler<InviteMemberCommand, MembershipDto>,
             InviteMemberHandler>();
@@ -132,6 +178,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportProductsCommand, ExportProductsResult>,
             ExportProductsHandler>();
         services.AddScoped<
+            IQueryHandler<GetCurrenciesInUseQuery, IReadOnlyList<string>>,
+            GetCurrenciesInUseHandler>();
+        services.AddScoped<
             ICommandHandler<CreateProductCommand, ProductDto>,
             CreateProductHandler>();
         services.AddScoped<
@@ -176,6 +225,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
             DeleteTaxRateHandler>();
+        // La biblioteca de opciones de Catalog. Mismo registro a mano que las tasas.
+        services.AddScoped<IQueryHandler<ListOptionsQuery, OptionsResponse>, ListOptionsHandler>();
+        services.AddScoped<ICommandHandler<CreateOptionCommand, OptionResponse>, CreateOptionHandler>();
+        services.AddScoped<ICommandHandler<UpdateOptionCommand, OptionResponse>, UpdateOptionHandler>();
+        services.AddScoped<ICommandHandler<DeleteOptionCommand, OptionDeletedResult>, DeleteOptionHandler>();
+        services.AddScoped<IQueryHandler<ListCategoriesQuery, IReadOnlyList<CategoryDto>>, ListCategoriesHandler>();
+        services.AddScoped<ICommandHandler<CreateCategoryCommand, CategoryDto>, CreateCategoryHandler>();
+        services.AddScoped<ICommandHandler<UpdateCategoryCommand, CategoryDto>, UpdateCategoryHandler>();
+        services.AddScoped<ICommandHandler<DeleteCategoryCommand, CategoryDeletedResult>, DeleteCategoryHandler>();
+        services.AddScoped<
+            ICommandHandler<ReplacePosQuickAccessCommand, IReadOnlyList<CategoryDto>>,
+            ReplacePosQuickAccessHandler>();
         // EMP. Los siete van aca por la misma razon que los de tasas: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -200,6 +261,77 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteCompanyCommand, CompanyDeletedResult>,
             DeleteCompanyHandler>();
+        // Suppliers, spec 2026-10-23. Los ocho a mano, como los demás: un handler olvidado compila y
+        // responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListSuppliersQuery, SupplierPage>,
+            ListSuppliersHandler>();
+        services.AddScoped<
+            IQueryHandler<ListSupplierCategoriesQuery, IReadOnlyList<string>>,
+            ListSupplierCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<GetSupplierQuery, SupplierResponse>,
+            GetSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateSupplierCommand, SupplierResponse>,
+            CreateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateSupplierCommand, SupplierResponse>,
+            UpdateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ActivateSupplierCommand, SupplierResponse>,
+            ActivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<DeactivateSupplierCommand, SupplierResponse>,
+            DeactivateSupplierHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
+            ExportSuppliersHandler>();
+        // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
+        // responde 500 y CompositionRootTests lo detecta.
+        services.AddScoped<
+            IQueryHandler<GetRegisterContextQuery, RegisterContextResponse>,
+            GetRegisterContextHandler>();
+        services.AddScoped<
+            ICommandHandler<OpenCashSessionCommand, PosOpenSessionResponse>,
+            OpenCashSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<CloseCashSessionCommand, PosSessionSummaryResponse>,
+            CloseCashSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<SearchPosProductsQuery, PosPage<PosCatalogProductResponse>>,
+            SearchPosProductsHandler>();
+        services.AddScoped<IQueryHandler<ListPosCategoriesQuery, PosCategoriesResponse>, ListPosCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<FindPosProductByCodeQuery, PosProductResponse>,
+            FindPosProductByCodeHandler>();
+        services.AddScoped<
+            ICommandHandler<PreviewPosSaleCommand, PosPreviewResponse>,
+            PreviewPosSaleHandler>();
+        services.AddScoped<
+            ICommandHandler<CreatePosSaleCommand, PosSaleCreation>,
+            CreatePosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<GetPosSaleQuery, PosSaleResponse>,
+            GetPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPosSalesQuery, PosPage<PosSaleListItemResponse>>,
+            ListPosSalesHandler>();
+        services.AddScoped<
+            ICommandHandler<VoidPosSaleCommand, PosSaleResponse>,
+            VoidPosSaleHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCashSessionsQuery, PosPage<PosSessionSummaryResponse>>,
+            ListCashSessionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCashSessionQuery, PosSessionSummaryResponse>,
+            GetCashSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<SearchPosCustomersQuery, PosCustomerOptionsResponse>,
+            SearchPosCustomersHandler>();
+        services.AddScoped<
+            ICommandHandler<CreatePosCustomerCommand, PosCustomerOptionResponse>,
+            CreatePosCustomerHandler>();
         // CLI. Los siete van aca por la misma razon que los de empresas: el dispatcher resuelve
         // por registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y
         // falla recien en runtime con 500 al no encontrar handler.
@@ -209,6 +341,26 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerQuery, CustomerDto>,
             GetCustomerHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>,
+            GetCustomerMergePreviewHandler>();
+        // Spec 2026-10-26 D-8: el estado y el historial de la autorización de datos.
+        services.AddScoped<
+            IQueryHandler<GetCustomerDataConsentQuery, CustomerDataConsentDto>,
+            GetCustomerDataConsentHandler>();
+        // Spec 2026-10-26 D-5 (medium) y D-9: la revocación de un miembro. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<RevokeDataConsentCommand, CustomerDataConsentDto>,
+            RevokeDataConsentHandler>();
+        services.AddScoped<
+            ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
+            MergeCustomersHandler>();
+        services.AddScoped<
+            IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
+            FindCustomerIdentificationMatchesHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCustomerAnomaliesQuery, CustomerAnomaliesResponse>,
+            ListCustomerAnomaliesHandler>();
         services.AddScoped<
             ICommandHandler<CreateCustomerCommand, CustomerDto>,
             CreateCustomerHandler>();
@@ -257,6 +409,40 @@ public static class QepServiceCollectionExtensions
         // TaxRate frente a Product en Catalog. Registrados a mano, uno por uno: un caso de uso
         // que se olvide compila, mapea su endpoint y falla recien en runtime con 500 al no
         // encontrar handler.
+        // Spec 2026-10-11 §4: notas, etiquetas y consentimiento de marketing. Registro explícito, como todo el módulo.
+        services.AddScoped<
+            IQueryHandler<ListCustomerNotesQuery, IReadOnlyList<CustomerNoteDto>>,
+            ListCustomerNotesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCustomerNoteCommand, CustomerNoteDto>,
+            CreateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCustomerNoteCommand, CustomerNoteDto>,
+            UpdateCustomerNoteHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteCustomerNoteCommand, CustomerNoteDeletedResult>,
+            DeleteCustomerNoteHandler>();
+        services.AddScoped<
+            IQueryHandler<ListTagsQuery, IReadOnlyList<TagDto>>,
+            ListTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateTagCommand, TagDto>,
+            CreateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateTagCommand, TagDto>,
+            UpdateTagHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteTagCommand, TagDeletedResult>,
+            DeleteTagHandler>();
+        services.AddScoped<
+            IQueryHandler<ListCustomerTagsQuery, IReadOnlyList<TagDto>>,
+            ListCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCustomerTagsCommand, IReadOnlyList<TagDto>>,
+            SetCustomerTagsHandler>();
+        services.AddScoped<
+            ICommandHandler<SetMarketingConsentCommand, MarketingConsentDto>,
+            SetMarketingConsentHandler>();
         services.AddScoped<
             IQueryHandler<ListClientClassificationsQuery, IReadOnlyList<ClientClassificationDto>>,
             ListClientClassificationsHandler>();
@@ -288,6 +474,25 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<ListCitiesQuery, IReadOnlyList<CityDto>>,
             ListCitiesHandler>();
+        // Spec 2026-10-26 §6: las lecturas de la consola de ciudades del operador. La política exige el permiso y el handler
+        // revalida con OperatorAuthorization; el validador entra con AddValidatorsFromAssemblyContaining de abajo.
+        services.AddScoped<IQueryHandler<GetCitySummaryQuery, CitySummaryDto>, GetCitySummaryHandler>();
+        services.AddScoped<IQueryHandler<ListUnresolvedCitiesQuery, UnresolvedCityPageDto>, ListUnresolvedCitiesHandler>();
+        services.AddScoped<IQueryHandler<GetUnresolvedCityQuery, UnresolvedCityDetailDto>, GetUnresolvedCityHandler>();
+        // Confirmar, descartar y restaurar, y el impacto de confirmar (que no escribe).
+        services.AddScoped<IQueryHandler<PreviewResolveImpactQuery, ResolveImpactDto>, PreviewResolveImpactHandler>();
+        services.AddScoped<ICommandHandler<ResolveUnresolvedCityCommand, CitySynonymDto>, ResolveUnresolvedCityHandler>();
+        services.AddScoped<UnresolvedCityTriage>();
+        services.AddScoped<ICommandHandler<DiscardUnresolvedCityCommand, UnresolvedCityListItemDto>, DiscardUnresolvedCityHandler>();
+        services.AddScoped<ICommandHandler<RestoreUnresolvedCityCommand, UnresolvedCityListItemDto>, RestoreUnresolvedCityHandler>();
+        // Los sinónimos: la lista, el impacto de corregir (que no escribe), corregir, borrar y reintentar; y el recorrido de la
+        // historia previa. Sin el registro de uno, su ruta responde 500.
+        services.AddScoped<IQueryHandler<ListCitySynonymsQuery, CitySynonymPageDto>, ListCitySynonymsHandler>();
+        services.AddScoped<IQueryHandler<PreviewSynonymCorrectionImpactQuery, CorrectImpactDto>, PreviewSynonymCorrectionImpactHandler>();
+        services.AddScoped<ICommandHandler<CorrectCitySynonymCommand, CitySynonymDto>, CorrectCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<DeleteCitySynonymCommand, bool>, DeleteCitySynonymHandler>();
+        services.AddScoped<ICommandHandler<RetryCitySynonymCorrectionsCommand, CitySynonymDto>, RetryCitySynonymCorrectionsHandler>();
+        services.AddScoped<ICommandHandler<RunCityBackfillCommand, CityBackfillResultDto>, RunCityBackfillHandler>();
         // Quotations, fase 1 (borrador: crear, agregar/editar/quitar lineas, editar encabezado).
         // Los seis van aca por la misma razon que el resto: el dispatcher resuelve por registro
         // explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla recien en
@@ -295,6 +500,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<CreateQuotationCommand, QuotationDto>,
             CreateQuotationHandler>();
+        // Lo comparten la creación y su cálculo previo sin id (spec 2026-10-18 §7.3).
+        services.AddScoped<QuotationDraftBuilder>();
         services.AddScoped<
             IQueryHandler<GetQuotationQuery, QuotationDto>,
             GetQuotationHandler>();
@@ -342,6 +549,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewQuotationQuery, QuotationDto>,
             PreviewQuotationHandler>();
+        // El cálculo de una cotización nueva sin id (spec 2026-10-18 §7): mismo armado que la creación.
+        services.AddScoped<
+            IQueryHandler<PreviewNewQuotationQuery, QuotationDto>,
+            PreviewNewQuotationHandler>();
         services.AddScoped<
             ICommandHandler<SendQuotationCommand, QuotationDto>,
             SendQuotationHandler>();
@@ -352,7 +563,7 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ExportQuotationPdfCommand, QuotationPdfExportDto>,
             ExportQuotationPdfHandler>();
         services.AddScoped<
-            IQueryHandler<GetOrderQuery, OrderDto>,
+            IQueryHandler<GetOrderQuery, OrderDetailDto>,
             GetOrderHandler>();
         services.AddScoped<
             IQueryHandler<ListOrdersQuery, OrderPage>,
@@ -375,14 +586,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
-            ICommandHandler<ConvertQuotationToOrderCommand, OrderDto>,
+            ICommandHandler<SendOrderCommand, OrderDetailDto>,
+            SendOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<ConvertQuotationToOrderCommand, OrderDetailDto>,
             ConvertQuotationToOrderHandler>();
         services.AddScoped<
             ICommandHandler<AddOrderPaymentProofsCommand, OrderDto>,
             AddOrderPaymentProofsHandler>();
         services.AddScoped<
-            ICommandHandler<AddOrderItemsCommand, OrderItemsAddedResult>,
+            ICommandHandler<AddOrderItemsCommand, OrderDetailDto>,
             AddOrderItemsHandler>();
         services.AddScoped<
             ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>,
@@ -393,6 +608,22 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>,
             PreviewOrderEditsHandler>();
+        // «Reconocer este nombre» (spec de Shopify D-S25); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            ICommandHandler<RecognizeOrderCarrierCommand, OrderDetailDto>,
+            RecognizeOrderCarrierHandler>();
+        // Pedido manual y su cálculo previo (spec 2026-10-15 §5.2); el armador lo comparten con el
+        // servicio de pedidos externos.
+        services.AddScoped<OrderDraftBuilder>();
+        services.AddScoped<
+            ICommandHandler<CreateOrderCommand, OrderDetailDto>,
+            CreateOrderHandler>();
+        services.AddScoped<
+            IQueryHandler<PreviewOrderQuery, OrderDetailDto>,
+            PreviewOrderHandler>();
+        // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
+        // consume; ningún consumidor referencia Modules.Quotations.Application.
+        services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -401,6 +632,29 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateOrdersExportLayoutCommand, OrdersExportLayoutDto>,
             UpdateOrdersExportLayoutHandler>();
+        // The tenant's minimum purchase (spec 2026-10-08, D7), registered by hand like the rest.
+        services.AddScoped<
+            IQueryHandler<GetQuotationSettingsQuery, QuotationSettingsDto>,
+            GetQuotationSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
+            UpdateQuotationSettingsHandler>();
+        // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
+        services.AddScoped<
+            IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
+            GetWhatsAppChannelsHandler>();
+        services.AddScoped<
+            ICommandHandler<ChooseWhatsAppChannelCommand, WhatsAppChannelsDto>,
+            ChooseWhatsAppChannelHandler>();
+        // Transportadoras y el IVA del envío (spec 2026-10-17 §4.3), a mano como el resto.
+        services.AddScoped<IQueryHandler<ListCarriersQuery, CarrierSettingsDto>, ListCarriersHandler>();
+        services.AddScoped<ICommandHandler<CreateCarrierCommand, CarrierDto>, CreateCarrierHandler>();
+        services.AddScoped<ICommandHandler<UpdateCarrierCommand, CarrierDto>, UpdateCarrierHandler>();
+        services.AddScoped<ICommandHandler<SetCarrierActiveCommand, CarrierDto>, SetCarrierActiveHandler>();
+        services.AddScoped<ICommandHandler<ReorderCarriersCommand, CarrierSettingsDto>, ReorderCarriersHandler>();
+        services.AddScoped<ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>, SetFreightTaxRateHandler>();
+        services.AddScoped<ICommandHandler<SetFreightChargeModesCommand, CarrierSettingsDto>, SetFreightChargeModesHandler>();
+        services.AddScoped<IQueryHandler<GetShippingOptionsQuery, ShippingOptionsDto>, GetShippingOptionsHandler>();
         // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
@@ -428,12 +682,210 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
+        // Integrations (spec 2026-10-08). A mano, como el resto: un handler que falte compila, mapea
+        // su endpoint y falla recién en runtime con 500.
+        services.AddScoped<
+            IQueryHandler<GetIntegrationsCatalogQuery, IntegrationsCatalogResponse>,
+            GetIntegrationsCatalogHandler>();
+        services.AddScoped<
+            IQueryHandler<ListConnectionsQuery, ConnectionsResponse>,
+            ListConnectionsHandler>();
+        services.AddScoped<
+            IQueryHandler<GetConnectionQuery, ConnectionResponse>,
+            GetConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateConnectionCommand, ConnectionResponse>,
+            CreateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateConnectionCommand, ConnectionResponse>,
+            UpdateConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<TestConnectionCommand, ConnectionResponse>,
+            TestConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<PauseConnectionCommand, ConnectionResponse>,
+            PauseConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<ResumeConnectionCommand, ConnectionResponse>,
+            ResumeConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteConnectionCommand, bool>,
+            DeleteConnectionHandler>();
+        services.AddScoped<
+            ICommandHandler<CompleteWhatsAppSignupCommand, ConnectionResponse>,
+            CompleteWhatsAppSignupHandler>();
+        // Integrations (spec 2026-10-14 §8.1): conectar Instagram con el code de Business Login. El validador entra con
+        // AddValidatorsFromAssemblyContaining del módulo, más abajo.
+        services.AddScoped<
+            ICommandHandler<ConnectInstagramCommand, ConnectionResponse>,
+            ConnectInstagramHandler>();
+        // Integrations (spec 2026-10-15 §4.3): los dos inicios de la instalación de Shopify. Los validadores entran con
+        // AddValidatorsFromAssemblyContaining del módulo, más abajo.
+        services.AddScoped<
+            ICommandHandler<StartShopifyInstallForTenantCommand, ShopifyAuthorizeResponse>,
+            StartShopifyInstallForTenantHandler>();
+        services.AddScoped<
+            ICommandHandler<StartShopifyInstallCommand, ShopifyAuthorizeResponse>,
+            StartShopifyInstallHandler>();
+        // El canje del code y la lectura de la instalación (§4.3 pasos 4 y 5).
+        services.AddScoped<
+            ICommandHandler<CompleteShopifyInstallCommand, ShopifyInstallCompletedResponse>,
+            CompleteShopifyInstallHandler>();
+        services.AddScoped<
+            IQueryHandler<GetShopifyInstallQuery, ShopifyInstallResponse>,
+            GetShopifyInstallHandler>();
+        // El enlace de la tienda al tenant elegido (§4.3 paso 6).
+        services.AddScoped<
+            ICommandHandler<LinkShopifyStoreCommand, ConnectionResponse>,
+            LinkShopifyStoreHandler>();
+        // Messaging (spec 2026-10-09): el webhook de Meta, anónimo y firmado.
+        services.AddScoped<IQueryHandler<VerifyWebhookQuery, string?>, VerifyWebhookHandler>();
+        services.AddScoped<ICommandHandler<ReceiveWebhookCommand, bool>, ReceiveWebhookHandler>();
+        // Messaging (spec 2026-10-09 §8.7): lista, detalle e hilo. Cada handler a mano: sin registro, 500.
+        services.AddValidatorsFromAssemblyContaining<ListConversationsValidator>();
+        services.AddScoped<IQueryHandler<ListConversationsQuery, ConversationPageDto>, ListConversationsHandler>();
+        services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
+        services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
+        services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
+        services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
+        // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
+        services.AddScoped<ICommandHandler<SendMessageCommand, MessageDto>, SendMessageHandler>();
+        // Messaging (spec 2026-10-11 §6): la nota de voz, con las mismas guardas que el texto.
+        services.AddScoped<ICommandHandler<SendAudioMessageCommand, MessageDto>, SendAudioMessageHandler>();
+        // Messaging-media-reply R1: la sesión de subida del adjunto del asesor (imagen o documento).
+        services.AddScoped<ICommandHandler<CreateMediaUploadSessionCommand, MediaUploadSessionDto>, CreateMediaUploadSessionHandler>();
+        // Messaging-media-reply R3: la confirmación del adjunto. El validador entra con AddValidatorsFromAssemblyContaining de arriba.
+        services.AddScoped<ICommandHandler<SendMediaMessageCommand, MessageDto>, SendMediaMessageHandler>();
+        // Messaging (spec 2026-10-11 §5): plantillas. Conexiones y catálogo para leer; enviar una plantilla y abrir una conversación con ella.
+        services.AddScoped<IQueryHandler<ListMessagingConnectionsQuery, IReadOnlyList<MessagingConnectionDto>>, ListMessagingConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListTemplatesQuery, IReadOnlyList<MessageTemplateDto>>, ListTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendTemplateMessageCommand, MessageDto>, SendTemplateMessageHandler>();
+        services.AddScoped<ICommandHandler<StartConversationCommand, StartConversationResult>, StartConversationHandler>();
+        // Messaging (spec 2026-10-11 §6.2): campañas. Cada handler a mano: sin registro, 500.
+        services.AddScoped<IQueryHandler<ListCampaignsQuery, CampaignPageDto<CampaignSummaryDto>>, ListCampaignsHandler>();
+        services.AddScoped<IQueryHandler<GetCampaignQuery, CampaignDetailDto>, GetCampaignHandler>();
+        services.AddScoped<IQueryHandler<ListCampaignRecipientsQuery, CampaignPageDto<CampaignRecipientDto>>, ListCampaignRecipientsHandler>();
+        services.AddScoped<IQueryHandler<PreviewAudienceQuery, AudiencePreviewDto>, PreviewAudienceHandler>();
+        services.AddScoped<ICommandHandler<CreateCampaignCommand, CampaignDetailDto>, CreateCampaignHandler>();
+        services.AddScoped<ICommandHandler<UpdateCampaignCommand, CampaignDetailDto>, UpdateCampaignHandler>();
+        services.AddScoped<ICommandHandler<DeleteCampaignCommand, bool>, DeleteCampaignHandler>();
+        services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
+        services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
+        services.AddScoped<ICommandHandler<RetryCampaignCommand, CampaignDetailDto>, RetryCampaignHandler>();
+        // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
+        services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
+        services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
+        services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
+        // Spec 2026-10-15 §3.4: el catálogo de motivos de resolución. Sin estos registros, 500.
+        services.AddScoped<IQueryHandler<ListResolutionReasonsQuery, IReadOnlyList<ResolutionReasonDto>>, ListResolutionReasonsHandler>();
+        services.AddScoped<ICommandHandler<RenameResolutionReasonCommand, ResolutionReasonDto>, RenameResolutionReasonHandler>();
+        services.AddScoped<ICommandHandler<ArchiveResolutionReasonCommand, bool>, ArchiveResolutionReasonHandler>();
+        // Spec 2026-10-21: el catálogo de horarios de atención. Sin registrar el handler, la ruta responde 500.
+        services.AddScoped<IQueryHandler<ListBusinessHoursQuery, BusinessHoursListDto>, ListBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<CreateBusinessHoursCommand, BusinessHoursDto>, CreateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<UpdateBusinessHoursCommand, BusinessHoursDto>, UpdateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<DeleteBusinessHoursCommand, bool>, DeleteBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<DuplicateBusinessHoursCommand, BusinessHoursDto>, DuplicateBusinessHoursHandler>();
+        services.AddScoped<ICommandHandler<SetDefaultBusinessHoursCommand, BusinessHoursDto>, SetDefaultBusinessHoursHandler>();
+        // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
+        services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
+        services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
+        // Messaging (spec 2026-10-14 §4.3): crear una plantilla libre y mandarla a aprobación.
+        services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
+        // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
+        services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
+        // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
+        services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
+        // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
+        services.AddScoped<ReadReceipts>();
+        services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
+        // Spec 2026-10-14: marcar no leída, espejo del read.
+        services.AddScoped<ICommandHandler<MarkConversationUnreadCommand, bool>, MarkConversationUnreadHandler>();
+        services.AddScoped<ICommandHandler<MarkUnreadFromMessageCommand, bool>, MarkUnreadFromMessageHandler>();
+        services.AddScoped<ICommandHandler<ResolveConversationCommand, ConversationSummary>, ResolveConversationHandler>();
+        services.AddScoped<ICommandHandler<ReopenConversationCommand, ConversationSummary>, ReopenConversationHandler>();
+        // Messaging (spec 2026-10-10 §8.4): tomar, transferir y liberar. Cada handler a mano: sin registro, 500.
+        services.AddScoped<ConversationAssignmentSteps>();
+        services.AddScoped<ICommandHandler<TakeConversationCommand, ConversationSummary>, TakeConversationHandler>();
+        services.AddScoped<ICommandHandler<TransferConversationCommand, ConversationSummary>, TransferConversationHandler>();
+        services.AddScoped<ICommandHandler<ReleaseConversationCommand, ConversationSummary>, ReleaseConversationHandler>();
+        // Spec 2026-10-24 §4.2: cambiar el cliente principal de la conversación.
+        services.AddScoped<ICommandHandler<ChangeConversationCustomerCommand, ConversationSummary>, ChangeConversationCustomerHandler>();
+        // Spec 2026-10-21: pausar y devolver el asistente. Sin registro, 500.
+        services.AddScoped<ICommandHandler<PauseAutomationCommand, ConversationSummary>, PauseAutomationHandler>();
+        services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();
+        // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin registro, 500.
+        services.AddScoped<ICommandHandler<BlockContactCommand, ConversationSummary>, BlockContactHandler>();
+        services.AddScoped<ICommandHandler<UnblockContactCommand, ConversationSummary>, UnblockContactHandler>();
+        // Messaging (spec 2026-10-09 §8.6): servir el medio ya copiado con la sesión de QEP.
+        services.AddScoped<IQueryHandler<GetMediaQuery, MediaStreamDto?>, GetMediaHandler>();
+        // Messaging (spec 2026-10-10 §5.1, D-A1): el selector de transferir.
+        services.AddScoped<IQueryHandler<ListAssigneesQuery, AssigneesDto>, ListAssigneesHandler>();
+        // Pipeline (spec 2026-10-13 §6): ajustes. Cada handler a mano: sin registro, 500 (CompositionRootTests).
+        services.AddValidatorsFromAssemblyContaining<ReplacePipelineStagesValidator>();
+        services.AddScoped<IQueryHandler<GetPipelineStagesQuery, PipelineStagesDto>, GetPipelineStagesHandler>();
+        services.AddScoped<ICommandHandler<ReplacePipelineStagesCommand, PipelineStagesDto>, ReplacePipelineStagesHandler>();
+        services.AddScoped<IQueryHandler<GetPipelineReasonsQuery, ReasonListDto>, GetPipelineReasonsHandler>();
+        services.AddScoped<ICommandHandler<ReplacePipelineReasonsCommand, ReasonListDto>, ReplacePipelineReasonsHandler>();
+        // Pipeline (spec 2026-10-13 §6): negocios.
+        services.AddScoped<IQueryHandler<GetDealQuery, DealDetailDto>, GetDealHandler>();
+        services.AddScoped<ICommandHandler<CreateDealCommand, DealDetailDto>, CreateDealHandler>();
+        services.AddScoped<ICommandHandler<UpdateDealCommand, DealDetailDto>, UpdateDealHandler>();
+        services.AddScoped<ICommandHandler<MoveDealCommand, DealDetailDto>, MoveDealHandler>();
+        services.AddScoped<ICommandHandler<WinDealCommand, DealDetailDto>, WinDealHandler>();
+        services.AddScoped<ICommandHandler<LoseDealCommand, DealDetailDto>, LoseDealHandler>();
+        services.AddScoped<ICommandHandler<ReopenDealCommand, DealDetailDto>, ReopenDealHandler>();
+        services.AddScoped<ICommandHandler<LinkDealQuotationCommand, DealDetailDto>, LinkDealQuotationHandler>();
+        services.AddScoped<ICommandHandler<LinkDealOrderCommand, DealDetailDto>, LinkDealOrderHandler>();
+        services.AddScoped<ICommandHandler<SetPrimaryQuotationCommand, DealDetailDto>, SetPrimaryQuotationHandler>();
+        // Pipeline (D21 del spec del frontend): los posibles dueños de un negocio, para el selector del formulario.
+        services.AddScoped<IQueryHandler<GetDealOwnersQuery, IReadOnlyList<DealOwnerDto>>, GetDealOwnersHandler>();
+        // Pipeline (spec 2026-10-13 §6): el tablero.
+        services.AddScoped<IQueryHandler<GetBoardQuery, PipelineBoardDto>, GetBoardHandler>();
+        // Pipeline (spec 2026-10-13 §5.1): la decisión de triage.
+        services.AddScoped<ICommandHandler<DecideTriageCommand, TriageResultDto>, DecideTriageHandler>();
+        // Pipeline (spec 2026-10-13 D36): el resumen de negocios de la ficha del cliente.
+        services.AddScoped<IQueryHandler<GetCustomerDealsSummaryQuery, CustomerDealsSummaryDto>, GetCustomerDealsSummaryHandler>();
+        // Automations (spec 2026-10-21 §4.4): lista, creación, lectura, edición, borrador, validación, publicación, pausa, reanudación,
+        // duplicado, borrado, exportar e importar el chatbot. A mano, como el resto: sin registro, 500 (CompositionRootTests).
+        services.AddValidatorsFromAssemblyContaining<CreateChatbotValidator>();
+        services.AddScoped<IQueryHandler<ListChatbotsQuery, ChatbotListResponse>, ListChatbotsHandler>();
+        services.AddScoped<IQueryHandler<GetChatbotQuery, ChatbotEditorDto>, GetChatbotHandler>();
+        services.AddScoped<IQueryHandler<ListSelectableConnectionsQuery, IReadOnlyList<SelectableConnectionDto>>, ListSelectableConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListExternalApisQuery, IReadOnlyList<ExternalApiRefDto>>, ListExternalApisHandler>();
+        services.AddScoped<IQueryHandler<ListRunsQuery, IReadOnlyList<RunDto>>, ListRunsHandler>();
+        services.AddScoped<ICommandHandler<CreateChatbotCommand, ChatbotEditorDto>, CreateChatbotHandler>();
+        services.AddScoped<ICommandHandler<UpdateChatbotCommand, ChatbotEditorDto>, UpdateChatbotHandler>();
+        services.AddScoped<ICommandHandler<SaveChatbotDraftCommand, DraftSavedDto>, SaveChatbotDraftHandler>();
+        services.AddScoped<IQueryHandler<ValidateChatbotQuery, IReadOnlyList<FlowIssueDto>>, ValidateChatbotHandler>();
+        services.AddScoped<ICommandHandler<PublishChatbotCommand, ChatbotEditorDto>, PublishChatbotHandler>();
+        services.AddScoped<ICommandHandler<PauseChatbotCommand, ChatbotEditorDto>, PauseChatbotHandler>();
+        services.AddScoped<ICommandHandler<ResumeChatbotCommand, ChatbotEditorDto>, ResumeChatbotHandler>();
+        services.AddScoped<ICommandHandler<DuplicateChatbotCommand, ChatbotEditorDto>, DuplicateChatbotHandler>();
+        services.AddScoped<ICommandHandler<DeleteChatbotCommand, bool>, DeleteChatbotHandler>();
+        services.AddScoped<IQueryHandler<ExportChatbotQuery, ChatbotExportDto>, ExportChatbotHandler>();
+        services.AddScoped<ICommandHandler<ImportChatbotCommand, ChatbotEditorDto>, ImportChatbotHandler>();
+        // Automations (spec 2026-10-21 D-C8): el catálogo de plantillas, guardar un chatbot como plantilla y borrarla.
+        services.AddScoped<IQueryHandler<ListChatbotTemplatesQuery, TemplateCatalogDto>, ListChatbotTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SaveChatbotAsTemplateCommand, TemplateDto>, SaveChatbotAsTemplateHandler>();
+        services.AddScoped<ICommandHandler<DeleteChatbotTemplateCommand, bool>, DeleteChatbotTemplateHandler>();
+        // Automations (spec 2026-10-21 §8, D-S1..D-S3): el simulador del editor sobre el borrador.
+        services.AddScoped<ICommandHandler<StartSimulationCommand, SimulationDto>, StartSimulationHandler>();
+        services.AddScoped<ICommandHandler<SendSimulationMessageCommand, SimulationDto>, SendSimulationMessageHandler>();
+        services.AddScoped<ICommandHandler<DeleteSimulationCommand, bool>, DeleteSimulationHandler>();
         services.AddValidatorsFromAssemblyContaining<UpdateTenantSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateProductValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
+        services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
+        services.AddValidatorsFromAssemblyContaining<ListUnresolvedCitiesValidator>();
+        services.AddValidatorsFromAssemblyContaining<NewPasswordValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);
@@ -441,6 +893,7 @@ public static class QepServiceCollectionExtensions
         services.AddStorageInfrastructure(configuration);
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
+        services.AddSuppliersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -449,11 +902,180 @@ public static class QepServiceCollectionExtensions
         services.AddReportingInfrastructure(configuration);
         services.AddPlatformInfrastructure(configuration);
 
+        // Pos (spec 2026-10-07): su único vecino directo es Tenancy; productos, empresas y
+        // cajeros entran por adaptadores que se registran más abajo, con los demás.
+        services.AddPosInfrastructure(configuration);
+
+        // Integrations (spec 2026-10-08): núcleo, dueño de las conexiones del tenant con plataformas
+        // externas. Sólo ve Tenancy; el nombre del autor de una conexión entra por un adaptador que se
+        // registra más abajo, con los demás.
+        services.AddIntegrationsInfrastructure(configuration);
+
+        // Messaging (spec 2026-10-09): la bandeja de WhatsApp. Sólo ve Tenancy y Audit; conexiones,
+        // clientes y almacenamiento entran por adaptadores que se registran más abajo.
+        services.AddMessagingInfrastructure(configuration);
+
+        // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
+        // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
+        services.AddPipelineInfrastructure(configuration);
+
+        // Automations (spec 2026-10-21 §4.1): los chatbots. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones, salida del
+        // bot, conexiones y la «API externa» entran por adaptadores que se registran más abajo.
+        services.AddAutomationsInfrastructure(configuration);
+
+        // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
+        // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
+        services.AddShopifyInfrastructure(configuration);
+        // §5.1: el webhook firmado. La firma usa el client secret de la app de Integrations por un puerto propio.
+        services.AddSingleton<IShopifyAppSecret, ShopifyAppSecret>();
+        services.AddScoped<ICommandHandler<ReceiveShopifyWebhookCommand, ShopifyWebhookReceipt>, ReceiveShopifyWebhookHandler>();
+        // §5.3: «Sincronizar ahora» (quotations.order.manage, política ya registrada por Quotations) y la versión de la Admin API
+        // de la conciliación, la misma Shopify:App:ApiVersion que usa Integrations para el enlace.
+        services.AddScoped<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>, SyncShopifyStoreHandler>();
+        // §6.1 y §7: la configuración de la tienda (integrations.connection.read|manage) y la bandeja
+        // (quotations.order.read|manage); las cuatro políticas ya las registran Integrations y Quotations, sin permisos nuevos.
+        services.AddScoped<IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>, ListShopifyStoresHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyStoreQuery, ShopifyStoreDto>, GetShopifyStoreHandler>();
+        services.AddScoped<ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>, UpdateShopifyStoreHandler>();
+        services.AddScoped<IQueryHandler<ListShopifyOrdersQuery, ShopifyOrderPageDto>, ListShopifyOrdersHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>, GetShopifyOrdersSummaryHandler>();
+        services.AddScoped<ICommandHandler<RetryShopifyOrderCommand, ShopifyOrderRowDto>, RetryShopifyOrderHandler>();
+        services.AddScoped<ICommandHandler<ReviewShopifyOrderWarningsCommand, ShopifyOrderRowDto>, ReviewShopifyOrderWarningsHandler>();
+        services.AddScoped<ShopifyOrderRowMapper>();
+        services.AddValidatorsFromAssemblyContaining<UpdateShopifyStoreValidator>();
+        services.AddSingleton<IShopifyApiVersion, ShopifyApiVersion>();
+        // §5.2 y §6.2: los puertos de Shopify hacia Integrations, Customers, Catalog, Geography, Quotations, Companies y
+        // Tenancy/Identity (ShopifyPorts.cs). Shopify no referencia ninguno de esos módulos: el composition root los une. El
+        // escritor de pedidos abre un scope propio por llamada (DiscardPendingChanges de Quotations).
+        services.AddScoped<IShopifyConnectionDirectory, ShopifyConnectionDirectory>();
+        services.AddScoped<IShopifyConnectionHealth, ShopifyConnectionHealth>();
+        services.AddScoped<IShopifyCustomerDirectory, ShopifyCustomerDirectory>();
+        services.AddScoped<IShopifyProductLookup, ShopifyProductLookup>();
+        services.AddScoped<IShopifyGeographyLookup, ShopifyGeographyLookup>();
+        // Spec 2026-10-26 §4.2: la ciudad que no casa va a la bandeja de Geography.
+        services.AddScoped<IShopifyUnresolvedCityReporter, ShopifyUnresolvedCityReporter>();
+        services.AddScoped<IShopifyShippingLookup, ShopifyShippingLookup>();
+        services.AddScoped<IShopifyOrderWriter, ShopifyOrderWriter>();
+        services.AddScoped<IShopifyMemberDirectory, ShopifyMemberDirectory>();
+        services.AddScoped<IShopifyBillingAccounts, ShopifyBillingAccounts>();
+        services.AddScoped<IShopifyOrderNumbers, ShopifyOrderNumbers>();
+        services.AddScoped<IShopifyTenantConnections, ShopifyTenantConnections>();
+        services.AddScoped<IShopifyStoreReferences, ShopifyStoreReferences>();
+        // §6.2: el importador y, con él, el procesador de entregas y su worker. Sin estas tres líneas el webhook
+        // responde 200, encola y nadie procesa nunca; CompositionRootTests arma el contenedor con ValidateOnBuild y resuelve el
+        // worker para que eso no pase en silencio.
+        services.AddScoped<ShopifyCustomerResolver>();
+        services.AddScoped<IShopifyOrderImporter, ShopifyOrderImporter>();
+        // §6.3: pago y cancelación de los pedidos ya importados. Va antes de AddShopifyWebhookProcessing, que sólo
+        // registra la reacción vacía si nadie registró otra (TryAdd).
+        services.AddScoped<IShopifyOrderChangeReaction, ShopifyOrderChanges>();
+        services.AddShopifyWebhookProcessing();
+        services.AddShopifyWebhookWorker();
+        // Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography, que siembra los trabajos de corrección, y
+        // el worker que los corrige, con sus dos puertos: el sinónimo de Geography y el escritor sobre Quotations y Customers (los
+        // dos abren un scope propio por llamada).
+        services.AddScoped<IShopifyCitySynonymLookup, ShopifyCitySynonymLookup>();
+        services.AddScoped<IShopifyCityCorrectionWriter, ShopifyCityCorrectionWriter>();
+        services.AddShopifyCityCorrections();
+        // Spec 2026-10-26 D-C3b: lo que la consola de ciudades lee de pedidos, clientes, huellas, tenants y usuarios, que
+        // Geography no referencia. Scoped como el GeographyDbContext sobre el que corre.
+        services.AddScoped<ICityCorrectionInsights, CityCorrectionInsights>();
+        // Lo que la consola le hace a lo de Shopify: reintentar los trabajos fallidos de un sinónimo y recorrer la historia previa
+        // (D-C12, S6). Los dos puertos son de Geography y Geography no referencia Shopify.
+        services.AddScoped<ICityCorrectionJobs, CityCorrectionJobsAdapter>();
+        services.AddScoped<ShopifyUnresolvedCityBackfill>();
+        services.AddScoped<IHistoricalCityBackfill, HistoricalCityBackfillAdapter>();
+        // §5.3: el cron de la conciliación, cada Shopify:Reconcile:IntervalMinutes.
+        services.AddShopifyReconcileWorker();
+
         // CAT-05 — el único punto donde `catalog` y `storage` se tocan, y es acá a propósito:
         // ningún módulo referencia al otro, el composition root los cablea. Va después de los
         // dos AddXInfrastructure porque el adaptador depende de servicios que ellos registran.
         services.AddScoped<IProductImageLookup, ProductImageLookup>();
+        // Variantes: «¿alguna línea vende esta variante?» mira Quotations y Pos, que
+        // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
+        // consulta comparta la transacción del PUT.
+        services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
+        // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
+        // compartan la transacción de la fusión.
+        services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
+
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
+
+        // Pos (spec 2026-10-07): Catalog, Companies y Tenancy/Identity entran por adaptadores
+        // (PosLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules).
+        services.AddScoped<IPosProductLookup, PosProductLookup>();
+        services.AddScoped<IPosCategoryLookup, PosCategoryLookup>();
+        services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
+        services.AddScoped<IPosCashierLookup, PosCashierLookup>();
+        services.AddScoped<IPosCustomerLookup, PosCustomerLookup>();
+
+        // Integrations (P23): el nombre de quien creó la conexión sale de Tenancy e Identity.
+        services.AddScoped<IConnectionAuthorNames, IntegrationsConnectionAuthorNames>();
+
+        // Messaging (spec 2026-10-09 §6.4): conexiones de WhatsApp por Integrations. El único punto donde
+        // los dos módulos se tocan.
+        services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
+        // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
+        services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
+        services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
+        // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
+        services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
+        services.AddScoped<IConversationAutomationDetails, AutomationConversationDetails>();
+        // Spec 2026-10-21 §5.3: lo que Automations necesita de Mensajería e Integrations, por adaptadores.
+        services.AddScoped<IAutomationConnections, AutomationConnections>();
+        services.AddScoped<IAutomationExternalApis, AutomationExternalApis>();
+        // Spec 2026-10-25 D-5: los miembros que pueden responder, los mismos que ofrece «Transferir».
+        services.AddScoped<IAutomationMembers, AutomationMembers>();
+        // Spec 2026-10-26 D-5, D-7 y D-10: la autorización de datos del cliente de la conversación, en Customers.
+        services.AddScoped<IAutomationDataConsents, AutomationDataConsents>();
+        services.AddScoped<IAutomationBusinessHours, AutomationBusinessHours>();
+        // Spec 2026-10-21 D-H2, D-H5 y fallo P2-R31: el cliente del bloque HTTP va acá y no en AddAutomationsInfrastructure porque su handler
+        // primario (anti-SSRF: sin redirecciones, sin proxy, ConnectCallback que rechaza rangos internos) es de Integrations.Infrastructure.
+        // Sin loggers: el de HttpClient registraría la URL con la query del cliente. CompositionRootTests lo amarra.
+        services.AddSingleton<IExternalApiUrlPolicy, AutomationExternalApiUrlPolicy>();
+        services.AddHttpClient(HttpBlockExecutor.HttpClientName, HttpBlockExecutor.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
+            .RemoveAllLoggers();
+        // Spec 2026-10-21 §5.3, D-M5 y D-M14: los puertos del motor sobre la cola, la conversación, la salida del bot y los medios de
+        // Mensajería, y el nombre de la empresa por Tenancy.
+        services.AddScoped<IAutomationInboundQueue, AutomationInboundQueue>();
+        services.AddScoped<IAutomationConversations, AutomationConversations>();
+        services.AddScoped<IAutomationMessenger, AutomationMessenger>();
+        services.AddScoped<IAutomationMedia, AutomationMedia>();
+        services.AddScoped<IAutomationTenantNames, AutomationTenantNames>();
+        // Spec 2026-10-21 §5.2: una unidad del motor por fila del inbox, en el scope que abre AutomationInboxWorker.
+        services.AddScoped<RunEffects>();
+        // Spec 2026-10-25 D-E5: el parámetro es opcional en RunProcessor; sin este registro el contenedor lo arma sin registro de unidades
+        // y nada se pone rojo. CompositionRootTests lo amarra.
+        services.AddScoped<RunUnitWriter>();
+        services.AddScoped<RunProcessor>();
+        // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
+        services.AddScoped<SimulationRunner>();
+        // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
+        services.AddScoped<IMessagingTenantNames, MessagingTenantNames>();
+        // Spec 2026-10-11 §4.2: el autor de una nota de cliente (usuario, no membresía) con su nombre visible.
+        services.AddScoped<ICustomerAuthorNames, CustomersAuthorNames>();
+        // Spec 2026-10-26 D-5 (medium): la conversación por la que se revoca la autorización de datos, por Mensajería.
+        services.AddScoped<ICustomerConversations, CustomersConversations>();
+        // Spec 2026-10-10 §6.1.3: quién puede responder, por Tenancy, Identity y Authorization.
+        services.AddScoped<IMessagingAssignees, MessagingAssignees>();
+        // Messaging (spec 2026-10-09 §6.4 y §8.6): la copia de los medios entrantes, en el bucket privado de Storage.
+        services.AddScoped<IMessagingMediaStore, MessagingMediaStore>();
+        // Messaging-media-reply: el staging de los adjuntos del asesor (R1, R13) en el mismo bucket privado y el compresor de
+        // imágenes (R12); el compresor no guarda estado y es singleton.
+        services.AddScoped<IMessagingUploadStaging, MessagingUploadStaging>();
+        services.AddSingleton<IMessagingImageCompressor, ImageSharpMessagingImageCompressor>();
+        // Pipeline (spec 2026-10-13 D9): conversaciones por el DbContext de Messaging, clientes por Customers y nombres de
+        // miembros con el mismo adaptador que Messaging (una sola copia de «DisplayName ?? correo»). El único punto donde Pipeline
+        // toca esos módulos.
+        services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
+        services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
+        services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
+        // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).
+        services.AddScoped<IPipelineActiveMembers, PipelineActiveMembers>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -465,10 +1087,14 @@ public static class QepServiceCollectionExtensions
         // bucket y firmar su enlace de descarga.
         services.AddScoped<ICustomerExportStorage, CustomerExportStorage>();
 
+        // Y entre `suppliers` y `storage`, con el mismo adaptador para su exportación.
+        services.AddScoped<ISupplierExportStorage, SupplierExportStorage>();
+
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
         services.AddScoped<IExportFileStorage, ExportFileStorage>();
         services.AddScoped<IQuotationPdfStorage, QuotationPdfStorage>();
         services.AddScoped<IQuotationPdfProvider, QuotationPdfProvider>();
+        services.AddScoped<IOrderPdfProvider, OrderPdfProvider>();
 
         // Decisión 9 del spec 2026-09-19: el PDF lee el logo del tenant por Tenancy (el
         // LogoFileId vigente) y Storage (los bytes del original privado).
@@ -483,6 +1109,10 @@ public static class QepServiceCollectionExtensions
         // repositorios que ya registró AddGeographyInfrastructure.
         services.AddScoped<ICompanyGeographyLookup, CompanyGeographyLookup>();
 
+        // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
+        // los repositorios de Geography.
+        services.AddScoped<ISupplierGeographyLookup, SupplierGeographyLookup>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara
@@ -495,10 +1125,20 @@ public static class QepServiceCollectionExtensions
         // Mismo patron (CAT-05) entre `quotations` y `geography`: resuelve la ciudad de una parte
         // con datos propios para el Excel de pedidos.
         services.AddScoped<IQuotationGeographyLookup, QuotationGeographyLookup>();
+        // Plan 2026-10-21: la cotización y el pedido salen por la conexión de Zenvia del tenant, que vive en Integrations.
+        services.AddScoped<IWhatsAppChannelDirectory, QuotationsWhatsAppChannelDirectory>();
+        // Spec 2026-10-21 D16/D17: la cotización por la conexión de Meta cruza a Mensajería; scoped por su DbContext.
+        services.AddScoped<IMetaWhatsAppSender, QuotationsMetaWhatsAppSender>();
         // Arma la respuesta de una cotizacion con todo lo que su pantalla muestra, para que el
         // navegador no tenga que pedir cliente, miembros y catalogo por separado.
         services.AddScoped<IQuotationResponseComposer, QuotationResponseComposer>();
+        services.AddScoped<IOrderResponseComposer, OrderResponseComposer>();
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
+        // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
+        services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
+        // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
+        // lo usan crear, guardar y previsualizar la cotización y el pedido.
+        services.AddScoped<ShippingResolver>();
         services.AddScoped<IQuotationFileLookup, QuotationFileLookup>();
         // Los comprobantes de pago públicos (spec 2026-09-15, P3): el publicador que copia al bucket
         // público o el que no hace nada, según Quotations:PaymentProofs:PublicLinks. Se decide al
@@ -549,7 +1189,16 @@ public static class QepServiceCollectionExtensions
         services.AddHostedService<ExportLoadSeedWorker>();
 
         AddAuthorizationCapability(services, configuration);
-        services.AddQepObservability(configuration, environment);
+        // La identidad del build (spec 2026-10-14): llega por configuración, no compilada, y no es
+        // obligatoria. Se construye acá y no por el patrón de options porque OpenTelemetry necesita
+        // el valor al registrarse, no al resolverse — y porque con Get<T> una sección ausente es
+        // simplemente un objeto vacío, que es exactamente lo que corre en local.
+        var deployment = new DeploymentInfo(
+            configuration.GetSection(DeploymentOptions.SectionName).Get<DeploymentOptions>()
+                ?? new DeploymentOptions(),
+            environment);
+        services.AddSingleton(deployment);
+        services.AddQepObservability(configuration, environment, deployment.BuildNumber);
         AddAuthentication(services, configuration, environment);
         AddAuthorization(services);
         return services;
@@ -564,6 +1213,9 @@ public static class QepServiceCollectionExtensions
     {
         // El catalogo del codigo sigue siendo singleton: son constantes del build.
         services.AddSingleton<IRoleCatalog, RoleCatalog>();
+        // Spec 2026-10-07: puro y sin estado por tenant, así que singleton como el catálogo del
+        // código. Indexa las PermissionDefinition registradas abajo.
+        services.AddSingleton<ModuleEntitlementMask>();
         // La vista por tenant NO puede serlo: fusiona los roles que el tenant definio, y esos
         // cambian con un PUT y no con un deploy. Scoped, ademas, es lo que hace que memoizar
         // por request sea correcto — el scope dura lo que el request.
@@ -605,8 +1257,16 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage,
                 CustomersPermissions.CustomerImport,
+                // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
+                CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
+                CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
                 CustomersPermissions.ClassificationManage,
+                // Spec 2026-10-11 §4.3: renombrar o borrar etiquetas y borrar notas ajenas. Sólo admin: el
+                // asesor crea etiquetas y notas con CustomerManage, pero no cambia lo que ven todos.
+                CustomersPermissions.TagManage,
+                CustomersPermissions.NoteModerate,
                 QuotationsPermissions.QuotationRead,
                 QuotationsPermissions.QuotationManage,
                 OrdersPermissions.OrderRead,
@@ -632,7 +1292,55 @@ public static class QepServiceCollectionExtensions
                 ReportingPermissions.AllAdvisorsRead,
                 // Solo admin: el log expone trazas y mensajes crudos de todos los modulos.
                 PlatformPermissions.RequestLogRead,
-                PlatformPermissions.RequestLogPurge
+                PlatformPermissions.RequestLogPurge,
+                // Punto de venta (spec 2026-10-07): admin tiene los siete, incluidos descontar y
+                // anular, que el cajero no tiene.
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.SaleCustomer,
+                PosPermissions.SaleVoid,
+                PosPermissions.SaleDiscount,
+                PosPermissions.RegisterOperate,
+                PosPermissions.RegisterRead,
+                // Spec 2026-10-08 §2: el admin de fábrica es global, así que estos tres le llegan a
+                // todo admin; el filtro de operador los deja vivos sólo en el tenant operador. Quien
+                // asigna roles en QCode puede volver a alguien operador: aceptado (radio de explosión).
+                OperatorPermissions.TenantsRead,
+                OperatorPermissions.ModulesManage,
+                OperatorPermissions.TenantsManage,
+                // Spec 2026-10-26 §6: la consola de ciudades del operador, con el mismo criterio que las tres de arriba.
+                GeographyOperatorPermissions.CitiesRead,
+                GeographyOperatorPermissions.CitiesManage,
+                // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
+                // código, así que no hay migración de datos.
+                IntegrationsPermissions.ConnectionRead,
+                IntegrationsPermissions.ConnectionManage,
+                // Spec 2026-10-09 (Mensajería), decisión 5: la bandeja de WhatsApp. De núcleo; el
+                // módulo messaging lo revisa cada handler. El rol vive en código: sin migración.
+                MessagingPermissions.ConversationRead,
+                MessagingPermissions.ConversationManage,
+                // Spec 2026-10-11 §6.4 y decisión 16: las campañas llegan a miles de personas en nombre de la empresa
+                // y el costo es por mensaje; de fábrica sólo en admin (no en advisor: P2 del spec).
+                MessagingPermissions.CampaignManage,
+                // Spec 2026-10-12 D-Q6: lo que el asesor manda en nombre de la empresa lo decide quien administra.
+                // El rol vive en código: sin migración.
+                MessagingPermissions.QuickReplyManage,
+                // Spec 2026-10-15 D-R8: el catálogo de motivos de resolución. El rol vive en código: sin migración.
+                MessagingPermissions.ResolutionReasonManage,
+                // Spec 2026-10-21 D-H8: el horario decide cuándo atiende el asistente en nombre de la empresa; de fábrica sólo en admin.
+                MessagingPermissions.BusinessHoursManage,
+                // Spec 2026-10-14 D-T5: las plantillas de WhatsApp se gestionan desde QEP; de fábrica sólo en admin.
+                MessagingPermissions.TemplateManage,
+                // Spec 2026-10-13 D32: el embudo de ventas completo. De núcleo; la capacidad pipeline la revisa cada handler.
+                PipelinePermissions.DealRead,
+                PipelinePermissions.DealManage,
+                PipelinePermissions.SettingsManage,
+                // Spec 2026-10-21 D-C10: el chatbot atiende en nombre de la empresa; de fábrica sólo en admin. De núcleo.
+                AutomationsPermissions.ChatbotRead,
+                AutomationsPermissions.ChatbotManage,
+                // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
+                SuppliersPermissions.Read,
+                SuppliersPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -656,6 +1364,10 @@ public static class QepServiceCollectionExtensions
                 // misma autoridad, y el gate CLI-00 pide mapearlo por separado.
                 CustomersPermissions.CustomerRead,
                 CustomersPermissions.CustomerManage,
+                // Spec 2026-10-24 D-F1: el asesor es quien ve los duplicados en la bandeja y en el listado.
+                CustomersPermissions.CustomerMerge,
+                // Spec 2026-10-26 D-9: el asesor es quien recibe el pedido de revocación del titular.
+                CustomersPermissions.DataConsentRevoke,
                 // Mismo criterio que CustomerRead/CustomerManage y no el de CustomerImport:
                 // gestionar clasificaciones es trabajo diario de un asesor, no una operacion
                 // privilegiada.
@@ -679,7 +1391,15 @@ public static class QepServiceCollectionExtensions
                 // Solo los dos reportes de su trabajo diario. Cambios de precio y padron de
                 // clientes quedan en admin: son la vista agregada del negocio, no la operacion.
                 ReportingPermissions.OrdersRead,
-                ReportingPermissions.QuotationRead
+                ReportingPermissions.QuotationRead,
+                // Spec 2026-10-09 (Mensajería), decisión 5: la asesora lee y responde la bandeja.
+                MessagingPermissions.ConversationRead,
+                MessagingPermissions.ConversationManage,
+                // Spec 2026-10-15 D-R8: la asesora también corrige y archiva los motivos con que resuelve (decisión del owner).
+                MessagingPermissions.ResolutionReasonManage,
+                // Spec 2026-10-13 D32: la asesora trabaja sus negocios; los ajustes del embudo los decide quien administra.
+                PipelinePermissions.DealRead,
+                PipelinePermissions.DealManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "billing",
@@ -706,116 +1426,154 @@ public static class QepServiceCollectionExtensions
                 // Ver los comprobantes desde el detalle del pedido: el pedido sólo guarda el fileId,
                 // y el enlace lo emite POST /files/{id}/download-url, que exige este permiso. Sin él,
                 // OrderRead muestra la lista de comprobantes pero ninguno se abre (403).
-                StoragePermissions.FileRead
+                StoragePermissions.FileRead,
+                // Spec 2026-10-23 D-14: facturación paga a los proveedores, así que ve y gestiona el directorio.
+                SuppliersPermissions.Read,
+                SuppliersPermissions.Manage
+            ]));
+        // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
+        // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
+        // dibuja y elige o crea el cliente de la venta por /pos/customers, sin el padrón de Clientes
+        // (spec 2026-10-14, decisión 4). Un tenant que quiera cajeros con descuento hace un
+        // rol custom.
+        services.AddSingleton(new RoleDefinition(
+            "cashier",
+            "Cajero",
+            "Vende en el punto de venta y abre y cierra su propia caja.",
+            "Tenancy",
+            "medium",
+            [
+                PosPermissions.SaleRead,
+                PosPermissions.SaleCreate,
+                PosPermissions.SaleCustomer,
+                PosPermissions.RegisterOperate
             ]));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsRead,
             "Leer configuración",
             "Permite consultar la configuración del tenant.",
             "Tenancy",
-            "low"));
+            "low",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.SettingsUpdate,
             "Actualizar configuración",
             "Permite modificar la configuración del tenant.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipInvite,
             "Invitar miembros",
             "Permite invitar usuarios al tenant.",
             "Tenancy",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRead,
             "Leer miembros",
             "Permite consultar membresías y catálogo de roles/permisos.",
             "Tenancy",
-            "low"));
+            "low",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipManage,
             "Gestionar miembros",
             "Permite suspender, remover y cambiar los roles que tiene un miembro.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             TenancyPermissions.AdvisorshipRolesManage,
             "Definir roles",
             "Permite crear roles propios y elegir que permisos concede cada uno.",
             "Tenancy",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileUpload,
             "Subir archivos",
             "Permite crear sesiones de carga y completar uploads.",
             "Storage",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileRead,
             "Leer archivos",
             "Permite solicitar URLs de descarga.",
             "Storage",
-            "medium"));
+            "medium",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FileDelete,
             "Eliminar archivos",
             "Permite marcar archivos como eliminados.",
             "Storage",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             StoragePermissions.FilePublish,
             "Publicar imágenes",
             "Permite publicar y despublicar imágenes y sus variantes.",
             "Storage",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductRead,
             "Leer productos",
             "Permite consultar el catálogo de productos del tenant.",
             "Catalog",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.ProductManage,
             "Gestionar productos",
             "Permite crear, editar e inactivar productos.",
             "Catalog",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateRead,
             "Leer tasas de impuesto",
             "Permite consultar las tasas de impuesto del tenant.",
             "Catalog",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CatalogPermissions.TaxRateManage,
             "Gestionar tasas de impuesto",
             "Permite crear, editar e inactivar tasas de impuesto.",
             "Catalog",
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
             "Companies",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Companies]));
         services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyManage,
             "Gestionar empresas",
             "Permite crear, editar, inactivar y reactivar empresas.",
             "Companies",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Companies]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerRead,
             "Leer clientes",
             "Permite consultar el listado y el detalle de los clientes del tenant.",
             "Customers",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerManage,
             "Gestionar clientes",
             "Permite crear, editar, inactivar y reactivar clientes.",
             "Customers",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.CustomerImport,
             "Importar clientes",
@@ -824,50 +1582,86 @@ public static class QepServiceCollectionExtensions
             // Alto y no medio: una carga masiva escribe cientos de registros de datos personales
             // de una sola vez, y el gate CLI-00 todavia tiene abierta la politica de retencion de
             // PII. Separado de manage justamente para poder darlo a menos gente.
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerMerge,
+            "Fusionar clientes",
+            "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.DataConsentRevoke,
+            "Revocar autorización de datos",
+            "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationRead,
             "Leer clasificaciones de clientes",
             "Permite consultar el catalogo de clasificaciones de clientes del tenant.",
             "Customers",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.ClassificationManage,
             "Gestionar clasificaciones de clientes",
             "Permite crear, editar, inactivar, reactivar y eliminar clasificaciones de clientes.",
             "Customers",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.TagManage,
+            "Gestionar etiquetas de clientes",
+            "Permite renombrar, cambiar de color y eliminar etiquetas de clientes. Crearlas y asignarlas es de quien gestiona clientes.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.NoteModerate,
+            "Moderar notas de clientes",
+            "Permite eliminar las notas internas que escribió otra persona.",
+            "Customers",
+            "medium",
+            RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationRead,
             "Leer cotizaciones",
             "Permite consultar el listado y el detalle de las cotizaciones del tenant.",
             "Quotations",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             QuotationsPermissions.QuotationManage,
             "Gestionar cotizaciones",
             "Permite crear y editar cotizaciones en borrador, incluidas sus lineas de producto.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderRead,
             "Leer pedidos",
             "Permite consultar el pedido convertido de una cotización.",
             "Quotations",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderManage,
             "Gestionar pedidos",
             "Permite convertir una cotización enviada en pedido, con sus comprobantes de pago.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
             "Aprobar pedidos",
             "Permite dar el visto bueno a un pedido pendiente.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
         // persona ya aprobó.
         services.AddSingleton(new PermissionDefinition(
@@ -875,7 +1669,8 @@ public static class QepServiceCollectionExtensions
             "Anular pedidos",
             "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
             "Quotations",
-            "high"));
+            "high",
+            RequiredModules: [ModuleKeys.Orders]));
         // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
         // de QEP (spec 2026-10-05).
         services.AddSingleton(new PermissionDefinition(
@@ -883,19 +1678,22 @@ public static class QepServiceCollectionExtensions
             "Facturar pedidos",
             "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
             "Quotations",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.OrdersRead,
             "Reporte de pedidos",
             "Permite consultar y exportar el reporte de pedidos convertidos del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Orders]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.QuotationRead,
             "Reporte de cotizaciones",
             "Permite consultar y exportar el reporte de cotizaciones del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Quotations]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.PriceChangeRead,
             "Reporte de cambios de precio",
@@ -903,22 +1701,26 @@ public static class QepServiceCollectionExtensions
             "Reporting",
             // Medio y no bajo: el historico completo de precios de un catalogo es el margen del
             // negocio visto de costado, y por eso queda solo en admin.
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.CustomerRead,
             "Reporte de clientes",
             "Permite consultar y exportar el padron de clientes (Clientes CUC) del tenant.",
             "Reporting",
-            "low"));
+            "low",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Customers]));
         // Medio y no bajo, mismo criterio que PriceChangeRead: es la venta de cada asesor vista
         // por otro. No abre ningún reporte por sí solo; amplía el alcance de los de pedidos y
-        // cotizaciones, que sin él muestran sólo lo de quien consulta.
+        // cotizaciones, que sin él muestran sólo lo de quien consulta. Spec 2026-10-07: exige sólo
+        // reporting, porque esos reportes ya quedan enmascarados por su fuente.
         services.AddSingleton(new PermissionDefinition(
             ReportingPermissions.AllAdvisorsRead,
             "Ver reportes de todos los asesores",
             "Permite ver en los reportes de pedidos y cotizaciones los datos de todos los asesores, no sólo los propios.",
             "Reporting",
-            "medium"));
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting]));
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -926,13 +1728,231 @@ public static class QepServiceCollectionExtensions
             "Leer el log de la aplicacion",
             "Permite consultar los POST, PUT, PATCH y DELETE que fallaron, con su error completo.",
             "Platform",
-            "high"));
+            "high",
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             PlatformPermissions.RequestLogPurge,
             "Purgar el log de la aplicacion",
             "Permite borrar del log lo anterior a la ultima semana.",
             "Platform",
-            "high"));
+            "high",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleRead,
+            "Ver ventas y cierres de caja",
+            "Permite consultar las ventas del punto de venta y los cierres de caja propios.",
+            "Pos",
+            "low",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleCreate,
+            "Vender en caja",
+            "Permite registrar ventas en el punto de venta con la caja propia abierta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleCustomer,
+            "Elegir o crear el cliente de una venta",
+            "Permite buscar el cliente de una venta del punto de venta o darlo de alta rápida.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos, ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleDiscount,
+            "Dar descuentos en caja",
+            "Permite dar descuentos por línea y cobrar ventas en $0 en el punto de venta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.SaleVoid,
+            "Anular ventas de caja",
+            "Permite anular, con un motivo, una venta cuya caja sigue abierta.",
+            "Pos",
+            "high",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterOperate,
+            "Abrir y cerrar su caja",
+            "Permite abrir y cerrar la caja propia del punto de venta.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        services.AddSingleton(new PermissionDefinition(
+            PosPermissions.RegisterRead,
+            "Ver todas las cajas y ventas",
+            "Permite consultar las cajas y las ventas de todos los cajeros del tenant.",
+            "Pos",
+            "medium",
+            RequiredModules: [ModuleKeys.Pos]));
+        // Spec 2026-10-08 §2: categoría "Operator" (no "Platform", que es la del log de fallas) y
+        // núcleo, para que el enmascarado por módulos no las toque.
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.TenantsRead,
+            "Ver tenants de la plataforma",
+            "Permite listar los tenants, ver sus módulos y su historial.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.ModulesManage,
+            "Gestionar módulos de los tenants",
+            "Permite activar o desactivar los módulos de cualquier tenant.",
+            "Operator",
+            "high",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.TenantsManage,
+            "Activar o inactivar tenants",
+            "Permite inactivar un tenant, lo que corta el acceso de toda la empresa, o reactivarlo.",
+            "Operator",
+            "high",
+            RequiredModules: []));
+        // Spec 2026-10-26 §6: misma categoría y núcleo. Gestionar es "high": un sinónimo corrige pedidos y clientes de todos los
+        // tenants.
+        services.AddSingleton(new PermissionDefinition(
+            GeographyOperatorPermissions.CitiesRead,
+            "Ver ciudades sin resolver",
+            "Permite ver la bandeja de ciudades sin resolver, los sinónimos y lo que cambiaría al confirmarlos.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            GeographyOperatorPermissions.CitiesManage,
+            "Gestionar sinónimos de ciudades",
+            "Permite confirmar, descartar, corregir y borrar sinónimos de ciudades, que corrigen pedidos y clientes de todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: []));
+
+        // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
+        // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
+        // clientes.
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionRead,
+            "Ver integraciones",
+            "Permite ver las conexiones del tenant con plataformas externas, sin sus credenciales.",
+            "Integrations",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            IntegrationsPermissions.ConnectionManage,
+            "Gestionar integraciones",
+            "Permite conectar, probar, pausar, reanudar y eliminar conexiones con plataformas externas y cambiar sus credenciales.",
+            "Integrations",
+            "high",
+            RequiredModules: []));
+        // Spec 2026-10-09 §6.3: categoría "Messaging" y núcleo (RequiredModules vacío), para que el
+        // enmascarado por módulos no las toque y el 403 con módulo apagado salga con su código.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ConversationRead,
+            "Ver la bandeja de WhatsApp",
+            "Permite ver las conversaciones de WhatsApp del tenant, su hilo y sus archivos.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ConversationManage,
+            "Responder en la bandeja de WhatsApp",
+            "Permite responder mensajes, marcarlos como leídos y resolver o reabrir conversaciones.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
+        // Spec 2026-10-11 §6.4: núcleo como las otras dos de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.CampaignManage,
+            "Gestionar campañas de WhatsApp",
+            "Permite crear, programar, lanzar y cancelar campañas de plantillas de WhatsApp a etiquetas o clientes; cada mensaje tiene costo.",
+            "Messaging",
+            "high",
+            RequiredModules: []));
+        // Spec 2026-10-12 §3.5: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.QuickReplyManage,
+            "Gestionar respuestas rápidas de WhatsApp",
+            "Permite crear, editar y borrar los textos guardados que los asesores insertan en la bandeja de WhatsApp.",
+            "Messaging",
+            "medium",
+            RequiredModules: []));
+        // Spec 2026-10-15 §3.7: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.ResolutionReasonManage,
+            "Gestionar motivos de resolución",
+            "Permite renombrar y archivar los motivos con los que se resuelven las conversaciones de la bandeja.",
+            "Messaging",
+            "low",
+            RequiredModules: []));
+        // Spec 2026-10-21 D-H8: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.BusinessHoursManage,
+            "Administrar horarios de atención",
+            "Permite crear, editar, duplicar y asignar los horarios de atención de los números de la bandeja.",
+            "Messaging",
+            "low",
+            RequiredModules: []));
+        // Spec 2026-10-14 §4.6: núcleo como las demás de Messaging; el módulo lo revisa cada handler.
+        services.AddSingleton(new PermissionDefinition(
+            MessagingPermissions.TemplateManage,
+            "Gestionar plantillas de WhatsApp",
+            "Permite crear, sincronizar y borrar las plantillas de WhatsApp de una conexión y aprovisionar la plantilla de cotización; cada plantilla pasa por la revisión de Meta.",
+            "Messaging",
+            "high",
+            RequiredModules: []));
+        // Spec 2026-10-13 D23 y P1 del plan: categoría "Pipeline" y núcleo (RequiredModules vacío), para que el enmascarado por
+        // módulos no las toque y el 403 con la capacidad apagada salga con su código.
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.DealRead,
+            "Ver el embudo de ventas",
+            "Permite ver el tablero, los negocios del tenant, el triage de conversaciones y los ajustes del embudo.",
+            "Pipeline",
+            "low",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.DealManage,
+            "Gestionar negocios",
+            "Permite crear, editar, mover, ganar, perder y reabrir negocios, enlazar cotizaciones y decidir el triage.",
+            "Pipeline",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            PipelinePermissions.SettingsManage,
+            "Configurar el embudo",
+            "Permite cambiar las etapas del embudo y los motivos de pérdida y de descarte.",
+            "Pipeline",
+            "medium",
+            RequiredModules: []));
+        // Spec 2026-10-21 D-C10: categoría "Automations" y núcleo (RequiredModules vacío), como Pipeline: con [automations] el 403
+        // con la capacidad apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            AutomationsPermissions.ChatbotRead,
+            "Ver chatbots",
+            "Permite ver los chatbots, sus plantillas y las conexiones que atienden.",
+            "Automations",
+            "low",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            AutomationsPermissions.ChatbotManage,
+            "Gestionar chatbots",
+            "Permite crear, editar, publicar, pausar y borrar chatbots y sus plantillas.",
+            "Automations",
+            "medium",
+            RequiredModules: []));
+        // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
+        services.AddSingleton(new PermissionDefinition(
+            SuppliersPermissions.Read,
+            "Ver proveedores",
+            "Permite ver el directorio de proveedores y exportarlo.",
+            "Suppliers",
+            "low",
+            RequiredModules: [ModuleKeys.Suppliers]));
+        services.AddSingleton(new PermissionDefinition(
+            SuppliersPermissions.Manage,
+            "Gestionar proveedores",
+            "Permite crear, editar, activar y desactivar proveedores.",
+            "Suppliers",
+            "medium",
+            RequiredModules: [ModuleKeys.Suppliers]));
     }
 
     private static void AddAuthentication(
@@ -1106,6 +2126,15 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerImport,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerImport))
+            // La otra mitad del permiso de fusión. Sin esta política RequireAuthorization no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerMerge,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
+            // POST …/data-consent/revocations no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.DataConsentRevoke,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.DataConsentRevoke))
             // La otra mitad del permiso de clasificaciones. Sin esta politica RequireAuthorization
             // no resuelve y el sintoma es 500, no 403 — mismo gotcha que TaxRateRead/TaxRateManage.
             .AddPolicy(
@@ -1115,6 +2144,34 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.ClassificationManage,
                 policy => AddPermissionRequirement(
                     policy, CustomersPermissions.ClassificationManage))
+            // Spec 2026-10-11 §4.3: las dos mitades de los permisos de etiquetas y notas. Sin la política el síntoma
+            // es un 500, no un 403.
+            .AddPolicy(
+                CustomersPermissions.TagManage,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.TagManage))
+            .AddPolicy(
+                CustomersPermissions.NoteModerate,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.NoteModerate))
+            // Borrar una nota lo puede hacer el autor (manage) o un moderador: RequireClaim con varios valores deja
+            // pasar a quien tenga cualquiera, y el handler decide según de quién es la nota.
+            .AddPolicy(
+                CustomersPolicies.NoteDelete,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
+                })
+            // Leer los canales de WhatsApp: gestionar cotizaciones o actualizar la configuración (decisión del owner
+            // 2026-10-25). RequireClaim con varios valores deja pasar a quien tenga cualquiera.
+            .AddPolicy(
+                QuotationsPolicies.WhatsAppChannelsRead,
+                policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.RequireClaim(
+                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, TenancyPermissions.SettingsUpdate);
+                })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
             // TaxRateRead/TaxRateManage y ClassificationRead/ClassificationManage.
@@ -1167,7 +2224,99 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogPurge,
-                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge));
+                policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogPurge))
+            .AddPolicy(
+                PosPermissions.SaleRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleRead))
+            .AddPolicy(
+                PosPermissions.SaleCreate,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleCreate))
+            .AddPolicy(
+                PosPermissions.SaleCustomer,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleCustomer))
+            .AddPolicy(
+                PosPermissions.SaleVoid,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleVoid))
+            .AddPolicy(
+                PosPermissions.SaleDiscount,
+                policy => AddPermissionRequirement(policy, PosPermissions.SaleDiscount))
+            .AddPolicy(
+                PosPermissions.RegisterOperate,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterOperate))
+            .AddPolicy(
+                PosPermissions.RegisterRead,
+                policy => AddPermissionRequirement(policy, PosPermissions.RegisterRead))
+            .AddPolicy(
+                OperatorPermissions.TenantsRead,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsRead))
+            .AddPolicy(
+                OperatorPermissions.ModulesManage,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.ModulesManage))
+            .AddPolicy(
+                OperatorPermissions.TenantsManage,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.TenantsManage))
+            // Sin estas dos, RequireAuthorization de la consola de ciudades no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                GeographyOperatorPermissions.CitiesRead,
+                policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesRead))
+            .AddPolicy(
+                GeographyOperatorPermissions.CitiesManage,
+                policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesManage))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionRead,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
+            .AddPolicy(
+                IntegrationsPermissions.ConnectionManage,
+                policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionManage))
+            .AddPolicy(
+                MessagingPermissions.ConversationRead,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationRead))
+            .AddPolicy(
+                MessagingPermissions.ConversationManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ConversationManage))
+            .AddPolicy(
+                MessagingPermissions.CampaignManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.CampaignManage))
+            // Sin esta política, RequireAuthorization(QuickReplyManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.QuickReplyManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.QuickReplyManage))
+            // Spec 2026-10-15: sin esta política, RequireAuthorization(ResolutionReasonManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.ResolutionReasonManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.ResolutionReasonManage))
+            // Spec 2026-10-21: sin esta política, RequireAuthorization(BusinessHoursManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.BusinessHoursManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.BusinessHoursManage))
+            // Spec 2026-10-14: sin esta política, RequireAuthorization(TemplateManage) no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                MessagingPermissions.TemplateManage,
+                policy => AddPermissionRequirement(policy, MessagingPermissions.TemplateManage))
+            // Spec 2026-10-13: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403 (CLAUDE.md).
+            .AddPolicy(
+                PipelinePermissions.DealRead,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.DealRead))
+            .AddPolicy(
+                PipelinePermissions.DealManage,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.DealManage))
+            .AddPolicy(
+                PipelinePermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, PipelinePermissions.SettingsManage))
+            // Spec 2026-10-21 D-C10: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                AutomationsPermissions.ChatbotRead,
+                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotRead))
+            .AddPolicy(
+                AutomationsPermissions.ChatbotManage,
+                policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotManage))
+            // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
+            .AddPolicy(
+                SuppliersPermissions.Read,
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Read))
+            .AddPolicy(
+                SuppliersPermissions.Manage,
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage));
     }
 
     private static void AddPermissionRequirement(

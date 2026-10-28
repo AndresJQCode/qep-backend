@@ -275,7 +275,7 @@ public sealed class TaxRateApiTests
             await CreateTaxRateAsync(client, TenantId, "IVA en uso", 19))).Id;
         var product = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-201", taxRateId, pricing = new { baseUsd = 10m } },
+            ProductBodies.Create("Vela de soja", "VS-201", taxRateId: taxRateId),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, product.StatusCode);
 
@@ -407,6 +407,11 @@ public sealed class TaxRateApiTests
     /// antes de que pueda existir: los dos índices únicos del esquema catalog tienen que
     /// devolver códigos distintos. Colapsarlos en una sola rama manda al llamador a corregir el
     /// campo equivocado, que es exactamente SDD-CT-06.
+    ///
+    /// Desde la Tarea 5 el lado del producto ya no llega al índice: lo frena la comprobación previa
+    /// del handler con el mismo código (catalog.product.code_taken). La prueba sigue afirmando que
+    /// cada lado responde su código; la traducción por nombre del índice de código la cubre
+    /// CatalogVariantPersistenceTests.SavingATakenCodeThrowsCodeTaken.
     /// </summary>
     [Fact]
     public async Task TheTwoUniqueIndexesOfTheSchemaReturnTheirOwnDomainCode()
@@ -426,11 +431,11 @@ public sealed class TaxRateApiTests
 
         await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Create("Vela de soja", "VS-001"),
             TestContext.Current.CancellationToken);
         var productClash = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Otra vela", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Create("Otra vela", "VS-001"),
             TestContext.Current.CancellationToken);
         var productBody = await productClash.Content.ReadAsStringAsync(
             TestContext.Current.CancellationToken);

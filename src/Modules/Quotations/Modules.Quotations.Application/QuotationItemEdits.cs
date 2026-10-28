@@ -15,15 +15,15 @@ internal enum QuotationItemEditKind
 /// <c>RemoveQuotationItemHandler</c>.</summary>
 internal sealed record QuotationItemEdit(
     QuotationItemEditKind Kind,
-    Guid ProductId,
+    Guid VariantId,
     string? ProductName,
     decimal? PreviousQuantity,
     decimal? Quantity);
 
 /// <summary>
 /// Lleva las líneas de una cotización **editable** (Draft o Sent) a la lista completa deseada. La
-/// clave es <c>productId</c>: el dominio ya prohíbe dos líneas del mismo producto
-/// (<c>quotation.item.duplicate_product</c>).
+/// clave es <c>variantId</c> (spec 2026-10-20 §4): el dominio ya prohíbe dos líneas de la misma
+/// variante (<c>quotation.item.duplicate_product</c>), y dos tallas del mismo producto son dos líneas.
 ///
 /// Gemelo de <see cref="OrderItemEdits"/>, pero por el camino editable: usa <c>AddItem</c>,
 /// <c>UpdateItemQuantity</c> y <c>RemoveItem</c>, que pasan por <c>EnsureEditable</c>, y no las
@@ -56,28 +56,28 @@ internal static class QuotationItemEdits
         CancellationToken cancellationToken)
     {
         // Foto de antes de mutar: las altas agregan líneas a quotation.Items mientras se recorre.
-        var current = quotation.Items.ToDictionary(item => item.ProductId);
-        var desiredProductIds = desired.Select(line => line.ProductId).ToHashSet();
+        var current = quotation.Items.ToDictionary(item => item.VariantId);
+        var desiredVariantIds = desired.Select(line => line.VariantId).ToHashSet();
         var edits = new List<QuotationItemEdit>();
 
-        foreach (var line in desired.Where(line => !current.ContainsKey(line.ProductId)))
+        foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {
             // Rechaza inexistente, inactivo o sin precio en la moneda, con los mismos códigos que
             // POST /quotations/{quotationId}/items.
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
+                pricingLookup, tenantId, line.VariantId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
 
             quotation.AddItem(
-                QuotationItemId.New(), line.ProductId, line.Quantity,
+                QuotationItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
                 pricing.Pricing.TaxPercentage, updatedBy, occurredAt);
             edits.Add(new QuotationItemEdit(
-                QuotationItemEditKind.Added, line.ProductId, pricing.Name, null, line.Quantity));
+                QuotationItemEditKind.Added, line.VariantId, pricing.Name, null, line.Quantity));
         }
 
         foreach (var line in desired)
         {
-            if (!current.TryGetValue(line.ProductId, out var item) || item.Quantity == line.Quantity)
+            if (!current.TryGetValue(line.VariantId, out var item) || item.Quantity == line.Quantity)
             {
                 continue;
             }
@@ -86,20 +86,20 @@ internal static class QuotationItemEdits
             // escala y el impuesto se vuelven a resolver, igual que en UpdateQuotationItemHandler.
             var previousQuantity = item.Quantity;
             var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.ProductId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
+                pricingLookup, tenantId, line.VariantId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
 
             quotation.UpdateItemQuantity(
                 item.Id, line.Quantity, pricing.Pricing.DiscountPercentage,
                 pricing.Pricing.TaxPercentage, updatedBy, occurredAt);
             edits.Add(new QuotationItemEdit(
-                QuotationItemEditKind.QuantityChanged, line.ProductId, pricing.Name, previousQuantity, line.Quantity));
+                QuotationItemEditKind.QuantityChanged, line.VariantId, pricing.Name, previousQuantity, line.Quantity));
         }
 
-        foreach (var item in current.Values.Where(item => !desiredProductIds.Contains(item.ProductId)).ToArray())
+        foreach (var item in current.Values.Where(item => !desiredVariantIds.Contains(item.VariantId)).ToArray())
         {
             quotation.RemoveItem(item.Id, updatedBy, occurredAt);
             edits.Add(new QuotationItemEdit(
-                QuotationItemEditKind.Removed, item.ProductId, null, item.Quantity, null));
+                QuotationItemEditKind.Removed, item.VariantId, null, item.Quantity, null));
         }
 
         return edits;

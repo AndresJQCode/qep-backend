@@ -63,6 +63,10 @@ internal sealed class CountingQuotationsUnitOfWork : IQuotationsUnitOfWork
 
     public Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IQuotationsTransaction>(new NoOpQuotationsTransaction());
+
+    public void DiscardPendingChanges()
+    {
+    }
 }
 
 internal sealed class RecordingExportEventPublisher : IExportEventPublisher
@@ -88,6 +92,10 @@ internal sealed class RecordingExportAuditPublisher : IQuotationAuditPublisher
         Guid tenantId, Guid actorId, string action, string resourceId,
         string outcome, DateTimeOffset occurredAt) =>
         Entries.Add(new RecordedAuditEntry(tenantId, actorId, action, resourceId, outcome));
+
+    public void PublishByIntegration(
+        Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+        Entries.Add(new RecordedAuditEntry(tenantId, Guid.Empty, action, resourceId, outcome));
 }
 
 internal sealed class StubExportJobProcessor(

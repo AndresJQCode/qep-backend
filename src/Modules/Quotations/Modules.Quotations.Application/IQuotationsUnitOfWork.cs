@@ -15,6 +15,11 @@ public interface IQuotationsUnitOfWork
     /// <c>IDbContextTransaction</c> vive en Infrastructure porque Application no referencia EF.
     /// </summary>
     Task<IQuotationsTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+
+    /// <summary>Olvida todo lo que se agregó o se leyó en esta unidad de trabajo sin guardarlo. Después de un
+    /// <see cref="SaveChangesAsync"/> fallido, lo pendiente quedaría ahí y el siguiente guardado lo volvería a
+    /// intentar; el caso que la motivó es la carrera de la clave externa (<c>ExternalOrderService</c>).</summary>
+    void DiscardPendingChanges();
 }
 
 /// <summary>Se confirma con <see cref="CommitAsync"/>; disponerla sin commit hace rollback, que

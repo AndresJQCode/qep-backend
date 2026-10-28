@@ -24,7 +24,7 @@ BEGIN
 END
 $$;
 
--- orders -> quotations es RESTRICT: primero los pedidos. Sus comprobantes caen en cascada.
+-- orders -> quotations es RESTRICT: primero los pedidos. Sus líneas, partes, historial y comprobantes caen en cascada.
 DELETE FROM quotations.orders WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 -- Ítems, partes, historial y PDFs caen en cascada con la cotización.
 DELETE FROM quotations.quotations WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
@@ -37,8 +37,14 @@ DELETE FROM customers.customers WHERE tenant_id = '01900000-0000-7000-8000-00000
 DELETE FROM customers.client_classifications WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 DELETE FROM customers.cuc_counters WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 
--- Escalas y cambios de precio caen en cascada con el producto. La tasa es RESTRICT, así que va después.
+-- Galería, opciones del producto, variantes (con sus precios, escalas y valores de opción) y cambios de
+-- precio caen en cascada con el producto. La tasa es RESTRICT, así que va después.
 DELETE FROM catalog.products WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
+-- La biblioteca de opciones se siembra la primera vez que alguien abre el formulario en el tenant. Va
+-- después de los productos: product_options y los valores de las variantes la referencian con RESTRICT.
+-- Sus valores caen en cascada con la opción.
+DELETE FROM catalog.option_definitions WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
+DELETE FROM catalog.option_library_provisions WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 DELETE FROM catalog.tax_rates WHERE tenant_id = '01900000-0000-7000-8000-000000000004';
 
 DELETE FROM tenancy.memberships WHERE tenant_id = '01900000-0000-7000-8000-000000000004';

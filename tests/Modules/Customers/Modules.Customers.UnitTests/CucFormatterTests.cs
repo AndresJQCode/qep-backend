@@ -43,6 +43,15 @@ public sealed class CucFormatterTests
         Assert.Equal("A08000001", CucFormatter.Build("A", "08", 1));
     }
 
+    // Un cliente sin clasificacion no tiene prefijo que ponerle: su CUC es solo departamento y
+    // consecutivo. Son exactamente los ocho caracteres estables (Customer.StableSuffixOf), asi que
+    // asignarle una clasificacion despues antepone el prefijo sin tocar nada mas.
+    [Fact]
+    public void BuildWithoutClassificationLeavesOnlyTheDepartmentAndTheSequence()
+    {
+        Assert.Equal("08000001", CucFormatter.Build(null, "08", 1));
+    }
+
     [Fact]
     public void BuildUsesTheDepartmentCodeVerbatim()
     {

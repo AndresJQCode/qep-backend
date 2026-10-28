@@ -147,6 +147,18 @@ public sealed class NotificationsOptionsValidatorTests
         Assert.True(result.Succeeded);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("/login")]
+    [InlineData("ftp://qep.qcode.co")]
+    public void AnInvalidAppBaseUrlFails(string value)
+    {
+        var result = ValidatorFor(Environments.Development)
+            .Validate(null, new NotificationsOptions { AppBaseUrl = value });
+
+        Assert.Contains("Notifications:AppBaseUrl must be an absolute URL.", result.Failures!);
+    }
+
     private static NotificationsOptionsValidator ValidatorFor(string environmentName) =>
         new(new StubHostEnvironment(environmentName));
 

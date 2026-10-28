@@ -270,6 +270,7 @@ public sealed class ExportQuotationsHandlerTests
             notes: null,
             QuotationParties.Empty,
             billingAccount: null,
+            defaultCurrency: "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,

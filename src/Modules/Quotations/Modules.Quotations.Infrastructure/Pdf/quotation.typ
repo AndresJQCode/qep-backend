@@ -13,6 +13,12 @@
 // sin acento de color que le ponga la marca de nadie a un documento comercial ajeno.
 #let data = json(sys.inputs.data)
 
+// Un solo layout para cotización y pedido (decisión del owner). Lo único que cambia es el nombre del
+// documento —membrete y pie— y el renglón de vigencia, que un pedido no tiene. `kind` llega como texto
+// ("Quotation" / "Order", `QuotationPdfKind`); cualquier otro valor se imprime como cotización.
+#let es-pedido = data.kind == "Order"
+#let documento = if es-pedido { "Pedido" } else { "Cotización" }
+
 #let tinta = rgb("#14181F")
 // 5.8:1 sobre blanco. Los rótulos van en 7pt y a esa medida un gris "de diseño" deja de leerse.
 #let apagado = rgb("#5F6672")
@@ -62,7 +68,8 @@
   str(int(partes.at(2))) + " de " + meses.at(int(partes.at(1)) - 1) + " de " + partes.at(0)
 }
 
-// El separador de miles se arma a mano: Typst no tiene formato por locale.
+// El separador de miles se arma a mano: Typst no tiene formato por locale. Los separadores
+// (miles y decimal) llegan en `data` desde el formato numérico del tenant (spec 2026-10-23).
 #let miles(valor) = {
   let entero = int(valor)
   let signo = if entero < 0 { "-" } else { "" }
@@ -73,24 +80,23 @@
     texto = texto.slice(0, texto.len() - 3)
   }
   partes.insert(0, texto)
-  signo + partes.join(".")
+  signo + partes.join(data.thousandsSeparator)
 }
 
-// Monedas sin fracción de uso corriente. La distinción importa: redondear a entero está bien
-// en pesos y es plata mal dicha en dólares — un unitario de 12,50 impreso como 13 no cierra
-// contra su propia línea, y esa diferencia la descubre el cliente con la calculadora.
-#let sin-decimales = ("COP", "CLP", "PYG", "JPY", "KRW", "VND", "ISK")
-
+// Los decimales los manda el mapper desde el catálogo de monedas (spec 2026-10-08): 0 en pesos,
+// 2 en dólares y euros. Redondear a entero está bien en pesos y es plata mal dicha en dólares.
 #let importe(valor) = {
-  if data.currency in sin-decimales {
+  if data.decimals == 0 {
     miles(calc.round(valor))
   } else {
     let centavos = int(calc.round(valor * 100))
     let resto = calc.abs(calc.rem(centavos, 100))
     let decimales = if resto < 10 { "0" + str(resto) } else { str(resto) }
-    miles(calc.quo(centavos, 100)) + "," + decimales
+    miles(calc.quo(centavos, 100)) + data.decimalSeparator + decimales
   }
 }
+
+#let moneda = data.symbol + " "
 
 // Las cantidades pueden ser fraccionarias (metros, kilos) pero casi nunca lo son: imprimir
 // "12,00" donde va "12" mete ruido en la columna que se lee de un vistazo.
@@ -101,16 +107,12 @@
   if resto == 0 {
     entero
   } else if calc.rem(resto, 10) == 0 {
-    entero + "," + str(calc.quo(resto, 10))
+    entero + data.decimalSeparator + str(calc.quo(resto, 10))
   } else if resto < 10 {
-    entero + ",0" + str(resto)
+    entero + data.decimalSeparator + "0" + str(resto)
   } else {
-    entero + "," + str(resto)
+    entero + data.decimalSeparator + str(resto)
   }
-}
-
-#let porcentaje(valor) = {
-  if valor == int(valor) { str(int(valor)) } else { str(valor).replace(".", ",") }
 }
 
 // ---------------------------------------------------------------------------- piezas
@@ -144,7 +146,7 @@
     #grid(
       columns: (1fr, auto),
       text(size: 7.5pt, fill: apagado)[
-        Cotización #data.quotationNumber#if data.billingAccount != none [ · #data.billingAccount.companyName]
+        #documento #data.quotationNumber#if data.billingAccount != none [ · #data.billingAccount.companyName]
       ],
       text(size: 7.5pt, fill: apagado)[
         Página #counter(page).display() de #counter(page).final().first()
@@ -188,23 +190,27 @@
         \ #text(size: 8.5pt, fill: apagado)[Teléfono: #data.billingAccount.companyPhone]
       ]
     ] else [
-      #text(size: 14pt, weight: "bold", tracking: -0.01em)[Cotización]
+      #text(size: 14pt, weight: "bold", tracking: -0.01em)[#documento]
     ]
   ],
   block[
     #if hay-emisor [
-      #text(size: 12pt, weight: "bold")[Cotización]
+      #text(size: 12pt, weight: "bold")[#documento]
     ] else [
       #text(size: 12pt, weight: "bold")[#data.quotationNumber]
     ]
     #v(3pt, weak: true)
     #par(leading: 0.6em)[
       #if hay-emisor [#renglon("N.°", data.quotationNumber) \ ]
-      #renglon("Emitida", fecha(data.issuedOn)) \
-      #renglon(
-        "Válida hasta",
-        if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
-      ) \
+      // Concuerda con el documento: «la cotización», emitida; «el pedido», emitido.
+      #renglon(if es-pedido { "Emitido" } else { "Emitida" }, fecha(data.issuedOn)) \
+      // Un pedido no vence: "Sin vencimiento" se leería como una condición comercial que nadie pactó.
+      #if not es-pedido [
+        #renglon(
+          "Válida hasta",
+          if data.validUntil == none { text(fill: apagado)[Sin vencimiento] } else { fecha(data.validUntil) },
+        ) \
+      ]
       #renglon("Asesor", if data.advisorLabel == "" { vacio } else { data.advisorLabel }) \
       #renglon("Cliente", if data.customerName == "" { vacio } else { data.customerName })
       #if data.customerCuc != "" [ \ #renglon("NIT / CUC", data.customerCuc)]
@@ -219,7 +225,7 @@
 
 // El recuadro de condiciones de pago va arriba y no al pie, como en la referencia: es lo que el
 // comprador necesita antes de decidir, no una nota final.
-#if data.paymentMethod != none or data.billingAccount != none [
+#if data.paymentMethod != none or data.billingAccount != none or data.cashOnDelivery [
   #block(
     breakable: false,
     width: 100%,
@@ -227,7 +233,13 @@
     inset: 10pt,
   )[
     #par(leading: 0.6em)[
-      #if data.paymentMethod != none [#renglon("Forma de pago", data.paymentMethod) \ ]
+      // Contraentrega reemplaza a la forma de pago escrita a mano (spec §7): el cliente paga al
+      // recibir, así que un segundo «Forma de pago:» se contradiría.
+      #if data.cashOnDelivery [
+        #renglon("Forma de pago", "Contraentrega") \
+      ] else if data.paymentMethod != none [
+        #renglon("Forma de pago", data.paymentMethod) \
+      ]
       #if data.billingAccount != none [
         #renglon("Cuenta para el pago", data.billingAccount.companyName) \
         #data.billingAccount.bankName \
@@ -270,7 +282,7 @@
   #if valor.location != "" [\ #valor.location]
 ]
 
-#if data.isStorePickup or not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
+#if data.isStorePickup or data.carrierName != none or not data.billing.sameAsCustomer or not data.shipping.sameAsCustomer [
   #grid(
     columns: (1fr, 1fr),
     column-gutter: 10mm,
@@ -295,6 +307,10 @@
       } else {
         parte(data.shipping)
       }
+      // La transportadora no existe con recogida en tienda (el dominio la limpia).
+      #if not data.isStorePickup and data.carrierName != none [
+        \ #renglon("Transportadora", data.carrierName)
+      ]
     ],
   )
   #v(14pt)
@@ -343,23 +359,6 @@
     .flatten()
 )
 
-// ---------------------------------------------------------------------------- notas
-
-// Va entre la tabla y los totales, como en la cotizacion de referencia: son las condiciones
-// que califican los precios de arriba, y leerlas despues del total es leerlas tarde.
-//
-// Acotado a 130mm y no al ancho de la caja: a 9pt, los 174mm del texto corrido dan renglones de
-// ~110 caracteres y el ojo pierde el salto de línea. Las observaciones son el único párrafo
-// largo del documento, así que es el único bloque que necesita medida propia.
-#if data.notes != none [
-  #v(14pt)
-  #rotulo("Observaciones")
-  #v(4pt, weak: true)
-  // En mayúsculas como en la referencia: es la letra chica que el vendedor quiere que el
-  // comprador no pase por alto, y en mayúsculas se lee como aviso, no como un párrafo más.
-  #block(width: 130mm)[#upper(data.notes)]
-]
-
 #v(14pt)
 
 // ---------------------------------------------------------------------------- totales
@@ -376,28 +375,64 @@
 // de cero se leería como si ya estuviera descontada del total de arriba, que es falso.
 #let hay-retencion = data.retentionAmount > 0
 
-#let renglones = {
-  let filas = (
-    ("Valor antes de IVA:", "$ " + importe(data.subtotal), 0),
+// Envío: el IVA del envío va en su propio renglón y el IVA de productos sigue siendo `taxAmount`.
+// `Charged` suma (base + IVA); `Free` y `OnDelivery` no suman nada al total: el renglón sólo
+// explica por qué no hay cobro. Con `OnDelivery` el valor, si lo hay, es informativo.
+#let nombre-envio = if data.carrierName == none { "" } else { " (" + data.carrierName + ")" }
+
+//
+// El renglón del IVA del envío se oculta en cero: en USD no hay IVA y con excedente de IVA tampoco se
+// cobra, así que un «IVA del envío: 0» sobra y, con excedente, contradiría la marca del IVA de arriba.
+#let filas-envio = if data.freightChargeMode == "Charged" {
+  let base = (("Envío" + nombre-envio + ":", moneda + importe(data.freightSubtotal), 0),)
+  if data.freightTaxAmount > 0 {
+    base + (
+      (
+        "IVA del envío (" + str(data.freightTaxPercentage) + " %):",
+        moneda + importe(data.freightTaxAmount),
+        0,
+      ),
+    )
+  } else {
+    base
+  }
+} else if data.freightChargeMode == "Free" {
+  (("Envío" + nombre-envio + ": Gratis", "", 0),)
+} else if data.freightChargeMode == "OnDelivery" {
+  (
     (
-      if data.customerVatSurplus { "Total IVA · excedente de IVA:" } else { "Total IVA:" },
-      "$ " + importe(data.taxAmount),
+      "Envío" + nombre-envio + ": al cobro, lo paga el cliente a la transportadora",
+      if data.freightAmount > 0 { moneda + importe(data.freightAmount) } else { "" },
       0,
     ),
+  )
+} else {
+  ()
+}
+
+#let renglones = {
+  let filas = (
+    ("Valor antes de IVA:", moneda + importe(data.subtotal), 0),
+    (
+      if data.customerVatSurplus { "Total IVA · excedente de IVA:" } else { "Total IVA:" },
+      moneda + importe(data.taxAmount),
+      0,
+    ),
+    ..filas-envio,
     (
       "Retención en la fuente:",
-      (if hay-retencion { "-$ " } else { "$ " }) + importe(data.retentionAmount),
+      (if hay-retencion { "-" + moneda } else { moneda }) + importe(data.retentionAmount),
       0,
     ),
     (
       "Total inversión (" + data.currency + "):",
-      "$ " + importe(data.total),
+      moneda + importe(data.total),
       if hay-retencion { 1 } else { 2 },
     ),
   )
 
   if hay-retencion {
-    filas.push(("Neto a pagar (" + data.currency + "):", "$ " + importe(data.netTotal), 2))
+    filas.push(("Neto a pagar (" + data.currency + "):", moneda + importe(data.netTotal), 2))
   }
 
   filas
@@ -411,7 +446,7 @@
     // Lo que el mayorista gana si revende a valor público: la suma de los descuentos de línea.
     // Es un argumento de venta, y por eso vive al lado del total y no escondido en la tabla.
     if data.discountAmount > 0 [
-      #text(style: "italic")[Total utilidad: \$ #importe(data.discountAmount)]
+      #text(style: "italic")[Total utilidad: #moneda#importe(data.discountAmount)]
     ] else [],
     block(width: 82mm)[
       #table(

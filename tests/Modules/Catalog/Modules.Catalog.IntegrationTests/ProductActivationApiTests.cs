@@ -84,20 +84,25 @@ public sealed class ProductActivationApiTests
 
         var created = await ReadProductAsync(
             await CreateProductAsync(client, TenantId, "Vela de soja", "VS-001"));
-        await DeactivateAsync(client, TenantId, created.Id);
+        var deactivated = await ReadProductAsync(await DeactivateAsync(client, TenantId, created.Id));
 
-        // Antes de activar, editar está cerrado: es el callejón sin salida que el slice abre.
+        // Antes de activar, editar está cerrado: es el callejón sin salida que el slice abre. Con la
+        // versión vigente, para que el 422 sea por el producto inactivo y no un 412 de concurrencia.
         var blocked = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(deactivated, "Vela de coco", "VS-001"),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, blocked.StatusCode);
+        Assert.Contains(
+            "catalog.product.inactive",
+            await blocked.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
 
-        await ActivateAsync(client, TenantId, created.Id);
+        var activated = await ReadProductAsync(await ActivateAsync(client, TenantId, created.Id));
 
         var edited = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new { name = "Vela de coco", code = "VS-001", pricing = new { baseUsd = 10m } },
+            ProductBodies.Update(activated, "Vela de coco", "VS-001"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
@@ -207,9 +212,11 @@ public sealed class ProductActivationApiTests
         Assert.True(await QueryUpdatedAfterCreatedAsync(connection, created.Id));
     }
 
-    // CA-CAT-07-09: ancla la afirmación sobre el índice. IX_products_tenant_code es único **sin
-    // filtro parcial**, así que desactivar nunca liberó el código y reactivar no puede colisionar.
-    // Si algún día alguien le agrega un filtro parcial, esta prueba se cae y avisa.
+    // CA-CAT-07-09: desactivar nunca liberó el código y reactivar no puede colisionar. Desde la
+    // Tarea 5 el código repetido lo frena la comprobación previa del handler, que busca entre
+    // **todas** las variantes del tenant, activas o no; el índice ya no se alcanza por acá. Que
+    // IX_product_variants_tenant_code siga siendo no parcial lo ancla
+    // CatalogVariantPersistenceTests.SavingATakenCodeThrowsCodeTaken, con la variante inactiva.
     [Fact]
     public async Task AnInactiveProductNeverReleasedItsCode()
     {
@@ -238,7 +245,7 @@ public sealed class ProductActivationApiTests
         string code) =>
         client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
-            new { name, code, pricing = new { baseUsd = 10m } },
+            ProductBodies.Create(name, code),
             TestContext.Current.CancellationToken);
 
     private static Task<HttpResponseMessage> DeactivateAsync(

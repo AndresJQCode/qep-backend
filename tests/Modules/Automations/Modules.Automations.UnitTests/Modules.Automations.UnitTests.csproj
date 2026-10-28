@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- El flujo del Anexo A completo: lo reusan las pruebas del validador, del guardado y del motor. -->
+    <EmbeddedResource Include="Fixtures\annex-a.json" />
+    <!-- El flujo completo de Clasic (Anexo B), el de las pruebas de punta a punta: el validador lo revisa también acá. -->
+    <EmbeddedResource Include="..\Modules.Automations.IntegrationTests\Fixtures\clasic.json" Link="Fixtures\clasic.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Domain\Modules.Automations.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Automations\Modules.Automations.Infrastructure\Modules.Automations.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

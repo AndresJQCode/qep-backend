@@ -15,6 +15,17 @@ metadata:
 # cualquiera que pueda leer ConfigMaps en el namespace.
 data:
   ASPNETCORE_ENVIRONMENT: "Production"
+  # Identidad del build que corre en el pod, para GET /api/v1/version y el service.version de las
+  # trazas (spec 2026-10-14). Las tres son variables predefinidas del pipeline: Build.BuildId es el
+  # tag de la imagen (azure-pipelines.yml), así que si lo que responde el endpoint no coincide con
+  # `kubectl get deploy -o jsonpath='{.spec.template.spec.containers[0].image}'` alguien aplicó
+  # manifiestos por fuera del pipeline. Un token que la plantilla no resuelva llega literal y el
+  # backend lo trata como ausente (DeploymentInfo.Normalize): el endpoint responde null, nunca el
+  # token. Si en el primer despliegue los tres vienen en null, el plan B es declararlas como
+  # variables propias en azure-pipelines.yml (spec, decisión pendiente 1).
+  Deployment__BuildId: "#{Build.BuildId}#"
+  Deployment__BuildNumber: "#{Build.BuildNumber}#"
+  Deployment__Commit: "#{Build.SourceVersion}#"
   # El publicador del outbox y los tres relays del inbox consultan cada 2-3s, y EF Core
   # registra cada comando en nivel Information, así que el nivel por defecto inunda el pod
   # de líneas "Executed DbCommand" incluso cuando no hay nada que procesar. Subir esta
@@ -59,6 +70,7 @@ data:
   # que es preferible a que arranque y las invitaciones queden entregadas sin correo.
   Notifications__EmailProvider: "infobip"
   Notifications__InvitationUrl: "#{NOTIFICATIONS_INVITATION_URL}#"
+  Notifications__AppBaseUrl: "#{NOTIFICATIONS_APP_BASE_URL}#"
   Notifications__Infobip__BaseUrl: "#{NOTIFICATIONS_INFOBIP_BASE_URL}#"
   Notifications__Infobip__SenderEmail: "#{NOTIFICATIONS_INFOBIP_SENDER_EMAIL}#"
   # Identificadores, no credenciales. El par de claves de R2 está en prod-secret.yaml.
@@ -81,12 +93,39 @@ data:
   # —precios, cliente, totales— viaja en el cuerpo del POST. La API key es una credencial y vive
   # en prod-secret.yaml.
   Quotations__Pdf__BaseUrl: "#{QUOTATIONS_PDF_BASE_URL}#"
-  # Id de la plantilla de WhatsApp aprobada por Meta. Repite el valor por defecto de la imagen
-  # y aun así va acá: cambiar el texto del mensaje es una decisión de negocio que no toca una
-  # línea de código, pero Meta no permite editar una plantilla aprobada — hay que crear otra y
-  # apuntar a su id. Sin esta clave, ese cambio exigiría reconstruir y desplegar la imagen.
-  # El token y el número emisor son credenciales y viven en prod-secret.yaml.
-  Quotations__WhatsApp__TemplateId: "#{QUOTATIONS_WHATSAPP_TEMPLATE_ID}#"
+  # Spec 2026-10-08 (Integraciones): id (no secreto) de la llave con la que se cifran las credenciales
+  # de las conexiones de cada tenant. Rotar = dos despliegues: declarar Keys__k2 con ésta todavía en
+  # k1, y después cambiar ésta a k2 (README § Integraciones). La llave vive en prod-secret.yaml.
+  Integrations__SecretProtection__ActiveKeyId: "k1"
+  # Spec 2026-10-09 (Mensajería): la app de Meta de toda la plataforma. Públicos: viajan en la URL del
+  # popup de Embedded Signup. El AppSecret y el token del webhook viven en prod-secret.yaml. Sin las cinco
+  # claves MetaAppOptionsValidator deja el pod en crash-loop, a propósito.
+  Meta__App__AppId: "#{META_APP_ID}#"
+  Meta__App__ConfigId: "#{META_CONFIG_ID}#"
+  Meta__App__GraphApiVersion: "v24.0"
+  # Spec 2026-10-14 (Instagram): el caso de uso Instagram de la misma app tiene su propio App ID (público: viaja en la
+  # URL de autorización) y su App Secret (prod-secret.yaml). El origen permitido del redirect_uri es el del SPA.
+  Meta__Instagram__AppId: "#{META_INSTAGRAM_APP_ID}#"
+  Meta__Instagram__GraphApiVersion: "v24.0"
+  Meta__Instagram__AllowedRedirectOrigins__0: "https://qep.qcode.co"
+  # Spec 2026-10-15 (Shopify): la app pública no embebida de toda la plataforma. Nada de esto es secreto: el Client ID viaja
+  # en la URL de autorización, y la versión, los scopes, la URL del webhook y el origen del SPA son configuración. El client
+  # secret vive en prod-secret.yaml. ShopifyAppOptionsValidator exige en Production ClientId, ClientSecret,
+  # WebhookCallbackUrl y al menos un origen, con ValidateOnStart: sin una de ellas el pod no arranca, y un token que el
+  # pipeline dejó sin resolver (la variable no está en Backend-prod) cuenta como ausente. ApiVersion y Scopes repiten el
+  # valor por defecto de la imagen a propósito, como Meta__App__GraphApiVersion: subir de versión de la API de Shopify (cada
+  # trimestre) o pedir otro scope es una decisión que no debería exigir otra imagen. Un scope nuevo obliga a cada tienda a
+  # reinstalar. WebhookCallbackUrl es el host de prod-ingress.yaml más la ruta del webhook (ShopifyWebhookEndpoints.Route):
+  # es la dirección que el enlace registra en cada tienda. Cambiarla no borra nada: el próximo enlace o probador registra los
+  # topics en la URL nueva (ShopifyWebhookRegistration compara topic y URL) y las suscripciones de la vieja siguen ahí.
+  Shopify__App__ClientId: "#{SHOPIFY_APP_CLIENT_ID}#"
+  Shopify__App__ApiVersion: "2026-10"
+  Shopify__App__Scopes: "read_orders,read_customers"
+  Shopify__App__WebhookCallbackUrl: "https://qep-api.qcode.co/api/webhooks/shopify"
+  Shopify__App__AllowedRedirectOrigins__0: "https://qep.qcode.co"
+  # Cada cuánto la conciliación trae de Shopify lo que el webhook no entregó y reintenta lo que espera (spec §5.3). Repite el
+  # default de la imagen, como ApiVersion: es el tiempo que tarda en entrar un pedido cuyo producto se acaba de crear.
+  Shopify__Reconcile__IntervalMinutes: "10"
   # Copia pública de cada comprobante de pago nuevo, para que el Excel de pedidos lo enlace (spec
   # 2026-09-15). Literal y no token: no es un secreto ni cambia por despliegue. Exige
   # Storage__R2__PublicBucket y Storage__R2__PublicBaseUrl, de arriba: sin ellos
@@ -99,6 +138,11 @@ data:
   # al cliente. Sin ellas la semilla no corre.
   Seed__Enabled: "true"
   Seed__OwnerEmail: "#{SEED_OWNER_EMAIL}#"
+  # Dueño del tenant operador QCode (consola de operador): administra toda la plataforma, así que
+  # tiene que ser un email interno de QCode que no use nadie más. Mientras la variable del pipeline
+  # SEED_OPERATOR_OWNER_EMAIL no exista, el token llega literal y la semilla salta QCode con una
+  # advertencia (4107), sin tumbar el arranque.
+  Seed__OperatorOwnerEmail: "#{SEED_OPERATOR_OWNER_EMAIL}#"
   # Carga sintética para medir la exportación (spec 2026-09-13). Con un número mayor que 0 siembra,
   # después del arranque, el tenant "carga-export" con esa cantidad de cotizaciones, y le da admin a
   # Seed__OwnerEmail. Repite el default de la imagen a propósito, igual que

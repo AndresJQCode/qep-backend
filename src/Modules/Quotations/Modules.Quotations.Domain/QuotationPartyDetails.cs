@@ -15,6 +15,14 @@ public sealed record QuotationPartyDetails
     /// entrega, y <see cref="Quotation"/> lo exige cuando la facturación trae nombre propio.</summary>
     public string? IdentificationNumber { get; init; }
 
+    /// <summary>Natural o jurídica, sólo en la parte de facturación (spec 2026-10-26):
+    /// <see cref="QuotationParty"/> lo descarta en la de entrega.</summary>
+    public PartyPersonType? PersonType { get; init; }
+
+    /// <summary>NIT, CC, CE o PASAPORTE: el tipo del <see cref="IdentificationNumber"/>. Misma
+    /// suerte que el número: sólo existe en facturación y se exige donde el número se exige.</summary>
+    public PartyIdentificationType? IdentificationType { get; init; }
+
     public string? Phone { get; init; }
 
     public string? Email { get; init; }
@@ -54,6 +62,8 @@ public sealed record QuotationPartyDetails
             IdentificationNumberMaxLength,
             "quotation.party.identification_number_too_long",
             $"The party identification number cannot exceed {IdentificationNumberMaxLength} characters."),
+        PersonType = PersonType,
+        IdentificationType = IdentificationType,
         Phone = NormalizeOptional(
             Phone,
             PhoneMaxLength,

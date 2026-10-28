@@ -77,10 +77,20 @@ public static class AuthorizationCatalogEndpoints
         return Results.Ok(new EffectivePermissionsResponse(tenantId, subjectId, permissions));
     }
 
-    private static IResult GetCatalogAsync(
+    // Spec 2026-10-07, «Catálogo de roles filtrado»: con el tenant en tenancy.tenants, saca de
+    // permissions y de cada roles[].permissions lo que el enmascarado descartaría. El enmascarado por
+    // módulos no se aplica a /authorization/roles ni a EnsureKnownPermissions: son lo guardado, y si
+    // el módulo vuelve el rol vuelve a conceder lo que concedía. La excepción es operator.* (spec
+    // 2026-10-08 §2), que /authorization/roles también oculta fuera del tenant operador.
+    // CatalogVersion no cambia: describe el catálogo del build.
+    private static async Task<IResult> GetCatalogAsync(
         Guid tenantId,
         IExecutionContext executionContext,
-        IRoleCatalog roleCatalog)
+        IRoleCatalog roleCatalog,
+        ITenantModules tenantModules,
+        ModuleEntitlementMask entitlementMask,
+        IOperatorTenant operatorTenant,
+        CancellationToken cancellationToken)
     {
         if (executionContext.TenantId != new TenantId(tenantId))
         {
@@ -88,6 +98,16 @@ public static class AuthorizationCatalogEndpoints
                 "authorization.denied",
                 "The subject cannot read the authorization catalog for this tenant.");
         }
+
+        var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
+        var isOperator = operatorTenant.IsOperator(tenantId);
+        bool Offered(string permission) => modules is null || entitlementMask.Allows(permission, modules);
+        // Spec 2026-10-08 §2 y D11: operator.* nunca es una casilla (ningún rol personalizado puede
+        // llevarlo), y en roles[] sólo lo ve el tenant operador.
+        bool OfferedInRole(string permission) =>
+            Offered(permission) && (isOperator || !OperatorPermissionFilter.IsOperatorPermission(permission));
+        bool OfferedAsCheckbox(string permission) =>
+            Offered(permission) && !OperatorPermissionFilter.IsOperatorPermission(permission);
 
         return Results.Ok(new AuthorizationCatalogResponse(
             roleCatalog.CatalogVersion,
@@ -98,9 +118,13 @@ public static class AuthorizationCatalogEndpoints
                     role.Description,
                     role.Category,
                     role.RiskLevel,
-                    role.Permissions.OrderBy(permission => permission, StringComparer.Ordinal).ToArray()))
+                    role.Permissions
+                        .Where(OfferedInRole)
+                        .OrderBy(permission => permission, StringComparer.Ordinal)
+                        .ToArray()))
                 .ToArray(),
             roleCatalog.ListPermissions()
+                .Where(permission => OfferedAsCheckbox(permission.Permission))
                 .Select(permission => new PermissionCatalogItemResponse(
                     permission.Permission,
                     permission.DisplayName,

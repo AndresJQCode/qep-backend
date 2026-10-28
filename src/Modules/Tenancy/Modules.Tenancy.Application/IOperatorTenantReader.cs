@@ -1,0 +1,65 @@
+using Modules.Tenancy.Domain;
+
+namespace Modules.Tenancy.Application;
+
+/// <summary>
+/// Spec 2026-10-08 §5: la lectura de la consola de operador, a través de todos los tenants. Los registros
+/// son del lado de lectura y llevan tipos de dominio, sin texto: el texto del contrato lo pone
+/// <see cref="OperatorTenantDetails"/> y cada handler.
+/// </summary>
+public interface IOperatorTenantReader
+{
+    /// <summary>Una página ordenada por nombre y luego id; <paramref name="search"/> en nombre o slug, con
+    /// los comodines tratados como literales. El resumen cuenta todos los tenants, sin la búsqueda.</summary>
+    Task<OperatorTenantListing> ListAsync(string? search, int page, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>null si el tenant no existe.</summary>
+    Task<OperatorTenantSnapshot?> FindAsync(TenantId tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Una página de lotes del historial, del más reciente al más antiguo. Con
+    /// <paramref name="moduleKey"/>, los lotes que tocan ese módulo (con todos sus cambios) y ninguno de estado
+    /// del tenant ni de proveedor.</summary>
+    Task<TenantChangeBatchPage> ListHistoryAsync(
+        TenantId tenantId, TenantModuleKey? moduleKey, int page, int pageSize, CancellationToken cancellationToken);
+}
+
+/// <param name="Batches">Lotes en el orden de la página; dentro de un lote, en el orden de
+/// <c>TenantModuleKeys.All</c>. Nunca vacíos.</param>
+/// <param name="Total">Lotes que cumplen el filtro, no filas.</param>
+public sealed record TenantChangeBatchPage(IReadOnlyList<IReadOnlyList<TenantChange>> Batches, int Total);
+
+/// <param name="Total">Los que cumplen la búsqueda, no sólo los de la página.</param>
+/// <param name="AllTenants">Todos, sin la búsqueda.</param>
+/// <param name="WithoutModules">Tenants sin ninguna fila activa (decisión P7 del plan).</param>
+/// <param name="Inactive">Tenants cuyo estado no es <see cref="TenantStatus.Active"/>.</param>
+public sealed record OperatorTenantListing(
+    IReadOnlyList<OperatorTenantRow> Rows, int Total, int AllTenants, int WithoutModules, int Inactive);
+
+/// <param name="ActiveModules">Filas con estado activo (contratados), no efectivos.</param>
+public sealed record OperatorTenantRow(
+    Guid TenantId, string Slug, string DisplayName, TenantStatus Status, DateTimeOffset CreatedAt, int ActiveModules);
+
+/// <param name="Modules">Sólo los que tienen fila.</param>
+/// <param name="LastModuleReasons">El motivo del último cambio de cada módulo en el historial.</param>
+/// <param name="LastStatusChange">El último cambio de estado del tenant en el historial, o null.</param>
+/// <param name="Providers">Sólo los que tienen fila (plan 2026-10-21).</param>
+/// <param name="LastProviderReasons">El motivo del último cambio de cada proveedor en el historial.</param>
+public sealed record OperatorTenantSnapshot(
+    Guid TenantId,
+    string Slug,
+    string DisplayName,
+    DateTimeOffset CreatedAt,
+    TenantStatus Status,
+    long Version,
+    IReadOnlyList<TenantModuleState> Modules,
+    IReadOnlyDictionary<TenantModuleKey, ChangeReason> LastModuleReasons,
+    TenantStatusChange? LastStatusChange,
+    IReadOnlyList<TenantProviderState> Providers,
+    IReadOnlyDictionary<string, ChangeReason> LastProviderReasons);
+
+public sealed record TenantModuleState(
+    TenantModuleKey Key, TenantModuleStatus Status, DateTimeOffset StatusChangedAt, string Source);
+
+public sealed record TenantProviderState(string Key, TenantModuleStatus Status, DateTimeOffset StatusChangedAt);
+
+public sealed record TenantStatusChange(DateTimeOffset OccurredAt, ChangeReason Reason);

@@ -28,12 +28,18 @@ Order.status:        Pending → Approved → Invoiced
                      Invoiced → Approved (revertir la facturación; no anula nada fuera de QEP)
                      Pending | Approved → Cancelled (con motivo; la cotización sigue Converted)
 Order.paymentStatus: FullPaymentReceived | PartialPaymentReceived | PaymentPending
+Order.source:        Quotation | Manual | Shopify   (de dónde nació; no cambia)
 ```
 
 Editar (encabezado o líneas) sólo funciona en `Draft`/`Sent`. `Converted`, `Voided` y `Expired`
-son de sólo lectura (422 `quotation.quotation.not_editable`). Única excepción: mientras el pedido
-sigue `Pending`, `POST /orders/{orderId}/items` le suma líneas a su cotización —sólo sumar,
-nada de cambiar cantidad ni quitar—, sin importar el `status` de la cotización.
+son de sólo lectura (422 `quotation.quotation.not_editable`), sin excepciones.
+
+**El pedido tiene sus propios datos** (spec 2026-10-15): cliente, asesor, cuenta de cobro, partes,
+líneas y totales. Convertir **copia** la cotización al pedido; desde ahí son independientes. Mientras
+el pedido sigue `Pending`, `PUT /orders/{orderId}` y `POST /orders/{orderId}/items` editan **las
+líneas del pedido**, y la cotización `Converted` no cambia. Un pedido puede no tener cotización:
+el manual (`POST /orders`, `source: "Manual"`) y el de una integración (`source: "Shopify"`) traen
+`quotationId: null`.
 
 ## Endpoints
 
@@ -57,33 +63,37 @@ Todo lo que cuelga de `/quotations/{id}/items...` sigue siendo de la cotización
 |---|---|---|---|
 | `GET` | `/quotations` | — (query: `clientId`, `advisorId`, `status`, `createdFrom`, `createdTo`, `page`, `pageSize`) | Paginado, sin líneas |
 | `GET` | `/quotations/{id}` | — | Con líneas |
-| `POST` | `/quotations` | `CreateQuotationRequest` | 201, arranca en `Draft` |
+| `POST` | `/quotations` | `CreateQuotationRequest` (con `items`, `globalScaleFloor`, `isRetail` opcionales) | 201, arranca en `Draft` con las líneas que traiga |
+| `POST` | `/quotations/preview` | `CreateQuotationRequest` | 200 `QuotationResponse` calculado **sin persistir** y sin gastar número: `id` vacío, `quotationNumber: ""`, `version: 0`. La vigencia ausente vuelve resuelta |
 | `PATCH` | `/quotations/{id}` | `UpdateQuotationRequest` | Reemplaza el encabezado entero (no PATCH parcial pese al verbo) |
-| `POST` | `/quotations/{id}/items` | `AddQuotationItemRequest` | Descuento se calcula solo por escala del producto |
+| `POST` | `/quotations/{id}/items` | `AddQuotationItemRequest` | Descuento se calcula solo por escala de la variante |
 | `PUT` | `/quotations/{id}/items/{itemId}` | `UpdateQuotationItemRequest` | Re-resuelve el descuento para la nueva cantidad |
 | `DELETE` | `/quotations/{id}/items/{itemId}` | — | |
 | `POST` | `/quotations/{id}/send` | `SendQuotationRequest` | El PDF ya se subió a Storage antes de este llamado (ver abajo) |
 | `POST` | `/quotations/{id}/void` | — (sin body) | |
-| `GET` | `/quotations/{id}/order` | — | 404 si no se convirtió todavía |
-| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | Crea el pedido en `Pending` y deja la cotización en `Converted`, en una sola operación |
+| `GET` | `/quotations/{id}/order` | — | 200 `OrderDetailResponse`, el mismo de `GET /orders/{orderId}`. 404 si no se convirtió todavía |
+| `POST` | `/quotations/{id}/order` | `ConvertQuotationToOrderRequest` | 201 `OrderDetailResponse` (el mismo de `GET /orders/{orderId}`: la pantalla dibuja el resumen sin pedir nada después) + `Location`. Copia la cotización a un pedido en `Pending` (`source: "Quotation"`) y la deja en `Converted`, en una sola operación. Las notas del pedido son un solo campo: `notes` las reemplaza tal cual; `null` u omitido hereda las de la cotización; `""` (o en blanco) deja el pedido sin notas |
 
 Y los del pedido, siempre por su `orderId` (el `id` que devuelve la conversión, el listado
 `GET /orders` o el detalle `GET /orders/{orderId}`):
 
 | Método | Ruta | Body | Notas |
 |---|---|---|---|
-| `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `page`, `pageSize`) | Paginado |
-| `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido y su cotización compuesta |
+| `GET` | `/orders` | — (query: `clientId`, `advisorId`, `status`, `paymentStatus`, `convertedFrom`, `convertedTo`, `clientCuc`, `orderNumber`, `source`, `timeZone`, `page`, `pageSize`) | Paginado, `OrdersPageResponse`. `source` es `Quotation`, `Manual` o `Shopify` (sin él, todos; otro valor → 422 `order.order.source_invalid`). `timeZone` es la zona IANA del navegador (`Europe/Madrid`): los días de `convertedFrom`/`convertedTo` se cortan en ella; sin ella, en la del tenant; una zona que no es IANA → 422 `order.time_zone_invalid` |
+| `POST` | `/orders` | `CreateOrderRequest` | 201 `OrderDetailResponse` + `Location`. Pedido manual, sin cotización, en `Pending`. Exige `quotations.order.manage` y cliente completo con CUC |
+| `POST` | `/orders/preview` | `CreateOrderRequest` (los comprobantes pueden ir sin `fileId`; `billingAccount` puede ir `null`) | 200 `OrderDetailResponse` calculado **sin persistir** y sin gastar número de pedido. Sin `billingAccount` se precia en la moneda por defecto del tenant, como una cotización sin cuenta, y `order.billingAccount` y `billingAccount` vuelven `null` |
+| `GET` | `/orders/{orderId}` | — | 200 `OrderDetailResponse`: el pedido con sus datos, el cliente y el asesor resueltos, las líneas, la cotización de origen (si la hay) y el historial |
 | `POST` | `/orders/{orderId}/approve` | — (sin body) | 200 `OrderResponse` en `Approved`. Sólo desde `Pending`; exige `quotations.order.approve` (admin y facturación, no el asesor: `quotations.order.manage` no alcanza) |
 | `POST` | `/orders/{orderId}/cancel` | `CancelOrderRequest` | 200 `OrderResponse` en `Cancelled`. Desde `Pending` o `Approved`; exige `quotations.order.cancel` (sólo admin). Conserva `approvedAt`/`approvedBy` |
 | `POST` | `/orders/{orderId}/invoice` | — (sin body) | 200 `OrderResponse` en `Invoiced`, con `invoicedAt`/`invoicedBy`. Sólo desde `Approved`; no exige el pago completo. Exige `quotations.order.invoice` (admin y facturación: `quotations.order.approve` no alcanza). Es sólo el estado: QEP no emite la factura |
 | `POST` | `/orders/{orderId}/uninvoice` | — (sin body) | 200 `OrderResponse` de vuelta en `Approved`, con `invoicedAt`/`invoicedBy` en `null`. Sólo desde `Invoiced`; mismo permiso que facturar. No anula nada fuera de QEP |
 | `POST` | `/orders/{orderId}/proofs` | `AddOrderPaymentProofsRequest` | 200 `OrderResponse`. Suma comprobantes y corrige monto o archivo de los ya cargados. Sólo con el pedido en `Pending` |
 | `DELETE` | `/orders/{orderId}/proofs/{proofId}` | — | 200 `OrderResponse`. Quita un comprobante y recalcula `paymentStatus`. Sólo con el pedido en `Pending` |
-| `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas a la cotización y recalcula `paymentStatus` contra el total nuevo |
+| `POST` | `/orders/{orderId}/send` | `SendOrderRequest` **opcional**: `{ "recipient": "Customer" \| "Billing" }`; sin cuerpo o sin `recipient`, `Customer` | 200 `OrderDetailResponse`, con la entrada nueva en `history` (`eventType: "Sent"`, `details`: «Enviado por WhatsApp al cliente.» o «… a facturación.»). Manda el PDF del pedido por WhatsApp: al teléfono del cliente o al de la facturación propia del pedido. En `Pending`, `Approved` o `Invoiced`; no cambia el pedido (ni estado ni `version`). Exige `quotations.order.manage`. No exige cliente completo: basta que exista y tenga teléfono |
+| `POST` | `/orders/{orderId}/items` | `AddOrderItemsRequest` | 200 `OrderDetailResponse`. Sólo con el pedido en `Pending`; suma líneas al pedido y recalcula `paymentStatus` contra el total nuevo |
 | `PUT` | `/orders/{orderId}` | `SaveOrderEditsRequest` + header `If-Match: "<order.version>"` | 200 `OrderDetailResponse` + `ETag`. Guarda de una vez productos (lista completa), comprobantes (`add`/`update`/`removeIds`) y notas; `paymentStatus` lo deriva el servidor. Sin cambios reales responde 200 con la misma `version`. Sin `If-Match` → 428; versión vieja → 412 |
 | `POST` | `/orders/{orderId}/preview` | `SaveOrderEditsRequest` (sin `fileId` en `add`) | 200 `OrderDetailResponse` recalculado **sin persistir**. `order.version` es la guardada; los comprobantes nuevos vuelven con `id`/`fileId` sintéticos que no se deben usar |
-| `POST` | `/orders/export` | — (mismos filtros del listado por query string) | 202: el Excel del listado llega por correo |
+| `POST` | `/orders/export` | — (mismos filtros del listado por query string, `source` y `timeZone` incluidos) | 202: el Excel del listado llega por correo |
 
 ## Formas de los DTOs
 
@@ -98,7 +108,29 @@ type CreateQuotationRequest = {
 };
 // UpdateQuotationRequest: mismos campos, sin clientId (no se puede cambiar el cliente de una cotización)
 
-type AddQuotationItemRequest = { productId: string; quantity: number };
+// Spec 2026-10-17 (flete): lo acepta también el cuerpo de crear/guardar/previsualizar cotización y pedido,
+// como `shipping`. Ausente = "no lo toques" (en recogida en tienda se limpia). Nada es obligatorio.
+type ShippingRequest = {
+  carrierId: string | null;
+  freightChargeMode: "Charged" | "OnDelivery" | "Free" | null;
+  freightAmount: number;            // con IVA incluido; entero en COP
+  cashOnDelivery: boolean;
+};
+// Las respuestas devuelven `shipping` siempre, también en recogida:
+type ShippingResponse = {
+  isStorePickup: boolean;
+  carrier: { id: string; name: string } | null;   // el nombre es la foto al elegirla
+  chargeMode: "Charged" | "OnDelivery" | "Free" | null;
+  freightAmount: number;
+  freightTaxPercentage: number;     // foto de la tasa; 0 fuera de COP
+  freightSubtotal: number;
+  freightTaxAmount: number;
+  cashOnDelivery: boolean;
+};
+
+// Spec 2026-10-20 §4: una línea vende una **variante**. Un producto sin opciones manda el id de su
+// variante por defecto, que es el mismo del producto. Ver docs/superpowers/plans/2026-10-20-variantes-handoff.md.
+type AddQuotationItemRequest = { variantId: string; quantity: number };
 type UpdateQuotationItemRequest = { quantity: number };
 
 type SendQuotationRequest = { pdfFileId: string };
@@ -130,16 +162,49 @@ type QuotationResponse = {
   // del último envío) ya está adentro de `canBeConvertedToOrder`; viaja aparte para que el
   // detalle pueda decir *por qué* no se ofrece convertir, en vez de esconder el botón callado.
   canBeSent: boolean; hasChangesSinceSent: boolean; canBeConvertedToOrder: boolean;
-  items: { id, productId, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
+  // `variantId` es lo que el guardado manda de vuelta; `productId`, el producto dueño de la variante.
+  // `productName` es el nombre visible de la variante («Camiseta – M»), `productCode` su Code.
+  items: { id, variantId, productId, productCode, productName, quantity, unitPrice, discountPercentage, discountAmount, subtotal, position }[];
 };
 
 type CancelOrderRequest = { reason: string }; // obligatorio, se recorta, máx. 500
 
+// Spec 2026-10-15 §5.2: el mismo cuerpo que la pantalla arma para una cotización, más el estado de
+// pago y los comprobantes. Precio, descuento por escala y tasa los resuelve el backend.
+type CreateOrderRequest = {
+  clientId: string;
+  paymentMethod: string | null;
+  notes: string | null;
+  isRetail: boolean;
+  globalScaleFloor: number | null;
+  parties: QuotationPartiesRequest | null; // null: facturación y envío con los datos del cliente
+  // Obligatoria en POST /orders (422 validation.failed, errors.BillingAccount). En /orders/preview puede ir
+  // null: la pantalla pinta el precio antes de elegir la empresa que factura.
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string } | null;
+  items: { variantId: string; quantity: number }[]; // al menos uno, sin variantes repetidas
+  paymentStatus: "FullPaymentReceived" | "PartialPaymentReceived" | "PaymentPending";
+  paymentProofs: { fileId: string; amount: number; paidOn?: string | null }[]; // vacío sólo con PaymentPending
+};
+
 type OrderResponse = {
-  id: string; orderNumber: string; quotationId: string;
+  id: string; orderNumber: string;
+  source: "Quotation" | "Manual" | "Shopify";
+  quotationId: string | null;          // null en un pedido manual o de una integración
+  externalReference: string | null;    // "#1001" en uno de Shopify
+  clientId: string; advisorId: string;
   status: "Pending" | "Approved" | "Cancelled" | "Invoiced";
-  paymentStatus: string; notes: string | null;
-  convertedAt: string; convertedBy: string;
+  paymentStatus: string; paymentMethod: string | null; currency: string;
+  isRetail: boolean; globalScaleFloor: number | null;
+  billingUsesBusinessName: boolean; isStorePickup: boolean; billsToFinalConsumer: boolean;
+  billingWithRetention: boolean | null; billingVatSurplus: boolean | null;
+  customerVatSurplus: boolean;         // el valor efectivo: con consumidor final es false
+  subtotal: number; taxPercentage: number; taxAmount: number; discountAmount: number;
+  total: number; retentionAmount: number; netTotal: number;
+  notes: string | null;                // sin tope de largo
+  // null sólo en el cálculo previo sin cuenta (POST /orders/preview); un pedido guardado siempre la trae.
+  billingAccount: { companyId: string; bankName: string; accountNumber: string; currency: string } | null;
+  parties: QuotationPartyResponse[];   // las líneas no viajan acá: van en OrderDetailResponse.items
+  convertedAt: string; convertedBy: string; // en un pedido manual o externo: cuándo y quién lo creó
   approvedAt: string | null; approvedBy: string | null;
   cancelledAt: string | null; cancelledBy: string | null; cancellationReason: string | null;
   invoicedAt: string | null; invoicedBy: string | null; // null si no está facturado
@@ -151,9 +216,29 @@ type OrderResponse = {
   paymentProofs: { id, fileId, amount, uploadedAt, paidOn: string | null }[];
 };
 
-type AddOrderItemsRequest = { toAdd: { productId: string; quantity: number }[] }; // al menos uno
+type AddOrderItemsRequest = { toAdd: { variantId: string; quantity: number }[] }; // al menos uno
 
-type OrderDetailResponse = { order: OrderResponse; quotation: QuotationResponse };
+// Spec 2026-10-15 §6.2: la cotización ya no viaja. `items` son las líneas del pedido con su producto
+// resuelto (mismo QuotationItemResponse de la cotización); `sourceQuotation` es null sin cotización.
+type OrderDetailResponse = {
+  order: OrderResponse;
+  client: QuotationClientResponse | null;
+  advisorName: string | null; advisorEmail: string | null;
+  billingAccount: QuotationBillingResponse | null;
+  items: QuotationItemResponse[];
+  sourceQuotation: { id: string; quotationNumber: string } | null;
+  history: { id: string; eventType: string; eventAt: string; memberId: string | null; memberName: string | null; details: string | null }[];
+  availableFloors: number[];
+};
+
+type OrderListItemResponse = {
+  id: string; orderNumber: string;
+  quotationId: string | null; quotationNumber: string | null;
+  clientId: string; clientName: string | null; advisorId: string; advisorName: string | null;
+  status: string; paymentStatus: string; paymentMethod: string | null;
+  convertedAt: string; currency: string; total: number;
+  source: string; externalReference: string | null;
+};
 ```
 
 `advisorId`/`createdBy`/`updatedBy`/`convertedBy`/`approvedBy`/`cancelledBy`/`invoicedBy` son ids de **membership** (Tenancy), no el
@@ -196,28 +281,63 @@ URL pública deja de abrir y un `PaymentProof` quitado ya no se puede volver a a
 
 | `code` | HTTP | Qué pasó |
 |---|---|---|
-| `quotation.quotation.client_not_found` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear o al convertir |
+| `quotation.quotation.client_not_found` / `client_incomplete` / `client_inactive` / `client_cuc_missing` | 422 | Cliente inválido al crear (también en `/quotations/preview`) o al convertir |
 | `quotation.quotation.not_editable` | 422 | La cotización no está en `Draft`/`Sent` |
 | `quotation.quotation.not_draft` | 422 | `send` sobre algo que no es `Draft` |
 | `quotation.quotation.not_sent` | 422 | `void`/convertir sobre algo que no es `Sent` (void también acepta Draft) |
 | `quotation.quotation.changed_since_sent` | 422 | Convertir una cotización editada después de su último envío: hay que reenviarla primero |
 | `quotation.quotation.pdf_not_found` / `pdf_not_available` / `pdf_not_a_pdf` | 422 | Problema con el `pdfFileId` de `send` |
-| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Producto inválido al agregar una línea |
-| `quotation.item.duplicate_product` | 422 | El producto ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra |
+| `quotation.item.product_not_found` / `product_inactive` / `product_price_unavailable` | 422 | Variante inválida (inexistente, inactiva o de un producto inactivo, o sin precio en la moneda) al agregar una línea, a la cotización o al pedido (también en `POST /quotations` y `/quotations/preview` con `items`, en `POST /orders`, y en `/orders/preview` sin cuenta, contra la moneda por defecto del tenant) |
+| `quotation.item.duplicate_product` | 422 | La variante ya está en la cotización: se cambia la cantidad de su línea, no se agrega otra. Dos tallas del mismo producto sí son dos líneas (en `POST /quotations` y `/quotations/preview`, una variante repetida en `items` llega antes como `validation.failed` con `errors.Items`) |
+| `quotation.retail.floor_not_allowed` | 422 | Cotización detal con piso de escala global en el mismo cuerpo (`POST /quotations`, `/quotations/preview`, `PUT /quotations/{id}` y su `/preview`) |
+| `order.order.client_not_found` / `client_inactive` / `client_incomplete` / `client_cuc_missing` | 422 | `POST /orders` (y su `/preview`) con un cliente que no existe en el tenant, inactivo, incompleto o sin CUC |
+| `order.order.items_required` | 422 | `POST /orders` sin líneas |
+| `order.item.duplicate_product` | 422 | La variante ya está en el pedido (`POST /orders`, `PUT /orders/{orderId}`, `POST /orders/{orderId}/items`): se cambia la cantidad de su línea |
+| `order.billing.account_required` | 422 | Pedido de una integración (Shopify) sin cuenta de cobro (`POST /orders` sin ella responde `validation.failed` con `errors.BillingAccount`) |
+| `order.billing.party_incomplete` / `order.shipping.party_incomplete` | 422 | La parte de facturación o de envío del pedido quedó incompleta |
+| `order.billing.identification_required` | 422 | Una parte de facturación con nombre propio sin documento de identidad |
+| `order.billing.tax_profile_required` | 422 | Una parte de facturación propia sin decir si practica retención y si tiene excedente de IVA |
+| `order.time_zone_invalid` | 422 | `GET /orders` o `POST /orders/export` con un `timeZone` que no es un ID IANA |
+| `order.order.source_invalid` | 422 | `GET /orders` o `POST /orders/export` con un `source` que no es `Quotation`, `Manual` ni `Shopify` |
 | `order.order.not_pending` | 422 | El pedido ya está `Approved`, `Invoiced` o `Cancelled`: no admite comprobantes (`/orders/{orderId}/proofs`), productos (`/orders/{orderId}/items`), edición (`PUT /orders/{orderId}` y su `/preview`) ni otra aprobación |
 | `concurrency.conflict` | 412 | `PUT /orders/{orderId}` con un `If-Match` que ya no es la `version` del pedido, o cualquiera de `/approve`, `/cancel`, `/invoice` y `/uninvoice` que choca con otro cambio simultáneo sobre el mismo pedido: otra persona lo cambió. Recargar |
 | `precondition.if_match_required` | 428 | `PUT /orders/{orderId}` sin `If-Match` o con un valor que no es un número positivo |
 | `order.order.not_found` | 404 | El `orderId` de la ruta no existe en este tenant. Lo devuelven todas las acciones de `/orders/{orderId}/…` |
-| `order.order.already_cancelled` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido ya `Cancelled` |
+| `order.order.already_cancelled` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido ya `Cancelled`, o `POST /orders/{orderId}/send` sobre un pedido anulado |
+| `order.order.recipient_invalid` | 422 | `POST /orders/{orderId}/send` con un `recipient` que no es `Customer` ni `Billing` |
+| `order.order.billing_phone_missing` | 422 | `POST /orders/{orderId}/send` con `recipient: "Billing"` y el pedido factura a los datos del cliente (o su parte de facturación no tiene teléfono). No ofrezcas «facturación» sin una parte de facturación propia |
+| `order.whatsapp.recipient_missing` | 422 | `POST /orders/{orderId}/send`: el destinatario elegido no tiene un teléfono utilizable. Completa el teléfono del cliente o elige otro destinatario |
+| `order.whatsapp.no_channel` | 422 | `POST /orders/{orderId}/send` en un tenant sin conexión de Zenvia disponible (activa, habilitada por el operador y con plantilla). Se arregla en Integraciones, no en el pedido. Llega antes de generar el PDF |
+| `order.whatsapp.channel_required` | 422 | `POST /orders/{orderId}/send` con más de una conexión de Zenvia disponible: elegir el canal todavía no existe (plan 3 del spec 2026-10-21). Llega antes de generar el PDF |
+| `order.whatsapp.not_configured` | 422 | `POST /orders/{orderId}/send` con la conexión de Zenvia del tenant sin plantilla de pedido (`orderTemplateId`). Se completa en Integraciones; llega antes de generar el PDF |
+| `order.whatsapp.send_failed` | 422 | `POST /orders/{orderId}/send`: Zenvia rechazó el mensaje. Se puede reintentar |
+| `order.send.failed` | 422 | `POST /orders/{orderId}/send` falló por algo que no es de dominio (PDF, publicación, red, base); el mensaje nombra el paso. Se puede reintentar; si el paso es `Persistence`, el WhatsApp ya salió |
 | `order.order.cancellation_reason_required` | 422 | `POST /orders/{orderId}/cancel` con el campo `reason` ausente, `null`, vacío o en blanco. Código de dominio, sin `errors`. Un request sin body no llega hasta acá: el binding lo rechaza con `400` |
 | `order.order.cancellation_reason_too_long` | 422 | `POST /orders/{orderId}/cancel` con `reason` de más de 500 caracteres ya recortado. Código de dominio, sin `errors` |
 | `order.order.already_invoiced` | 422 | `POST /orders/{orderId}/cancel` sobre un pedido `Invoiced`, con o sin motivo: primero se revierte la facturación |
 | `order.order.not_approved` | 422 | `POST /orders/{orderId}/invoice` sobre un pedido que no está `Approved` (`Pending`, `Cancelled` o ya `Invoiced`) |
 | `order.order.not_invoiced` | 422 | `POST /orders/{orderId}/uninvoice` sobre un pedido que no está `Invoiced` |
-| `order.order.payment_proof_required` | 422 | `POST /quotations/{id}/order` sin comprobantes y el pago no es `PaymentPending`; en `POST /orders/{orderId}/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
+| `order.order.payment_proof_required` | 422 | `POST /quotations/{id}/order` o `POST /orders` sin comprobantes y el pago no es `PaymentPending`; en `POST /orders/{orderId}/proofs`, ni `paymentProofs` ni `updatedProofs` traen nada |
 | `order.payment_proof.file_not_found` / `file_not_available` / `file_type_not_allowed` / `file_too_large` | 422 | Problema con un comprobante nuevo |
 | `order.payment_proof.amount_invalid` | 422 | Un comprobante (nuevo o corregido en `updatedProofs`) con monto ≤ 0 |
 | `order.payment_proof.not_found` | 422 | `updatedProofs` referencia un `proofId` que no es de este pedido |
+| `quotations.carrier.not_found` | 404 | El `carrierId` de la ruta no existe en este tenant (`PUT /carriers/{carrierId}`, `activate`, `deactivate`) |
+| `quotations.carrier.name_required` / `name_too_long` | 422 | El nombre de la transportadora llegó vacío o pasa de 60 caracteres. Escríbelo de nuevo, más corto si hace falta |
+| `quotations.carrier.name_taken` | 422 | Otra transportadora del tenant —activa **o inactiva**— ya usa ese nombre o alguno de los externos, comparados sin mayúsculas ni tildes. Cambia el nombre, o reactiva la que ya existe |
+| `quotations.carrier.too_many_external_names` / `external_name_too_long` / `external_name_duplicated` | 422 | Los nombres externos (cómo llama el ERP a la transportadora) pasan de 20, algún nombre pasa de 120 caracteres, o hay dos iguales o vacíos. Depura la lista |
+| `quotations.carrier.order_mismatch` | 422 | `PUT /carriers/order` sin la lista completa de ids: el orden se manda entero, con todas las transportadoras del tenant, activas e inactivas. Recarga `GET /carriers` y reenvía |
+| `quotations.freight_tax_rate.not_found` | 422 | `PUT /carriers/freight-tax-rate` con una tasa que no es de este tenant. Elige una de las del catálogo |
+| `quotations.freight_tax_rate.inactive` | 422 | La tasa elegida para el IVA del envío está desactivada en Catálogo. Elige una activa |
+| `quotation.quotation.shipping_not_allowed_on_pickup` / `order.order.shipping_not_allowed_on_pickup` | 422 | La entrega es recoger en tienda y el cuerpo trae transportadora, valor de envío o contraentrega. Quítalos, o cambia la entrega a envío |
+| `quotation.quotation.freight_amount_invalid` / `order.order.freight_amount_invalid` | 422 | El valor del envío es negativo, o en COP trae decimales. Escribe pesos enteros y positivos |
+| `quotation.quotation.freight_amount_required` / `order.order.freight_amount_required` | 422 | `Charged` con valor 0. Escribe el valor, o elige `Free` si el envío no se cobra |
+| `quotation.quotation.freight_amount_not_allowed` / `order.order.freight_amount_not_allowed` | 422 | Un valor mayor que 0 con `Free` o sin modo de envío. Pon el modo (`Charged` u `OnDelivery`), o deja el valor en 0 |
+| `quotation.quotation.freight_charge_mode_invalid` / `order.order.freight_charge_mode_invalid` | 422 | `freightChargeMode` no es `Charged`, `OnDelivery` ni `Free`: ni otra capitalización ni números |
+| `quotation.quotation.freight_charge_mode_disabled` / `order.order.freight_charge_mode_disabled` | 422 | Elegir o cambiar a un `freightChargeMode` que el tenant apagó en Configuración › Transportadoras (`freightChargeModes[].isEnabled: false` en `GET /shipping-options`). Elige uno activo, o quita el modo (`null`). Un modo que el documento ya tenía y se apagó después no da este error mientras no lo cambies, y la conversión lo copia igual |
+| `quotation.quotation.carrier_not_available` / `order.order.carrier_not_available` | 422 | La transportadora no existe en el tenant o está inactiva. Recarga `GET /shipping-options` y elige una de la lista. Una transportadora que el documento ya tenía y se apagó después no da este error mientras no la cambies |
+| `quotation.quotation.cash_on_delivery_not_supported` / `order.order.cash_on_delivery_not_supported` | 422 | Contraentrega con una transportadora que no recauda (`supportsCashOnDelivery: false`). Elige otra, o quita la contraentrega |
+| `order.order.cash_on_delivery_pending_only` | 422 | Prender la contraentrega en un pedido que ya tiene comprobantes o cuyo pago no está en `PaymentPending`. Sólo se cobra contra entrega lo que todavía no se ha pagado |
+| `quotation.quotation.freight_tax_rate_missing` / `order.order.freight_tax_rate_missing` | 422 | Cobrar un envío en COP (`Charged` con valor) cuando el tenant no tiene tasa de IVA del envío, o la que tenía está desactivada. Un administrador la fija en Configuración › Transportadoras |
 | `validation.failed` | 422 | Errores de campo, viene con `errors` |
 
 ---

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Los mismos pedidos REST sintéticos de las pruebas unitarias (hasta V-9), para firmarlos y mandarlos al webhook. -->
+    <None Include="..\Modules.Shopify.UnitTests\Fixtures\rest\*.json" Link="Fixtures\rest\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Y los de GraphQL, para el Shopify falso de la conciliación. -->
+    <None Include="..\Modules.Shopify.UnitTests\Fixtures\graphql\*.json" Link="Fixtures\graphql\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- El lector del .xlsx de Quotations, para afirmar sobre el Excel de pedidos en el flujo de punta a punta. -->
+    <Compile Include="..\..\Quotations\Modules.Quotations.IntegrationTests\ExportWorkbookReader.cs" Link="ExportWorkbookReader.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
+  </ItemGroup>
+</Project>

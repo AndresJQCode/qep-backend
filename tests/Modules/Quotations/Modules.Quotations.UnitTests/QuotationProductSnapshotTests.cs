@@ -101,7 +101,7 @@ public sealed class QuotationProductSnapshotTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
-            validUntil: null, null, null, QuotationParties.Empty, BillingAccount, false, false,
+            validUntil: null, null, null, QuotationParties.Empty, BillingAccount, "COP", false, false,
             AdvisorId, Now);
         AddLine(quotation, ProductA);
 
@@ -135,33 +135,12 @@ public sealed class QuotationProductSnapshotTests
         Assert.Equal("A-001", Assert.Single(quotation.Items).ProductCode);
     }
 
-    // Una línea que se suma al pedido ya convertido no tiene un envío posterior que la congele:
-    // se congela al agregarla, y las que ya estaban no se tocan.
-    [Fact]
-    public void LinesAddedAfterConversionAreCapturedWithoutTouchingTheOthers()
-    {
-        var quotation = NewQuotationWith(ProductA);
-        quotation.ConvertToOrder(AdvisorId, Now, Catalog((ProductA, "A-001", "Tornillo")));
-        quotation.AddItemAfterConversion(
-            QuotationItemId.New(), ProductB, 1m, 1_000m, 0m, 19, AdvisorId, Now.AddHours(1));
-        var version = quotation.Version;
-
-        quotation.CaptureProductSnapshotsAfterConversion(Catalog(
-            (ProductA, "A-999", "Otro"),
-            (ProductB, "B-002", "Tuerca")));
-
-        Assert.Equal("A-001", quotation.Items.Single(item => item.ProductId == ProductA).ProductCode);
-        Assert.Equal("B-002", quotation.Items.Single(item => item.ProductId == ProductB).ProductCode);
-        // No es una edición: la versión ya la subió la línea que se agregó.
-        Assert.Equal(version, quotation.Version);
-    }
-
     private static Quotation NewQuotationWith(params Guid[] productIds)
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
             new DateOnly(2026, 10, 30), "Transferencia bancaria", null, QuotationParties.Empty,
-            BillingAccount, false, false, AdvisorId, Now);
+            BillingAccount, "COP", false, false, AdvisorId, Now);
         foreach (var productId in productIds)
         {
             AddLine(quotation, productId);
@@ -170,9 +149,63 @@ public sealed class QuotationProductSnapshotTests
         return quotation;
     }
 
+    // ---- Nombre visible largo (spec 2026-10-20 §3.4; T10) ----
+    //
+    // «{producto} – {v1} / {v2} / {v3}» puede pasar de los 200 de product_name: el producto llega a
+    // 200 y cada valor a 60. La foto se recorta con «…» en vez de ensanchar la columna.
+
+    [Fact]
+    public void ANameThatFitsTheColumnIsKeptWhole()
+    {
+        var name = new string('a', QuotationProductSnapshot.NameMaxLength);
+
+        Assert.Equal(name, new QuotationProductSnapshot("CAM-M", name).Name);
+        Assert.Equal("Camiseta – M", new QuotationProductSnapshot("CAM-M", "Camiseta – M").Name);
+    }
+
+    [Fact]
+    public void ALongerVariantNameIsCutTo200WithAnEllipsis()
+    {
+        var product = new string('P', QuotationProductSnapshot.NameMaxLength);
+        var visible = $"{product} – {new string('M', 60)} / Azul";
+
+        var snapshot = new QuotationProductSnapshot("CAM-M", visible);
+
+        Assert.Equal(QuotationProductSnapshot.NameMaxLength, snapshot.Name.Length);
+        Assert.EndsWith("…", snapshot.Name, StringComparison.Ordinal);
+        Assert.StartsWith(new string('P', QuotationProductSnapshot.NameMaxLength - 1), snapshot.Name, StringComparison.Ordinal);
+    }
+
+    // El corte no deja medio emoji: un par sustituto partido sería texto inválido en el PDF y en
+    // el Excel.
+    [Fact]
+    public void TheCutNeverSplitsASurrogatePair()
+    {
+        var name = new string('a', QuotationProductSnapshot.NameMaxLength - 2) + "\U0001F600" + "bbbb";
+
+        var fitted = QuotationProductSnapshot.Fit(name);
+
+        Assert.Equal(new string('a', QuotationProductSnapshot.NameMaxLength - 2) + "…", fitted);
+        Assert.DoesNotContain(fitted, char.IsSurrogate);
+    }
+
+    // Lo que se guarda en la línea es el nombre ya recortado: la columna nunca recibe más de 200.
+    [Fact]
+    public void SendingStoresTheCutName()
+    {
+        var quotation = NewQuotationWith(ProductA);
+        var visible = $"{new string('P', QuotationProductSnapshot.NameMaxLength)} – M";
+
+        quotation.Send(AdvisorId, Now, Catalog((ProductA, "CAM-M", visible)));
+
+        var item = Assert.Single(quotation.Items);
+        Assert.Equal(QuotationProductSnapshot.NameMaxLength, item.ProductName!.Length);
+        Assert.EndsWith("…", item.ProductName, StringComparison.Ordinal);
+    }
+
     private static void AddLine(Quotation quotation, Guid productId) =>
         quotation.AddItem(
-            QuotationItemId.New(), productId, quantity: 1m, unitPrice: 1_000m,
+            QuotationItemId.New(), productId, productId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
     private static Dictionary<Guid, QuotationProductSnapshot> Catalog(

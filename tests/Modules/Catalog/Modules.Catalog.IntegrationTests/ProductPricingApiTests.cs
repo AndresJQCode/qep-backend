@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
@@ -9,7 +10,7 @@ using Testcontainers.PostgreSql;
 namespace Modules.Catalog.IntegrationTests;
 
 /// <summary>
-/// CAT-09 — precio base/final en USD y COP, y escalas por cantidad.
+/// CAT-09 — precio base por moneda, finales derivados y escalas por cantidad.
 ///
 /// Las reglas de negocio ya las cubren las unitarias de <c>ProductTests</c> contra el agregado
 /// en memoria. Lo que este archivo verifica es lo que esas pruebas no pueden ver: que
@@ -39,16 +40,11 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var response = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
         {
-            name = "Vela de soja",
-            code = "VS-001",
-            pricing = new
-            {
-                baseUsd = 100m,
-                baseCop = 400000m,
-                packagingUnits = TwelvePack,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["USD"] = 100m, ["COP"] = 400000m },
+            packagingUnits = TwelvePack,
+            scales = new object[]
                 {
                     new
                     {
@@ -56,27 +52,22 @@ public sealed class ProductPricingApiTests
                         toUnit = 9,
                         discount = 5m,
                         restriction = "multiple",
-                        multiple = 3,
-                        finalUsd = 95m,
-                        finalCop = 380000m
+                        multiple = 3
                     },
                     new
                     {
                         fromUnit = 10,
                         toUnit = 50,
                         discount = 15m,
-                        restriction = "packaging_unit",
-                        finalUsd = 85m,
-                        finalCop = 340000m
+                        restriction = "packaging_unit"
                     }
                 }
-            }
-        });
+        }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
-        Assert.Equal(100m, created.PriceBaseUsd);
-        Assert.Equal(2, created.PriceScales.Count);
+        Assert.Equal(100m, created.Only().Prices["USD"]);
+        Assert.Equal(2, created.Only().PriceScales.Count);
 
         // Releído desde la base, no desde la respuesta de la escritura — eso probaría el
         // mapeo de salida, no si ProductRepository trae las escalas al leer.
@@ -84,25 +75,29 @@ public sealed class ProductPricingApiTests
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             TestContext.Current.CancellationToken));
 
-        Assert.Equal(2, fetched.PriceScales.Count);
-        var multipleScale = Assert.Single(fetched.PriceScales, scale => scale.Restriction == "multiple");
+        Assert.Equal(2, fetched.Only().PriceScales.Count);
+        var multipleScale = Assert.Single(fetched.Only().PriceScales, scale => scale.Restriction == "multiple");
         Assert.Equal(1, multipleScale.FromUnit);
         Assert.Equal(9, multipleScale.ToUnit);
         Assert.Equal(3, multipleScale.Multiple);
-        Assert.Equal(95m, multipleScale.FinalUsd);
+        Assert.Equal(95m, multipleScale.Finals["USD"]);
 
-        Assert.Single(fetched.PriceScales, scale => scale.Restriction == "packaging_unit");
+        Assert.Single(fetched.Only().PriceScales, scale => scale.Restriction == "packaging_unit");
         // El empaque es del producto, no de la escala (2026-10-01).
-        Assert.Equal([12], fetched.PackagingUnits);
+        Assert.Equal([12], fetched.Only().PackagingUnits);
 
-        // El listado pasa por SearchAsync, un camino distinto de FindAsync — ambos necesitan
-        // su propio Include.
+        // El listado ya no trae escalas (Tarea 5: es por producto y proyecta lo que pinta la
+        // grilla); trae el rango de precios de sus variantes activas, que con una sola es su precio.
         var list = await client.GetFromJsonAsync<ProductsResponse>(
             $"/api/v1/tenants/{TenantId}/catalog/products",
             TestContext.Current.CancellationToken);
         Assert.NotNull(list);
         var listed = Assert.Single(list.Items);
-        Assert.Equal(2, listed.PriceScales.Count);
+        Assert.Equal(1, listed.VariantCount);
+        Assert.Equal("VS-001", listed.Code);
+        Assert.Equal(new PriceRangeResponse(400000m, 400000m), listed.PriceRange["COP"]);
+        Assert.Equal(new PriceRangeResponse(100m, 100m), listed.PriceRange["USD"]);
+        Assert.Equal(["COP", "USD"], listed.PriceRange.Keys);
     }
 
     // La prueba que hubiera encontrado el hueco de origen: sin el Include en FindAsync, las
@@ -115,14 +110,10 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: new
         {
-            name = "Vela de soja",
-            code = "VS-001",
-            pricing = new
-            {
-                baseUsd = 100m,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["USD"] = 100m },
+            scales = new object[]
                 {
                     new
                     {
@@ -130,55 +121,47 @@ public sealed class ProductPricingApiTests
                         toUnit = 9,
                         discount = 0m,
                         restriction = "multiple",
-                        multiple = 3,
-                        finalUsd = 100m
+                        multiple = 3
                     }
                 }
-            }
-        }));
-        Assert.Single(created.PriceScales);
+        })));
+        Assert.Single(created.Only().PriceScales);
 
         var updated = await ReadProductAsync(await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new
+            ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: new
             {
-                name = "Vela de soja",
-                code = "VS-001",
-                pricing = new
-                {
-                    baseUsd = 100m,
-                    finalUsd = 100m,
-                    packagingUnits = SixPack,
-                    scales = new object[]
+                prices = new Dictionary<string, decimal> { ["USD"] = 100m },
+                packagingUnits = SixPack,
+                scales = new object[]
                     {
                         new
                         {
                             fromUnit = 20,
                             toUnit = 40,
                             discount = 0m,
-                            restriction = "packaging_unit",
-                            finalUsd = 100m
+                            restriction = "packaging_unit"
                         }
                     }
-                }
-            },
+            }),
             TestContext.Current.CancellationToken));
 
-        var onlyScale = Assert.Single(updated.PriceScales);
+        var onlyScale = Assert.Single(updated.Only().PriceScales);
         Assert.Equal(20, onlyScale.FromUnit);
-        Assert.Equal([6], updated.PackagingUnits);
+        Assert.Equal([6], updated.Only().PackagingUnits);
 
         // Releído de la base: si el Update hubiera dejado la escala vieja huérfana, esto
         // volvería con dos filas en vez de una.
         var fetched = await ReadProductAsync(await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             TestContext.Current.CancellationToken));
-        Assert.Single(fetched.PriceScales);
+        Assert.Single(fetched.Only().PriceScales);
 
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var command = new NpgsqlCommand(
-            "SELECT count(*) FROM catalog.product_price_scales WHERE product_id = @id", connection);
+            // La variante por defecto lleva el id del producto.
+            "SELECT count(*) FROM catalog.product_price_scales WHERE variant_id = @id", connection);
         command.Parameters.AddWithValue("id", created.Id);
         var count = (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
         Assert.Equal(1, count);
@@ -193,28 +176,23 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var response = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-001", pricing: new
         {
-            name = "Vela de soja",
-            code = "VS-AGR-001",
-            pricing = new
-            {
-                baseCop = 100_000m,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            scales = new object[]
                 {
                     new
                     {
                         fromUnit = 5, toUnit = 48, discount = 5m,
                         restriction = "multiple", multiple = 3,
-                        finalCop = 95_000m, allowGrouping = true
+                        allowGrouping = true
                     }
                 }
-            }
-        });
+        }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await ReadProductAsync(response);
-        Assert.True(Assert.Single(created.PriceScales).AllowGrouping);
+        Assert.True(Assert.Single(created.Only().PriceScales).AllowGrouping);
     }
 
     [Fact]
@@ -224,25 +202,20 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var response = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-AGR-002", pricing: new
         {
-            name = "Vela de soja",
-            code = "VS-AGR-002",
-            pricing = new
-            {
-                baseCop = 100_000m,
-                packagingUnits = TwelvePack,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = TwelvePack,
+            scales = new object[]
                 {
                     new
                     {
                         fromUnit = 1, toUnit = 999, discount = 0m,
                         restriction = "packaging_unit",
-                        finalCop = 100_000m, allowGrouping = true
+                        allowGrouping = true
                     }
                 }
-            }
-        });
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -265,23 +238,18 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var response = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
         {
-            name = "Keratina 120 ml",
-            code = "KR-120",
-            pricing = new
-            {
-                baseCop = 100_000m,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            scales = new object[]
                 {
                     new
                     {
                         fromUnit = 100, toUnit = 999, discount = 0m,
-                        restriction = "packaging_unit", finalCop = 100_000m
+                        restriction = "packaging_unit"
                     }
                 }
-            }
-        });
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -297,12 +265,11 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var response = await CreateProductAsync(client, TenantId, new
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
         {
-            name = "Keratina 120 ml",
-            code = "KR-120",
-            pricing = new { baseCop = 100_000m, packagingUnits = DuplicatedPackagingUnits }
-        });
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = DuplicatedPackagingUnits
+        }));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(
@@ -321,42 +288,39 @@ public sealed class ProductPricingApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
 
-        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, new
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Keratina 120 ml", "KR-120", pricing: new
         {
-            name = "Keratina 120 ml",
-            code = "KR-120",
-            pricing = new
-            {
-                baseCop = 100_000m,
-                packagingUnits = UnsortedPackagingUnits,
-                scales = new object[]
+            prices = new Dictionary<string, decimal> { ["COP"] = 100_000m },
+            packagingUnits = UnsortedPackagingUnits,
+            scales = new object[]
                 {
                     new
                     {
                         fromUnit = 100, toUnit = 999, discount = 0m,
-                        restriction = "packaging_unit", finalCop = 100_000m
+                        restriction = "packaging_unit"
                     }
                 }
-            }
-        }));
-        Assert.Equal([100, 150], created.PackagingUnits);
+        })));
+        Assert.Equal([100, 150], created.Only().PackagingUnits);
 
         var fetched = await ReadProductAsync(await client.GetAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
             TestContext.Current.CancellationToken));
-        Assert.Equal([100, 150], fetched.PackagingUnits);
+        Assert.Equal([100, 150], fetched.Only().PackagingUnits);
 
         var list = await client.GetFromJsonAsync<ProductsResponse>(
             $"/api/v1/tenants/{TenantId}/catalog/products",
             TestContext.Current.CancellationToken);
         Assert.NotNull(list);
-        Assert.Equal([100, 150], Assert.Single(list.Items).PackagingUnits);
+        // El listado no trae empaques desde la Tarea 5; la fila sigue ahí, con su única variante.
+        Assert.Equal(1, Assert.Single(list.Items).VariantCount);
 
         await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var command = new NpgsqlCommand(
-                "SELECT packaging_units FROM catalog.products WHERE id = @id", connection);
+                // Los empaques son de la variante por defecto, que lleva el id del producto.
+                "SELECT packaging_units FROM catalog.product_variants WHERE id = @id", connection);
             command.Parameters.AddWithValue("id", created.Id);
             var stored = (int[])(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
             Assert.Equal([100, 150], stored);
@@ -364,16 +328,88 @@ public sealed class ProductPricingApiTests
 
         var cleared = await client.PutAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
-            new
-            {
-                name = "Keratina 120 ml",
-                code = "KR-120",
-                pricing = new { baseCop = 100_000m }
-            },
+            ProductBodies.Update(
+                created,
+                "Keratina 120 ml",
+                "KR-120",
+                pricing: new { prices = new Dictionary<string, decimal> { ["COP"] = 100_000m } }),
             TestContext.Current.CancellationToken);
         var body = await cleared.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.True(cleared.IsSuccessStatusCode, body);
         Assert.Contains("\"packagingUnits\":[]", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateWithPricesInThreeCurrenciesReturnsThemWithDerivedFinals()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var product = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create("Vela de soja", "VS-EUR", pricing: new
+        {
+            prices = new Dictionary<string, decimal> { ["eur"] = 11.4m, ["COP"] = 45_000m, ["USD"] = 12.5m },
+            scales = new object[] { new { fromUnit = 1, toUnit = 9, discount = 10m, restriction = "multiple", multiple = 1 } }
+        })));
+
+        Assert.Equal(new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m, ["EUR"] = 11.4m }, product.Only().Prices);
+        Assert.Equal(
+            new Dictionary<string, decimal> { ["COP"] = 40_500m, ["USD"] = 11.25m, ["EUR"] = 10.26m },
+            Assert.Single(product.Only().PriceScales).Finals);
+    }
+
+    [Fact]
+    public async Task CreateWithAnUnknownCurrencyIsA422OnThatPriceRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-XYZ",
+            pricing: new { prices = new Dictionary<string, decimal> { ["COP"] = 1m, ["XYZ"] = 2m } }));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("validation.failed", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Variants[0].Pricing.Prices.XYZ", out _));
+    }
+
+    [Fact]
+    public async Task CreateWithoutAnyPriceIsA422PriceRequired()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-NONE",
+            pricing: new { prices = new Dictionary<string, decimal>() }));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken);
+        Assert.Equal("catalog.product.price_required", problem!.Code);
+    }
+
+    [Fact]
+    public async Task UpdateDropsAPriceThatIsNoLongerSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        var created = await ReadProductAsync(await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-DROP",
+            pricing: new { prices = new Dictionary<string, decimal> { ["COP"] = 45_000m, ["USD"] = 12.5m } })));
+
+        var updated = await ReadProductAsync(await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Vela de soja", "VS-DROP", pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 13m } }),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(new Dictionary<string, decimal> { ["USD"] = 13m }, updated.Only().Prices);
     }
 
     private static Task<HttpResponseMessage> CreateProductAsync(

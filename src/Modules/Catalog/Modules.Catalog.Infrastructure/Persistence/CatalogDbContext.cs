@@ -10,7 +10,18 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
 
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+
     internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
+
+    /// <summary>
+    /// Las variantes se leen por el agregado <see cref="Product"/>; este set existe para las
+    /// consultas que buscan por un dato de la variante (código, código de barras, id) y para
+    /// los adaptadores que la leen sin cargar el producto entero.
+    /// </summary>
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+
+    public DbSet<OptionDefinition> OptionDefinitions => Set<OptionDefinition>();
 
     /// <summary>
     /// Público, a diferencia de <see cref="PriceScales"/>: el histórico de precios no se lee a
@@ -24,7 +35,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureProduct(modelBuilder);
+        ConfigureGalleryImage(modelBuilder);
+        ConfigureProductVariant(modelBuilder);
+        ConfigureOptionDefinition(modelBuilder);
+        ConfigureOptionValue(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
@@ -43,18 +59,12 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         product.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(Product.NameMaxLength);
-        product.Property(value => value.Code)
-            .HasColumnName("code")
-            .HasMaxLength(Product.CodeMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
         // CAT-04. Nullable: hay productos ya cargados y una columna NOT NULL sin default los
         // rompe.
         product.Property(value => value.Description)
             .HasColumnName("description")
             .HasMaxLength(ProductDetails.DescriptionMaxLength);
-        // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
-        // módulo. Es un Guid suelto, como cualquier referencia entre módulos de este monolito.
-        product.Property(value => value.ImageFileId).HasColumnName("image_file_id");
         product.Property(value => value.TaxRateId)
             .HasColumnName("tax_rate_id")
             .HasConversion(
@@ -70,48 +80,264 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
-        // CAT-09. Independientes del viejo Price: no lo reemplazan.
-        product.Property(value => value.PriceBaseUsd)
-            .HasColumnName("price_base_usd")
-            .HasPrecision(18, 2);
-        product.Property(value => value.PriceBaseCop)
-            .HasColumnName("price_base_cop")
-            .HasPrecision(18, 2);
-        product.Navigation(value => value.PriceScales)
-            .UsePropertyAccessMode(PropertyAccessMode.Field);
-        // integer[] de PostgreSQL y no una tabla hija: es un puñado de números sin identidad
-        // propia, que se reemplaza entero con el producto y nunca se consulta por separado.
-        // Default '{}' para que las filas existentes nazcan sin empaques y no con null.
-        product.PrimitiveCollection(value => value.PackagingUnits)
-            .HasColumnName("packaging_units")
-            .IsRequired()
-            .HasDefaultValueSql("'{}'");
+        product.Property(value => value.CategoryId)
+            .HasColumnName("category_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new ProductCategoryId(value.Value) : null);
+        // RESTRICT y no CASCADE; la FK no sabe de tenants, eso lo verifica ProductCategoryResolver.
+        product.HasOne<ProductCategory>()
+            .WithMany()
+            .HasForeignKey(value => value.CategoryId)
+            .OnDelete(DeleteBehavior.Restrict);
+        product.HasIndex(value => value.CategoryId).HasDatabaseName("IX_products_category");
         product.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
         product.Property(value => value.CreatedAt).HasColumnName("created_at");
         product.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         product.HasIndex(value => value.TenantId).HasDatabaseName("IX_products_tenant");
-        // La unicidad que promete el código de producto. Nombrado a propósito: la capa de
-        // infraestructura discrimina la violación de unicidad por nombre de índice, no sólo por
-        // SqlState, porque si no otros índices únicos de esta base se reportarían con el código
-        // de dominio equivocado. Esa fue la lección de SDD-CT-06.
-        product.HasIndex(value => new { value.TenantId, value.Code })
-            .IsUnique()
-            .HasDatabaseName("IX_products_tenant_code");
 
-        // GIN trigram: ProductRepository.SearchAsync filtra `Name`/`Code` con
-        // `ILIKE '%termino%'` (comodin a ambos lados) — mismo razonamiento que
-        // `IX_customers_name_trgm`. El indice unico de arriba ya cubre la igualdad exacta de
-        // Code, pero no el "contains" que hace el buscador del listado.
+        // GIN trigram: ProductRepository.SearchAsync filtra `Name` con `ILIKE '%termino%'`
+        // (comodín a ambos lados) — mismo razonamiento que `IX_customers_name_trgm`. El de Code
+        // se mudó con la columna a IX_product_variants_code_trgm.
         product.HasIndex(value => value.Name)
             .HasDatabaseName("IX_products_name_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
-        product.HasIndex(value => value.Code)
-            .HasDatabaseName("IX_products_code_trgm")
+
+        // Variantes (spec 2026-10-20): código, precios, escalas, empaques e imagen viven en la
+        // variante o en la galería. ImageFileId y OptionIds son derivados y no se mapean.
+        product.Ignore(value => value.ImageFileId);
+        product.Ignore(value => value.OptionIds);
+
+        // Tabla propia con FK a option_definitions, RESTRICT: una opción que algún producto usa no
+        // se puede borrar ni por SQL (spec §3.1: se desactiva). Clave (producto, posición): las
+        // filas se reemplazan en el lugar (Product.ReplaceOptions).
+        product.OwnsMany<ProductOption>("_options", option =>
+        {
+            option.ToTable("product_options", "catalog");
+            option.WithOwner().HasForeignKey("ProductId");
+            option.Property<ProductId>("ProductId")
+                .HasColumnName("product_id")
+                .HasConversion(id => id.Value, value => new ProductId(value));
+            option.Property(value => value.Position).HasColumnName("position").ValueGeneratedNever();
+            option.Property(value => value.OptionDefinitionId)
+                .HasColumnName("option_definition_id")
+                .HasConversion(id => id.Value, value => new OptionDefinitionId(value));
+            option.HasKey("ProductId", nameof(ProductOption.Position));
+            option.HasOne<OptionDefinition>()
+                .WithMany()
+                .HasForeignKey(value => value.OptionDefinitionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            option.HasIndex(value => value.OptionDefinitionId)
+                .HasDatabaseName("IX_product_options_option_definition");
+        });
+
+        product.HasMany(value => value.Variants)
+            .WithOne()
+            .HasForeignKey(variant => variant.ProductId)
+            .OnDelete(DeleteBehavior.Cascade);
+        product.Navigation(value => value.Variants)
+            .HasField("_variants")
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        product.HasMany(value => value.Gallery)
+            .WithOne()
+            .HasForeignKey("ProductId")
+            .OnDelete(DeleteBehavior.Cascade);
+        product.Navigation(value => value.Gallery)
+            .HasField("_gallery")
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    private static void ConfigureGalleryImage(ModelBuilder modelBuilder)
+    {
+        var image = modelBuilder.Entity<ProductGalleryImage>();
+        image.ToTable("product_gallery_images", "catalog");
+        image.HasKey(value => value.Id);
+        image.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        image.Property<ProductId>("ProductId")
+            .HasColumnName("product_id")
+            .HasConversion(id => id.Value, value => new ProductId(value));
+        // Sin FK: apunta a storage.file_resources, y catalog no referencia las tablas de otro
+        // módulo. Es un Guid suelto, como lo era products.image_file_id.
+        image.Property(value => value.FileId).HasColumnName("file_id");
+        image.Property(value => value.Position).HasColumnName("position");
+        // Sin índice único sobre (producto, posición) ni (producto, archivo): la galería se reordena
+        // en el lugar y dos filas intercambian posición en el mismo guardado. La unicidad la
+        // garantiza el agregado (catalog.product.gallery_duplicate) bajo la Version del producto.
+        image.HasIndex("ProductId").HasDatabaseName("IX_product_gallery_images_product");
+    }
+
+    private static void ConfigureProductVariant(ModelBuilder modelBuilder)
+    {
+        var variant = modelBuilder.Entity<ProductVariant>();
+        variant.ToTable("product_variants", "catalog");
+        variant.HasKey(value => value.Id);
+        variant.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new VariantId(value))
+            .ValueGeneratedNever();
+        variant.Property(value => value.ProductId)
+            .HasColumnName("product_id")
+            .HasConversion(id => id.Value, value => new ProductId(value));
+        variant.Property(value => value.TenantId).HasColumnName("tenant_id");
+        variant.Property(value => value.Code)
+            .HasColumnName("code")
+            .HasMaxLength(ProductVariant.CodeMaxLength);
+        variant.Property(value => value.Barcode)
+            .HasColumnName("barcode")
+            .HasMaxLength(ProductVariant.BarcodeMaxLength);
+        // integer[] de PostgreSQL y no una tabla hija: es un puñado de números sin identidad
+        // propia, que se reemplaza entero con la variante y nunca se consulta por separado.
+        variant.PrimitiveCollection(value => value.PackagingUnits)
+            .HasColumnName("packaging_units")
+            .IsRequired()
+            .HasDefaultValueSql("'{}'");
+        variant.Property(value => value.GalleryImageId).HasColumnName("gallery_image_id");
+        variant.Property(value => value.IsActive).HasColumnName("is_active");
+        variant.Property(value => value.Position).HasColumnName("position");
+        variant.Property(value => value.CombinationKey)
+            .HasColumnName("combination_key")
+            .IsRequired();
+        variant.Ignore(value => value.OptionValueIds);
+        variant.Ignore(value => value.PricedCurrencies);
+
+        // SET NULL y no CASCADE: quitar la foto de la galería no borra la variante, que vuelve a
+        // la principal del producto. El agregado ya lo evita (image_not_in_gallery); la FK es la
+        // red para el SQL a mano.
+        variant.HasOne<ProductGalleryImage>()
+            .WithMany()
+            .HasForeignKey(value => value.GalleryImageId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // Spec D3. Owned y no entidad propia: un precio no tiene identidad fuera de su variante y
+        // se carga siempre con ella. Las columnas heredadas price_base_usd/price_base_cop siguen en
+        // products, sin mapear, hasta DropLegacyProductPriceColumns (deploy N+1).
+        variant.OwnsMany(value => value.Prices, price =>
+        {
+            price.ToTable("product_prices", "catalog", table =>
+                table.HasCheckConstraint("CK_product_prices_amount_not_negative", "amount >= 0"));
+            price.WithOwner().HasForeignKey("VariantId");
+            price.Property<VariantId>("VariantId")
+                .HasColumnName("variant_id")
+                .HasConversion(id => id.Value, value => new VariantId(value));
+            price.Property(value => value.Currency)
+                .HasColumnName("currency")
+                .HasColumnType("character(3)")
+                .HasMaxLength(3);
+            price.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            price.HasKey("VariantId", nameof(ProductPrice.Currency));
+        });
+        variant.Navigation(value => value.Prices).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // Mismo criterio que product_options: FK RESTRICT a option_values, para que un valor en
+        // uso no se borre ni por SQL; y el índice por valor sirve la pregunta «¿está en uso?».
+        variant.OwnsMany<ProductVariantOptionValue>("_optionValues", value =>
+        {
+            value.ToTable("product_variant_option_values", "catalog");
+            value.WithOwner().HasForeignKey("VariantId");
+            value.Property<VariantId>("VariantId")
+                .HasColumnName("variant_id")
+                .HasConversion(id => id.Value, id => new VariantId(id));
+            value.Property(row => row.Position).HasColumnName("position").ValueGeneratedNever();
+            value.Property(row => row.OptionValueId).HasColumnName("option_value_id");
+            value.HasKey("VariantId", nameof(ProductVariantOptionValue.Position));
+            value.HasOne<OptionValue>()
+                .WithMany()
+                .HasForeignKey(row => row.OptionValueId)
+                .OnDelete(DeleteBehavior.Restrict);
+            value.HasIndex(row => row.OptionValueId)
+                .HasDatabaseName("IX_product_variant_option_values_option_value");
+        });
+
+        variant.HasMany(value => value.PriceScales)
+            .WithOne()
+            .HasForeignKey(scale => scale.VariantId)
+            .OnDelete(DeleteBehavior.Cascade);
+        variant.Navigation(value => value.PriceScales)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La unicidad que promete el código (spec §3.3): por tenant entre **todas** las variantes,
+        // sin filtro parcial —desactivar no libera el código, como antes con
+        // IX_products_tenant_code—, y con mayúsculas, igual que el índice de antes y que la
+        // comparación ordinal del agregado. Nombrado a propósito: CatalogUnitOfWork traduce la
+        // violación por nombre de índice (lección de SDD-CT-06).
+        variant.HasIndex(value => new { value.TenantId, value.Code })
+            .IsUnique()
+            .HasDatabaseName("IX_product_variants_tenant_code");
+        // Opcional y único cuando existe: parcial, así las variantes sin código de barras no chocan.
+        variant.HasIndex(value => new { value.TenantId, value.Barcode })
+            .IsUnique()
+            .HasFilter("barcode IS NOT NULL")
+            .HasDatabaseName("IX_product_variants_tenant_barcode");
+        // **No** único: la combinación es única sólo entre variantes activas (§3.3.1), y aun así
+        // un índice único parcial chocaría cuando un PUT intercambia combinaciones entre dos
+        // variantes (PostgreSQL revisa fila por fila). La unicidad la hace cumplir el agregado
+        // (catalog.variant.combination_duplicate) bajo la Version del producto; este índice sirve
+        // para buscar la variante de un producto por su combinación.
+        variant.HasIndex(value => new { value.ProductId, value.CombinationKey })
+            .HasDatabaseName("IX_product_variants_product_combination");
+        // El buscador filtra Code con ILIKE '%término%'; mismo motivo que IX_products_name_trgm.
+        variant.HasIndex(value => value.Code)
+            .HasDatabaseName("IX_product_variants_code_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
+    }
+
+    private static void ConfigureOptionDefinition(ModelBuilder modelBuilder)
+    {
+        var option = modelBuilder.Entity<OptionDefinition>();
+        option.ToTable("option_definitions", "catalog");
+        option.HasKey(value => value.Id);
+        option.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new OptionDefinitionId(value))
+            .ValueGeneratedNever();
+        option.Property(value => value.TenantId).HasColumnName("tenant_id");
+        option.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(OptionDefinition.NameMaxLength);
+        option.Property(value => value.IsActive).HasColumnName("is_active");
+        option.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        option.Property(value => value.CreatedAt).HasColumnName("created_at");
+        option.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // El único por (tenant, lower(name)) lo crea AddProductVariants con SQL a mano
+        // (IX_option_definitions_tenant_name), como IX_tags_tenant_name: EF no modela índices
+        // sobre expresiones. Éste es el de listar la biblioteca de un tenant.
+        option.HasIndex(value => value.TenantId).HasDatabaseName("IX_option_definitions_tenant");
+
+        // Entidad y no owned: product_variant_option_values la referencia con FK, y un tipo owned
+        // no puede ser principal de una relación con otro.
+        option.HasMany(value => value.Values)
+            .WithOne()
+            .HasForeignKey("OptionDefinitionId")
+            .OnDelete(DeleteBehavior.Cascade);
+        option.Navigation(value => value.Values)
+            .HasField("_values")
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+    }
+
+    private static void ConfigureOptionValue(ModelBuilder modelBuilder)
+    {
+        var value = modelBuilder.Entity<OptionValue>();
+        value.ToTable("option_values", "catalog");
+        value.HasKey(row => row.Id);
+        value.Property(row => row.Id).HasColumnName("id").ValueGeneratedNever();
+        value.Property<OptionDefinitionId>("OptionDefinitionId")
+            .HasColumnName("option_definition_id")
+            .HasConversion(id => id.Value, id => new OptionDefinitionId(id));
+        value.Property(row => row.Value)
+            .HasColumnName("value")
+            .HasMaxLength(OptionDefinition.ValueMaxLength);
+        value.Property(row => row.Position).HasColumnName("position");
+        value.Property(row => row.IsActive).HasColumnName("is_active");
+        // Sin índice único sobre el valor: un PUT puede intercambiar dos nombres en el mismo
+        // guardado. La unicidad sin mayúsculas la hace cumplir OptionDefinition bajo su Version.
+        value.HasIndex("OptionDefinitionId").HasDatabaseName("IX_option_values_option_definition");
     }
 
     private static void ConfigureTaxRate(ModelBuilder modelBuilder)
@@ -144,6 +370,46 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasDatabaseName("IX_tax_rates_tenant_name");
     }
 
+    private static void ConfigureProductCategory(ModelBuilder modelBuilder)
+    {
+        var category = modelBuilder.Entity<ProductCategory>();
+        category.ToTable("product_categories", "catalog");
+        category.HasKey(value => value.Id);
+        category.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new ProductCategoryId(value))
+            .ValueGeneratedNever();
+        category.Property(value => value.TenantId).HasColumnName("tenant_id");
+        category.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(ProductCategory.NameMaxLength);
+        category.Property(value => value.ParentId)
+            .HasColumnName("parent_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new ProductCategoryId(value.Value) : null);
+        // RESTRICT: borrar una categoría con hijas no debe arrastrarlas.
+        category.HasOne<ProductCategory>()
+            .WithMany()
+            .HasForeignKey(value => value.ParentId)
+            .OnDelete(DeleteBehavior.Restrict);
+        category.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        category.Property(value => value.CreatedAt).HasColumnName("created_at");
+        category.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Quick access of the register (spec 2026-10-26-categorias-pos-acceso-rapido D-4): a column
+        // here and not a POS table, because POS has no settings table and the aggregate is Catalog's.
+        // No unique index on (tenant_id, position): EF writes a reorder row by row, and a swap
+        // would trip a non-deferrable index halfway. Contiguity is ProductCategoryQuickAccess's job.
+        category.Property(value => value.PosQuickAccessPosition).HasColumnName("pos_quick_access_position");
+        category.HasIndex(value => value.TenantId).HasDatabaseName("IX_product_categories_tenant");
+        category.HasIndex(value => value.ParentId).HasDatabaseName("IX_product_categories_parent");
+        // El índice único (tenant_id, parent_id, lower(name)) NULLS NOT DISTINCT no se modela acá:
+        // EF no expresa índices sobre expresiones. Se crea a mano en la migración
+        // AddProductCategories, y CatalogUnitOfWork lo traduce por nombre.
+    }
+
     private static void ConfigurePriceScale(ModelBuilder modelBuilder)
     {
         var scale = modelBuilder.Entity<PriceScale>();
@@ -153,9 +419,11 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("id")
             .HasConversion(id => id.Value, value => new PriceScaleId(value))
             .ValueGeneratedNever();
-        scale.Property(value => value.ProductId)
-            .HasColumnName("product_id")
-            .HasConversion(id => id.Value, value => new ProductId(value));
+        // De la variante desde AddProductVariants (antes product_id); la relación, con CASCADE,
+        // la declara ConfigureProductVariant.
+        scale.Property(value => value.VariantId)
+            .HasColumnName("variant_id")
+            .HasConversion(id => id.Value, value => new VariantId(value));
         scale.Property(value => value.TenantId).HasColumnName("tenant_id");
         scale.Property(value => value.FromUnit).HasColumnName("from_unit");
         scale.Property(value => value.ToUnit).HasColumnName("to_unit");
@@ -169,17 +437,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasMaxLength(20);
         scale.Property(value => value.Multiple).HasColumnName("multiple");
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
-        scale.Property(value => value.FinalUsd).HasColumnName("final_usd").HasPrecision(18, 2);
-        scale.Property(value => value.FinalCop).HasColumnName("final_cop").HasPrecision(18, 2);
-        scale.HasIndex(value => value.ProductId).HasDatabaseName("IX_product_price_scales_product");
-
-        // CASCADE y no RESTRICT, a diferencia de la FK de TaxRate: una escala no tiene sentido
-        // sin su producto — no es una referencia a un catálogo compartido, es parte del mismo
-        // agregado. Borrar el producto debe borrar sus escalas.
-        scale.HasOne<Product>()
-            .WithMany(product => product.PriceScales)
-            .HasForeignKey(value => value.ProductId)
-            .OnDelete(DeleteBehavior.Cascade);
+        // final_usd/final_cop stay in the table, unmapped, until DropLegacyProductPriceColumns.
+        scale.HasIndex(value => value.VariantId).HasDatabaseName("IX_product_price_scales_variant");
     }
 
     private static void ConfigureProductPriceChange(ModelBuilder modelBuilder)
@@ -195,18 +454,28 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         change.Property(value => value.ProductId)
             .HasColumnName("product_id")
             .HasConversion(id => id.Value, value => new ProductId(value));
+        // Spec §3.5: el cambio es de una variante. product_id se queda para que el reporte agrupe
+        // por producto sin juntar product_variants.
+        change.Property(value => value.VariantId)
+            .HasColumnName("variant_id")
+            .HasConversion(id => id.Value, value => new VariantId(value));
         // Como texto, mismo criterio que PriceScale.Restriction: una fila del histórico se lee a
         // mano cuando alguien discute un precio, y "ScaleDiscount" se entiende donde un 2 no.
         change.Property(value => value.Field)
             .HasColumnName("field")
             .HasConversion<string>()
             .HasMaxLength(20);
+        // Spec D5: which currency a PriceBase row talks about; null for ScaleDiscount.
+        change.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasColumnType("character(3)")
+            .HasMaxLength(3);
         // Nullable de verdad: sólo las filas de ScaleDiscount los llenan. Ver
         // ProductPriceChange.ScaleFromUnit.
         change.Property(value => value.ScaleFromUnit).HasColumnName("scale_from_unit");
         change.Property(value => value.ScaleToUnit).HasColumnName("scale_to_unit");
-        // La misma precisión que price_base_usd/cop: el histórico tiene que poder guardar
-        // cualquier valor que la columna de origen aceptó, o redondearía la evidencia.
+        // The same precision as product_prices.amount: the history has to hold any value the
+        // source column accepted, or it would round the evidence.
         change.Property(value => value.PreviousValue)
             .HasColumnName("previous_value")
             .HasPrecision(18, 2);
@@ -223,6 +492,13 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.ProductId)
             .OnDelete(DeleteBehavior.Cascade);
+        // CASCADE por el mismo motivo: borrar una variante sin uso (spec §3.3) se lleva su historia.
+        change.HasOne<ProductVariant>()
+            .WithMany()
+            .HasForeignKey(value => value.VariantId)
+            .OnDelete(DeleteBehavior.Cascade);
+        change.HasIndex(value => value.VariantId)
+            .HasDatabaseName("IX_product_price_changes_variant");
 
         change.HasIndex(value => value.TenantId)
             .HasDatabaseName("IX_product_price_changes_tenant");

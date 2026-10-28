@@ -29,9 +29,10 @@ public sealed class QCodePdfRendererTests
         IsStorePickup: false,
         AdvisorLabel: "Ana Pérez",
         Currency: "COP",
+        Symbol: "$",
+        Decimals: 0,
         BillingAccount: null,
         PaymentMethod: "Transferencia",
-        Notes: null,
         Items:
         [
             new QuotationPdfLine("Tornillo hexagonal 3/8", 100m, 1500m, 0m, 1500m, 150000m),
@@ -166,6 +167,35 @@ public sealed class QCodePdfRendererTests
 
         var logo = capture.Body().GetProperty("data").GetProperty("logo");
         Assert.False(logo.TryGetProperty("content", out _));
+    }
+
+    // Un solo layout para cotización y pedido (owner): lo que distingue al pedido es `data.kind`, que
+    // la plantilla compara por nombre, y el archivo que lo nombra.
+    [Fact]
+    public async Task RenderNamesAnOrderAfterTheOrder()
+    {
+        var (renderer, capture) = NewRenderer();
+
+        await renderer.RenderAsync(
+            Document with { QuotationNumber = "PED-2026-0007", ValidUntil = null, Kind = QuotationPdfKind.Order },
+            TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.Equal("Pedido-PED-2026-0007.pdf", body.GetProperty("filename").GetString());
+        Assert.Equal("Order", body.GetProperty("data").GetProperty("kind").GetString());
+    }
+
+    // La cotización no cambia: mismo nombre de archivo, y `kind` viaja como texto.
+    [Fact]
+    public async Task RenderKeepsTheQuotationFileName()
+    {
+        var (renderer, capture) = NewRenderer();
+
+        await renderer.RenderAsync(Document, TestContext.Current.CancellationToken);
+
+        var body = capture.Body();
+        Assert.Equal("Cotizacion-QUO-2026-0002.pdf", body.GetProperty("filename").GetString());
+        Assert.Equal("Quotation", body.GetProperty("data").GetProperty("kind").GetString());
     }
 
     private static (IQuotationPdfRenderer Renderer, RequestCapture Capture) NewRenderer(

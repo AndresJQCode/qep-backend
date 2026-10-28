@@ -17,9 +17,10 @@ public sealed record CreateCustomerCommand(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid ClassificationId,
+    Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    bool VatSurplus,
+    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -30,13 +31,16 @@ public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCo
 public sealed class CreateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
+    ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<CreateCustomerCommand> validator)
+    IValidator<CreateCustomerCommand> validator,
+    IPhoneNumberNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory)
     : ICommandHandler<CreateCustomerCommand, CustomerDto>
 {
     public async Task<CustomerDto> HandleAsync(
@@ -51,16 +55,15 @@ public sealed class CreateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
         // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
-        // prefijo y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
+        // prefijo (si trae clasificacion) y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
         // redundante con la FK de base. Resolverlas antes tambien evita quemar un numero del
         // consecutivo cuando la referencia del cuerpo es invalida.
-        var classification = await classificationRepository.FindAsync(
-            command.TenantId, new ClientClassificationId(command.ClassificationId), cancellationToken)
-            ?? throw new CustomersDomainException(
-                "customers.customer.classification_not_found",
-                "The client classification was not found in this tenant.");
+        var classification = await classificationRepository.ResolveForCustomerAsync(
+            command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se
         // aseguro de que venga la que corresponde al pais; aca se comprueba que exista.
         // Sin `?.`: el validador de arriba ya exigio el pais NotEmpty, asi que a esta altura no es
@@ -84,7 +87,7 @@ public sealed class CreateCustomerHandler(
         // Un cliente de afuera no tiene departamento DIVIPOLA, y el CUC lleva dos digitos en ese
         // lugar: van los de CucFormatter.ForeignDepartmentCode. Ver alla por que no se omiten.
         var cuc = CucFormatter.Build(
-            classification.Prefix,
+            classification?.Prefix,
             city?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
             sequence);
         var now = clock.UtcNow;
@@ -113,6 +116,7 @@ public sealed class CreateCustomerHandler(
                 },
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
+            PersonTypeParser.ParseOptional(command.PersonType),
             new CustomerContactInfo
             {
                 Phone = command.Phone,
@@ -124,7 +128,8 @@ public sealed class CreateCustomerHandler(
             },
             CustomerMapping.ToCommercialInfo(
                 command.ClassificationId, command.WithRetention, command.VatSurplus),
-            now);
+            now,
+            phoneNormalizer);
 
         repository.Add(customer);
         auditPublisher.Publish(
@@ -138,10 +143,20 @@ public sealed class CreateCustomerHandler(
         // La unicidad de la identificacion y del CUC, y la existencia de la ciudad y la
         // clasificacion en la carrera entre esta lectura y el commit, NO se comprueban con un
         // segundo SELECT: el unico arbitro real son los indices y las FK de base, y
-        // CustomersUnitOfWork traduce sus violaciones.
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        // CustomersUnitOfWork traduce sus violaciones. Cuando es la de la identificacion, el dueño se
+        // relee **despues** del indice y nunca antes (spec clientes duplicados §3.1): un pre-chequeo
+        // dejaria pasar la carrera, y el 422 lleva `existing` para que la pantalla ofrezca ir a el.
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (CustomersDomainException e) when (e.Code == CustomerIdentificationTaken.Code)
+        {
+            throw await CustomerIdentificationTaken.ResolveAsync(
+                repository, command.TenantId, customer, e, cancellationToken);
+        }
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, cancellationToken);
     }
 }

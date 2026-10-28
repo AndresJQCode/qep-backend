@@ -258,7 +258,7 @@ public sealed class TaxRateActivationApiTests
 
         var product = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/products",
-            new { name = "Vela de soja", code = "VS-101", taxRateId = id, pricing = new { baseUsd = 10m } },
+            ProductBodies.Create("Vela de soja", "VS-101", taxRateId: id),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, product.StatusCode);
 

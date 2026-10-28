@@ -1,0 +1,108 @@
+using Modules.Quotations.Domain;
+
+namespace Modules.Quotations.Application;
+
+/// <summary>Los textos del historial del pedido (spec 2026-10-15 §4.6). Son hechos que lee una persona:
+/// en español, y donde se dirigen a alguien, tuteando.</summary>
+public static class OrderChangeSummary
+{
+    public static string CreatedFromQuotation(string quotationNumber) =>
+        Trim($"Creado desde la cotización {quotationNumber}.");
+
+    public static string CreatedManually() => "Creado a mano desde Pedidos.";
+
+    public static string CreatedFromExternal(OrderSource source, string reference) =>
+        Trim($"Creado desde {source} ({reference}).");
+
+    public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
+        QuotationChangeSummary.ItemAdded(productName, quantity, format);
+
+    public static string ItemQuantityChanged(string productName, decimal from, decimal to, HistoryFormat format) =>
+        QuotationChangeSummary.ItemQuantityChanged(productName, from, to, format);
+
+    public static string ItemRemoved(string productName) => QuotationChangeSummary.ItemRemoved(productName);
+
+    public static string RetailChanged(bool isRetail) => isRetail
+        ? "Marcó el pedido como detal: ninguna línea recibe descuento."
+        : "Quitó el detal: las líneas vuelven a su descuento por escala.";
+
+    public static string GlobalScaleFloorChanged(int? floor, HistoryFormat format) =>
+        QuotationChangeSummary.GlobalScaleFloorChanged(floor, format);
+
+    public static string NotesChanged() => "Editó las notas.";
+
+    /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
+    /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>
+    public static string? ShippingChanged(ShippingDetails before, ShippingDetails after, HistoryFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        var changes = new List<string>(4);
+        QuotationChangeSummary.AppendFreight(changes, before, after, format);
+        return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
+    }
+
+    /// <summary>A quién se le factura, tal como lo lee una persona: el nombre de la parte propia, «consumidor
+    /// final», o «los datos del cliente» (con su razón social si es el caso).</summary>
+    public static string BillingLabel(Order order)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        if (order.BillsToFinalConsumer)
+        {
+            return "consumidor final";
+        }
+
+        if (order.Billing is { } party)
+        {
+            return string.IsNullOrWhiteSpace(party.Name) ? "otros datos" : party.Name;
+        }
+
+        return order.BillingUsesBusinessName ? "los datos del cliente (razón social)" : "los datos del cliente";
+    }
+
+    /// <summary>El cambio de facturación de un pedido pendiente (spec 2026-10-26). Si a quién se factura no
+    /// cambió y sólo se tocó un dato de la parte, lo dice sin repetir el nombre.</summary>
+    public static string BillingChanged(string before, string after) =>
+        string.Equals(before, after, StringComparison.Ordinal)
+            ? Trim($"Editó los datos de facturación de {after}.")
+            : Trim($"Cambió la facturación de {before} a {after}.");
+
+    /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
+    public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
+        ? "Enviado por WhatsApp a facturación."
+        : "Enviado por WhatsApp al cliente.";
+
+    public static string Approved() => "Aprobado.";
+
+    public static string Cancelled(string reason) => Trim($"Anulado: {reason}");
+
+    public static string Invoiced() => "Marcado como facturado.";
+
+    public static string InvoicingReverted() => "Se revirtió la facturación.";
+
+    public static string PaymentProofsChanged(int added, int corrected, int removed)
+    {
+        var parts = new List<string>(3);
+        if (added > 0)
+        {
+            parts.Add($"{added} comprobante(s) nuevo(s)");
+        }
+
+        if (corrected > 0)
+        {
+            parts.Add($"{corrected} corregido(s)");
+        }
+
+        if (removed > 0)
+        {
+            parts.Add($"{removed} retirado(s)");
+        }
+
+        return Trim($"Comprobantes: {string.Join(", ", parts)}.");
+    }
+
+    private static string Trim(string summary) =>
+        summary.Length <= OrderHistoryEntry.DetailsMaxLength
+            ? summary
+            : summary[..(OrderHistoryEntry.DetailsMaxLength - 1)] + "…";
+}

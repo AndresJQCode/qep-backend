@@ -7,9 +7,9 @@ public sealed class Tenant
 {
     private static readonly HashSet<string> AllowedDateFormats =
     [
-        "yyyy-MM-dd",
-        "dd/MM/yyyy",
-        "MM/dd/yyyy"
+        TenantDateFormats.IsoDate,
+        TenantDateFormats.DayMonthYear,
+        TenantDateFormats.MonthDayYear
     ];
 
     private readonly List<IDomainEvent> _domainEvents = [];
@@ -54,6 +54,25 @@ public sealed class Tenant
     public string TimeZone { get; private set; } = string.Empty;
 
     public string DateFormat { get; private set; } = string.Empty;
+
+    public string DefaultCurrency { get; private set; } = "COP";
+
+    public string NumberFormat { get; private set; } = TenantNumberFormats.CommaDecimal;
+
+    /// <summary>
+    /// El país de la organización, ISO-3166-1 alpha-2. Hoy es informativo: ninguna regla lo lee.
+    /// Arranca en <c>CO</c> igual que la moneda arranca en <c>COP</c>, y la migración rellena los
+    /// tenants existentes con el mismo valor, así que uno nuevo y uno viejo no se distinguen.
+    /// </summary>
+    public string Country { get; private set; } = "CO";
+
+    /// <summary>
+    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado**: sólo manda
+    /// si <see cref="Country"/> es <c>CO</c>; quien lo consulta pasa por
+    /// <see cref="PersonTypeRequirementPolicy.Effective"/>. Arranca en <c>Never</c> y la migración
+    /// rellena con lo mismo.
+    /// </summary>
+    public PersonTypeRequirement PersonTypeRequirement { get; private set; } = PersonTypeRequirement.Never;
 
     /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
@@ -112,6 +131,25 @@ public sealed class Tenant
         new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
             createdAt);
 
+    /// <summary>
+    /// Aplica las mismas reglas y los mismos códigos que <see cref="Create"/> a los datos de un
+    /// registro, sin construir el tenant. Devuelve el slug normalizado.
+    /// </summary>
+    public static string EnsureValidRegistration(
+        string slug,
+        string displayName,
+        string defaultCulture,
+        string timeZone,
+        string dateFormat)
+    {
+        var normalizedSlug = ValidateSlug(slug);
+        ValidateDisplayName(displayName);
+        ValidateCulture(defaultCulture);
+        ValidateTimeZone(timeZone);
+        ValidateDateFormat(dateFormat);
+        return normalizedSlug;
+    }
+
     /// <summary>Si esa membresía es la autoridad de este tenant.</summary>
     public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 
@@ -120,6 +158,10 @@ public sealed class Tenant
         string defaultCulture,
         string timeZone,
         string dateFormat,
+        string defaultCurrency,
+        string numberFormat,
+        string country,
+        PersonTypeRequirement personTypeRequirement,
         DateTimeOffset occurredAt)
     {
         EnsureActive();
@@ -128,12 +170,23 @@ public sealed class Tenant
         var validatedCulture = ValidateCulture(defaultCulture);
         var validatedTimeZone = ValidateTimeZone(timeZone);
         var validatedDateFormat = ValidateDateFormat(dateFormat);
+        var validatedCurrency = NormalizeCurrencyCode(defaultCurrency);
+        var validatedNumberFormat = TenantNumberFormats.Normalize(numberFormat);
+        var validatedCountry = NormalizeCountryCode(country);
         List<string> changedFields = [];
 
         TrackChange(nameof(DisplayName), DisplayName, validatedDisplayName, changedFields);
         TrackChange(nameof(DefaultCulture), DefaultCulture, validatedCulture, changedFields);
         TrackChange(nameof(TimeZone), TimeZone, validatedTimeZone, changedFields);
         TrackChange(nameof(DateFormat), DateFormat, validatedDateFormat, changedFields);
+        TrackChange(nameof(DefaultCurrency), DefaultCurrency, validatedCurrency, changedFields);
+        TrackChange(nameof(NumberFormat), NumberFormat, validatedNumberFormat, changedFields);
+        TrackChange(nameof(Country), Country, validatedCountry, changedFields);
+        TrackChange(
+            nameof(PersonTypeRequirement),
+            PersonTypeRequirement.ToString(),
+            personTypeRequirement.ToString(),
+            changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -144,6 +197,10 @@ public sealed class Tenant
         DefaultCulture = validatedCulture;
         TimeZone = validatedTimeZone;
         DateFormat = validatedDateFormat;
+        DefaultCurrency = validatedCurrency;
+        NumberFormat = validatedNumberFormat;
+        Country = validatedCountry;
+        PersonTypeRequirement = personTypeRequirement;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(
@@ -201,6 +258,50 @@ public sealed class Tenant
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-10-08 §4 (O8): inactivo bloquea todo acceso, no borra nada y conserva los módulos (D8).
+    /// Sube <see cref="Version"/> (el If-Match del endpoint) y <b>no emite eventos</b>: OutboxWriter
+    /// lanza ante un evento sin mapear y nadie fuera de Tenancy consume este cambio; alcanzan el
+    /// historial y la auditoría. Los demás valores de <see cref="TenantStatus"/> no se asignan hoy:
+    /// desde ellos es <c>tenancy.tenant.not_active</c> (decisión P5 del plan).
+    /// </summary>
+    public void Suspend(ChangeReason reason, DateTimeOffset occurredAt)
+    {
+        if (Status == TenantStatus.Suspended)
+        {
+            throw new TenantDomainException("tenancy.tenant.already_inactive", "The tenant is already inactive.");
+        }
+
+        // No EnsureActive: su mensaje habla de ajustes y aquí confundiría a quien lea el log.
+        if (Status != TenantStatus.Active)
+        {
+            throw new TenantDomainException("tenancy.tenant.not_active", "Only an active tenant can be suspended.");
+        }
+
+        EnsureReason(TenantChangeVocabulary.SuspensionReasons, reason, "suspend");
+        Status = TenantStatus.Suspended;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
+    public void Reactivate(ChangeReason reason, DateTimeOffset occurredAt)
+    {
+        if (Status == TenantStatus.Active)
+        {
+            throw new TenantDomainException("tenancy.tenant.already_active", "The tenant is already active.");
+        }
+
+        if (Status != TenantStatus.Suspended)
+        {
+            throw new TenantDomainException("tenancy.tenant.not_active", "Only a suspended tenant can be reactivated.");
+        }
+
+        EnsureReason(TenantChangeVocabulary.ReactivationReasons, reason, "reactivate");
+        Status = TenantStatus.Active;
+        Version++;
+        UpdatedAt = occurredAt;
+    }
+
     public IReadOnlyCollection<IDomainEvent> PullDomainEvents()
     {
         var events = _domainEvents.ToArray();
@@ -215,6 +316,16 @@ public sealed class Tenant
             throw new TenantDomainException(
                 "tenancy.tenant.not_active",
                 "Only an active tenant can update settings.");
+        }
+    }
+
+    private static void EnsureReason(IReadOnlySet<ChangeReason> allowed, ChangeReason reason, string verb)
+    {
+        if (!allowed.Contains(reason))
+        {
+            throw new TenantDomainException(
+                "tenancy.tenant.reason_not_allowed",
+                $"'{TenantChangeVocabulary.ToText(reason)}' is not a reason to {verb} a tenant.");
         }
     }
 
@@ -275,7 +386,17 @@ public sealed class Tenant
     {
         try
         {
-            return TimeZoneInfo.FindSystemTimeZoneById(value.Trim()).Id;
+            // `FindSystemTimeZoneById` also resolves Windows ids ("SA Pacific Standard Time"), but
+            // the frontend renders local dates through `Intl.DateTimeFormat`, which only accepts IANA.
+            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(value.Trim());
+            if (!timeZone.HasIanaId)
+            {
+                throw new TenantDomainException(
+                    "tenancy.settings.time_zone.invalid",
+                    "Time zone must be a valid IANA time zone.");
+            }
+
+            return timeZone.Id;
         }
         catch (TimeZoneNotFoundException)
         {
@@ -289,6 +410,31 @@ public sealed class Tenant
                 "tenancy.settings.time_zone.invalid",
                 "Time zone data is invalid.");
         }
+    }
+
+    // Shape only: Tenancy.Domain cannot see the catalogue (Currencies lives in Tenancy.Application,
+    // which references this assembly). UpdateTenantSettingsHandler checks the catalogue first and
+    // answers with this same field-level code, so the settings form marks the currency select.
+    private static string NormalizeCurrencyCode(string value)
+    {
+        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        return normalized.Length == 3 && normalized.All(char.IsAsciiLetterUpper)
+            ? normalized
+            : throw new TenantDomainException(
+                "tenancy.settings.default_currency.invalid",
+                "Default currency must be a three-letter ISO 4217 code.");
+    }
+
+    // Shape only, same as Customers (CustomerContactInfo.NormalizeCountry): there is no world
+    // geography module to check the code against, and the frontend picks it from its own list.
+    private static string NormalizeCountryCode(string value)
+    {
+        var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        return normalized.Length == 2 && normalized.All(char.IsAsciiLetterUpper)
+            ? normalized
+            : throw new TenantDomainException(
+                "tenancy.settings.country.invalid",
+                "Country must be a two-letter ISO-3166-1 alpha-2 code.");
     }
 
     private static string ValidateDateFormat(string value)

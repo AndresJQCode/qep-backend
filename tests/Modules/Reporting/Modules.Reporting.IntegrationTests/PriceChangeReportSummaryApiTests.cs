@@ -14,9 +14,10 @@ namespace Modules.Reporting.IntegrationTests;
 /// </summary>
 public sealed class PriceChangeReportSummaryApiTests
 {
-    /// <summary>Los tres campos del enum, en el orden en el que el contrato los devuelve.</summary>
-    private static readonly string[] EveryField =
-        ["PriceBaseUsd", "PriceBaseCop", "ScaleDiscount"];
+    /// <summary>The four slices, always, in the order the contract returns them: one PriceBase per
+    /// catalogue currency, then the discount.</summary>
+    private static readonly (string Field, string? Currency)[] EverySlice =
+        [("PriceBase", "COP"), ("PriceBase", "USD"), ("PriceBase", "EUR"), ("ScaleDiscount", null)];
 
     // Spec 2026-09-17, punto 5: el cambio de precio del 31 de diciembre a las 23:00 de Bogotá —ya
     // enero en UTC— cuenta en la serie de diciembre del tenant.
@@ -77,8 +78,155 @@ public sealed class PriceChangeReportSummaryApiTests
         Assert.Equal(1, product.EntityCount);
         Assert.Equal(2, product.Count);
 
+        // Un producto sin opciones se desglosa en su única variante, que lleva el nombre del
+        // producto y el código que el producto muestra.
+        var variant = Assert.Single(product.Variants);
+        Assert.Equal(("Vela de soja", product.ProductCode, 2), (variant.Name, variant.Code, variant.Count));
+
         // Sin rango de fechas no hay ventana anterior contra la cual comparar.
         Assert.Null(summary.Previous);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-20 §3.5: el ranking sigue siendo por producto y cada uno trae adentro el
+    /// desglose por variante, con los conteos que suman el del producto. La camiseta (M dos veces,
+    /// L una) le gana a la vela (una) y se desglosa en el orden de presentación; la vela, de una
+    /// sola variante, conserva su código, y la camiseta, de dos, no tiene uno que decir.
+    /// </summary>
+    [Fact]
+    public async Task SummaryGroupsByProductWithVariantBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 130_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 120_000m, largeCop: 130_000m);
+        var candle = await CreateProductAsync(client, tenant.TenantId, baseCop: 50_000m);
+        await ChangeProductBaseCopAsync(client, tenant.TenantId, candle, 60_000m);
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(4, summary.ChangeCount);
+        // Tres variantes tocadas en dos productos: el denominador sigue siendo el producto.
+        Assert.Equal(2, summary.ProductCount);
+
+        Assert.Equal(2, summary.ByProduct.Count);
+        var shirtEntry = summary.ByProduct[0];
+        Assert.Equal(shirt.ProductId, shirtEntry.ProductId);
+        Assert.Equal("Camiseta", shirtEntry.ProductName);
+        Assert.Equal(3, shirtEntry.Count);
+        Assert.Null(shirtEntry.ProductCode);
+        Assert.Equal(
+            [(shirt.Medium.Id, "Camiseta – M", shirt.Medium.Code, 2), (shirt.Large.Id, "Camiseta – L", shirt.Large.Code, 1)],
+            shirtEntry.Variants.Select(variant => (variant.VariantId, variant.Name, variant.Code, variant.Count)));
+        Assert.Equal(shirtEntry.Count, shirtEntry.Variants.Sum(variant => variant.Count));
+
+        var candleEntry = summary.ByProduct[1];
+        Assert.Equal(candle, candleEntry.ProductId);
+        Assert.Equal(1, candleEntry.Count);
+        var candleVariant = Assert.Single(candleEntry.Variants);
+        Assert.Equal(("Vela de soja", candleEntry.ProductCode, 1), (candleVariant.Name, candleVariant.Code, candleVariant.Count));
+    }
+
+    /// <summary>El resumen toma el filtro por variante igual que el listado: sin ella el panel y la
+    /// tabla de la misma pantalla hablarían de conjuntos distintos. El desglose del producto sigue
+    /// completo: la variante filtrada con su conteo y las demás en cero, para que se lea igual
+    /// con y sin filtro.</summary>
+    [Fact]
+    public async Task SummaryFiltersByVariantLikeTheList()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 130_000m);
+
+        var large = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?variantId={shirt.Large.Id}",
+            TestContext.Current.CancellationToken);
+        var unknown = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?variantId={Guid.CreateVersion7()}",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, large?.ChangeCount);
+        Assert.Equal(1, large?.ProductCount);
+        var entry = Assert.Single(large!.ByProduct);
+        Assert.Equal(shirt.ProductId, entry.ProductId);
+        Assert.Equal(1, entry.Count);
+        // M no entra en el conjunto filtrado pero viaja, en cero; la suma cierra con el producto.
+        Assert.Equal(
+            [(shirt.Medium.Id, "Camiseta – M", 0), (shirt.Large.Id, "Camiseta – L", 1)],
+            entry.Variants.Select(variant => (variant.VariantId, variant.Name, variant.Count)));
+        Assert.Equal(entry.Count, entry.Variants.Sum(variant => variant.Count));
+        Assert.Equal(0, unknown?.ChangeCount);
+        Assert.Empty(unknown!.ByProduct);
+    }
+
+    /// <summary>
+    /// El desglose es una colección completa: una variante sin ningún cambio en la ventana aparece
+    /// igual, con <c>Count</c> en cero y en su lugar de presentación, y el código del producto
+    /// sigue sin decirse porque tiene dos variantes (no porque una haya cambiado).
+    /// </summary>
+    [Fact]
+    public async Task SummaryListsAVariantWithoutChangesInZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        var shirt = await CreateSizedProductAsync(client, tenant.TenantId, baseCop: 100_000m);
+        // Sólo cambia M: L conserva su precio y no deja fila de historial.
+        await SetSizedProductPricesAsync(client, tenant.TenantId, shirt, mediumCop: 110_000m, largeCop: 100_000m);
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, summary?.ChangeCount);
+        var entry = Assert.Single(summary!.ByProduct);
+        Assert.Equal(1, entry.Count);
+        Assert.Null(entry.ProductCode);
+        Assert.Equal(
+            [(shirt.Medium.Id, shirt.Medium.Code, 1), (shirt.Large.Id, shirt.Large.Code, 0)],
+            entry.Variants.Select(variant => (variant.VariantId, variant.Code, variant.Count)));
+    }
+
+    /// <summary>
+    /// Seis productos con un cambio cada uno: el ranking trae cinco y el sexto se pliega en
+    /// «Otros», que no se desglosa (<c>Variants</c> vacío, nunca nulo) y cierra por resta. Los
+    /// cinco nombrados sí traen su desglose.
+    /// </summary>
+    [Fact]
+    public async Task SummaryFoldsTheRestIntoOthersWithAnEmptyBreakdown()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var client = tenant.Client;
+        for (var index = 0; index < 6; index++)
+        {
+            var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 50_000m);
+            await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 60_000m);
+        }
+
+        var summary = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(summary);
+        Assert.Equal(6, summary.ProductCount);
+        Assert.Equal(6, summary.ByProduct.Count);
+        var named = summary.ByProduct.Take(5).ToArray();
+        Assert.All(named, entry => Assert.Single(entry.Variants));
+
+        var others = summary.ByProduct[5];
+        Assert.Null(others.ProductId);
+        Assert.Equal((1, 1), (others.EntityCount, others.Count));
+        Assert.NotNull(others.Variants);
+        Assert.Empty(others.Variants);
     }
 
     /// <summary>
@@ -99,7 +247,7 @@ public sealed class PriceChangeReportSummaryApiTests
 
         Assert.NotNull(summary);
         Assert.Equal(0, summary.ChangeCount);
-        Assert.Equal(EveryField, summary.ByField.Select(slice => slice.Field));
+        Assert.Equal(EverySlice, summary.ByField.Select(slice => (slice.Field, slice.Currency)));
         Assert.All(summary.ByField, slice => Assert.Equal(0, slice.Count));
         Assert.Empty(summary.Monthly);
         Assert.Empty(summary.ByProduct);
@@ -117,15 +265,55 @@ public sealed class PriceChangeReportSummaryApiTests
         var productId = await CreateProductAsync(client, tenant.TenantId, baseCop: 100_000m);
         await ChangeProductBaseCopAsync(client, tenant.TenantId, productId, 120_000m);
 
-        var cop = await client.GetFromJsonAsync<PriceChangeReportSummary>(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBaseCop",
+        var basePrice = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBase",
             TestContext.Current.CancellationToken);
-        var usd = await client.GetFromJsonAsync<PriceChangeReportSummary>(
-            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=PriceBaseUsd",
+        var discount = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?field=ScaleDiscount",
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(1, cop?.ChangeCount);
+        Assert.Equal(1, basePrice?.ChangeCount);
+        Assert.Equal(0, discount?.ChangeCount);
+    }
+
+    [Fact]
+    public async Task SummaryCountsAnEurChangeInItsOwnSlice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+        var client = tenant.Client;
+        var productId = await CreateProductAsync(
+            client, tenant.TenantId, prices: new Dictionary<string, decimal> { ["COP"] = 100_000m, ["EUR"] = 20m });
+        await ChangeProductBaseCopAsync(
+            client, tenant.TenantId, productId, 100_000m,
+            new Dictionary<string, decimal> { ["COP"] = 100_000m, ["EUR"] = 24m });
+
+        var all = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary", TestContext.Current.CancellationToken);
+        var usd = await client.GetFromJsonAsync<PriceChangeReportSummary>(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?currency=USD",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, all?.ChangeCount);
+        Assert.Equal(
+            [("PriceBase", "COP", 0), ("PriceBase", "USD", 0), ("PriceBase", "EUR", 1), ("ScaleDiscount", null, 0)],
+            all!.ByField.Select(slice => (slice.Field, slice.Currency, slice.Count)));
         Assert.Equal(0, usd?.ChangeCount);
+    }
+
+    [Fact]
+    public async Task SummaryRejectsAnUnknownCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterTenantAsync(factory, ManagerPermissions);
+
+        var response = await tenant.Client.GetAsync(
+            $"{ReportsUrl(tenant.TenantId)}/price-changes/summary?currency=XYZ",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     [Fact]

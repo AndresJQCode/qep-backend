@@ -37,6 +37,8 @@ internal sealed class RequestFailureLoggingMiddleware(
     {
         await next(httpContext);
 
+        // ShouldCapture deja afuera /api/webhooks/ (spec 2026-10-09 §11, «firma antes de la base»): el
+        // 413 y el 429 de un POST anónimo al webhook no escriben fila.
         if (httpContext.Response.StatusCode < StatusCodes.Status400BadRequest ||
             !RequestFailureCapture.ShouldCapture(httpContext) ||
             httpContext.Items.ContainsKey(HandledKey))

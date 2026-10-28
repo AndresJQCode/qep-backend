@@ -33,8 +33,33 @@ public sealed class OrdersExportProcessorTests
         "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
         Email: "cliente@ejemplo.co", CityName: "Bogotá", IdentificationNumber: "900123456");
 
-    private static readonly QuotationProductRef DefaultProduct = new(
-        ProductId, "Tornillo hexagonal", "TOR-001", ImageUrl: null, Scales: []);
+    private static readonly QuotationVariantRef DefaultProduct = new(
+        ProductId, ProductId, "Tornillo hexagonal", "TOR-001", ImageUrl: null, Scales: []);
+
+    // Las partes del pedido son completas por dominio (`order.*.party_incomplete`), así que las
+    // pruebas que sólo miran un campo las arman enteras.
+    private static QuotationPartyDetails CompleteBillingParty(string name) => new()
+    {
+        Name = name,
+        IdentificationNumber = "901555444-1",
+        IdentificationType = PartyIdentificationType.Nit,
+        Phone = "6015550000",
+        Email = "facturas@ejemplo.co",
+        Address = "Cra 7 # 1-2",
+        DepartmentId = Guid.CreateVersion7(),
+        CityId = Guid.CreateVersion7(),
+    };
+
+    private static QuotationPartyDetails CompleteShippingParty(
+        string name, Guid? cityId, string address = "Zona Franca, Bodega 14") => new()
+        {
+            Name = name,
+            Phone = "6015550000",
+            Email = "bodega@ejemplo.co",
+            Address = address,
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = cityId ?? Guid.CreateVersion7(),
+        };
 
     [Fact]
     public async Task WritesTheErpColumnsInOrder()
@@ -57,7 +82,7 @@ public sealed class OrdersExportProcessorTests
                 "V. Comprobante 5", "URL Comprobante 5",
                 "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
-                "Retencion",
+                "Retencion", "Valor Flete",
             ],
             writer.Columns.Select(column => column.Header));
     }
@@ -168,12 +193,7 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
-            Billing: new QuotationPartyDetails
-            {
-                Name = "Distribuciones Andinas S.A.S.",
-                IdentificationNumber = "901555444-1",
-                Phone = "6015550000",
-            },
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
             BillingWithRetention: false,
             BillingVatSurplus: false);
@@ -296,12 +316,7 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
-            Billing: new QuotationPartyDetails
-            {
-                Name = "Distribuciones Andinas S.A.S.",
-                IdentificationNumber = "901555444-1",
-                Phone = "6015550000",
-            },
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
             BillingWithRetention: false,
             BillingVatSurplus: false);
@@ -319,43 +334,19 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
-            Billing: new QuotationPartyDetails
-            {
-                Name = "Distribuciones Andinas S.A.S.",
-                IdentificationNumber = "901555444-1",
-                Phone = "6015550000",
-            },
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
             BillingWithRetention: false,
             BillingVatSurplus: false);
         var row = NewRow("PED-2026-0001", parties: parties);
-        typeof(QuotationParty)
-            .GetProperty(nameof(QuotationParty.IdentificationNumber))!
-            .SetValue(row.Quotation.Billing, null);
+        typeof(OrderParty)
+            .GetProperty(nameof(OrderParty.IdentificationNumber))!
+            .SetValue(row.Billing, null);
 
         await NewProcessor(new StubOrderListRepository(row), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[DocumentoIdentidadIndex]);
-    }
-
-    // Una parte de facturación sin nombre deja "Cliente" en el de la ficha, y con él su documento.
-    [Fact]
-    public async Task DocumentoIdentidadIsTheCustomersNumberWhenTheBillingPartyHasNoName()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var parties = new QuotationParties(
-            Billing: new QuotationPartyDetails { Phone = "6015550000" },
-            Shipping: null,
-            BillingWithRetention: false,
-            BillingVatSurplus: false);
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        var row = Assert.Single(writer.Rows);
-        Assert.Equal("Ferretería El Tornillo", row[ClienteIndex].Text);
-        Assert.Equal("900123456", row[DocumentoIdentidadIndex].Text);
     }
 
     [Fact]
@@ -405,20 +396,6 @@ public sealed class OrdersExportProcessorTests
     }
 
     [Fact]
-    public async Task AnOrderWithoutItemsContributesNoRows()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var withItems = NewRow("PED-2026-0001");
-        var withoutItems = NewRow("PED-2026-0002", items: []);
-
-        await NewProcessor(new StubOrderListRepository(withItems, withoutItems), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        var row = Assert.Single(writer.Rows);
-        Assert.Equal("PED-2026-0001", row[14].Text);
-    }
-
-    [Fact]
     public async Task EmpresaComesFromTheBillingAccountsCompany()
     {
         var writer = new RecordingExportWorkbookWriter();
@@ -444,17 +421,6 @@ public sealed class OrdersExportProcessorTests
     }
 
     [Fact]
-    public async Task EmpresaIsEmptyWithoutABillingAccount()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: null)), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[0].Text);
-    }
-
-    [Fact]
     public async Task NotaDetalleIsAlwaysEmpty()
     {
         var writer = new RecordingExportWorkbookWriter();
@@ -466,8 +432,10 @@ public sealed class OrdersExportProcessorTests
     }
 
     // "Observaciones" es Order.Notes: la que se escribe al convertir o al editar el pedido, y la que
-    // la pantalla del pedido rotula igual. Hasta el hotfix 2026-10-15 salía sólo Quotation.Notes, y
-    // un pedido con observaciones pero sin nota en la cotización (POB145) exportaba la celda vacía.
+    // la pantalla del pedido rotula igual. Hasta el hotfix 2026-10-15 salía Quotation.Notes, y un
+    // pedido con observaciones pero sin nota en la cotización (POB145) exportaba la celda vacía.
+    // Desde el spec 2026-10-15 la fila ya no tiene cotización al lado: al convertir, el pedido
+    // hereda sus notas (OrderTests), y el Excel sólo lee las del pedido.
     [Fact]
     public async Task ObservacionesIsTheOrdersNotes()
     {
@@ -477,45 +445,6 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
-    }
-
-    // Sin observaciones del pedido, la nota de la cotización: los pedidos convertidos antes de que
-    // la conversión la copiara (hotfix 2026-10-15) nacieron sin ella.
-    [Fact]
-    public async Task ObservacionesFallsBackToTheQuotationsNotes()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(
-                new StubOrderListRepository(NewRow("PED-2026-0001", quotationNotes: "Nota de la cotización")), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal("Nota de la cotización", Assert.Single(writer.Rows)[16].Text);
-    }
-
-    [Fact]
-    public async Task ObservacionesPrefersTheOrdersNotesOverTheQuotations()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(
-                new StubOrderListRepository(NewRow(
-                    "PED-2026-0001", orderNotes: "Frágil", quotationNotes: "Nota de la cotización")),
-                writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal("Frágil", Assert.Single(writer.Rows)[16].Text);
-    }
-
-    [Fact]
-    public async Task ObservacionesIsEmptyWithoutNotesAnywhere()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(string.Empty, Assert.Single(writer.Rows)[16].Text);
     }
 
     [Fact]
@@ -560,6 +489,7 @@ public sealed class OrdersExportProcessorTests
                 Phone = "6015550000",
                 Email = "bodega@ejemplo.co",
                 Address = "Zona Franca, Bodega 14",
+                DepartmentId = Guid.CreateVersion7(),
                 CityId = CityId,
             });
         var geography = new StubQuotationGeographyLookup(
@@ -587,7 +517,7 @@ public sealed class OrdersExportProcessorTests
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
             Billing: null,
-            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", CityId = CityId });
+            Shipping: CompleteShippingParty("Bodega Norte", CityId));
         var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
         var geography = new StubQuotationGeographyLookup(
             new Dictionary<Guid, string> { [CityId] = "Rionegro", [CustomerCityId] = "Abejorral" },
@@ -653,14 +583,18 @@ public sealed class OrdersExportProcessorTests
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
             Billing: null,
-            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", Address = "Zona Franca" });
+            Shipping: CompleteShippingParty("Bodega Norte", null, "Zona Franca"));
+        // Una parte guardada antes de que existiera la ciudad: el dominio ya no deja crearla, pero
+        // las copiadas por la migración pueden venir así.
+        var row = NewRow("PED-2026-0001", parties: parties);
+        typeof(OrderParty).GetProperty(nameof(OrderParty.CityId))!.SetValue(row.Shipping, null);
         var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
         var geography = new StubQuotationGeographyLookup(
             new Dictionary<Guid, string>(),
             new Dictionary<Guid, string> { [CustomerCityId] = "ABEJORRAL (ANT)" });
 
         await NewProcessor(
-                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                new StubOrderListRepository(row),
                 writer,
                 customers: customers,
                 geography: geography,
@@ -676,7 +610,7 @@ public sealed class OrdersExportProcessorTests
     {
         var parties = new QuotationParties(
             Billing: null,
-            Shipping: new QuotationPartyDetails { Name = "Bodega Norte", CityId = CityId });
+            Shipping: CompleteShippingParty("Bodega Norte", CityId));
         var customers = new StubQuotationCustomerLookup(DefaultCustomer with { CityId = CustomerCityId });
         var geography = new StubQuotationGeographyLookup(new Dictionary<Guid, string>());
 
@@ -711,6 +645,184 @@ public sealed class OrdersExportProcessorTests
     // la guarda, acá de primera, para leerla en la celda 0.
     private static InMemoryOrdersExportLayoutRepository CoordinadoraCityVisibleFirst() =>
         StoredLayout(OrdersExportColumnSetting.Catalog("coordinadora_city", "Ciudad Coordinadora", visible: true));
+
+    // Spec 2026-10-26 tipo de persona: «Tipo de persona» describe a quien describe «Documento de
+    // identidad» (OrderBilledParty.SourceFor), con el valor de contrato «Natural» / «Juridica».
+    private static InMemoryOrdersExportLayoutRepository PersonTypeVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("customer_person_type", "Tipo de persona", visible: true));
+
+    private static QuotationParties BillingPartyOf(PartyPersonType? personType) =>
+        new(
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = personType },
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+    [Fact]
+    public async Task PersonTypeIsTheCustomersWhenThereIsNoBillingRow()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Tipo de persona", writer.Columns[0].Header);
+        Assert.Equal(ExportCell.OfText("Juridica"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task PersonTypeIsTheBillingRowsWhenItHasAName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+
+        await NewProcessor(
+                new StubOrderListRepository(
+                    NewRow("PED-2026-0001", parties: BillingPartyOf(PartyPersonType.Juridica))),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Juridica"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // La fila de facturación es otra persona: si no trae tipo, la celda queda vacía y no toma el del cliente.
+    [Fact]
+    public async Task ABillingRowWithoutPersonTypeIsEmptyEvenIfTheCustomerHasOne()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: BillingPartyOf(null))),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task AFinalConsumerIsNatural()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Juridica" });
+        var parties = QuotationParties.Empty with { BillsToFinalConsumer = true };
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Natural"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task PersonTypeIsRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: QuotationParties.Empty,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: customers,
+                layouts: PersonTypeVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Natural"), cells[0]));
+    }
+
+    // «Razon social» es la de la ficha del cliente, no la de quien se factura: no depende de la parte de
+    // facturación ni de BillingUsesBusinessName. Sin razón social sale vacía.
+    private static InMemoryOrdersExportLayoutRepository BusinessNameVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("business_name", "Razon social", visible: true));
+
+    [Fact]
+    public async Task BusinessNameIsTheCustomersAndIsRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Distribuciones Andinas S.A.S." });
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: QuotationParties.Empty,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: customers,
+                layouts: BusinessNameVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Razon social", writer.Columns[0].Header);
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Distribuciones Andinas S.A.S."), cells[0]));
+    }
+
+    [Fact]
+    public async Task BusinessNameIsEmptyWhenTheCustomerHasNone()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = null });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                layouts: BusinessNameVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task WithoutALayoutThatShowsItBusinessNameIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Razon social");
+    }
+
+    // Oculta por defecto: el Excel de un tenant que no la prende no cambia.
+    [Fact]
+    public async Task WithoutALayoutThatShowsItPersonTypeIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { PersonType = "Natural" });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001")), writer, customers: customers)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Tipo de persona");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
 
     // Spec 2026-10-05 (recoger en tienda): "Transportadora" sale por pedido desde la cotización.
     // Hasta entonces la hoja del tenant la tenía fija en "Coordinadora", así que quien despachaba no
@@ -832,6 +944,117 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
     }
 
+    // Spec 2026-10-17 flete §7 (D-F8): la transportadora sale del pedido; sin ella, "Coordinadora".
+    [Fact]
+    public async Task CarrierColumnUsesTheOrdersCarrier()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var shipping = new ShippingDetails(null, "Servientrega", FreightChargeMode.Charged, 15_000m, 19, false);
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", shipping: shipping)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Servientrega"), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task CarrierColumnFallsBackToCoordinadoraWithoutCarrier()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var shipping = new ShippingDetails(null, null, FreightChargeMode.Free, 0m, 0, false);
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", shipping: shipping)),
+                writer,
+                layouts: CarrierVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Coordinadora"), Assert.Single(writer.Rows)[0]);
+    }
+
+    private static readonly string[] FreightKeys =
+        ["freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery"];
+
+    private static async Task<IReadOnlyList<ExportCell>> FreightCellsAsync(Order order)
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var layouts = StoredLayout(
+            [.. FreightKeys.Select(key => OrdersExportColumnSetting.Catalog(key, key, visible: true))]);
+
+        await NewProcessor(new StubOrderListRepository(order), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        return Assert.Single(writer.Rows).Take(5).ToArray();
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAChargedFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Charged, 15_000m, 19, false)));
+
+        Assert.Equal(
+            [ExportCell.OfNumber(15_000m), ExportCell.OfNumber(12_605.04m), ExportCell.OfNumber(2_394.96m),
+                ExportCell.OfText("Cobrado"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAFreeFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Free, 0m, 0, false)));
+
+        Assert.Equal(
+            [ExportCell.OfNumber(0m), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText("Gratis"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task FreightColumnsForAnOnDeliveryFreight()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.OnDelivery, 0m, 0, false)));
+
+        Assert.Equal(
+            [ExportCell.OfText(string.Empty), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText("Al cobro"), ExportCell.OfText("No")],
+            cells);
+    }
+
+    // Recogida: el dominio no deja que un pedido de recogida lleve flete, transportadora ni contraentrega
+    // (spec §5.2, lo rechaza), así que el pedido llega sin envío: valor y modo vacíos, desglose en 0 y
+    // sin contraentrega.
+    [Fact]
+    public async Task FreightColumnsAreEmptyForAStorePickup()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            parties: StorePickup));
+
+        Assert.Equal(
+            [ExportCell.OfText(string.Empty), ExportCell.OfNumber(0m), ExportCell.OfNumber(0m),
+                ExportCell.OfText(string.Empty), ExportCell.OfText("No")],
+            cells);
+    }
+
+    [Fact]
+    public async Task CashOnDeliveryColumnSaysSi()
+    {
+        var cells = await FreightCellsAsync(NewRow(
+            "PED-2026-0001",
+            shipping: new ShippingDetails(null, "Servientrega", FreightChargeMode.Free, 0m, 0, true)));
+
+        Assert.Equal(ExportCell.OfText("Sí"), cells[4]);
+    }
+
     private static readonly QuotationParties StorePickup = new(Billing: null, Shipping: null, IsStorePickup: true);
 
     // La columna nueva va oculta al final del efectivo: un layout que la pide visible la pone donde
@@ -920,7 +1143,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportJobLimits.BatchSize, repository.PaymentProofRequests[0].Count);
         // El lote corto trae el de número más bajo: el listado va de mayor a menor.
         Assert.Equal(
-            rows.Single(row => row.Order.OrderNumber == "PED-2026-0001").Order.Id,
+            rows.Single(row => row.OrderNumber == "PED-2026-0001").Id,
             Assert.Single(repository.PaymentProofRequests[1]));
     }
 
@@ -980,6 +1203,31 @@ public sealed class OrdersExportProcessorTests
             new RecordedOrderExportSearch(
                 ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
             repository.LastExportSearch);
+    }
+
+    [Fact]
+    public async Task CutsTheRangeInTheStoredTimeZone()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null, TimeZone: "Europe/Madrid"));
+
+        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch!.ConvertedFrom);
+        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), repository.LastExportSearch.ConvertedBefore);
+    }
+
+    // Un job encolado antes de este cambio no trae zona: corta en el día del tenant, como siempre.
+    [Fact]
+    public async Task AJobWithoutATimeZoneCutsTheDayOfTheTenant()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
+        var job = NewJob(new OrdersExportFilters(null, null, null, null, From, To, null, null));
+
+        await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(FromUtc, repository.LastExportSearch!.ConvertedFrom);
+        Assert.Equal(BeforeUtc, repository.LastExportSearch.ConvertedBefore);
     }
 
     [Fact]
@@ -1045,19 +1293,6 @@ public sealed class OrdersExportProcessorTests
             Assert.Equal("Bancolombia", cells[BancoIndex].Text);
             Assert.Equal("123456789", cells[BancoIndex + 1].Text);
         }
-    }
-
-    [Fact]
-    public async Task BancoAndCuentaAreEmptyWithoutABillingAccount()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: null)), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        var row = Assert.Single(writer.Rows);
-        Assert.Equal(string.Empty, row[BancoIndex].Text);
-        Assert.Equal(string.Empty, row[BancoIndex + 1].Text);
     }
 
     // 2026-09-24: por comprobante, su monto como número y su enlace público clicable, con la URL
@@ -1164,17 +1399,6 @@ public sealed class OrdersExportProcessorTests
         }
     }
 
-    [Fact]
-    public async Task BancoYCuentaIsEmptyWithoutABillingAccount()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: null)), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[BancoYCuentaIndex]);
-    }
-
     // Ajuste 2026-09-26: "Total consignado" suma TODOS los comprobantes del pedido, no sólo los cinco
     // que tienen columna propia, como número —el ERP lo suma—, y se repite en cada línea.
     [Fact]
@@ -1233,7 +1457,7 @@ public sealed class OrdersExportProcessorTests
 
         // 2 × 1.000 con 10 % de descuento son 1.800, más 5 × 500: 4.300 con el IVA adentro. Ya neto
         // del descuento de la línea: restarle DiscountAmount lo descontaría dos veces.
-        Assert.Equal(4_300m, row.Quotation.Total);
+        Assert.Equal(4_300m, row.Total);
         Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[TotalFacturadoIndex]);
         Assert.Equal(2, writer.Rows.Count);
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(4_300m), cells[TotalFacturadoIndex]));
@@ -1246,13 +1470,13 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var row = NewRow("PED-2026-0001", customerWithRetention: true);
-        Assert.True(row.Quotation.RetentionAmount > 0m);
-        Assert.NotEqual(row.Quotation.Total, row.Quotation.NetTotal);
+        Assert.True(row.RetentionAmount > 0m);
+        Assert.NotEqual(row.Total, row.NetTotal);
 
         await NewProcessor(new StubOrderListRepository(row), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[TotalFacturadoIndex]);
+        Assert.Equal(ExportCell.OfNumber(row.Total), Assert.Single(writer.Rows)[TotalFacturadoIndex]);
     }
 
     // Hotfix 2026-10-14, el caso que lo destapó: 100 kits de keratina 7703 a 35.000 con IVA y la
@@ -1290,13 +1514,13 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^2]);
-        Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), Assert.Single(writer.Rows)[^2]);
+        Assert.Equal(new ExportColumn("Total facturado", 18), writer.Columns[^3]);
+        Assert.Equal(ExportCell.OfNumber(row.Total), Assert.Single(writer.Rows)[^3]);
     }
 
     // Ajuste 2026-10-06: "Retencion" es Quotation.RetentionAmount, la misma en cada línea del pedido,
     // detrás de "Total facturado". Con las dos el ERP cuadra lo facturado contra lo que de verdad se
-    // cobra: NetTotal = Total − RetentionAmount. Visible por defecto, la última del archivo sin
+    // cobra: NetTotal = Total − RetentionAmount. Visible por defecto, penúltima del archivo sin
     // layout guardado.
     private const int RetencionIndex = 41;
 
@@ -1312,19 +1536,19 @@ public sealed class OrdersExportProcessorTests
                 (OtherProductId, 5m, 500m, 0m, 19),
             ],
             customerWithRetention: true);
-        Assert.True(row.Quotation.RetentionAmount > 0m);
-        Assert.Equal(row.Quotation.Total - row.Quotation.RetentionAmount, row.Quotation.NetTotal);
+        Assert.True(row.RetentionAmount > 0m);
+        Assert.Equal(row.Total - row.RetentionAmount, row.NetTotal);
 
         await NewProcessor(new StubOrderListRepository(row), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[RetencionIndex]);
-        Assert.Equal(RetencionIndex, writer.Columns.Count - 1);
+        Assert.Equal(RetencionIndex, writer.Columns.Count - 2); // "Valor Flete" va detrás.
         Assert.Equal(2, writer.Rows.Count);
         Assert.All(writer.Rows, cells =>
         {
-            Assert.Equal(ExportCell.OfNumber(row.Quotation.RetentionAmount), cells[RetencionIndex]);
-            Assert.Equal(ExportCell.OfNumber(row.Quotation.Total), cells[TotalFacturadoIndex]);
+            Assert.Equal(ExportCell.OfNumber(row.RetentionAmount), cells[RetencionIndex]);
+            Assert.Equal(ExportCell.OfNumber(row.Total), cells[TotalFacturadoIndex]);
         });
     }
 
@@ -1336,7 +1560,7 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var row = NewRow("PED-2026-0001");
-        Assert.Equal(0m, row.Quotation.RetentionAmount);
+        Assert.Equal(0m, row.RetentionAmount);
 
         await NewProcessor(new StubOrderListRepository(row), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
@@ -1356,8 +1580,8 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[^1]);
-        Assert.Equal(ExportCell.OfNumber(row.Quotation.RetentionAmount), Assert.Single(writer.Rows)[^1]);
+        Assert.Equal(new ExportColumn("Retencion", 16), writer.Columns[^2]);
+        Assert.Equal(ExportCell.OfNumber(row.RetentionAmount), Assert.Single(writer.Rows)[^2]);
     }
 
     // Sin comprobantes la celda queda vacía, igual que "V. Comprobante N" sin comprobante: vacío
@@ -1687,11 +1911,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(41, writer.Columns.Count);
+        Assert.Equal(42, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Correo", 30), writer.Columns[0]);
         Assert.Equal(new ExportColumn("Pedido", 18), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Cod. Producto", 18), writer.Columns[2]);
-        Assert.Equal("Retencion", writer.Columns[^1].Header);
+        Assert.Equal("Retencion", writer.Columns[^2].Header);
         Assert.DoesNotContain(writer.Columns, column => column.Header == "EMPRESA");
         var cells = Assert.Single(writer.Rows);
         Assert.Equal(writer.Columns.Count, cells.Count);
@@ -1722,7 +1946,7 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(row), writer, layouts: layouts)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(44, writer.Columns.Count);
+        Assert.Equal(45, writer.Columns.Count);
         Assert.Equal(new ExportColumn("Tipo Doc", OrdersExportLayoutProjection.FixedColumnWidth), writer.Columns[0]);
         Assert.Equal(new ExportColumn("EMPRESA", 30), writer.Columns[1]);
         Assert.Equal(new ExportColumn("Bodega", 18), writer.Columns[2]);
@@ -1739,7 +1963,7 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(5m, writer.Rows[1][4].Number);
     }
 
-    // Una fija oculta no viaja: ni columna ni celda. Hay 42 columnas, como sin layout.
+    // Una fija oculta no viaja: ni columna ni celda. Hay 43 columnas, como sin layout.
     [Fact]
     public async Task AHiddenFixedColumnIsNotWritten()
     {
@@ -1820,7 +2044,7 @@ public sealed class OrdersExportProcessorTests
     {
         var writer = new RecordingExportWorkbookWriter();
         var row = NewRow("PED-2026-0001");
-        row.Quotation.CaptureProductSnapshotsAfterConversion(new Dictionary<Guid, QuotationProductSnapshot>
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
         {
             [ProductId] = new("TOR-VIEJO", "Tornillo viejo"),
         });
@@ -1848,11 +2072,11 @@ public sealed class OrdersExportProcessorTests
     public async Task ALotOfFrozenLinesDoesNotReadTheCatalog()
     {
         var row = NewRow("PED-2026-0001");
-        row.Quotation.CaptureProductSnapshotsAfterConversion(new Dictionary<Guid, QuotationProductSnapshot>
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
         {
             [ProductId] = new("TOR-VIEJO", "Tornillo viejo"),
         });
-        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationProductRef>
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
         {
             [ProductId] = DefaultProduct,
         });
@@ -1861,6 +2085,170 @@ public sealed class OrdersExportProcessorTests
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
         Assert.Equal(0, products.FindManyCalls);
+    }
+
+    private static readonly Guid VariantMId = Guid.CreateVersion7();
+
+    // La variante M del producto de DefaultProduct, tal como el catálogo la tenía cuando se vendió, y la
+    // misma después de que alguien le cambiara el código y el nombre.
+    private static readonly QuotationProductSnapshot VariantMPhoto = new("TOR-001-M", "Tornillo hexagonal – M");
+
+    private static readonly QuotationVariantRef VariantMToday = new(
+        VariantMId, ProductId, "Tornillo renombrado – M", "TOR-001-CAMBIADO", ImageUrl: null, Scales: []);
+
+    private static Order NewVariantMRow()
+    {
+        var row = NewRow(
+            "PED-2026-0001",
+            items: [(VariantMId, 2m, 1000m, 0m, 19)],
+            ownerProductId: ProductId);
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot> { [VariantMId] = VariantMPhoto });
+        return row;
+    }
+
+    // Spec 2026-10-20 variantes §7: «Cod. Producto» es el `Code` de la variante que vendió la línea, y sale
+    // de la foto que la línea guardó. Ni el `Code` de hoy de la variante (`TOR-001-CAMBIADO`) ni el del
+    // producto (`TOR-001`) entran en la celda, y con la línea congelada el catálogo ni se consulta.
+    [Fact]
+    public async Task OrdersExportProductCodeIsVariantCode()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [ProductId] = DefaultProduct,
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(NewVariantMRow()), writer, products: products)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Cod. Producto", writer.Columns[1].Header);
+        Assert.Equal(ExportCell.OfText("TOR-001-M"), Assert.Single(writer.Rows)[1]);
+        Assert.Equal(0, products.FindManyCalls);
+    }
+
+    // Una línea sin foto cae al catálogo, pero por el id de la variante: el `Code` que sale es el de la
+    // variante, no el del producto dueño.
+    [Fact]
+    public async Task OrdersExportProductCodeWithoutASnapshotReadsTheVariantNotTheProduct()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(VariantMId, 2m, 1000m, 0m, 19)], ownerProductId: ProductId);
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [ProductId] = DefaultProduct,
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("TOR-001-CAMBIADO"), Assert.Single(writer.Rows)[1]);
+    }
+
+    // «Variante» lleva el nombre visible de la foto de la línea. En una variante por defecto (sin opciones) el
+    // nombre visible es el del producto: la línea no la distingue sin consultar Catalog, así que se repite.
+    [Fact]
+    public async Task OrdersExportVariantColumnCarriesTheVisibleNameFromTheLinePhoto()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow(
+            "PED-2026-0001",
+            items: [(VariantMId, 2m, 1000m, 0m, 19), (ProductId, 1m, 1000m, 0m, 19)],
+            ownerProductId: ProductId);
+        row.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
+        {
+            [VariantMId] = VariantMPhoto,
+            [ProductId] = new("TOR-001", "Tornillo hexagonal"),
+        });
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("variant", "Variante", visible: true));
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Variante", writer.Columns[0].Header);
+        Assert.Equal(
+            [ExportCell.OfText("Tornillo hexagonal – M"), ExportCell.OfText("Tornillo hexagonal")],
+            writer.Rows.Select(cells => cells[0]));
+    }
+
+    // Una línea sin foto muestra el nombre visible de hoy de su variante, igual que con el código.
+    [Fact]
+    public async Task OrdersExportVariantColumnWithoutASnapshotReadsTheVariantName()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", items: [(VariantMId, 2m, 1000m, 0m, 19)], ownerProductId: ProductId);
+        var layouts = StoredLayout(OrdersExportColumnSetting.Catalog("variant", "Variante", visible: true));
+        var products = new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>
+        {
+            [VariantMId] = VariantMToday,
+        });
+
+        await NewProcessor(new StubOrderListRepository(row), writer, products: products, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("Tornillo renombrado – M"), Assert.Single(writer.Rows)[0]);
+    }
+
+    // Oculta por defecto: sin layout guardado el archivo no gana una columna, y las 43 de siempre siguen
+    // en su sitio (WritesTheErpColumnsInOrder fija la lista entera).
+    [Fact]
+    public async Task OrdersExportVariantColumnIsNotInTheFileWithoutAStoredLayout()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewVariantMRow()), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Variante");
+        Assert.Equal(43, writer.Columns.Count);
+    }
+
+    // Spec 2026-10-15 §6.4: un pedido sin cotización exporta igual, con todo leído del pedido:
+    // su dirección de envío, sus observaciones, su cuenta de cobro, su número y su total.
+    [Fact]
+    public async Task ExportsAnOrderWithoutQuotationReadingEverythingFromTheOrder()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var parties = new QuotationParties(
+            Billing: null,
+            Shipping: new QuotationPartyDetails
+            {
+                Name = "Bodega",
+                Phone = "3005550000",
+                Email = "bodega@ejemplo.co",
+                Address = "Cl 1",
+                DepartmentId = Guid.CreateVersion7(),
+                CityId = CityId,
+            },
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+        var row = NewRow(
+            "PED-2026-0007",
+            parties: parties,
+            billingAccount: new QuotationBillingAccount
+            {
+                CompanyId = CompanyId,
+                BankName = "Bancolombia",
+                AccountNumber = "7542",
+                Currency = "COP",
+            },
+            orderNotes: "Entregar en portería");
+        Assert.Equal((OrderSource.Manual, (QuotationId?)null), (row.Source, row.QuotationId));
+
+        await NewProcessor(new StubOrderListRepository(row), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        var cells = Assert.Single(writer.Rows);
+        Assert.Equal("PED-2026-0007", cells[14].Text);
+        Assert.Equal("Cl 1", cells[15].Text);
+        Assert.Equal("Entregar en portería", cells[16].Text);
+        Assert.Equal(ExportCell.OfText("Bancolombia 7542"), cells[BancoYCuentaIndex]);
+        Assert.Equal(ExportCell.OfNumber(row.Total), cells[TotalFacturadoIndex]);
     }
 
     private static ExportJob NewJob(OrdersExportFilters? filters = null) =>
@@ -1875,7 +2263,17 @@ public sealed class OrdersExportProcessorTests
     private static readonly (Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)[]
         DefaultItems = [(ProductId, 2m, 1000m, 0m, 19)];
 
-    private static OrderWithQuotation NewRow(
+    private static readonly QuotationBillingAccount DefaultBillingAccount = new()
+    {
+        CompanyId = Guid.CreateVersion7(),
+        BankName = "Bancolombia",
+        AccountNumber = "7542",
+        Currency = "COP",
+    };
+
+    // Un pedido manual (spec 2026-10-15 §6.4): todo lo que el Excel lee vive en el pedido, así que
+    // las pruebas ya no arman una cotización al lado. La cuenta de cobro es obligatoria en el pedido.
+    private static Order NewRow(
         string orderNumber,
         string? paymentMethod = null,
         IReadOnlyList<string?>? publicKeys = null,
@@ -1883,35 +2281,39 @@ public sealed class OrdersExportProcessorTests
         QuotationParties? parties = null,
         QuotationBillingAccount? billingAccount = null,
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
-        string? quotationNotes = null,
         IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
         bool customerWithRetention = false,
         // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
         IReadOnlyList<DateOnly?>? paidOn = null,
-        string? orderNotes = null)
+        string? orderNotes = null,
+        ShippingDetails? shipping = null,
+        // Spec 2026-10-20 variantes: el producto dueño de las variantes de `items`. Ausente, cada línea se
+        // arma como una variante por defecto (variante y producto con el mismo id), como hasta ahora.
+        Guid? ownerProductId = null)
     {
         var occurredAt = at ?? Now;
-        var quotation = Quotation.Create(
-            QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
-            paymentMethod, quotationNotes, parties ?? QuotationParties.Empty, billingAccount,
-            customerWithRetention, customerVatSurplus: false, AdvisorId, occurredAt);
-
-        foreach (var item in items ?? DefaultItems)
-        {
-            quotation.AddItemAfterConversion(
-                QuotationItemId.New(), item.ProductId, item.Quantity, item.UnitPrice,
-                item.DiscountPercentage, item.TaxPercentage, AdvisorId, occurredAt);
-        }
-
         var proofInputs = (proofs ?? [.. (publicKeys ?? []).Select(publicKey => (10_000m, publicKey))])
             .Select((proof, index) => new OrderPaymentProofInput(
                 Guid.CreateVersion7(), proof.Amount, proof.PublicKey, paidOn?.ElementAtOrDefault(index)))
             .ToArray();
-        var order = Order.Create(
-            OrderId.New(), TenantId, orderNumber, quotation.Id, OrderPaymentStatus.PaymentPending,
-            orderNotes, AdvisorId, proofInputs, occurredAt);
-        return new OrderWithQuotation(order, quotation);
+        return Order.CreateManual(
+            OrderId.New(),
+            TenantId,
+            orderNumber,
+            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, customerWithRetention, false),
+            parties ?? QuotationParties.Empty,
+            billingAccount ?? DefaultBillingAccount,
+            shipping ?? ShippingDetails.None,
+            (items ?? DefaultItems)
+                .Select(item => new OrderLineInput(
+                    item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
+                .ToArray(),
+            OrderPaymentStatus.PaymentPending,
+            orderNotes,
+            AdvisorId,
+            proofInputs,
+            occurredAt);
     }
 
     private static OrdersExportProcessor NewProcessor(
@@ -1931,10 +2333,10 @@ public sealed class OrdersExportProcessorTests
             layouts ?? new InMemoryOrdersExportLayoutRepository(),
             customers ?? new StubQuotationCustomerLookup(DefaultCustomer),
             products ?? new StubQuotationProductLookup(
-                new Dictionary<Guid, QuotationProductRef>
+                new Dictionary<Guid, QuotationVariantRef>
                 {
                     [ProductId] = DefaultProduct,
-                    [OtherProductId] = DefaultProduct with { Id = OtherProductId, Code = "OTR-002" },
+                    [OtherProductId] = DefaultProduct with { VariantId = OtherProductId, ProductId = OtherProductId, Code = "OTR-002" },
                 }),
             companies ?? new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             geography ?? new StubQuotationGeographyLookup(new Dictionary<Guid, string>()),

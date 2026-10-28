@@ -9,6 +9,7 @@ public sealed record CompleteUploadCommand(Guid TenantId, Guid FileResourceId)
 
 public sealed class CompleteUploadHandler(
     IFileResourceRepository repository,
+    ITenantModules tenantModules,
     IObjectStorage objectStorage,
     IFileContentInspector contentInspector,
     IImageVariantGenerator imageVariantGenerator,
@@ -28,6 +29,9 @@ public sealed class CompleteUploadHandler(
             executionContext, command.TenantId, StoragePermissions.FileUpload);
 
         var resource = await LoadAsync(command.TenantId, command.FileResourceId, cancellationToken);
+        // Spec 2026-10-07: después del 404 —que no confirma que el id existe en otro tenant— y antes
+        // de cualquier otra regla o efecto.
+        await FileOwnerModuleGuard.EnsureOwnerModuleEnabledAsync(tenantModules, resource, cancellationToken);
 
         var stored = await objectStorage.StatAsync(resource.StorageKey, cancellationToken)
             ?? throw new PreconditionRequiredException(

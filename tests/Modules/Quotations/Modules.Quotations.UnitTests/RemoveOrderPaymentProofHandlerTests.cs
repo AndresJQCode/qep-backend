@@ -34,11 +34,11 @@ public sealed class RemoveOrderPaymentProofHandlerTests
         Assert.Equal(119_000m, quotation.Total);
         Assert.Equal(customerWithRetention ? 116_500m : 119_000m, quotation.NetTotal);
 
-        var order = Order.Create(
+        var order = Order.FromQuotation(
             OrderId.New(),
             TenantId,
             "PED-2026-0001",
-            quotation.Id,
+            quotation,
             OrderPaymentStatus.PartialPaymentReceived,
             notes: null,
             AdvisorId,
@@ -50,11 +50,11 @@ public sealed class RemoveOrderPaymentProofHandlerTests
         var mistaken = order.PaymentProofs.Single(proof => proof.Amount == 5_000m);
 
         var handler = new RemoveOrderPaymentProofHandler(
-            new StubOrderListRepository(new OrderWithQuotation(order, quotation)),
-            new StubQuotationRepository(quotation),
+            new StubOrderListRepository(order),
             new NoOpQuotationsUnitOfWork(),
             new NoOpQuotationAuditPublisher(),
             new NoOpOrderPaymentProofEventPublisher(),
+            new StubMembershipDirectory(AdvisorId.Value),
             new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now.AddHours(1)));
 
@@ -78,13 +78,14 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             paymentMethod: "Transferencia bancaria",
             notes: null,
             QuotationParties.Empty,
-            billingAccount: null,
+            OrderBuilders.BillingAccount,
+            defaultCurrency: "COP",
             customerWithRetention,
             customerVatSurplus: false,
             AdvisorId,
             Now);
         quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
+            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
         return quotation;
     }

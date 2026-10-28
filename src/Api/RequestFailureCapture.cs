@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Claims;
+using Bootstrapper;
 using Bootstrapper.Authentication;
 using Modules.Platform.Application;
 using Modules.Platform.Domain;
@@ -23,8 +24,17 @@ internal static class RequestFailureCapture
     private static readonly string[] MutatingMethods =
         [HttpMethods.Post, HttpMethods.Put, HttpMethods.Patch, HttpMethods.Delete];
 
+    /// <summary>
+    /// Los webhooks quedan afuera (spec 2026-10-09 §11, «firma antes de la base»): son POST anónimos
+    /// detrás de un limitador global, así que cada request falsificado (401, 413, 429) escribiría una
+    /// fila — amplificación de escritura gratis para quien lo mande. La línea del log estructurado de
+    /// <see cref="ApiExceptionHandler"/> se mantiene; sólo deja de guardarse la fila. Lo usan el
+    /// manejador y <see cref="RequestFailureLoggingMiddleware"/>, así que la excepción cubre a los dos, y
+    /// el prefijo es el mismo de la excepción de CSRF (<see cref="WebhookPaths"/>).
+    /// </summary>
     public static bool ShouldCapture(HttpContext httpContext) =>
-        MutatingMethods.Contains(httpContext.Request.Method, StringComparer.OrdinalIgnoreCase);
+        MutatingMethods.Contains(httpContext.Request.Method, StringComparer.OrdinalIgnoreCase)
+        && !WebhookPaths.IsWebhook(httpContext.Request.Path);
 
     /// <summary>
     /// Arma la fila. No la guarda: quien llama decide cuándo, y el puerto es el que se traga sus

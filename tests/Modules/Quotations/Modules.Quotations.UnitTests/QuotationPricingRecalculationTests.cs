@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -27,9 +28,18 @@ public sealed class QuotationPricingRecalculationTests
     private static QuotationPriceScaleRef[] FlatTier() =>
         [new(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)];
 
-    private static QuotationProductPricingRef Product(
+    private static QuotationVariantPricingRef Product(
         Guid id, decimal? cop, decimal? usd, QuotationPriceScaleRef[] scales) =>
-        new(id, TenantId, "Producto", true, cop, usd, scales, 19);
+        new(id, id, TenantId, "Producto", "SKU", true, PricesOf(cop, usd), scales, 19);
+
+    // A missing price is a missing key, not a null amount: the catalogue only lists what it has.
+    private static Dictionary<string, decimal> PricesOf(decimal? cop, decimal? usd)
+    {
+        var prices = new Dictionary<string, decimal>();
+        if (cop is { } copPrice) prices["COP"] = copPrice;
+        if (usd is { } usdPrice) prices["USD"] = usdPrice;
+        return prices;
+    }
 
     private static Quotation NewQuotation(string currency = "COP") =>
         Quotation.Create(
@@ -49,6 +59,7 @@ public sealed class QuotationPricingRecalculationTests
                 AccountNumber = "12345678",
                 Currency = currency
             },
+            "COP",
             customerWithRetention: false,
             customerVatSurplus: false,
             AdvisorId,
@@ -61,7 +72,7 @@ public sealed class QuotationPricingRecalculationTests
 
         // Entra sin descuento a propósito: lo que se prueba es que la pasada lo resuelva, no que
         // el llamador lo haya traído.
-        quotation.AddItem(itemId, productId, quantity, unitPrice, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(itemId, productId, productId, quantity, unitPrice, 0m, 19, AdvisorId, Now);
         return itemId;
     }
 
@@ -84,6 +95,8 @@ public sealed class QuotationPricingRecalculationTests
             new StubPricingLookup(
                 Product(productA, 10_000m, null, Tiers()),
                 Product(productB, 10_000m, null, Tiers())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -94,6 +107,37 @@ public sealed class QuotationPricingRecalculationTests
 
         // 60.000 menos 5% = 57.000, IVA adentro.
         Assert.Equal(57_000m, quotation.Total);
+    }
+
+    // Enfoque de revisión 5 en la pasada completa, que es donde vive la clave: dos tallas del mismo
+    // producto con escalas distintas. M tiene un tramo plano al 5 % y L ninguno. Si la pasada
+    // buscara las escalas por producto, L se llevaría las de M (o ninguna de las dos las tendría).
+    [Fact]
+    public async Task EachVariantIsPricedWithItsOwnScalesEvenWithinTheSameProduct()
+    {
+        var shirt = Guid.CreateVersion7();
+        var sizeM = Guid.CreateVersion7();
+        var sizeL = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var lineM = QuotationItemId.New();
+        var lineL = QuotationItemId.New();
+        quotation.AddItem(lineM, sizeM, shirt, 6m, 10_000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(lineL, sizeL, shirt, 6m, 10_000m, 0m, 19, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(
+                new QuotationVariantPricingRef(
+                    sizeM, shirt, TenantId, "Camiseta – M", "CAM-M", true, PricesOf(10_000m, null), FlatTier(), 19),
+                new QuotationVariantPricingRef(
+                    sizeL, shirt, TenantId, "Camiseta – L", "CAM-L", true, PricesOf(10_000m, null), [], 19)),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal((5m, 0m), (DiscountOf(quotation, lineM), DiscountOf(quotation, lineL)));
     }
 
     // Menos de 6 unidades y muy por debajo de los $500.000: la compuerta le quita el descuento a
@@ -107,6 +151,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -126,6 +172,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 1_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -146,6 +194,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 300_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -168,6 +218,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 260_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -188,6 +240,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 150m, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -207,6 +261,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, null, 50m, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -233,6 +289,8 @@ public sealed class QuotationPricingRecalculationTests
 
         await QuotationPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(product, 10_000m, null, Tiers())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -260,7 +318,7 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup(Product(product, 10_000m, null, Tiers()));
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
     }
@@ -273,30 +331,162 @@ public sealed class QuotationPricingRecalculationTests
         var lookup = new StubPricingLookup();
 
         await QuotationPricingRecalculation.ApplyAsync(
-            lookup, TenantId, quotation, Now, CancellationToken.None);
+            lookup, new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, quotation, Now, CancellationToken.None);
 
         Assert.Equal(0, lookup.ManyCalls);
     }
 
-    private sealed class StubPricingLookup(params QuotationProductPricingRef[] products)
+    // The gate reads the tenant settings, not constants: with no EUR minimum, an EUR quotation of
+    // 2 units keeps no scale discount however large its total (spec D7, Review Focus 3).
+    [Fact]
+    public async Task AnEurQuotationBelowTheUnitsLosesTheDiscountWhenEurHasNoMinimum()
+    {
+        var product = Guid.CreateVersion7();
+        var quotation = NewQuotation(currency: "EUR");   // the billing account decides: EUR
+        var item = AddItem(quotation, product, 2m, 1_000_000m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(new QuotationVariantPricingRef(
+                product, product, TenantId, "Producto", "SKU", true,
+                new Dictionary<string, decimal> { ["EUR"] = 1_000_000m }, FlatTier(), 19)),
+            new FixedQuotationSettingsStore(QuotationSettings.Create(
+                6, new Dictionary<string, decimal> { ["COP"] = 500_000m })),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(0m, DiscountOf(quotation, item));
+        Assert.Equal(2_000_000m, quotation.Total);
+    }
+
+    // Spec 2026-10-27 §4: la pasada baja la regla vigente del tenant a la cotización antes de preciar. Tramo plano
+    // al 15 %: 13,19 → unitario 11,22 con (2, Up), línea 112,20.
+    [Fact]
+    public async Task TheRecalculationAppliesTheTenantRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        var item = AddItem(quotation, productId, 10m, 13.19m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, null, 13.19m, [new(1, 999, 15m, QuotationPriceScaleRestriction.Multiple, 1, [], false)])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), quotation.PriceRounding);
+        Assert.Equal(112.20m, quotation.Items.Single(line => line.Id == item).Subtotal);
+    }
+
+    // La regla se baja antes de cualquier salida temprana: una cotización detal también la guarda.
+    [Fact]
+    public async Task ARetailQuotationAlsoTakesTheTenantRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        AddItem(quotation, productId, 10m, 13.19m);
+        quotation.SetIsRetail(true, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), quotation.PriceRounding);
+    }
+
+    // Cambiar de cuenta y de moneda deja la regla de la moneda vieja sin guardar; la pasada toma la de la nueva.
+    [Fact]
+    public async Task ChangingCurrencyTakesTheRuleOfTheNewCurrency()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        AddItem(quotation, productId, 10m, 13.19m);
+        ChangeBillingCurrency(quotation, productId, "USD", 13.19m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, 13_190m, 13.19m, [])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(
+                ("COP", new PriceRounding(0, PriceRoundingMode.Nearest)),
+                ("USD", new PriceRounding(2, PriceRoundingMode.Up))),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(("USD", new PriceRounding(2, PriceRoundingMode.Up)), (quotation.Currency, quotation.PriceRounding));
+    }
+
+    // La inversa: la regla (2, Up) era de USD; al pasar a COP no sobrevive, y la pasada deja la de COP.
+    [Fact]
+    public async Task ASavedUsdRuleDoesNotSurviveSwitchingToPesos()
+    {
+        var productId = Guid.CreateVersion7();
+        var quotation = NewQuotation("USD");
+        AddItem(quotation, productId, 10m, 13.19m);
+        quotation.UsePriceRounding(new PriceRounding(2, PriceRoundingMode.Up), Now);
+        ChangeBillingCurrency(quotation, productId, "COP", 13_190m);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(productId, 13_190m, 13.19m, [])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now,
+            CancellationToken.None);
+
+        Assert.Equal(("COP", new PriceRounding(0, PriceRoundingMode.Nearest)), (quotation.Currency, quotation.PriceRounding));
+    }
+
+    private static void ChangeBillingCurrency(Quotation quotation, Guid variantId, string currency, decimal unitPrice) =>
+        quotation.UpdateDetails(
+            validUntil: new DateOnly(2026, 10, 31),
+            paymentMethod: "Transferencia bancaria",
+            notes: null,
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(),
+                BankName = "Bancolombia",
+                AccountNumber = "12345678",
+                Currency = currency
+            },
+            new Dictionary<Guid, QuotationItemPricing> { [variantId] = new(unitPrice, 0m, 19) },
+            isRetail: false,
+            globalScaleFloor: null,
+            AdvisorId,
+            Now);
+
+    private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
-        private readonly Dictionary<Guid, QuotationProductPricingRef> _products =
-            products.ToDictionary(product => product.Id);
+        private readonly Dictionary<Guid, QuotationVariantPricingRef> _products =
+            products.ToDictionary(product => product.VariantId);
 
         public int ManyCalls { get; private set; }
 
-        public Task<QuotationProductPricingRef?> FindAsync(
+        public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken) =>
             Task.FromResult(_products.GetValueOrDefault(productId));
 
-        public Task<IReadOnlyDictionary<Guid, QuotationProductPricingRef>> FindManyAsync(
+        public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
             CancellationToken cancellationToken)
         {
             ManyCalls++;
-            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationProductPricingRef>>(
+            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 productIds
                     .Where(_products.ContainsKey)
                     .ToDictionary(id => id, id => _products[id]));
@@ -324,6 +514,8 @@ public sealed class QuotationPricingRecalculationTests
                 new(5, 9, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false),
                 new(20, 200, 10m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,
@@ -353,6 +545,8 @@ public sealed class QuotationPricingRecalculationTests
                 // 30 % 1 == 0 -> esta si aplica, y es el mismo piso que eligio el asesor.
                 new(1000, 5000, 12m, QuotationPriceScaleRestriction.Multiple, 1, [], false)
             ])),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
             TenantId,
             quotation,
             Now,

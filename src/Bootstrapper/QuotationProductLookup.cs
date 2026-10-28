@@ -8,63 +8,53 @@ namespace Bootstrapper;
 /// Adapta el catálogo al puerto que <c>quotations</c> declara para pintar sus líneas. Vive acá,
 /// como el resto de los adaptadores entre módulos.
 ///
-/// Dos consultas por pantalla y no una por línea: los productos de un lote y, con los ids de sus
-/// portadas, los archivos de otro. Es lo que evita que el detalle de una cotización con diez
-/// líneas cueste veinte lecturas.
+/// Por **variante** (spec 2026-10-20 §4): cada línea vende una variante, así que el código, el
+/// nombre visible, la foto y las escalas son de ella. Trae activas e inactivas —variante o
+/// producto—: una línea vieja sigue necesitando su nombre.
+///
+/// Pocas consultas por pantalla y no una por línea: los productos de las variantes del lote, las
+/// opciones de esos productos (para el nombre visible) y, con los ids de sus fotos, los archivos.
+/// Es lo que evita que el detalle de una cotización con diez líneas cueste treinta lecturas.
 /// </summary>
 internal sealed class QuotationProductLookup(
     IProductRepository repository,
+    IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup)
     : IQuotationProductLookup
 {
-    public async Task<IReadOnlyDictionary<Guid, QuotationProductRef>> FindManyAsync(
+    public async Task<IReadOnlyDictionary<Guid, QuotationVariantRef>> FindManyAsync(
         Guid tenantId,
-        IReadOnlyCollection<Guid> productIds,
+        IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken)
     {
-        if (productIds.Count == 0)
+        if (variantIds.Count == 0)
         {
-            return new Dictionary<Guid, QuotationProductRef>();
+            return new Dictionary<Guid, QuotationVariantRef>();
         }
 
-        var products = await repository.ListByIdsAsync(
+        var wanted = variantIds.ToHashSet();
+        var products = await repository.FindVariantsByIdsAsync(
             tenantId,
-            productIds.Distinct().Select(id => new ProductId(id)).ToArray(),
+            wanted.Select(id => new VariantId(id)).ToArray(),
+            cancellationToken);
+        var selected = CatalogVariantReads.Select(products, wanted);
+
+        var valueNames = await CatalogVariantReads.LoadValueNamesAsync(
+            optionRepository, tenantId, products, cancellationToken);
+        var images = await CatalogVariantReads.LoadImagesAsync(
+            imageLookup,
+            selected.Select(pair => CatalogVariantReads.ImageFileIdOf(pair.Product, pair.Variant)),
             cancellationToken);
 
-        var imageIds = products
-            .Select(product => product.ImageFileId)
-            .Where(id => id.HasValue)
-            .Select(id => id!.Value)
-            .Distinct()
-            .ToArray();
-        var images = imageIds.Length == 0
-            ? new Dictionary<Guid, ProductImageRef>()
-            : await imageLookup.FindManyAsync(imageIds, cancellationToken);
-
-        return products.ToDictionary(
-            product => product.Id.Value,
-            product => new QuotationProductRef(
-                product.Id.Value,
-                product.Name,
-                product.Code,
-                ResolveImageUrl(product, images, tenantId),
-                product.PriceScales
-                    .Select(scale => scale.ToQuotationRef(product.PackagingUnits))
-                    .ToArray()));
-    }
-
-    // La portada de otro tenant no se muestra ni se rechaza: se ignora. Acá no hay un request
-    // que corregir —es una lectura de algo ya guardado— y esconder la referencia ajena es lo
-    // que la frontera de tenant existe para hacer.
-    private static string? ResolveImageUrl(
-        Product product,
-        IReadOnlyDictionary<Guid, ProductImageRef> images,
-        Guid tenantId)
-    {
-        if (product.ImageFileId is not { } fileId) return null;
-        if (!images.TryGetValue(fileId, out var image)) return null;
-
-        return image.TenantId == tenantId && image.IsAvailable ? image.PublicUrl : null;
+        return selected.ToDictionary(
+            pair => pair.Variant.Id.Value,
+            pair => new QuotationVariantRef(
+                pair.Variant.Id.Value,
+                pair.Product.Id.Value,
+                CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames),
+                pair.Variant.Code,
+                CatalogVariantReads.ImageUrlOf(
+                    CatalogVariantReads.ImageFileIdOf(pair.Product, pair.Variant), images, tenantId),
+                pair.Variant.ToQuotationRefs()));
     }
 }

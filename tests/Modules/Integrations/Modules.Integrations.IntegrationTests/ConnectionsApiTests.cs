@@ -1,0 +1,374 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Modules.Integrations.Application;
+using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
+
+namespace Modules.Integrations.IntegrationTests;
+
+/// <summary>
+/// Spec 2026-10-08, «Endpoints» y «Códigos de error», por HTTP: crear con prueba contra Zenvia, el
+/// contrato JSON en camelCase, cada código con su status, aislamiento y visibilidad por módulo.
+/// </summary>
+public sealed class ConnectionsApiTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    // Criterio 2 del spec.
+    [Fact]
+    public async Task AnAdminConnectsZenviaAndTheCatalogCountsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var json = await response.Content.ReadAsStringAsync(Ct);
+        // El contrato del spec, literal: camelCase, enums por nombre, claves de diccionario tal cual.
+        using (var document = JsonDocument.Parse(json))
+        {
+            var root = document.RootElement;
+            Assert.Equal("zenvia", root.GetProperty("providerKey").GetString());
+            Assert.Equal("Active", root.GetProperty("status").GetString());
+            Assert.Equal(FromNumber, root.GetProperty("fields").GetProperty("fromNumber").GetString());
+            Assert.True(root.GetProperty("secrets").GetProperty("apiToken").GetProperty("configured").GetBoolean());
+            Assert.True(root.GetProperty("secrets").GetProperty("apiToken").GetProperty("readable").GetBoolean());
+            Assert.Equal(1, root.GetProperty("version").GetInt64());
+            Assert.True(root.GetProperty("createdBy").TryGetProperty("memberId", out _));
+        }
+
+        var created = JsonSerializer.Deserialize<ConnectionResponse>(json, JsonSerializerOptions.Web);
+        Assert.NotNull(created);
+        Assert.Equal(ConnectionUrl(tenant.TenantId, created.Id), response.Headers.Location?.OriginalString);
+        Assert.Equal(await OwnerMembershipIdAsync(connectionString, tenant), created.CreatedBy.MemberId);
+        Assert.Equal(tenant.Email, created.CreatedBy.DisplayName);
+        Assert.NotNull(created.LastVerifiedAt);
+
+        var request = Assert.Single(factory.ZenviaHandler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal($"{ZenviaBaseUrl}/v2/templates", request.Uri?.ToString());
+        Assert.Equal(SentinelApiToken, request.Token);
+        Assert.Contains("qep-integrations", request.UserAgent, StringComparison.Ordinal);
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        // shopify también sale (módulo de fábrica y app fijada en el harness); zenvia es la que cuenta.
+        Assert.Equal(1, Assert.Single(catalog!.Providers, provider => provider.Key == "zenvia").ConnectionCount);
+        var list = await client.GetFromJsonAsync<ConnectionsResponse>(ConnectionsUrl(tenant.TenantId), Ct);
+        Assert.Equal(created.Id, Assert.Single(list!.Items).Id);
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM audit.entries WHERE action = 'integrations.connection.created' AND tenant_id = @tenantId",
+            ("tenantId", tenant.TenantId)));
+    }
+
+    // Spec 2026-10-21 D-H1: external-api sale en el catálogo del tenant con automations, se crea por el formulario genérico y el
+    // GET nunca devuelve la clave.
+    [Fact]
+    public async Task CreatesAnExternalApiConnectionAndTheCatalogShowsItForAutomations()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        var provider = Assert.Single(catalog!.Providers, item => item.Key == "external-api");
+        Assert.Equal("API externa", provider.DisplayName);
+        Assert.Equal(["baseUrl", "authHeader", "apiKey", "testPath"], provider.Fields.Select(field => field.Key));
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = (await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct))!;
+        Assert.Equal("external-api", created.ProviderKey);
+        Assert.Equal("https://api-clasic.qcode.co", created.Fields["baseUrl"]);
+
+        var read = await SendAsync(client, HttpMethod.Get, ConnectionUrl(tenant.TenantId, created.Id));
+        var json = await read.Content.ReadAsStringAsync(Ct);
+        Assert.DoesNotContain(SentinelExternalApiKey, json, StringComparison.Ordinal);
+        using (var document = JsonDocument.Parse(json))
+        {
+            Assert.True(document.RootElement.GetProperty("secrets").GetProperty("apiKey").GetProperty("configured").GetBoolean());
+            Assert.False(document.RootElement.GetProperty("fields").TryGetProperty("apiKey", out _));
+        }
+
+        var list = await SendAsync(client, HttpMethod.Get, ConnectionsUrl(tenant.TenantId));
+        Assert.DoesNotContain(SentinelExternalApiKey, await list.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+    }
+
+    // Fallo P2-R30: un header reservado no puede llevar la clave; el 422 marca el campo y no se guarda nada ni se llama a la API.
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("content-type")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("COOKIE")]
+    public async Task AReservedAuthHeaderIs422OnTheField(string authHeader)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody(authHeader: authHeader));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["fields.authHeader"], (await ProblemAsync(response)).ErrorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+        Assert.Empty(factory.ExternalApiHandler.Requests);
+    }
+
+    [Fact]
+    public async Task AnHttpBaseUrlIs422OnTheField()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterAutomationsTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody(baseUrl: "http://api.x.co"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["fields.baseUrl"], (await ProblemAsync(response)).ErrorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+    }
+
+    [Fact]
+    public async Task WithoutTheAutomationsModuleTheProviderIsHidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        // El signup no trae automations: es el caso de un tenant real sin el módulo.
+        var tenant = await RegisterTenantAsync(factory);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        Assert.DoesNotContain(catalog!.Providers, provider => provider.Key == "external-api");
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ExternalApiBody());
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(response)).Code);
+    }
+
+    // F2 del plan de frontend: credentials_rejected trae errors con la clave del secreto.
+    [Fact]
+    public async Task RejectedCredentialsAnswer422OnTheSecretFieldAndSaveNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        factory.ZenviaHandler.Status = HttpStatusCode.Unauthorized;
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, errorKeys) = await ProblemAsync(response);
+        Assert.Equal("integrations.connection.credentials_rejected", code);
+        Assert.Equal(["secrets.apiToken"], errorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(database.GetConnectionString(), tenant.TenantId));
+    }
+
+    // D3: «no pude verificar» bloquea y no marca ningún campo.
+    [Fact]
+    public async Task AnUnreachableProviderAnswers422WithoutAFieldAndSavesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        factory.ZenviaHandler.Throw = new TaskCanceledException("timed out", new TimeoutException());
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, errorKeys) = await ProblemAsync(response);
+        Assert.Equal("integrations.connection.provider_unreachable", code);
+        Assert.Empty(errorKeys);
+        Assert.Equal(0L, await CountConnectionsAsync(database.GetConnectionString(), tenant.TenantId));
+    }
+
+    // F1 del plan de frontend y Review Focus 1-2: claves exactas en minúscula, nunca un 500, sin
+    // llamar a Zenvia y sin fila.
+    [Fact]
+    public async Task ValidationIsPerFieldWithExactKeysAndNeverAServerError()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new
+        {
+            providerKey = "zenvia",
+            name = "a\u0000b",
+            fields = new Dictionary<string, string?> { ["fromNumber"] = "+573001234567", ["templateId"] = IntegrationsApiHarness.TemplateId, ["apiToken"] = SentinelApiToken },
+            secrets = new Dictionary<string, string?>(),
+        });
+        var unknownProvider = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new
+        {
+            providerKey = "whatsapp",
+            name = "Norte",
+            fields = new Dictionary<string, string?>(),
+            secrets = new Dictionary<string, string?>(),
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, errorKeys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["fields.apiToken", "fields.fromNumber", "name", "secrets.apiToken"], errorKeys);
+        Assert.Equal(["providerKey"], (await ProblemAsync(unknownProvider)).ErrorKeys);
+        Assert.Empty(factory.ZenviaHandler.Requests);
+        Assert.Equal(0L, await CountConnectionsAsync(database.GetConnectionString(), tenant.TenantId));
+    }
+
+    // Review Focus 5.
+    [Fact]
+    public async Task ANameRepeatedWithOtherCaseIsNameTakenOnlyInsideTheTenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        var other = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        using var otherClient = CreateClient(factory, other.OwnerUserId, other.TenantId, ManagePermissions);
+        await CreateConnectionAsync(client, tenant.TenantId, "WhatsApp Norte");
+
+        var repeated = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody("  whatsapp norte  "));
+        var elsewhere = await SendAsync(otherClient, HttpMethod.Post, ConnectionsUrl(other.TenantId), ZenviaBody("WhatsApp Norte"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, repeated.StatusCode);
+        Assert.Equal("integrations.connection.name_taken", (await ProblemAsync(repeated)).Code);
+        Assert.Equal(1L, await CountConnectionsAsync(database.GetConnectionString(), tenant.TenantId));
+        Assert.Equal(HttpStatusCode.Created, elsewhere.StatusCode);
+    }
+
+    // D1.
+    [Fact]
+    public async Task TheTwentyFirstConnectionIsLimitReached()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenant = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        for (var index = 1; index <= 20; index++)
+        {
+            await CreateConnectionAsync(client, tenant.TenantId, $"Línea {index}");
+        }
+
+        var response = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody("Línea 21"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.connection.limit_reached", (await ProblemAsync(response)).Code);
+        Assert.Equal(20, factory.ZenviaHandler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AnotherTenantIs403TheIdIs404InsideItsOwnRouteAndAReaderCannotWrite()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var a = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        var b = await RegisterZenviaTenantAsync(factory, database.GetConnectionString());
+        using var ownerA = CreateClient(factory, a.OwnerUserId, a.TenantId, ManagePermissions);
+        using var ownerB = CreateClient(factory, b.OwnerUserId, b.TenantId, ManagePermissions);
+        using var readerA = CreateClient(factory, a.OwnerUserId, a.TenantId, ReadPermissions);
+        var created = await CreateConnectionAsync(ownerA, a.TenantId);
+
+        var crossRead = await SendAsync(ownerB, HttpMethod.Get, ConnectionUrl(a.TenantId, created.Id));
+        var crossWrite = await SendAsync(ownerB, HttpMethod.Post, ConnectionsUrl(a.TenantId), ZenviaBody("Intrusa"));
+        var foreignId = await SendAsync(ownerB, HttpMethod.Get, ConnectionUrl(b.TenantId, created.Id));
+        var readerWrite = await SendAsync(readerA, HttpMethod.Post, ConnectionsUrl(a.TenantId), ZenviaBody("Otra"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossRead.StatusCode);
+        Assert.Equal("authorization.denied", (await ProblemAsync(crossRead)).Code);
+        Assert.Equal(HttpStatusCode.Forbidden, crossWrite.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, foreignId.StatusCode);
+        Assert.Equal("integrations.connection.not_found", (await ProblemAsync(foreignId)).Code);
+        Assert.Equal(HttpStatusCode.Forbidden, readerWrite.StatusCode);
+        Assert.Equal(1L, await CountConnectionsAsync(database.GetConnectionString(), a.TenantId));
+    }
+
+    // Criterio 6 del spec.
+    [Fact]
+    public async Task TurningOffTheConsumingModuleHidesTheConnectionAndTurningItOnBringsItBackIntact()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var created = await CreateConnectionAsync(client, tenant.TenantId);
+
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "inactive");
+
+        var catalog = await client.GetFromJsonAsync<IntegrationsCatalogResponse>(CatalogUrl(tenant.TenantId), Ct);
+        var list = await client.GetFromJsonAsync<ConnectionsResponse>(ConnectionsUrl(tenant.TenantId), Ct);
+        var hidden = await SendAsync(client, HttpMethod.Get, ConnectionUrl(tenant.TenantId, created.Id));
+        var newOne = await SendAsync(client, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), ZenviaBody("Otra"));
+        Assert.Empty(catalog!.Providers);
+        Assert.Empty(list!.Items);
+        Assert.Equal(HttpStatusCode.Forbidden, hidden.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(hidden)).Code);
+        Assert.Equal(HttpStatusCode.Forbidden, newOne.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(newOne)).Code);
+        Assert.Equal(1L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+
+        await SetModuleStatusAsync(connectionString, tenant.TenantId, "quotations", "active");
+
+        var back = await client.GetFromJsonAsync<ConnectionResponse>(ConnectionUrl(tenant.TenantId, created.Id), Ct);
+        Assert.Equal(created.Version, back!.Version);
+        Assert.Equal("Active", back.Status);
+        Assert.True(back.Secrets["apiToken"].Readable);
+    }
+
+    // Spec §5.2 y D-M3: el catálogo con messaging activo trae whatsapp-cloud con su onboarding; sin
+    // Meta:App no lo trae. Y §6.1: el POST genérico no crea una conexión de Meta.
+    [Fact]
+    public async Task TheCatalogShowsWhatsAppCloudWithItsOnboardingOnlyWithMetaApp()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterZenviaTenantAsync(factory, connectionString);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+
+        var json = await client.GetStringAsync(CatalogUrl(tenant.TenantId), Ct);
+        using var document = JsonDocument.Parse(json);
+        var whatsapp = document.RootElement.GetProperty("providers").EnumerateArray()
+            .Single(provider => provider.GetProperty("key").GetString() == "whatsapp-cloud");
+        Assert.Equal("MetaEmbeddedSignup", whatsapp.GetProperty("onboarding").GetProperty("kind").GetString());
+        Assert.Equal(MetaAppId, whatsapp.GetProperty("onboarding").GetProperty("appId").GetString());
+        Assert.Equal(["displayPhoneNumber", "verifiedName"], whatsapp.GetProperty("fields").EnumerateArray().Select(field => field.GetProperty("key").GetString()));
+        var zenvia = document.RootElement.GetProperty("providers").EnumerateArray()
+            .Single(provider => provider.GetProperty("key").GetString() == "zenvia");
+        Assert.False(zenvia.GetProperty("onboarding").TryGetProperty("appId", out _));
+
+        using var manager = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var post = await SendAsync(manager, HttpMethod.Post, ConnectionsUrl(tenant.TenantId), new
+        {
+            providerKey = "whatsapp-cloud",
+            name = "Ventas",
+            fields = new Dictionary<string, string?>(),
+            secrets = new Dictionary<string, string?>(),
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, post.StatusCode);
+        var (code, errorKeys) = await ProblemAsync(post);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["providerKey"], errorKeys);
+
+        using var withoutMeta = factory.WithoutMetaApp();
+        using var client2 = CreateClient(withoutMeta, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+        var json2 = await client2.GetStringAsync(CatalogUrl(tenant.TenantId), Ct);
+        Assert.DoesNotContain("whatsapp-cloud", json2, StringComparison.Ordinal);
+    }
+}

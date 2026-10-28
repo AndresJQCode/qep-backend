@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
@@ -86,6 +87,35 @@ public sealed class RegistrationApiTests
             ("tenantId", registered.TenantId),
             ("userId", registered.OwnerUserId));
         Assert.Equal("Active", membership![0]);
+    }
+
+    [Fact]
+    public async Task RegisterWithOnlyNameAndSlugAppliesTheRegionalDefaults()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString(), true);
+        using var client = CreateOwnerClient(factory, NewEmail());
+
+        var created = await client.PostAsJsonAsync(
+            "/api/v1/auth/register-tenant",
+            new { displayName = "Minimal Org", slug = NewSlug() },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var registered = await created.Content.ReadFromJsonAsync<RegisterPayload>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(registered);
+        using var reader = factory.CreateClient();
+        reader.DefaultRequestHeaders.Add("X-Subject-Id", registered!.OwnerUserId.ToString());
+        reader.DefaultRequestHeaders.Add("X-Tenant-Id", registered.TenantId.ToString());
+        var settings = await reader.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{registered.TenantId}/settings",
+            TestContext.Current.CancellationToken);
+        Assert.Equal("es-CO", settings.GetProperty("defaultCulture").GetString());
+        Assert.Equal("America/Bogota", settings.GetProperty("timeZone").GetString());
+        Assert.Equal("dd/MM/yyyy", settings.GetProperty("dateFormat").GetString());
+        Assert.Equal("COP", settings.GetProperty("defaultCurrency").GetString());
+        Assert.Equal("1.234,56", settings.GetProperty("numberFormat").GetString());
     }
 
     /// <summary>
