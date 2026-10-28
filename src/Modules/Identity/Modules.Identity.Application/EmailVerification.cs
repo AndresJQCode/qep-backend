@@ -64,5 +64,5 @@ public sealed class EmailVerificationService(
     }
 
     private static IdentityDomainException Invalid() =>
-        new(InvalidTokenCode, "The verification link is invalid or has expired.");
+        new(InvalidTokenCode, "The link is invalid or has expired.");
 }
