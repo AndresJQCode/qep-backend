@@ -690,6 +690,25 @@ public sealed class PasswordAuthApiTests
             (await ResetAsync(client, resetToken, "a brand new password")).StatusCode);
     }
 
+    [Fact]
+    public async Task TheEleventhRequestToOneEndpointIs429AndAnotherEndpointStillAnswers()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, (await ForgotAsync(client, NewEmail())).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await ForgotAsync(client, NewEmail())).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Unauthorized,
+            (await LoginAsync(client, NewEmail(), "whatever password")).StatusCode);
+    }
+
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
     {
         public Task<Guid> RegisterOwnerTenantAsync(

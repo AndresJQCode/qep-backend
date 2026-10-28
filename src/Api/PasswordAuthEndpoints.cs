@@ -17,6 +17,7 @@ public static class PasswordAuthEndpoints
         // el 400 queda para un cuerpo JSON mal formado o ausente, que decide el handler.
         endpoints.MapPost("/api/v1/auth/password/register-tenant", RegisterTenantAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Authentication")
             .Accepts<RegisterTenantWithPasswordRequest>("application/json")
             .Produces(StatusCodes.Status202Accepted)
@@ -25,6 +26,7 @@ public static class PasswordAuthEndpoints
 
         endpoints.MapPost("/api/v1/auth/email/verify", VerifyEmailAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Authentication")
             .Accepts<VerifyEmailRequest>("application/json")
             .Produces<SessionResponse>()
@@ -32,6 +34,7 @@ public static class PasswordAuthEndpoints
 
         endpoints.MapPost("/api/v1/auth/password/login", LoginAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Authentication")
             .Accepts<PasswordLoginRequest>("application/json")
             .Produces<SessionResponse>()
@@ -41,12 +44,14 @@ public static class PasswordAuthEndpoints
 
         endpoints.MapPost("/api/v1/auth/password/forgot", ForgotPasswordAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Authentication")
             .Accepts<ForgotPasswordRequest>("application/json")
             .Produces(StatusCodes.Status202Accepted);
 
         endpoints.MapPost("/api/v1/auth/password/reset", ResetPasswordAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Authentication")
             .Accepts<ResetPasswordRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)

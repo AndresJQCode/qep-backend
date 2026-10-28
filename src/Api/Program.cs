@@ -84,6 +84,19 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
 
+    // Endpoints de credenciales: 10 por minuto por IP y por endpoint. La clave usa el PATRÓN de ruta,
+    // no el path, para que /invitations/{token}/accept-with-password no abra una partición por token.
+    options.AddPolicy(
+        RateLimiterPolicies.Credentials,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{httpContext.Connection.RemoteIpAddress}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
     // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
     // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
     // salen de MessagingWebhookOptions ya bindeadas y validadas al arrancar (> 0); la fábrica de la

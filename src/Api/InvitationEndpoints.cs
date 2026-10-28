@@ -28,9 +28,9 @@ public static class InvitationEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         // Anónimo: quien acepta con contraseña todavía no tiene sesión; la sesión sale de esta llamada.
-        // TODO(Task 14): .RequireRateLimiting(RateLimiterPolicies.Credentials) cuando exista la política.
         endpoints.MapPost("/api/v1/invitations/{token}/accept-with-password", AcceptWithPasswordAsync)
             .AllowAnonymous()
+            .RequireRateLimiting(RateLimiterPolicies.Credentials)
             .WithTags("Invitations")
             .Accepts<AcceptInvitationWithPasswordRequest>("application/json")
             .Produces<SessionResponse>()
