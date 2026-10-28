@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 71 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 81 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -28,6 +28,8 @@ public sealed class OrdersExportColumnCatalogTests
         "customer_address", "customer_city", "customer_department", "customer_phone", "customer_email",
         "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
         "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
+        "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
+        "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
     ];
 
     private static readonly string[] Headers =
@@ -51,12 +53,14 @@ public sealed class OrdersExportColumnCatalogTests
         "Nombre facturación", "Tipo de identificación facturación", "Identificación facturación",
         "Tipo de persona facturación", "Dirección facturación", "Ciudad facturación", "Departamento facturación",
         "Teléfono facturación", "Email facturación",
+        "Nombre envío", "Tipo de identificación envío", "Identificación envío", "Tipo de persona envío",
+        "Dirección envío", "Ciudad envío", "Ciudad Coordinadora envío", "Departamento envío", "Teléfono envío", "Email envío",
     ];
 
     [Fact]
-    public void HasTheSeventyOneColumnsOfTheSpecInItsOrder()
+    public void HasTheEightyOneColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(71, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(81, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -111,7 +115,7 @@ public sealed class OrdersExportColumnCatalogTests
     }
 
     [Fact]
-    public void BillingGroupIsAppendedLastHiddenByDefault()
+    public void BillingGroupIsAppendedAfterCustomerHiddenByDefault()
     {
         Assert.Equal(
             [
@@ -125,9 +129,32 @@ public sealed class OrdersExportColumnCatalogTests
                 new OrdersExportCatalogColumn("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_email", "Email facturación", 30, DefaultVisible: false),
             ],
-            OrdersExportColumnCatalog.Columns.Skip(62));
+            OrdersExportColumnCatalog.Columns.Skip(62).Take(9));
         Assert.Equal(62, OrdersExportColumnCatalog.IndexOf("billing_name"));
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("billing_email"));
+        Assert.Equal(70, OrdersExportColumnCatalog.IndexOf("billing_email"));
+    }
+
+    // Ajuste 2026-10-28: el grupo de envío cierra el catálogo, todo oculto.
+    [Fact]
+    public void ShippingGroupIsAppendedLastHiddenByDefault()
+    {
+        Assert.Equal(
+            [
+                new OrdersExportCatalogColumn("shipping_name", "Nombre envío", 30, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_identification_type", "Tipo de identificación envío", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_identification_number", "Identificación envío", 18, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_person_type", "Tipo de persona envío", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_address", "Dirección envío", 40, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_city", "Ciudad envío", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_city_coordinadora", "Ciudad Coordinadora envío", 30, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_department", "Departamento envío", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_phone", "Teléfono envío", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("shipping_email", "Email envío", 30, DefaultVisible: false),
+            ],
+            OrdersExportColumnCatalog.Columns.Skip(71));
+        Assert.Equal(71, OrdersExportColumnCatalog.IndexOf("shipping_name"));
+        Assert.Equal(OrdersExportColumnCatalog.IndexOf("shipping_city") + 1, OrdersExportColumnCatalog.IndexOf("shipping_city_coordinadora"));
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("shipping_email"));
     }
 
     // Se retiraron las llaves «customer_own_*»: un layout guardado que las nombre las pierde (Effective descarta
@@ -232,7 +259,9 @@ public sealed class OrdersExportColumnCatalogTests
                 "customer_identification_type", "customer_person_type", "customer_address", "customer_city",
                 "customer_department", "customer_phone", "customer_email",
                 "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
-                "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email"],
+                "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
+                "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
+                "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
