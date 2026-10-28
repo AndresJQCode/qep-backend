@@ -1093,6 +1093,141 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal([BillingDepartmentId], geography.LastDepartmentRequestedIds.Distinct());
     }
 
+    // Ajuste 2026-10-28: «shipping_*» es a quién se despacha. Con parte de envío salen sus datos (lo que no trae
+    // queda vacío, nunca con lo del cliente); sin parte —recoger en tienda incluido— caen a la ficha del cliente,
+    // como las columnas de entrega de siempre.
+    private static readonly Guid ShippingCityId = Guid.CreateVersion7();
+    private static readonly Guid ShippingDepartmentId = Guid.CreateVersion7();
+
+    private static readonly string[] ShippingKeys =
+    [
+        "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
+        "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
+    ];
+
+    private static StubQuotationGeographyLookup ShippingGeography() =>
+        new(
+            new Dictionary<Guid, string> { [ShippingCityId] = "Cali" },
+            departmentNames: new Dictionary<Guid, string> { [ShippingDepartmentId] = "Valle del Cauca" },
+            coordinadoraNames: new Dictionary<Guid, string> { [ShippingCityId] = "CALI (VALLE)" });
+
+    private static QuotationParties ShippingPartyOf() =>
+        new(
+            Billing: null,
+            Shipping: CompleteShippingParty("Bodega Sur", ShippingCityId) with { DepartmentId = ShippingDepartmentId },
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+    private static async Task<IReadOnlyList<ExportCell>> ShippingCellsAsync(
+        QuotationParties parties, QuotationCustomerRef? customer, Action<Order>? legacy = null)
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var row = NewRow("PED-2026-0001", parties: parties);
+        legacy?.Invoke(row);
+        var customers = new StubQuotationCustomerLookup(customer ?? DefaultCustomer);
+        if (customer is null)
+        {
+            customers.Refs.Clear();
+        }
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: customers,
+                geography: ShippingGeography(),
+                layouts: StoredLayout(ShippingKeys
+                    .Select(key => OrdersExportColumnSetting.Catalog(
+                        key,
+                        OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,
+                        visible: true))
+                    .ToArray()))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ShippingKeys.Select(key => OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader),
+            writer.Columns.Take(ShippingKeys.Length).Select(column => column.Header));
+        return Assert.Single(writer.Rows).Take(ShippingKeys.Length).ToArray();
+    }
+
+    // La parte de entrega no guarda documento ni tipo de persona (OrderParty.IdentificationNumber/PersonType/
+    // IdentificationType son siempre null en ella): esas tres salen vacías, nunca las de la ficha.
+    [Fact]
+    public async Task ShippingColumnsAreTheShippingPartysWhenTheOrderHasOne()
+    {
+        var cells = await ShippingCellsAsync(ShippingPartyOf(), CustomerWithFullData);
+
+        Assert.Equal(
+            Texts(["Bodega Sur", string.Empty, string.Empty, string.Empty, "Zona Franca, Bodega 14", "Cali", "CALI (VALLE)", "Valle del Cauca", "6015550000", "bodega@ejemplo.co"]),
+            cells);
+    }
+
+    // La parte de envío es otra persona: lo que no trae queda vacío, nunca con lo del cliente.
+    [Fact]
+    public async Task AShippingPartyWithMissingFieldsLeavesThemEmptyInsteadOfTheCustomers()
+    {
+        var cells = await ShippingCellsAsync(
+            ShippingPartyOf(),
+            CustomerWithFullData,
+            legacy: row =>
+            {
+                var shipping = row.Parties.Single(party => party.Role == QuotationPartyRole.Shipping);
+                foreach (var name in new[] { nameof(OrderParty.DepartmentId), nameof(OrderParty.Name) })
+                {
+                    typeof(OrderParty).GetProperty(name)!.SetValue(shipping, null);
+                }
+            });
+
+        Assert.Equal(
+            Texts([string.Empty, string.Empty, string.Empty, string.Empty, "Zona Franca, Bodega 14", "Cali", "CALI (VALLE)", string.Empty, "6015550000", "bodega@ejemplo.co"]),
+            cells);
+    }
+
+    [Fact]
+    public async Task WithoutAShippingPartyTheShippingColumnsFallBackToTheCustomer()
+    {
+        var cells = await ShippingCellsAsync(QuotationParties.Empty, CustomerWithFullData with { CityId = ShippingCityId });
+
+        Assert.Equal(
+            Texts(["Ferretería El Tornillo", "CC", "900123456", "Natural", "Calle 1 # 2-3", "Bogotá", "CALI (VALLE)", "Cundinamarca", "3001234567", "cliente@ejemplo.co"]),
+            cells);
+    }
+
+    [Fact]
+    public async Task ShippingColumnsAreEmptyWithoutShippingPartyWhenTheCustomerDoesNotResolve()
+    {
+        var cells = await ShippingCellsAsync(QuotationParties.Empty, customer: null);
+
+        Assert.Equal(Texts(Enumerable.Repeat(string.Empty, 10)), cells);
+    }
+
+    // Una consulta de departamentos por lote, con los de facturación y los de envío.
+    [Fact]
+    public async Task ResolvesTheShippingDepartmentsInTheSameBatchQuery()
+    {
+        var geography = ShippingGeography();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: ShippingPartyOf())),
+                geography: geography)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, geography.FindDepartmentNamesCalls);
+        Assert.Contains(ShippingDepartmentId, geography.LastDepartmentRequestedIds);
+    }
+
+    // Ocultas por defecto: el Excel de un tenant que no las prende no cambia.
+    [Fact]
+    public async Task WithoutALayoutThatShowsThemShippingColumnsAreNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: ShippingPartyOf())), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header.EndsWith(" envío", StringComparison.Ordinal));
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
+    }
+
     // Ocultas por defecto: el Excel de un tenant que no las prende no cambia.
     [Fact]
     public async Task WithoutALayoutThatShowsThemCustomerAndBillingColumnsAreNotWritten()

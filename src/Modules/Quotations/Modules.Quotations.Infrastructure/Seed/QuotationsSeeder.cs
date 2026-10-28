@@ -220,6 +220,17 @@ public static class QuotationsSeeder
         "customer_phone",
         "customer_email",
         "billing_name",
+        // Ajuste 2026-10-28: el grupo de envío, que la hoja tampoco usa.
+        "shipping_name",
+        "shipping_identification_type",
+        "shipping_identification_number",
+        "shipping_person_type",
+        "shipping_address",
+        "shipping_city",
+        "shipping_city_coordinadora",
+        "shipping_department",
+        "shipping_phone",
+        "shipping_email",
     ];
 
     /// <summary>

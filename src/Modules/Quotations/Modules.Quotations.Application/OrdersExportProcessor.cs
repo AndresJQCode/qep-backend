@@ -183,7 +183,11 @@ public sealed class OrdersExportProcessor(
             .Select(party => party.CityId!.Value);
         var cityNames = await geographyLookup.FindCityNamesAsync(
             shippingCityIds.Concat(billingCityIds).Distinct().ToArray(), cancellationToken);
+        // Los departamentos de envío entran en la misma consulta que los de facturación (ajuste 2026-10-28).
         var billingDepartmentIds = billingParties
+            .Concat(partiesByOrder.Values
+                .SelectMany(parties => parties)
+                .Where(party => party.Role == QuotationPartyRole.Shipping))
             .Where(party => party.DepartmentId is not null)
             .Select(party => party.DepartmentId!.Value)
             .Distinct()
@@ -244,6 +248,7 @@ public sealed class OrdersExportProcessor(
         var identification = BilledIdentificationFor(order, billingParty, customer);
         var billingPersonType = BilledPersonTypeFor(order, billingParty, customer);
         var billingContact = BilledContactFor(order, billingParty, customer, context.CityNames, context.DepartmentNames);
+        var shippingContact = ShippingContactFor(shipping, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
         var orderDate = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -354,6 +359,17 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(billingContact.Department),
                 ExportCell.OfText(billingContact.Phone),
                 ExportCell.OfText(billingContact.Email),
+                // Grupo shipping_*: a quién se despacha; sin parte de envío, la ficha del cliente (ShippingContactFor).
+                ExportCell.OfText(shippingContact.Name),
+                ExportCell.OfText(shippingContact.IdentificationType),
+                ExportCell.OfText(shippingContact.IdentificationNumber),
+                ExportCell.OfText(shippingContact.PersonType),
+                ExportCell.OfText(shippingContact.Address),
+                ExportCell.OfText(shippingContact.City),
+                ExportCell.OfText(coordinadoraCity),
+                ExportCell.OfText(shippingContact.Department),
+                ExportCell.OfText(shippingContact.Phone),
+                ExportCell.OfText(shippingContact.Email),
             ];
         }
     }
@@ -450,6 +466,39 @@ public sealed class OrdersExportProcessor(
                 customer?.Phone ?? string.Empty,
                 customer?.Email ?? string.Empty)
         };
+
+    private readonly record struct ShippingContact(
+        string Name, string IdentificationType, string IdentificationNumber, string PersonType,
+        string Address, string City, string Department, string Phone, string Email);
+
+    // Ajuste 2026-10-28: con parte de envío, sus datos (lo que no trae queda vacío, nunca con lo del cliente);
+    // sin ella, la ficha del cliente, la misma regla que ContactFor y CoordinadoraCityFor.
+    private static ShippingContact ShippingContactFor(
+        OrderParty? shipping,
+        QuotationCustomerRef? customer,
+        IReadOnlyDictionary<Guid, string> cityNames,
+        IReadOnlyDictionary<Guid, string> departmentNames) =>
+        shipping is not null
+            ? new ShippingContact(
+                shipping.Name ?? string.Empty,
+                shipping.IdentificationType?.ToWireValue() ?? string.Empty,
+                shipping.IdentificationNumber ?? string.Empty,
+                shipping.PersonType?.ToWireValue() ?? string.Empty,
+                shipping.Address ?? string.Empty,
+                NameOf(shipping.CityId, cityNames),
+                NameOf(shipping.DepartmentId, departmentNames),
+                shipping.Phone ?? string.Empty,
+                shipping.Email ?? string.Empty)
+            : new ShippingContact(
+                customer?.Name ?? string.Empty,
+                customer?.IdentificationType ?? string.Empty,
+                customer?.IdentificationNumber ?? string.Empty,
+                customer?.PersonType ?? string.Empty,
+                customer?.Address ?? string.Empty,
+                customer?.CityName ?? string.Empty,
+                customer?.DepartmentName ?? string.Empty,
+                customer?.Phone ?? string.Empty,
+                customer?.Email ?? string.Empty);
 
     private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
         id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
