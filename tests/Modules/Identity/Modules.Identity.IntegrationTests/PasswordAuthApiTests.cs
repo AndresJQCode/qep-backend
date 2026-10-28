@@ -535,6 +535,161 @@ public sealed class PasswordAuthApiTests
         Assert.Equal(0, await CountAuditContainingAsync(cs, Pw));
     }
 
+    [Fact]
+    public async Task ForgotWithAnUnknownEmailReturns202AndQueuesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+
+        Assert.Equal(HttpStatusCode.Accepted, (await ForgotAsync(client, NewEmail())).StatusCode);
+
+        Assert.Equal(0, await CountOutboxAsync(cs, IdentityIntegrationEvents.PasswordResetRequested));
+    }
+
+    // Review Focus 2
+    [Fact]
+    public async Task ForgotNormalizesTheEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, Pw)).UserId;
+
+        Assert.Equal(
+            HttpStatusCode.Accepted,
+            (await ForgotAsync(client, "  " + email.ToUpperInvariant() + " ")).StatusCode);
+
+        Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId));
+        Assert.Equal(1, await CountAuditAsync(cs, userId, "identity.password.reset.requested"));
+    }
+
+    [Fact]
+    public async Task ResetRevokesEarlierSessionsAndOnlyTheNewPasswordLogsIn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        var ct = TestContext.Current.CancellationToken;
+        var clientA = CreateClient(factory);
+        var clientB = CreateClient(factory);
+        var email = NewEmail();
+        const string newPassword = "a brand new password";
+        var userId = (await RegisterAndVerifyAsync(clientA, cs, email, Pw)).UserId; // clientA con sesión viva
+
+        await ForgotAsync(clientB, email);
+        var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(clientB, token, newPassword)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await clientA.GetAsync("/api/v1/auth/me", ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(clientB, email, Pw)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(clientB, email, newPassword)).StatusCode);
+        Assert.Equal(1, await CountAuditAsync(cs, userId, "identity.password.reset.completed"));
+    }
+
+    [Fact]
+    public async Task ResetWithAShortPasswordFailsValidationAndKeepsTheToken()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, Pw)).UserId;
+        await ForgotAsync(client, email);
+        var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+
+        var shortReset = await ResetAsync(client, token, "short");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, shortReset.StatusCode);
+        var problem = await ProblemAsync(shortReset);
+        Assert.Equal("validation.failed", problem.Code);
+        Assert.True(problem.Errors!.ContainsKey("Password"));
+        Assert.Equal(
+            HttpStatusCode.NoContent,
+            (await ResetAsync(client, token, "a long enough password")).StatusCode);
+    }
+
+    [Fact]
+    public async Task ResetVerifiesAnUnverifiedEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        const string newPassword = "a brand new password";
+        await RegisterAsync(client, email, Pw, NewSlug()); // sin verificar
+        var userId = await FindUserIdAsync(cs, email);
+        await ForgotAsync(client, email);
+        var token = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, token, newPassword)).StatusCode);
+
+        Assert.NotNull(await EmailVerifiedAtAsync(cs, userId));
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, newPassword)).StatusCode); // no 403
+    }
+
+    [Fact]
+    public async Task AnInvitedUserCreatesAPasswordAndEndsActive()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var ownerClient = CreateClient(factory);
+        const string newPassword = "a brand new password";
+        var owner = await RegisterAndVerifyAsync(ownerClient, cs, NewEmail(), Pw);
+        var invitedEmail = NewEmail();
+        var invited = await InviteAsync(ownerClient, cs, owner.TenantId, invitedEmail);
+        await ForgotAsync(client, invitedEmail);
+        var token = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.PasswordResetRequested, invited.UserId);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, token, newPassword)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, invitedEmail, newPassword)).StatusCode);
+        Assert.Equal("Active", await MembershipStateAsync(cs, owner.TenantId, invited.UserId));
+        Assert.Equal("Active", await UserStatusAsync(cs, invited.UserId));
+    }
+
+    // Carry-over de la Task 11: el propósito del token se compara en el consumo, así que uno emitido
+    // para un fin no sirve en el otro endpoint. Los dos dan el 422 genérico y el token queda intacto.
+    [Fact]
+    public async Task ATokenMintedForOnePurposeIsRejectedByTheOtherEndpointWithTheGeneric422()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        await RegisterAsync(client, email, Pw, NewSlug()); // deja un token verify vivo
+        var userId = await FindUserIdAsync(cs, email);
+        var verifyToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.EmailVerificationRequested, userId);
+        await ForgotAsync(client, email);
+        var resetToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+
+        var resetOnVerify = await VerifyAsync(client, resetToken);
+        var verifyOnReset = await ResetAsync(client, verifyToken, "a brand new password");
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, resetOnVerify.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, verifyOnReset.StatusCode);
+        var problems = new[] { await ProblemAsync(resetOnVerify), await ProblemAsync(verifyOnReset) };
+        Assert.All(problems, p => Assert.Equal("identity.email_token.invalid", p.Code));
+        Assert.Single(problems.Select(p => (p.Title, p.Detail)).Distinct());
+        // Ninguno se consumió: cada uno sigue sirviendo en su propio endpoint.
+        Assert.Equal(HttpStatusCode.OK, (await VerifyAsync(client, verifyToken)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.NoContent,
+            (await ResetAsync(client, resetToken, "a brand new password")).StatusCode);
+    }
+
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
     {
         public Task<Guid> RegisterOwnerTenantAsync(

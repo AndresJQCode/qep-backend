@@ -39,7 +39,87 @@ public static class PasswordAuthEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapPost("/api/v1/auth/password/forgot", ForgotPasswordAsync)
+            .AllowAnonymous()
+            .WithTags("Authentication")
+            .Accepts<ForgotPasswordRequest>("application/json")
+            .Produces(StatusCodes.Status202Accepted);
+
+        endpoints.MapPost("/api/v1/auth/password/reset", ResetPasswordAsync)
+            .AllowAnonymous()
+            .WithTags("Authentication")
+            .Accepts<ResetPasswordRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    // 202 siempre que el cuerpo sea JSON: exista el email o no, la respuesta es la misma.
+    private static async Task<IResult> ForgotPasswordAsync(
+        HttpContext httpContext,
+        IPasswordReset passwordReset,
+        CancellationToken cancellationToken)
+    {
+        ForgotPasswordRequest? request = null;
+        try
+        {
+            if (httpContext.Request.HasJsonContentType())
+            {
+                request = await httpContext.Request.ReadFromJsonAsync<ForgotPasswordRequest>(cancellationToken);
+            }
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "The request body is missing or malformed.");
+        }
+
+        await passwordReset.RequestAsync(
+            request.Email ?? string.Empty,
+            httpContext.TraceIdentifier,
+            cancellationToken);
+        return Results.Accepted(uri: null, value: new { });
+    }
+
+    // No abre sesión: revoca todas las del usuario y el login con la contraseña nueva la abre. El
+    // token y la contraseña no se registran en ningún lado.
+    private static async Task<IResult> ResetPasswordAsync(
+        HttpContext httpContext,
+        IPasswordReset passwordReset,
+        CancellationToken cancellationToken)
+    {
+        ResetPasswordRequest? request = null;
+        try
+        {
+            if (httpContext.Request.HasJsonContentType())
+            {
+                request = await httpContext.Request.ReadFromJsonAsync<ResetPasswordRequest>(cancellationToken);
+            }
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "The request body is missing or malformed.");
+        }
+
+        await passwordReset.ResetAsync(
+            request.Token ?? string.Empty,
+            request.Password ?? string.Empty,
+            cancellationToken);
+        return Results.NoContent();
     }
 
     // Un email desconocido, un usuario sin credencial y una contraseña errónea salen como el mismo
@@ -232,3 +312,7 @@ public sealed record RegisterTenantWithPasswordRequest(
 public sealed record VerifyEmailRequest(string Token);
 
 public sealed record PasswordLoginRequest(string Email, string Password);
+
+public sealed record ForgotPasswordRequest(string Email);
+
+public sealed record ResetPasswordRequest(string Token, string Password);

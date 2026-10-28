@@ -335,6 +335,80 @@ internal static class PasswordAuthApiHarness
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
+    public static Task<HttpResponseMessage> ForgotAsync(HttpClient client, string email) =>
+        PostJsonAsync(client, "/api/v1/auth/password/forgot", new { email });
+
+    public static Task<HttpResponseMessage> ResetAsync(HttpClient client, string token, string password) =>
+        PostJsonAsync(client, "/api/v1/auth/password/reset", new { token, password });
+
+    public static async Task<string?> MembershipStateAsync(string connectionString, Guid tenantId, Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT state FROM tenancy.memberships WHERE tenant_id = @tenantId AND user_id = @userId",
+            connection);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        command.Parameters.AddWithValue("userId", userId);
+        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return value as string;
+    }
+
+    public static async Task<string?> UserStatusAsync(string connectionString, Guid userId) =>
+        await ScalarAsync(
+            connectionString,
+            "SELECT status FROM identity.users WHERE id = @value",
+            userId) as string;
+
+    private static readonly string[] AdvisorRoles = ["advisor"];
+
+    public sealed record InvitedMember(Guid MembershipId, Guid UserId, string Token);
+
+    // Invita por la API como el dueño (la cookie del cliente) y toma el token crudo del payload de
+    // tenancy.membership-invited.v1: la base guarda sólo el hash.
+    public static async Task<InvitedMember> InviteAsync(
+        HttpClient ownerClient,
+        string connectionString,
+        Guid tenantId,
+        string email)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/tenants/{tenantId}/memberships")
+        {
+            Content = JsonContent.Create(new
+            {
+                email,
+                displayName = "Ana Pérez",
+                roles = AdvisorRoles,
+                advisorCode = (int?)null,
+            }),
+        };
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        request.Headers.Add("X-Qep-Client", "web");
+        var response = await ownerClient.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var membershipId = body.RootElement.GetProperty("id").GetGuid();
+        var userId = body.RootElement.GetProperty("userId").GetGuid();
+
+        var token = await ScalarAsync(
+            connectionString,
+            """
+            SELECT payload->>'token' FROM platform.outbox_messages
+            WHERE event_name = 'tenancy.membership-invited.v1'
+              AND payload::text LIKE '%' || @value || '%'
+            ORDER BY occurred_at DESC
+            LIMIT 1
+            """,
+            membershipId.ToString()) as string;
+        return new InvitedMember(
+            membershipId,
+            userId,
+            token ?? throw new InvalidOperationException($"No invitation token for membership {membershipId}."));
+    }
+
     public static Task<HttpResponseMessage> LoginAsync(HttpClient client, string email, string password) =>
         PostJsonAsync(client, "/api/v1/auth/password/login", new { email, password });
 
