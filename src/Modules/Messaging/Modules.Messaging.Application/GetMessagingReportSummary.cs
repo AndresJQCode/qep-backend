@@ -73,6 +73,7 @@ public sealed class GetMessagingReportSummaryHandler(
     ITenantClock tenantClock,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
+    IValidator<GetMessagingReportSummaryQuery> validator,
     ILogger<GetMessagingReportSummaryHandler> logger)
     : IQueryHandler<GetMessagingReportSummaryQuery, MessagingReportSummaryDto>
 {
@@ -88,6 +89,7 @@ public sealed class GetMessagingReportSummaryHandler(
     {
         ArgumentNullException.ThrowIfNull(query);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
+        await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var from = query.From!.Value;
         var to = query.To!.Value;

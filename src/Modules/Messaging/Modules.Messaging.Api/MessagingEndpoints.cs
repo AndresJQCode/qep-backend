@@ -266,6 +266,8 @@ public static class MessagingEndpoints
         group.MapResolutionReasonEndpoints();
         // Spec 2026-10-21 §5: horarios de atención.
         group.MapBusinessHoursEndpoints();
+        // Spec 2026-10-28: reporte de mensajería.
+        group.MapMessagingReportEndpoints();
         group.MapTemplateManagementEndpoints();
 
         return endpoints;
