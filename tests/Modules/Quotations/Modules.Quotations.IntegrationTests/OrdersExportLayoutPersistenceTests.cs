@@ -68,8 +68,8 @@ public sealed class OrdersExportLayoutPersistenceTests
             Assert.NotNull(reloaded);
             Assert.Equal(2, reloaded.Version);
             Assert.Equal(Now, reloaded.UpdatedAt);
-            // 57 del catálogo (desde «Razon social», 2026-10-28) + 1 fija.
-            Assert.Equal(58, reloaded.Columns.Count);
+            // 81 del catálogo (reorganización de cliente y facturación, 2026-10-28) + 1 fija.
+            Assert.Equal(82, reloaded.Columns.Count);
             Assert.Equal(OrdersExportColumnKind.Fixed, reloaded.Columns[0].Kind);
             Assert.Equal("Tipo Doc", reloaded.Columns[0].Header);
             Assert.Equal("FV", reloaded.Columns[0].Value);

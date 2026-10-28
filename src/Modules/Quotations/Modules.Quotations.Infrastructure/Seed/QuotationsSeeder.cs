@@ -88,7 +88,7 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("No. Doc.", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "FECHA", visible: true),
         OrdersExportColumnSetting.Fixed("Tercero Externo", "9999", visible: true),
-        OrdersExportColumnSetting.Catalog("customer_name", "Nota Encab.", visible: true),
+        OrdersExportColumnSetting.Catalog("customer_name", "Cliente", visible: true),
         OrdersExportColumnSetting.Catalog("advisor_code", "Tercero Interno", visible: true),
         OrdersExportColumnSetting.Fixed("Doc. Externo", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),
@@ -134,7 +134,7 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("Tipo Envio", string.Empty, visible: true),
         // Ajuste 2026-09-26: el ERP lee acá el documento de identidad de quien se factura, no el
         // CUC. "document" (el CUC) queda entre las ocultas.
-        OrdersExportColumnSetting.Catalog("customer_identification", "Documento (P5)", visible: true),
+        OrdersExportColumnSetting.Catalog("billing_identification_number", "Documento (P5)", visible: true),
         OrdersExportColumnSetting.Catalog("order_number", "Pedido (P6)", visible: true),
         // Ajuste 2026-09-26: el valor consignado es el total de todos los comprobantes del pedido, no
         // el primero, que sigue en "V. Consignacion 1".
@@ -151,9 +151,20 @@ public static class QuotationsSeeder
         // Ajuste 2026-09-26: el NIT de la empresa por la que se factura —la de "EMPRESA"—, no uno
         // escrito a mano, que salía mal en cuanto la cotización se facturaba por otra empresa.
         OrdersExportColumnSetting.Catalog("company_tax_id", "Nit", visible: true),
-        // Spec 2026-10-26 tipo de persona: visible, justo detrás de «Nit». Su encabezado por defecto
-        // («Tipo de persona») no choca con ningún otro de la hoja.
-        OrdersExportColumnSetting.Catalog("customer_person_type", "Tipo de persona", visible: true),
+        // Spec 2026-10-26 tipo de persona: visible, justo detrás de «Nit», con el de quien se factura
+        // (billing_person_type desde la reorganización del 2026-10-28). Su encabezado en la hoja («Tipo de
+        // persona») no choca con ningún otro.
+        OrdersExportColumnSetting.Catalog("billing_person_type", "Tipo de persona", visible: true),
+        // "Total facturado" y "Retencion" salían al final porque Effective las completaba; se nombran
+        // para que las de cliente y facturación queden detrás de ellas.
+        OrdersExportColumnSetting.Catalog("order_total", "Total facturado", visible: true),
+        OrdersExportColumnSetting.Catalog("retention_amount", "Retencion", visible: true),
+        // Ajuste 2026-10-28: el documento de la ficha del cliente y los datos de facturación, que pueden ser de
+        // otra persona. Visibles, al final y con su nombre por defecto: ninguno choca con la hoja.
+        .. VisibleCustomerAndBillingKeys().Select(key => OrdersExportColumnSetting.Catalog(
+            key,
+            OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,
+            visible: true)),
         .. HiddenCatalogKeys().Select(key => OrdersExportColumnSetting.Catalog(
             key,
             OrdersExportColumnCatalog.Columns[OrdersExportColumnCatalog.IndexOf(key)].DefaultHeader,
@@ -163,6 +174,17 @@ public static class QuotationsSeeder
     /// <summary>El nombre con el que el importador del ERP del tenant busca la hoja (spec
     /// 2026-10-05, D8). Sin tilde: así lo pide ese importador, aunque el dominio acepte tildes.</summary>
     private const string OrdersExportSheetName = "MIGRACION 1";
+
+    private static IEnumerable<string> VisibleCustomerAndBillingKeys() =>
+    [
+        "customer_identification",
+        "billing_identification_type",
+        "billing_address",
+        "billing_city",
+        "billing_department",
+        "billing_phone",
+        "billing_email",
+    ];
 
     // Las del catálogo que la hoja no usa, con su nombre por defecto. "IVA" choca con una visible
     // de la hoja, pero entre ocultas y visibles el encabezado puede repetirse.
@@ -189,6 +211,26 @@ public static class QuotationsSeeder
         // espera esa columna y Effective la completaría al final de todos modos. Su encabezado ("Variante")
         // no choca con ninguna visible de la hoja.
         "variant",
+        // Reorganización 2026-10-28: el resto del grupo de cliente y «Nombre facturación», que la hoja no usa.
+        "customer_identification_type",
+        "customer_person_type",
+        "customer_address",
+        "customer_city",
+        "customer_department",
+        "customer_phone",
+        "customer_email",
+        "billing_name",
+        // Ajuste 2026-10-28: el grupo de envío, que la hoja tampoco usa.
+        "shipping_name",
+        "shipping_identification_type",
+        "shipping_identification_number",
+        "shipping_person_type",
+        "shipping_address",
+        "shipping_city",
+        "shipping_city_coordinadora",
+        "shipping_department",
+        "shipping_phone",
+        "shipping_email",
     ];
 
     /// <summary>

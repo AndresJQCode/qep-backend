@@ -176,9 +176,9 @@ public sealed class OrderExportApiTests
                 "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
                 "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
                 "V. Comprobante 5", "URL Comprobante 5",
-                "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
+                "Valor Unit sin IVA", "Fecha Pedido",
                 "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Total facturado",
-                "Retencion", "Valor Flete",
+                "Retencion", "Valor Flete", "Cliente", "Documento de identidad",
             ],
             sheet.Rows[0]);
         Assert.Equal(items.Select(item => item.OrderNumber), sheet.Rows.Skip(1).Select(row => row[14]));
@@ -220,25 +220,24 @@ public sealed class OrderExportApiTests
         // cruzó la medianoche. Texto, no número.
         Assert.Contains(first[33], new[] { Iso(today), Iso(today.AddDays(1)) });
         Assert.False(sheet.NumericCells[1][33]);
-        // "Cliente": sin parte de facturación propia, el nombre de la ficha (CreateActiveCustomerAsync).
-        Assert.Equal("Verde Esencial S.A.S.", first[34]);
-        // "Documento de identidad" (2026-09-26): el NIT al azar de CreateActiveCustomerAsync, que no
-        // es el CUC de "Documento".
-        Assert.StartsWith("900.", first[35], StringComparison.Ordinal);
-        Assert.NotEqual(first[13], first[35]);
+        // "Cliente" y "Documento de identidad" salen al final desde la reorganización del 2026-10-28: la ficha
+        // (CreateActiveCustomerAsync). El NIT es el al azar de la ficha, que no es el CUC de "Documento".
+        Assert.Equal("Verde Esencial S.A.S.", first[41]);
+        Assert.StartsWith("900.", first[42], StringComparison.Ordinal);
+        Assert.NotEqual(first[13], first[42]);
         // "Banco y cuenta" (2026-09-26): "Banco" y "Cuenta" en una celda, con un espacio en medio.
-        Assert.Equal($"{first[20]} {first[21]}", first[36]);
+        Assert.Equal($"{first[20]} {first[21]}", first[34]);
         // "Total consignado" (2026-09-26): sin comprobantes, vacía como "V. Comprobante N".
-        Assert.Equal(string.Empty, first[37]);
+        Assert.Equal(string.Empty, first[35]);
         // "Tasa IVA" (2026-09-26): el producto de CreateProductWithScalesAsync no tiene tarifa, así
         // que la línea se tomó con 0 %. Número, no texto.
-        Assert.Equal("0", first[38]);
-        Assert.True(sheet.NumericCells[1][38]);
+        Assert.Equal("0", first[36]);
+        Assert.True(sheet.NumericCells[1][36]);
         // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Desde
         // el 2026-09-28 sale como lo lee el ERP —sin puntos ni dígito de verificación—, así que
         // sólo dígitos y número, no texto.
-        Assert.Matches(@"^901\d{6}$", first[39]);
-        Assert.True(sheet.NumericCells[1][39]);
+        Assert.Matches(@"^901\d{6}$", first[37]);
+        Assert.True(sheet.NumericCells[1][37]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -464,9 +463,11 @@ public sealed class OrderExportApiTests
         Assert.DoesNotContain("Email", header);
         Assert.DoesNotContain("Ciudad Coordinadora", header);
         Assert.DoesNotContain("Forma de pago 1", header);
-        Assert.Equal("Total facturado", header[^3]);
-        Assert.Equal("Retencion", header[^2]);
-        Assert.Equal("Valor Flete", header[^1]);
+        // Desde la reorganización del 2026-10-28, «Cliente» y «Documento de identidad» van detrás.
+        Assert.Equal("Total facturado", header[^5]);
+        Assert.Equal("Retencion", header[^4]);
+        Assert.Equal("Valor Flete", header[^3]);
+        Assert.Equal(["Cliente", "Documento de identidad"], header.TakeLast(2));
         var row = sheet.Rows[1];
         Assert.Equal(header.Count, row.Count);
         Assert.Equal("FV", row[0]);
@@ -549,7 +550,7 @@ public sealed class OrderExportApiTests
 
         var headers = sheet.Rows[0].ToList();
         var column = headers.IndexOf("Total facturado");
-        Assert.Equal(headers.Count - 3, column); // Detrás van "Retencion" y "Valor Flete".
+        Assert.Equal(headers.Count - 5, column); // Detrás van "Retencion", "Valor Flete", "Cliente" y "Documento de identidad".
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         Assert.True(detail!.Order.Total > 0m);
@@ -573,7 +574,7 @@ public sealed class OrderExportApiTests
 
         var headers = sheet.Rows[0].ToList();
         var column = headers.IndexOf("Retencion");
-        Assert.Equal(headers.Count - 2, column); // "Valor Flete" va detrás.
+        Assert.Equal(headers.Count - 4, column); // Detrás van "Valor Flete", "Cliente" y "Documento de identidad".
         var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{order.Id}", TestContext.Current.CancellationToken);
         Assert.True(detail!.Order.RetentionAmount > 0m);
@@ -605,9 +606,9 @@ public sealed class OrderExportApiTests
         var sheet = await ExportOrdersSheetAsync(client, factory, tenantId);
 
         var headers = sheet.Rows[0].ToList();
-        Assert.Equal("Valor Flete", headers[^1]);
-        Assert.Equal(15_000m, decimal.Parse(sheet.Rows[1][^1], CultureInfo.InvariantCulture));
-        Assert.True(sheet.NumericCells[1][^1]);
+        Assert.Equal("Valor Flete", headers[^3]);
+        Assert.Equal(15_000m, decimal.Parse(sheet.Rows[1][^3], CultureInfo.InvariantCulture));
+        Assert.True(sheet.NumericCells[1][^3]);
     }
 
     // El GET trae "coordinadora_city" oculta, al final; el PUT la devuelve visible y en su lugar.
@@ -660,7 +661,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
-        Assert.Equal(50, row.Count);
+        Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders.Length, row.Count);
         Assert.Equal("QEP Comercial S.A.S.", row[0]);
         Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
         Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });
