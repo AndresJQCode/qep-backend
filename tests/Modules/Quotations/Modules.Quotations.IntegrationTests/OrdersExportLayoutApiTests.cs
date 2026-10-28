@@ -37,36 +37,36 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(65, layout.Columns.Count);
+        Assert.Equal(71, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
         // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), que nacen ocultas y
-        // lo dicen en defaultVisible; "variant" (2026-10-21) y "customer_person_type" (2026-10-26) también nacen ocultas.
+        // lo dicen en defaultVisible; "variant" (2026-10-21) y las de cliente y facturación (2026-10-28), salvo «Cliente» y «Documento de identidad», también nacen ocultas.
         Assert.All(layout.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true), layout.Columns[18]);
-        Assert.Equal(38, layout.Columns[37].DefaultPosition);
-        Assert.Equal(new ColumnPayload("Catalog", "tax_rate", "Tasa IVA", 39, true, "Tasa IVA", null, true), layout.Columns[38]);
-        Assert.Equal(new ColumnPayload("Catalog", "company_tax_id", "NIT Empresa", 40, true, "NIT Empresa", null, true), layout.Columns[39]);
+        Assert.Equal(36, layout.Columns[35].DefaultPosition);
+        Assert.Equal(new ColumnPayload("Catalog", "tax_rate", "Tasa IVA", 37, true, "Tasa IVA", null, true), layout.Columns[36]);
+        Assert.Equal(new ColumnPayload("Catalog", "company_tax_id", "NIT Empresa", 38, true, "NIT Empresa", null, true), layout.Columns[37]);
         Assert.Equal(
-            new ColumnPayload("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad Coordinadora", null, false),
-            layout.Columns[40]);
+            new ColumnPayload("Catalog", "coordinadora_city", "Ciudad Coordinadora", 39, false, "Ciudad Coordinadora", null, false),
+            layout.Columns[38]);
         Assert.Equal(
-            new ColumnPayload("Catalog", "payment_method_1", "Forma de pago 1", 42, false, "Forma de pago 1", null, false),
-            layout.Columns[41]);
+            new ColumnPayload("Catalog", "payment_method_1", "Forma de pago 1", 40, false, "Forma de pago 1", null, false),
+            layout.Columns[39]);
         Assert.Equal(
-            new ColumnPayload("Catalog", "payment_method_5", "Forma de pago 5", 46, false, "Forma de pago 5", null, false),
+            new ColumnPayload("Catalog", "payment_method_5", "Forma de pago 5", 44, false, "Forma de pago 5", null, false),
+            layout.Columns[43]);
+        Assert.Equal(
+            new ColumnPayload("Catalog", "carrier", "Transportadora", 45, false, "Transportadora", null, false),
+            layout.Columns[44]);
+        Assert.Equal(
+            new ColumnPayload("Catalog", "order_total", "Total facturado", 46, true, "Total facturado", null, true),
             layout.Columns[45]);
         Assert.Equal(
-            new ColumnPayload("Catalog", "carrier", "Transportadora", 47, false, "Transportadora", null, false),
+            new ColumnPayload("Catalog", "retention_amount", "Retencion", 47, true, "Retencion", null, true),
             layout.Columns[46]);
-        Assert.Equal(
-            new ColumnPayload("Catalog", "order_total", "Total facturado", 48, true, "Total facturado", null, true),
-            layout.Columns[47]);
-        Assert.Equal(
-            new ColumnPayload("Catalog", "retention_amount", "Retencion", 49, true, "Retencion", null, true),
-            layout.Columns[48]);
     }
 
     // D9: el primer PUT viaja con "1" y la fila nace en 2. El GET siguiente la devuelve tal cual.
@@ -89,8 +89,8 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        // 65 del catálogo (desde «Email facturación», 2026-10-28) + 1 fija.
-        Assert.Equal(66, saved.Columns.Count);
+        // 71 del catálogo (reorganización de cliente y facturación, 2026-10-28) + 1 fija.
+        Assert.Equal(72, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -278,8 +278,8 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        // 65 del catálogo (desde «Email facturación», 2026-10-28) + la repetida.
-        Assert.Equal(66, layout!.Columns.Count);
+        // 71 del catálogo (reorganización de cliente y facturación, 2026-10-28) + la repetida.
+        Assert.Equal(72, layout!.Columns.Count);
         Assert.Equal(
             [
                 new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true),
@@ -448,24 +448,28 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(65, layout!.Columns.Count);
+        Assert.Equal(71, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
         Assert.Equal(
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier", "order_total", "retention_amount",
-                "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant", "customer_person_type",
-                "customer_own_name", "customer_own_identification", "billing_identification_type", "billing_address",
-                "billing_city", "billing_department", "billing_phone", "billing_email", "billing_name"],
-            layout.Columns.TakeLast(25).Select(column => column.Key));
+                "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant",
+                "customer_name", "customer_identification_type", "customer_identification", "customer_person_type",
+                "customer_address", "customer_city", "customer_department", "customer_phone", "customer_email",
+                "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
+                "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email"],
+            layout.Columns.TakeLast(33).Select(column => column.Key));
         // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05), "retention_amount"
         // (ajuste 2026-10-06) y "freight_amount" (2026-10-17) nacen visibles.
-        Assert.All(layout.Columns.TakeLast(25).Take(7), column => Assert.False(column.Visible));
-        // Y "freight_amount" (flete, 2026-10-17) nace visible; el resto del flete, "variant"
-        // (variantes, 2026-10-21), "customer_person_type" (2026-10-26) y las de cliente y
-        // facturación (2026-10-28), ocultos.
-        Assert.All(layout.Columns.TakeLast(18).Take(3), column => Assert.True(column.Visible));
-        Assert.All(layout.Columns.TakeLast(15), column => Assert.False(column.Visible));
+        Assert.All(layout.Columns.TakeLast(33).Take(7), column => Assert.False(column.Visible));
+        Assert.All(layout.Columns.TakeLast(33).Skip(7).Take(3), column => Assert.True(column.Visible));
+        // El resto del flete y "variant" (2026-10-21) nacen ocultos.
+        Assert.All(layout.Columns.TakeLast(33).Skip(10).Take(5), column => Assert.False(column.Visible));
+        // Grupos de cliente y facturación (2026-10-28): sólo «Cliente» y «Documento de identidad» nacen visibles.
+        Assert.Equal(
+            ["customer_name", "customer_identification"],
+            layout.Columns.TakeLast(18).Where(column => column.Visible).Select(column => column.Key));
     }
 
     // D10: restaurar es un PUT con el catálogo en su orden y nombres, sin fijas. La fila queda.
@@ -488,7 +492,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(65, layout!.Columns.Count);
+        Assert.Equal(71, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }

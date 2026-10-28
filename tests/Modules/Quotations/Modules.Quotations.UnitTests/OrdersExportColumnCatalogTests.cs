@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 65 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 71 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -18,15 +18,16 @@ public sealed class OrdersExportColumnCatalogTests
         "advisor_code", "bank", "account",
         "proof_amount_1", "proof_url_1", "proof_amount_2", "proof_url_2", "proof_amount_3", "proof_url_3",
         "proof_amount_4", "proof_url_4", "proof_amount_5", "proof_url_5",
-        "unit_price_without_tax", "order_date", "customer_name", "customer_identification",
+        "unit_price_without_tax", "order_date",
         "bank_account", "proof_amount_total", "tax_rate", "company_tax_id", "coordinadora_city",
         "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5",
         "carrier", "order_total", "retention_amount",
         "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery",
-        "variant", "customer_person_type",
-        "customer_own_name", "customer_own_identification",
-        "billing_identification_type", "billing_address", "billing_city", "billing_department",
-        "billing_phone", "billing_email", "billing_name",
+        "variant",
+        "customer_name", "customer_identification_type", "customer_identification", "customer_person_type",
+        "customer_address", "customer_city", "customer_department", "customer_phone", "customer_email",
+        "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
+        "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
     ];
 
     private static readonly string[] Headers =
@@ -39,21 +40,23 @@ public sealed class OrdersExportColumnCatalogTests
         "V. Comprobante 1", "URL Comprobante 1", "V. Comprobante 2", "URL Comprobante 2",
         "V. Comprobante 3", "URL Comprobante 3", "V. Comprobante 4", "URL Comprobante 4",
         "V. Comprobante 5", "URL Comprobante 5",
-        "Valor Unit sin IVA", "Fecha Pedido", "Cliente", "Documento de identidad",
+        "Valor Unit sin IVA", "Fecha Pedido",
         "Banco y cuenta", "Total consignado", "Tasa IVA", "NIT Empresa", "Ciudad Coordinadora",
         "Forma de pago 1", "Forma de pago 2", "Forma de pago 3", "Forma de pago 4", "Forma de pago 5",
         "Transportadora", "Total facturado", "Retencion",
         "Valor Flete", "Flete sin IVA", "IVA Flete", "Pago Flete", "Contraentrega",
-        "Variante", "Tipo de persona",
-        "Nombre cliente", "Identificación cliente",
-        "Tipo de identificación facturación", "Dirección facturación", "Ciudad facturación", "Departamento facturación",
-        "Teléfono facturación", "Email facturación", "Nombre facturación",
+        "Variante",
+        "Cliente", "Tipo de identificación cliente", "Documento de identidad", "Tipo de persona cliente",
+        "Dirección cliente", "Ciudad cliente", "Departamento cliente", "Teléfono cliente", "Email cliente",
+        "Nombre facturación", "Tipo de identificación facturación", "Identificación facturación",
+        "Tipo de persona facturación", "Dirección facturación", "Ciudad facturación", "Departamento facturación",
+        "Teléfono facturación", "Email facturación",
     ];
 
     [Fact]
-    public void HasTheSixtyFiveColumnsOfTheSpecInItsOrder()
+    public void HasTheSeventyOneColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(65, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(71, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -64,11 +67,11 @@ public sealed class OrdersExportColumnCatalogTests
     [Fact]
     public void FreightColumnsAreAppendedAtTheEnd()
     {
-        Assert.Equal(new OrdersExportCatalogColumn("freight_amount", "Valor Flete", 16), OrdersExportColumnCatalog.Columns[49]);
-        Assert.Equal(new OrdersExportCatalogColumn("freight_without_tax", "Flete sin IVA", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[50]);
-        Assert.Equal(new OrdersExportCatalogColumn("freight_tax", "IVA Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[51]);
-        Assert.Equal(new OrdersExportCatalogColumn("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[52]);
-        Assert.Equal(new OrdersExportCatalogColumn("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[53]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_amount", "Valor Flete", 16), OrdersExportColumnCatalog.Columns[47]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_without_tax", "Flete sin IVA", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[48]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_tax", "IVA Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[49]);
+        Assert.Equal(new OrdersExportCatalogColumn("freight_charge_mode", "Pago Flete", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[50]);
+        Assert.Equal(new OrdersExportCatalogColumn("cash_on_delivery", "Contraentrega", 16, DefaultVisible: false), OrdersExportColumnCatalog.Columns[51]);
     }
 
     // Spec 2026-10-20 variantes §7: el nombre visible de la variante, al final como toda columna nueva y
@@ -79,72 +82,79 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("variant", "Variante", 36, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[54]);
-        Assert.Equal(54, OrdersExportColumnCatalog.IndexOf("variant"));
+            OrdersExportColumnCatalog.Columns[52]);
+        Assert.Equal(52, OrdersExportColumnCatalog.IndexOf("variant"));
         Assert.Equal(new OrdersExportCatalogColumn("product_code", "Cod. Producto", 18), OrdersExportColumnCatalog.Columns[1]);
     }
 
-    // Spec 2026-10-26 tipo de persona: al final de todo, oculta por defecto.
+    // Ajuste 2026-10-28: dos grupos al final de todo. «customer_*» es la ficha del cliente («Cliente» y
+    // «Documento de identidad» siguen visibles, el resto oculto); «billing_*» son los datos para la factura,
+    // todos ocultos. Reemplazan a «customer_own_*» y a las «billing_*» sueltas.
     [Fact]
-    public void CustomerPersonTypeIsAppendedAfterVariantHiddenByDefault()
-    {
-        Assert.Equal(
-            new OrdersExportCatalogColumn("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[55]);
-        Assert.Equal(55, OrdersExportColumnCatalog.IndexOf("customer_person_type"));
-    }
-
-    // Ajuste 2026-10-28: los datos de la ficha del cliente y los de facturación, lado a lado. Al final de
-    // todo y ocultas por defecto, mismo criterio que «customer_person_type»: ningún Excel que ya existe cambia.
-    [Fact]
-    public void CustomerAndBillingColumnsAreAppendedAfterCustomerPersonTypeHiddenByDefault()
+    public void CustomerGroupIsAppendedAfterVariant()
     {
         Assert.Equal(
             [
-                new OrdersExportCatalogColumn("customer_own_name", "Nombre cliente", 30, DefaultVisible: false),
-                new OrdersExportCatalogColumn("customer_own_identification", "Identificación cliente", 18, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_name", "Cliente", 30),
+                new OrdersExportCatalogColumn("customer_identification_type", "Tipo de identificación cliente", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_identification", "Documento de identidad", 18),
+                new OrdersExportCatalogColumn("customer_person_type", "Tipo de persona cliente", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_address", "Dirección cliente", 40, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_city", "Ciudad cliente", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_department", "Departamento cliente", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_phone", "Teléfono cliente", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_email", "Email cliente", 30, DefaultVisible: false),
+            ],
+            OrdersExportColumnCatalog.Columns.Skip(53).Take(9));
+        Assert.Equal(53, OrdersExportColumnCatalog.IndexOf("customer_name"));
+        Assert.Equal(53, OrdersExportColumnCatalog.IndexOf("variant") + 1);
+    }
+
+    [Fact]
+    public void BillingGroupIsAppendedLastHiddenByDefault()
+    {
+        Assert.Equal(
+            [
+                new OrdersExportCatalogColumn("billing_name", "Nombre facturación", 30, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_identification_type", "Tipo de identificación facturación", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_identification_number", "Identificación facturación", 18, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_person_type", "Tipo de persona facturación", 16, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_address", "Dirección facturación", 40, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_city", "Ciudad facturación", 20, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_department", "Departamento facturación", 20, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
                 new OrdersExportCatalogColumn("billing_email", "Email facturación", 30, DefaultVisible: false),
             ],
-            OrdersExportColumnCatalog.Columns.Skip(56).Take(8));
-        Assert.Equal(56, OrdersExportColumnCatalog.IndexOf("customer_own_name"));
-        Assert.Equal(63, OrdersExportColumnCatalog.IndexOf("billing_email"));
+            OrdersExportColumnCatalog.Columns.Skip(62));
+        Assert.Equal(62, OrdersExportColumnCatalog.IndexOf("billing_name"));
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("billing_email"));
     }
 
-    // Ajuste 2026-10-28: a nombre de quién sale la factura (consumidor final, parte de facturación,
-    // razón social o ficha). «Cliente» pasó a ser el nombre de la ficha, así que esta es la única que lo
-    // dice. Al final de todo y oculta por defecto.
+    // Se retiraron las llaves «customer_own_*»: un layout guardado que las nombre las pierde (Effective descarta
+    // las desconocidas).
     [Fact]
-    public void BillingNameIsAppendedLastHiddenByDefault()
+    public void TheRetiredCustomerOwnKeysAreGone()
     {
-        Assert.Equal(
-            new OrdersExportCatalogColumn("billing_name", "Nombre facturación", 30, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[^1]);
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("billing_name"));
-        Assert.Equal(64, OrdersExportColumnCatalog.IndexOf("billing_name"));
-        Assert.Equal(OrdersExportColumnCatalog.IndexOf("billing_email") + 1, OrdersExportColumnCatalog.IndexOf("billing_name"));
+        Assert.False(OrdersExportColumnCatalog.Contains("customer_own_name"));
+        Assert.False(OrdersExportColumnCatalog.Contains("customer_own_identification"));
     }
 
     [Fact]
-    public void OrderDateAndCustomerNameAreAppendedAtTheEnd()
+    public void OrderDateStaysAndCustomerNameMovedToTheEnd()
     {
         Assert.Equal(new OrdersExportCatalogColumn("order_date", "Fecha Pedido", 14), OrdersExportColumnCatalog.Columns[33]);
-        Assert.Equal(new OrdersExportCatalogColumn("customer_name", "Cliente", 30), OrdersExportColumnCatalog.Columns[34]);
+        Assert.Equal(new OrdersExportCatalogColumn("customer_name", "Cliente", 30), OrdersExportColumnCatalog.Columns[53]);
     }
 
     // Ajuste 2026-09-26: el número de documento de identidad de quien nombra "Cliente". Va detrás de
     // todas, y "document" sigue siendo el CUC: otro ERP puede estar leyéndolo de ahí.
     [Fact]
-    public void CustomerIdentificationIsAppendedAfterCustomerName()
+    public void CustomerIdentificationIsTheFichasNumberInTheCustomerGroup()
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("customer_identification", "Documento de identidad", 18),
-            OrdersExportColumnCatalog.Columns[35]);
-        Assert.Equal(35, OrdersExportColumnCatalog.IndexOf("customer_identification"));
+            OrdersExportColumnCatalog.Columns[55]);
+        Assert.Equal(55, OrdersExportColumnCatalog.IndexOf("customer_identification"));
         Assert.Equal(13, OrdersExportColumnCatalog.IndexOf("document"));
     }
 
@@ -155,10 +165,10 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("bank_account", "Banco y cuenta", 36),
-            OrdersExportColumnCatalog.Columns[36]);
+            OrdersExportColumnCatalog.Columns[34]);
         Assert.Equal(
             new OrdersExportCatalogColumn("proof_amount_total", "Total consignado", 18),
-            OrdersExportColumnCatalog.Columns[37]);
+            OrdersExportColumnCatalog.Columns[35]);
         Assert.Equal(20, OrdersExportColumnCatalog.IndexOf("bank"));
         Assert.Equal(22, OrdersExportColumnCatalog.IndexOf("proof_amount_1"));
     }
@@ -170,8 +180,8 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("tax_rate", "Tasa IVA", 12),
-            OrdersExportColumnCatalog.Columns[38]);
-        Assert.Equal(38, OrdersExportColumnCatalog.IndexOf("tax_rate"));
+            OrdersExportColumnCatalog.Columns[36]);
+        Assert.Equal(36, OrdersExportColumnCatalog.IndexOf("tax_rate"));
         Assert.Equal(4, OrdersExportColumnCatalog.IndexOf("tax"));
     }
 
@@ -183,8 +193,8 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("company_tax_id", "NIT Empresa", 18),
-            OrdersExportColumnCatalog.Columns[39]);
-        Assert.Equal(39, OrdersExportColumnCatalog.IndexOf("company_tax_id"));
+            OrdersExportColumnCatalog.Columns[37]);
+        Assert.Equal(37, OrdersExportColumnCatalog.IndexOf("company_tax_id"));
     }
 
     // Ajuste 2026-10-02: la ciudad como la escribe Coordinadora, para la guía. Detrás de todas, y
@@ -196,8 +206,8 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("coordinadora_city", "Ciudad Coordinadora", 30, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[40]);
-        Assert.Equal(40, OrdersExportColumnCatalog.IndexOf("coordinadora_city"));
+            OrdersExportColumnCatalog.Columns[38]);
+        Assert.Equal(38, OrdersExportColumnCatalog.IndexOf("coordinadora_city"));
         Assert.Equal(12, OrdersExportColumnCatalog.IndexOf("city"));
     }
 
@@ -213,16 +223,16 @@ public sealed class OrdersExportColumnCatalogTests
             Enumerable.Range(1, OrdersExportColumnCatalog.PaymentDateColumns)
                 .Select(number => new OrdersExportCatalogColumn(
                     $"payment_method_{number}", $"Forma de pago {number}", 36, DefaultVisible: false)),
-            OrdersExportColumnCatalog.Columns.Skip(41).Take(OrdersExportColumnCatalog.PaymentDateColumns));
-        Assert.Equal(45, OrdersExportColumnCatalog.IndexOf("payment_method_5"));
-        Assert.Equal(36, OrdersExportColumnCatalog.IndexOf("bank_account"));
+            OrdersExportColumnCatalog.Columns.Skip(39).Take(OrdersExportColumnCatalog.PaymentDateColumns));
+        Assert.Equal(43, OrdersExportColumnCatalog.IndexOf("payment_method_5"));
+        Assert.Equal(34, OrdersExportColumnCatalog.IndexOf("bank_account"));
         Assert.Equal(
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier",
                 "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant",
-                "customer_person_type",
-                "customer_own_name", "customer_own_identification",
-                "billing_identification_type", "billing_address", "billing_city", "billing_department",
-                "billing_phone", "billing_email", "billing_name"],
+                "customer_identification_type", "customer_person_type", "customer_address", "customer_city",
+                "customer_department", "customer_phone", "customer_email",
+                "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
+                "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
@@ -235,8 +245,8 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("carrier", "Transportadora", 20, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[46]);
-        Assert.Equal(46, OrdersExportColumnCatalog.IndexOf("carrier"));
+            OrdersExportColumnCatalog.Columns[44]);
+        Assert.Equal(44, OrdersExportColumnCatalog.IndexOf("carrier"));
     }
 
     // Ajuste 2026-10-05: lo facturado del pedido (Quotation.Total), repetido en cada línea. Al final,
@@ -247,9 +257,9 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("order_total", "Total facturado", 18),
-            OrdersExportColumnCatalog.Columns[47]);
-        Assert.Equal(47, OrdersExportColumnCatalog.IndexOf("order_total"));
-        Assert.Equal(37, OrdersExportColumnCatalog.IndexOf("proof_amount_total"));
+            OrdersExportColumnCatalog.Columns[45]);
+        Assert.Equal(45, OrdersExportColumnCatalog.IndexOf("order_total"));
+        Assert.Equal(35, OrdersExportColumnCatalog.IndexOf("proof_amount_total"));
     }
 
     // Ajuste 2026-10-06: la retención del pedido (Quotation.RetentionAmount), repetida en cada línea,
@@ -261,8 +271,8 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(
             new OrdersExportCatalogColumn("retention_amount", "Retencion", 16),
-            OrdersExportColumnCatalog.Columns[48]);
-        Assert.Equal(48, OrdersExportColumnCatalog.IndexOf("retention_amount"));
+            OrdersExportColumnCatalog.Columns[46]);
+        Assert.Equal(46, OrdersExportColumnCatalog.IndexOf("retention_amount"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("order_total") + 1, OrdersExportColumnCatalog.IndexOf("retention_amount"));
     }
 
@@ -295,7 +305,7 @@ public sealed class OrdersExportColumnCatalogTests
     {
         Assert.Equal(0, OrdersExportColumnCatalog.IndexOf("company"));
         Assert.Equal(32, OrdersExportColumnCatalog.IndexOf("unit_price_without_tax"));
-        Assert.Equal(34, OrdersExportColumnCatalog.IndexOf("customer_name"));
+        Assert.Equal(53, OrdersExportColumnCatalog.IndexOf("customer_name"));
         Assert.Equal(-1, OrdersExportColumnCatalog.IndexOf("Company"));
         Assert.Equal(-1, OrdersExportColumnCatalog.IndexOf(" company"));
         Assert.True(OrdersExportColumnCatalog.Contains("email"));

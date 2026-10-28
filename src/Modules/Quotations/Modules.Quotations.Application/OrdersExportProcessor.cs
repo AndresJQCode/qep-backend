@@ -242,7 +242,7 @@ public sealed class OrdersExportProcessor(
         var customerName = customer?.Name ?? string.Empty;
         var billingName = BilledNameFor(order, billingParty, customer);
         var identification = BilledIdentificationFor(order, billingParty, customer);
-        var personType = BilledPersonTypeFor(order, billingParty, customer);
+        var billingPersonType = BilledPersonTypeFor(order, billingParty, customer);
         var billingContact = BilledContactFor(order, billingParty, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
@@ -319,8 +319,6 @@ public sealed class OrdersExportProcessor(
                 .. proofCells,
                 ExportCell.OfNumber(item.UnitPriceWithoutTax),
                 ExportCell.OfText(orderDate),
-                ExportCell.OfText(customerName),
-                ExportCell.OfText(identification),
                 ExportCell.OfText(bankAndAccount),
                 proofAmountTotal,
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
@@ -336,16 +334,26 @@ public sealed class OrdersExportProcessor(
                 freightChargeMode,
                 cashOnDelivery,
                 variant,
-                ExportCell.OfText(personType),
-                ExportCell.OfText(customer?.Name ?? string.Empty),
+                // Grupo customer_*: la ficha del cliente, nunca la parte de facturación ni el consumidor final.
+                ExportCell.OfText(customerName),
+                ExportCell.OfText(customer?.IdentificationType ?? string.Empty),
                 ExportCell.OfText(customer?.IdentificationNumber ?? string.Empty),
+                ExportCell.OfText(customer?.PersonType ?? string.Empty),
+                ExportCell.OfText(customer?.Address ?? string.Empty),
+                ExportCell.OfText(customer?.CityName ?? string.Empty),
+                ExportCell.OfText(customer?.DepartmentName ?? string.Empty),
+                ExportCell.OfText(customer?.Phone ?? string.Empty),
+                ExportCell.OfText(customer?.Email ?? string.Empty),
+                // Grupo billing_*: a quién se factura (OrderBilledParty.SourceFor).
+                ExportCell.OfText(billingName),
                 ExportCell.OfText(billingContact.IdentificationType),
+                ExportCell.OfText(identification),
+                ExportCell.OfText(billingPersonType),
                 ExportCell.OfText(billingContact.Address),
                 ExportCell.OfText(billingContact.City),
                 ExportCell.OfText(billingContact.Department),
                 ExportCell.OfText(billingContact.Phone),
                 ExportCell.OfText(billingContact.Email),
-                ExportCell.OfText(billingName),
             ];
         }
     }
@@ -396,13 +404,15 @@ public sealed class OrdersExportProcessor(
             _ => customer?.IdentificationNumber ?? string.Empty
         };
 
-    // Spec 2026-10-26 tipo de persona: la misma fuente que «Documento de identidad» (SourceFor), para que las
-    // dos celdas describan siempre a la misma persona. Sin filtro de país: el Excel muestra lo guardado.
+    // Spec 2026-10-26 tipo de persona (reubicada el 2026-10-28 en «billing_person_type»): la misma fuente que
+    // «Identificación facturación» (SourceFor), para que las dos celdas describan siempre a la misma persona. Sin filtro
+    // de país: el Excel muestra lo guardado.
     private static string BilledPersonTypeFor(
         Order order, OrderParty? billing, QuotationCustomerRef? customer) =>
         OrderBilledParty.SourceFor(order.BillsToFinalConsumer, billing) switch
         {
-            BilledPartySource.FinalConsumer => PartyPersonType.Natural.ToWireValue(),
+            // El consumidor final sólo lleva su número genérico: el tipo de persona queda vacío (2026-10-28).
+            BilledPartySource.FinalConsumer => string.Empty,
             // Una parte sin tipo lo deja vacío, nunca con el del cliente, que es otra persona.
             BilledPartySource.BillingParty => billing!.PersonType?.ToWireValue() ?? string.Empty,
             _ => customer?.PersonType ?? string.Empty
