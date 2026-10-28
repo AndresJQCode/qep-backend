@@ -129,6 +129,11 @@ public static class OrdersExportColumnCatalog
         // (consumidor final, parte de facturación o cliente; ver BilledPersonTypeFor). Oculta por defecto y
         // al final, mismo criterio que «variant»: el layout sembrado de origen-botanico la prende.
         new("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
+        // Ajuste 2026-10-28: la razón social de la ficha del cliente (`Customer.BusinessName`), repetida en
+        // cada línea. No es la de quien se factura: «Cliente» ya resuelve ese nombre, y esta sale igual
+        // aunque el pedido facture a una parte propia o al consumidor final. Vacía si la ficha no la tiene.
+        // Oculta por defecto y al final, mismo criterio que «customer_person_type».
+        new("business_name", "Razon social", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

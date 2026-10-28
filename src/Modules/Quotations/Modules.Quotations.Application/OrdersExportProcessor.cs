@@ -318,6 +318,7 @@ public sealed class OrdersExportProcessor(
                 contraentrega,
                 variante,
                 ExportCell.OfText(tipoPersona),
+                ExportCell.OfText(customer?.BusinessName ?? string.Empty),
             ];
         }
     }

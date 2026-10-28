@@ -23,7 +23,7 @@ public sealed class OrdersExportColumnCatalogTests
         "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5",
         "carrier", "order_total", "retention_amount",
         "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery",
-        "variant", "customer_person_type",
+        "variant", "customer_person_type", "business_name",
     ];
 
     private static readonly string[] Headers =
@@ -41,13 +41,13 @@ public sealed class OrdersExportColumnCatalogTests
         "Forma de pago 1", "Forma de pago 2", "Forma de pago 3", "Forma de pago 4", "Forma de pago 5",
         "Transportadora", "Total facturado", "Retencion",
         "Valor Flete", "Flete sin IVA", "IVA Flete", "Pago Flete", "Contraentrega",
-        "Variante", "Tipo de persona",
+        "Variante", "Tipo de persona", "Razon social",
     ];
 
     [Fact]
-    public void HasTheFiftySixColumnsOfTheSpecInItsOrder()
+    public void HasTheFiftySevenColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(56, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(57, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -85,7 +85,18 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(
             new OrdersExportCatalogColumn("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
             OrdersExportColumnCatalog.Columns[55]);
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("customer_person_type"));
+        Assert.Equal(55, OrdersExportColumnCatalog.IndexOf("customer_person_type"));
+    }
+
+    // La razón social de la ficha del cliente, al final de todo y oculta por defecto: ningún Excel que
+    // ya existe gana una columna que nadie pidió.
+    [Fact]
+    public void BusinessNameIsAppendedAfterCustomerPersonTypeHiddenByDefault()
+    {
+        Assert.Equal(
+            new OrdersExportCatalogColumn("business_name", "Razon social", 30, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[56]);
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("business_name"));
     }
 
     [Fact]
@@ -177,7 +188,8 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(36, OrdersExportColumnCatalog.IndexOf("bank_account"));
         Assert.Equal(
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier",
-                "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant"],
+                "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant",
+                "customer_person_type", "business_name"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 

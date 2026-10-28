@@ -751,6 +751,64 @@ public sealed class OrdersExportProcessorTests
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Natural"), cells[0]));
     }
 
+    // «Razon social» es la de la ficha del cliente, no la de quien se factura: no depende de la parte de
+    // facturación ni de BillingUsesBusinessName. Sin razón social sale vacía.
+    private static InMemoryOrdersExportLayoutRepository BusinessNameVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("business_name", "Razon social", visible: true));
+
+    [Fact]
+    public async Task BusinessNameIsTheCustomersAndIsRepeatedOnEveryLine()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Distribuciones Andinas S.A.S." });
+        var row = NewRow(
+            "PED-2026-0001",
+            parties: QuotationParties.Empty,
+            items:
+            [
+                (ProductId, 2m, 1000m, 0m, 19),
+                (OtherProductId, 5m, 500m, 0m, 19),
+            ]);
+
+        await NewProcessor(
+                new StubOrderListRepository(row),
+                writer,
+                customers: customers,
+                layouts: BusinessNameVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Razon social", writer.Columns[0].Header);
+        Assert.Equal(2, writer.Rows.Count);
+        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Distribuciones Andinas S.A.S."), cells[0]));
+    }
+
+    [Fact]
+    public async Task BusinessNameIsEmptyWhenTheCustomerHasNone()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = null });
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
+                writer,
+                customers: customers,
+                layouts: BusinessNameVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[0]);
+    }
+
+    [Fact]
+    public async Task WithoutALayoutThatShowsItBusinessNameIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Razon social");
+    }
+
     // Oculta por defecto: el Excel de un tenant que no la prende no cambia.
     [Fact]
     public async Task WithoutALayoutThatShowsItPersonTypeIsNotWritten()
