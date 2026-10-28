@@ -153,6 +153,24 @@ public static class OrdersExportColumnCatalog
         new("billing_department", "Departamento facturación", 20, DefaultVisible: false),
         new("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
         new("billing_email", "Email facturación", 30, DefaultVisible: false),
+        // Ajuste 2026-10-28: shipping_* = a quién se despacha, mismos campos y anchos que billing_*. Con parte de
+        // envío salen sus datos (lo que no trae queda vacío, nunca con lo del cliente, que es otra persona). Sin
+        // parte de envío —recoger en tienda incluido— caen a la ficha del cliente, la misma regla que las columnas
+        // de entrega («Ciudad», «Direccion», «Telefono», «Email», «Ciudad Coordinadora»); nombre, identificación,
+        // tipo de persona y departamento salen igual que su «customer_*». Todas nacen ocultas y al final, así que
+        // ningún layout guardado cambia.
+        new("shipping_name", "Nombre envío", 30, DefaultVisible: false),
+        new("shipping_identification_type", "Tipo de identificación envío", 16, DefaultVisible: false),
+        new("shipping_identification_number", "Identificación envío", 18, DefaultVisible: false),
+        new("shipping_person_type", "Tipo de persona envío", 16, DefaultVisible: false),
+        new("shipping_address", "Dirección envío", 40, DefaultVisible: false),
+        new("shipping_city", "Ciudad envío", 20, DefaultVisible: false),
+        // El nombre de esa misma ciudad como lo escribe Coordinadora (cities.coordinadora_name), con la regla de
+        // «coordinadora_city» y el mismo respaldo del grupo; vacía si la ciudad no tiene nombre de Coordinadora.
+        new("shipping_city_coordinadora", "Ciudad Coordinadora envío", 30, DefaultVisible: false),
+        new("shipping_department", "Departamento envío", 20, DefaultVisible: false),
+        new("shipping_phone", "Teléfono envío", 16, DefaultVisible: false),
+        new("shipping_email", "Email envío", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.
