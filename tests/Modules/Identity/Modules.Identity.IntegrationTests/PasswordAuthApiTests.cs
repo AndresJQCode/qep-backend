@@ -709,6 +709,46 @@ public sealed class PasswordAuthApiTests
             (await LoginAsync(client, NewEmail(), "whatever password")).StatusCode);
     }
 
+    // Cierre del tercer anti-objetivo: ni la auditoría ni las notificaciones guardan una contraseña,
+    // un token crudo o el hash de un token.
+    [Fact]
+    public async Task NoAuditEntryOrNotificationCarriesAPasswordOrAToken()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        await using var factory = new PasswordAuthApiFactory(cs, channel);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        const string oldPassword = "the original secret phrase";
+        const string newPassword = "a completely new secret phrase";
+
+        await RegisterAsync(client, email, oldPassword, NewSlug());
+        var userId = await FindUserIdAsync(cs, email);
+        var verifyToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.EmailVerificationRequested, userId);
+        Assert.Equal(HttpStatusCode.OK, (await VerifyAsync(client, verifyToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, oldPassword)).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Accepted, (await ForgotAsync(client, email)).StatusCode);
+        var resetToken = await LatestOutboxTokenAsync(
+            cs, IdentityIntegrationEvents.PasswordResetRequested, userId);
+        Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(client, resetToken, newPassword)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, newPassword)).StatusCode);
+
+        await WaitUntilAsync(() => Task.FromResult(channel.Sent.Count >= 2), TimeSpan.FromSeconds(45)); // el worker sondea cada 15 s
+
+        var audit = await AllAuditTextAsync(cs);
+        var notifications = await AllNotificationTextAsync(cs);
+        foreach (var secret in new[] { oldPassword, newPassword, verifyToken, resetToken })
+        {
+            Assert.DoesNotContain(secret, audit);
+            Assert.DoesNotContain(secret, notifications);
+        }
+
+        Assert.DoesNotContain(EmailTokenCodec.Hash(verifyToken), audit);
+    }
+
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
     {
         public Task<Guid> RegisterOwnerTenantAsync(

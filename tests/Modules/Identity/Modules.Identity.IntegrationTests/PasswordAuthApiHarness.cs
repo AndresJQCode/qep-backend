@@ -291,6 +291,24 @@ internal static class PasswordAuthApiHarness
             ?? throw new InvalidOperationException($"No {eventName} outbox row for user {userId}.");
     }
 
+    // Todo el texto de la auditoría como JSON, para buscar secretos con Assert.DoesNotContain.
+    public static Task<string> AllAuditTextAsync(string connectionString) =>
+        AllRowsAsTextAsync(connectionString, "audit.entries");
+
+    // Todo el texto de las notificaciones (destinatario, asunto, cuerpos) como JSON.
+    public static Task<string> AllNotificationTextAsync(string connectionString) =>
+        AllRowsAsTextAsync(connectionString, "notifications.notifications");
+
+    private static async Task<string> AllRowsAsTextAsync(string connectionString, string table)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT coalesce(string_agg(row_to_json(e)::text, ''), '') FROM {table} e",
+            connection);
+        return (string)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
     public sealed record RegisteredOwner(Guid UserId, Guid TenantId);
 
     // Registra, toma el token de la outbox y lo verifica: deja al cliente con la cookie de sesión.
