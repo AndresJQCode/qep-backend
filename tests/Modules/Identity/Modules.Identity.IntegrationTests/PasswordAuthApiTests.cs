@@ -44,7 +44,7 @@ public sealed class PasswordAuthApiTests
     }
 
     [Fact]
-    public async Task RegisterWithAnExistingEmailCreatesNothingAndQueuesTheExistingAccountMail()
+    public async Task RegisterWithAnExistingEmailCreatesTheNewTenantForThatUserAndQueuesTheExistingAccountMail()
     {
         await using var database = await StartDatabaseAsync();
         var cs = database.GetConnectionString();
@@ -62,7 +62,9 @@ public sealed class PasswordAuthApiTests
 
         Assert.Equal(HttpStatusCode.Accepted, second.StatusCode);
         Assert.Equal("{}", await second.Content.ReadAsStringAsync(ct));
-        Assert.Equal(0, await CountTenantsWithSlugAsync(cs, slug2));
+        Assert.Equal(1, await CountTenantsWithSlugAsync(cs, slug2));
+        Assert.Equal(1, await CountUsersWithEmailAsync(cs, email));
+        // La contraseña del segundo request no pisa la credencial: el usuario ya existía.
         Assert.Equal(hashBefore, await CredentialHashAsync(cs, userId));
         Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice, userId));
         // Sólo el del primer registro.
@@ -183,10 +185,10 @@ public sealed class PasswordAuthApiTests
         Assert.All(responses, r => Assert.Equal(HttpStatusCode.Accepted, r.StatusCode));
         Assert.Equal(1, await CountUsersWithEmailAsync(cs, email));
         var userId = await FindUserIdAsync(cs, email);
-        // El perdedor siguió el camino de email existente: un aviso, un solo tenant.
+        // El perdedor siguió el camino de email existente: un aviso, y su tenant se crea igual.
         Assert.Single(await ReadOutboxAsync(cs, IdentityIntegrationEvents.ExistingAccountNotice, userId));
         Assert.Equal(
-            1,
+            2,
             await CountTenantsWithSlugAsync(cs, slug1) + await CountTenantsWithSlugAsync(cs, slug2));
     }
 

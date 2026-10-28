@@ -36,10 +36,11 @@ public sealed class PasswordRegistrationValidator : AbstractValidator<PasswordRe
     }
 }
 
-/// <param name="CreatedUserId">Null cuando el email ya tenía cuenta y no se creó nada.</param>
-public sealed record PasswordRegistrationOutcome(Guid? CreatedUserId)
+/// <param name="UserId">El dueño del tenant a registrar: el usuario nuevo o el que ya tenía ese email.</param>
+/// <param name="WasCreated">False cuando el email ya tenía cuenta y este request no creó ningún usuario.</param>
+public sealed record PasswordRegistrationOutcome(Guid UserId, bool WasCreated)
 {
-    public bool IsExistingAccount => CreatedUserId is null;
+    public bool IsExistingAccount => !WasCreated;
 }
 
 public interface IPasswordRegistration
@@ -50,7 +51,8 @@ public interface IPasswordRegistration
     /// <summary>
     /// Hashea PRIMERO y después busca el email, para que el tiempo no delate si existe. Nuevo:
     /// crea el usuario activo con su credencial y audita <c>identity.password.registered</c>.
-    /// Existente: no toca nada salvo encolar <see cref="IdentityIntegrationEvents.ExistingAccountNotice"/>.
+    /// Existente: no toca su credencial; encola <see cref="IdentityIntegrationEvents.ExistingAccountNotice"/>
+    /// y devuelve su id para que el tenant nuevo se le asigne igual.
     /// </summary>
     Task<PasswordRegistrationOutcome> ProvisionOwnerAsync(
         string email,
@@ -135,7 +137,7 @@ public sealed class PasswordRegistrationService(
             return await NotifyExistingAccountAsync(winner.Id.Value, correlationId, cancellationToken);
         }
 
-        return new PasswordRegistrationOutcome(user.Id.Value);
+        return new PasswordRegistrationOutcome(user.Id.Value, WasCreated: true);
     }
 
     public async Task DiscardCreatedUserAsync(Guid userId, CancellationToken cancellationToken)
@@ -175,6 +177,6 @@ public sealed class PasswordRegistrationService(
             correlationId,
             clock.UtcNow);
         await unitOfWork.SaveChangesAsync(cancellationToken);
-        return new PasswordRegistrationOutcome(null);
+        return new PasswordRegistrationOutcome(userId, WasCreated: false);
     }
 }

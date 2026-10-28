@@ -201,8 +201,9 @@ public static partial class PasswordAuthEndpoints
     // Orden fijo, y cada paso depende del anterior para no delatar si el email existe:
     // flag -> cuerpo -> validar -> formato y slug libre (antes de cualquier rama por usuario, así un
     // 422 por slug tomado es idéntico con email nuevo o existente) -> aprovisionar -> tenant -> mail.
-    // El mail de verificación sale después del tenant: quien pierde la carrera por el slug no recibe
-    // ninguno. La respuesta es siempre un 202 vacío.
+    // Con un email que ya tiene cuenta también se crea el tenant, a nombre de ese usuario; sólo el
+    // slug tomado lo frena. El mail de verificación sale después del tenant y sólo para usuarios
+    // nuevos: quien pierde la carrera por el slug no recibe ninguno. La respuesta es siempre un 202 vacío.
     private static async Task<IResult> RegisterTenantAsync(
         HttpContext httpContext,
         IConfiguration configuration,
@@ -269,12 +270,7 @@ public static partial class PasswordAuthEndpoints
             request.Password,
             correlationId,
             cancellationToken);
-        if (outcome.IsExistingAccount)
-        {
-            return Results.Accepted(uri: null, value: new { });
-        }
-
-        var ownerUserId = outcome.CreatedUserId!.Value;
+        var ownerUserId = outcome.UserId;
         try
         {
             await tenantRegistration.RegisterOwnerTenantAsync(
@@ -291,29 +287,37 @@ public static partial class PasswordAuthEndpoints
         catch (Exception)
         {
             // Cualquier falla del paso del tenant (slug perdido en la carrera, error transitorio de la
-            // base, request cancelado): el usuario lo creó este request, así que se borra. Si quedara,
-            // ese email tomaría para siempre el camino de «cuenta existente» y nunca tendría tenant.
+            // base, request cancelado): si este request creó al usuario se borra; si quedara, ese email
+            // tomaría el camino de «cuenta existente» sin tener nunca un tenant. Un usuario que ya
+            // existía no se toca jamás: no es de este request.
             // El 422 de slug.taken sale igual que el del chequeo previo; el resto, como siempre.
-            try
+            if (outcome.WasCreated)
             {
-                await passwordRegistration.DiscardCreatedUserAsync(ownerUserId, CancellationToken.None);
-            }
-            catch (Exception discardFailure)
-            {
-                // No enmascara el error original: se registra y se relanza aquel.
-                LogDiscardFailed(
-                    loggerFactory.CreateLogger(nameof(PasswordAuthEndpoints)),
-                    discardFailure,
-                    ownerUserId);
+                try
+                {
+                    await passwordRegistration.DiscardCreatedUserAsync(ownerUserId, CancellationToken.None);
+                }
+                catch (Exception discardFailure)
+                {
+                    // No enmascara el error original: se registra y se relanza aquel.
+                    LogDiscardFailed(
+                        loggerFactory.CreateLogger(nameof(PasswordAuthEndpoints)),
+                        discardFailure,
+                        ownerUserId);
+                }
             }
 
             throw;
         }
 
-        await passwordRegistration.RequestEmailVerificationAsync(
-            ownerUserId,
-            correlationId,
-            cancellationToken);
+        // Un usuario existente ya recibió el aviso de cuenta existente: no se le pide verificar de nuevo.
+        if (outcome.WasCreated)
+        {
+            await passwordRegistration.RequestEmailVerificationAsync(
+                ownerUserId,
+                correlationId,
+                cancellationToken);
+        }
 
         return Results.Accepted(uri: null, value: new { });
     }
