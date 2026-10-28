@@ -134,6 +134,21 @@ public static class OrdersExportColumnCatalog
         // aunque el pedido facture a una parte propia o al consumidor final. Vacía si la ficha no la tiene.
         // Oculta por defecto y al final, mismo criterio que «customer_person_type».
         new("business_name", "Razon social", 30, DefaultVisible: false),
+        // Ajuste 2026-10-28: la ficha del cliente y los datos de facturación lado a lado, porque un pedido
+        // puede facturarse a otra persona. «Nombre cliente» e «Identificación cliente» salen siempre de la
+        // ficha (el número, no el CUC), aunque el pedido facture a una parte propia o al consumidor final.
+        // Las de facturación describen a la misma persona que «Documento de identidad»
+        // (OrderBilledParty.SourceFor): consumidor final, la parte de facturación —lo que no trae queda
+        // vacío, nunca con lo del cliente— o la ficha. Ocultas por defecto y al final, mismo criterio que
+        // «business_name».
+        new("customer_own_name", "Nombre cliente", 30, DefaultVisible: false),
+        new("customer_own_identification", "Identificación cliente", 18, DefaultVisible: false),
+        new("billing_identification_type", "Tipo de identificación facturación", 16, DefaultVisible: false),
+        new("billing_address", "Dirección facturación", 40, DefaultVisible: false),
+        new("billing_city", "Ciudad facturación", 20, DefaultVisible: false),
+        new("billing_department", "Departamento facturación", 20, DefaultVisible: false),
+        new("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
+        new("billing_email", "Email facturación", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

@@ -12,9 +12,23 @@ namespace Bootstrapper;
 /// ningún módulo de negocio referencia al otro, y el composition root es el único lugar donde ese
 /// acoplamiento es legítimo.
 /// </summary>
-internal sealed class QuotationGeographyLookup(ICityRepository cityRepository)
+internal sealed class QuotationGeographyLookup(
+    ICityRepository cityRepository, IDepartmentRepository departmentRepository)
     : IQuotationGeographyLookup
 {
+    public async Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
+        IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken)
+    {
+        var distinctIds = departmentIds.Distinct().Select(id => new DepartmentId(id)).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var departments = await departmentRepository.ListByIdsAsync(distinctIds, cancellationToken);
+        return departments.ToDictionary(department => department.Id.Value, department => department.Name);
+    }
+
     public async Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
     {

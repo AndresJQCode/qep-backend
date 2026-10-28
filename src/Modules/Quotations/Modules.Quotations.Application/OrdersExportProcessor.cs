@@ -130,7 +130,8 @@ public sealed class OrdersExportProcessor(
         IReadOnlyDictionary<Guid, string> CityNames,
         IReadOnlyDictionary<Guid, QuotationCustomerRef> Customers,
         IReadOnlyDictionary<Guid, QuotationAdvisor> Advisors,
-        IReadOnlyDictionary<Guid, string> CoordinadoraCityNames);
+        IReadOnlyDictionary<Guid, string> CoordinadoraCityNames,
+        IReadOnlyDictionary<Guid, string> DepartmentNames);
 
     // Todo lo que un lote necesita, en una consulta por tipo (spec 2026-09-15, E6): nunca una por
     // pedido.
@@ -172,7 +173,22 @@ public sealed class OrdersExportProcessor(
             .Select(party => party.CityId!.Value)
             .Distinct()
             .ToArray();
-        var cityNames = await geographyLookup.FindCityNamesAsync(shippingCityIds, cancellationToken);
+        // Las ciudades de facturación entran en la misma consulta que las de envío (ajuste 2026-10-28).
+        var billingParties = partiesByOrder.Values
+            .SelectMany(parties => parties)
+            .Where(party => party.Role == QuotationPartyRole.Billing)
+            .ToArray();
+        var billingCityIds = billingParties
+            .Where(party => party.CityId is not null)
+            .Select(party => party.CityId!.Value);
+        var cityNames = await geographyLookup.FindCityNamesAsync(
+            shippingCityIds.Concat(billingCityIds).Distinct().ToArray(), cancellationToken);
+        var billingDepartmentIds = billingParties
+            .Where(party => party.DepartmentId is not null)
+            .Select(party => party.DepartmentId!.Value)
+            .Distinct()
+            .ToArray();
+        var departmentNames = await geographyLookup.FindDepartmentNamesAsync(billingDepartmentIds, cancellationToken);
 
         var clientIds = batch.Select(order => order.ClientId).Distinct().ToArray();
         var customers = await customerLookup.FindManyAsync(tenantId, clientIds, cancellationToken);
@@ -189,7 +205,7 @@ public sealed class OrdersExportProcessor(
 
         return new BatchContext(
             itemsByOrder, partiesByOrder, proofsByOrder, products, companies, cityNames, customers,
-            advisors, coordinadoraCityNames);
+            advisors, coordinadoraCityNames, departmentNames);
     }
 
     // Una fila por línea del pedido. Un pedido sin líneas no puede existir (el dominio lo exige),
@@ -225,6 +241,7 @@ public sealed class OrdersExportProcessor(
         var cliente = BilledNameFor(order, billingParty, customer);
         var documentoIdentidad = BilledIdentificationFor(order, billingParty, customer);
         var tipoPersona = BilledPersonTypeFor(order, billingParty, customer);
+        var facturacion = BilledContactFor(order, billingParty, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
         var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -319,6 +336,14 @@ public sealed class OrdersExportProcessor(
                 variante,
                 ExportCell.OfText(tipoPersona),
                 ExportCell.OfText(customer?.BusinessName ?? string.Empty),
+                ExportCell.OfText(customer?.Name ?? string.Empty),
+                ExportCell.OfText(customer?.IdentificationNumber ?? string.Empty),
+                ExportCell.OfText(facturacion.IdentificationType),
+                ExportCell.OfText(facturacion.Address),
+                ExportCell.OfText(facturacion.City),
+                ExportCell.OfText(facturacion.Department),
+                ExportCell.OfText(facturacion.Phone),
+                ExportCell.OfText(facturacion.Email),
             ];
         }
     }
@@ -380,6 +405,42 @@ public sealed class OrdersExportProcessor(
             BilledPartySource.BillingParty => billing!.PersonType?.ToWireValue() ?? string.Empty,
             _ => customer?.PersonType ?? string.Empty
         };
+
+    private readonly record struct BilledContact(
+        string IdentificationType, string Address, string City, string Department, string Phone, string Email);
+
+    // Ajuste 2026-10-28: los datos de contacto de quien se factura, con la misma fuente que «Documento de
+    // identidad» (SourceFor). El consumidor final no tiene más que nombre y número genérico, así que acá
+    // queda vacío. La parte de facturación es otra persona: lo que no trae queda vacío, nunca con lo del
+    // cliente.
+    private static BilledContact BilledContactFor(
+        Order order,
+        OrderParty? billing,
+        QuotationCustomerRef? customer,
+        IReadOnlyDictionary<Guid, string> cityNames,
+        IReadOnlyDictionary<Guid, string> departmentNames) =>
+        OrderBilledParty.SourceFor(order.BillsToFinalConsumer, billing) switch
+        {
+            BilledPartySource.FinalConsumer => new BilledContact(
+                string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty),
+            BilledPartySource.BillingParty => new BilledContact(
+                billing!.IdentificationType?.ToWireValue() ?? string.Empty,
+                billing.Address ?? string.Empty,
+                NameOf(billing.CityId, cityNames),
+                NameOf(billing.DepartmentId, departmentNames),
+                billing.Phone ?? string.Empty,
+                billing.Email ?? string.Empty),
+            _ => new BilledContact(
+                customer?.IdentificationType ?? string.Empty,
+                customer?.Address ?? string.Empty,
+                customer?.CityName ?? string.Empty,
+                customer?.DepartmentName ?? string.Empty,
+                customer?.Phone ?? string.Empty,
+                customer?.Email ?? string.Empty)
+        };
+
+    private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
+        id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
 
     private static (string Ciudad, string Direccion, string Telefono, string Email) ContactFor(
         OrderParty? shipping,

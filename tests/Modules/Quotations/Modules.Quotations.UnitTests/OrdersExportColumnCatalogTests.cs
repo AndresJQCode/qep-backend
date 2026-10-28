@@ -4,7 +4,7 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El catálogo del Excel de pedidos (spec 2026-09-24): las 56 columnas de hoy, con la llave estable
+/// El catálogo del Excel de pedidos (spec 2026-09-24): las 65 columnas de hoy, con la llave estable
 /// con la que el tenant las homologa. Su orden es el orden del archivo sin layout guardado, así que
 /// se fija contra la lista del processor y no al revés.
 /// </summary>
@@ -24,6 +24,9 @@ public sealed class OrdersExportColumnCatalogTests
         "carrier", "order_total", "retention_amount",
         "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery",
         "variant", "customer_person_type", "business_name",
+        "customer_own_name", "customer_own_identification",
+        "billing_identification_type", "billing_address", "billing_city", "billing_department",
+        "billing_phone", "billing_email",
     ];
 
     private static readonly string[] Headers =
@@ -42,12 +45,15 @@ public sealed class OrdersExportColumnCatalogTests
         "Transportadora", "Total facturado", "Retencion",
         "Valor Flete", "Flete sin IVA", "IVA Flete", "Pago Flete", "Contraentrega",
         "Variante", "Tipo de persona", "Razon social",
+        "Nombre cliente", "Identificación cliente",
+        "Tipo de identificación facturación", "Dirección facturación", "Ciudad facturación", "Departamento facturación",
+        "Teléfono facturación", "Email facturación",
     ];
 
     [Fact]
-    public void HasTheFiftySevenColumnsOfTheSpecInItsOrder()
+    public void HasTheSixtyFiveColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(57, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(65, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -96,7 +102,27 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(
             new OrdersExportCatalogColumn("business_name", "Razon social", 30, DefaultVisible: false),
             OrdersExportColumnCatalog.Columns[56]);
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("business_name"));
+        Assert.Equal(56, OrdersExportColumnCatalog.IndexOf("business_name"));
+    }
+
+    // Ajuste 2026-10-28: los datos de la ficha del cliente y los de facturación, lado a lado. Al final de
+    // todo y ocultas por defecto, mismo criterio que «business_name»: ningún Excel que ya existe cambia.
+    [Fact]
+    public void CustomerAndBillingColumnsAreAppendedAfterBusinessNameHiddenByDefault()
+    {
+        Assert.Equal(
+            [
+                new OrdersExportCatalogColumn("customer_own_name", "Nombre cliente", 30, DefaultVisible: false),
+                new OrdersExportCatalogColumn("customer_own_identification", "Identificación cliente", 18, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_identification_type", "Tipo de identificación facturación", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_address", "Dirección facturación", 40, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_city", "Ciudad facturación", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_department", "Departamento facturación", 20, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
+                new OrdersExportCatalogColumn("billing_email", "Email facturación", 30, DefaultVisible: false),
+            ],
+            OrdersExportColumnCatalog.Columns.Skip(57));
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 1, OrdersExportColumnCatalog.IndexOf("billing_email"));
     }
 
     [Fact]
@@ -189,7 +215,10 @@ public sealed class OrdersExportColumnCatalogTests
         Assert.Equal(
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier",
                 "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant",
-                "customer_person_type", "business_name"],
+                "customer_person_type", "business_name",
+                "customer_own_name", "customer_own_identification",
+                "billing_identification_type", "billing_address", "billing_city", "billing_department",
+                "billing_phone", "billing_email"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
