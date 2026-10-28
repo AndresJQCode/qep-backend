@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -331,6 +332,44 @@ internal static class PasswordAuthApiHarness
             "SELECT COUNT(*) FROM audit.entries WHERE resource_id = @id AND action = @action", connection);
         command.Parameters.AddWithValue("id", resourceId.ToString());
         command.Parameters.AddWithValue("action", action);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    public static Task<HttpResponseMessage> LoginAsync(HttpClient client, string email, string password) =>
+        PostJsonAsync(client, "/api/v1/auth/password/login", new { email, password });
+
+    // Lo comparable de un error entre dos respuestas: sin traceId ni nada que cambie por request.
+    public static async Task<(HttpStatusCode Status, string? Code, string? Title, string? Detail)> ShapeAsync(
+        HttpResponseMessage response)
+    {
+        var problem = await ProblemAsync(response);
+        return (response.StatusCode, problem.Code, problem.Title, problem.Detail);
+    }
+
+    public static async Task<long> CountAuditByResourceAsync(
+        string connectionString,
+        string action,
+        string resourceId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM audit.entries WHERE action = @action AND resource_id = @resourceId",
+            connection);
+        command.Parameters.AddWithValue("action", action);
+        command.Parameters.AddWithValue("resourceId", resourceId);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    // Filas de audit.entries que contienen `text` en cualquier columna.
+    public static async Task<long> CountAuditContainingAsync(string connectionString, string text)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM audit.entries e WHERE row_to_json(e)::text LIKE '%' || @text || '%'",
+            connection);
+        command.Parameters.AddWithValue("text", text);
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 

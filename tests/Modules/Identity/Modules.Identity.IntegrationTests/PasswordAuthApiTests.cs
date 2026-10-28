@@ -433,6 +433,108 @@ public sealed class PasswordAuthApiTests
     }
 
     // Decora el servicio real saltando el chequeo previo; el registro del tenant sigue siendo el real.
+    [Fact]
+    public async Task LoginBeforeVerifyingReturns403AndReissuesTheVerifyToken()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+
+        await RegisterAsync(client, email, Pw, NewSlug());
+        var userId = await FindUserIdAsync(cs, email);
+        var firstToken = await LatestOutboxTokenAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId);
+
+        var response = await LoginAsync(client, email, Pw);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("identity.email.not_verified", (await ProblemAsync(response)).Code);
+        Assert.Equal(2, (await ReadOutboxAsync(cs, IdentityIntegrationEvents.EmailVerificationRequested, userId)).Count);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await VerifyAsync(client, firstToken)).StatusCode); // el anterior quedó invalidado
+    }
+
+    [Fact]
+    public async Task AWrongPasswordAnUnknownEmailAndAGoogleOnlyUserGetTheSame401()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        await RegisterAndVerifyAsync(client, cs, email, Pw);
+        var googleEmail = NewEmail();
+        await PostWithGoogleAsync(
+            CreateClient(factory),
+            "/api/v1/auth/register-tenant",
+            IssueGoogleIdToken("g-sub", googleEmail, true),
+            new { displayName = "Acme", slug = NewSlug() });
+
+        var wrongPassword = await LoginAsync(CreateClient(factory), email, "not the right password");
+        var unknownEmail = await LoginAsync(CreateClient(factory), NewEmail(), Pw);
+        var googleOnly = await LoginAsync(CreateClient(factory), googleEmail, Pw);
+
+        var expected = await ShapeAsync(wrongPassword);
+        Assert.Equal(HttpStatusCode.Unauthorized, expected.Status);
+        Assert.Equal("identity.credentials.invalid", expected.Code);
+        Assert.Equal(expected, await ShapeAsync(unknownEmail));
+        Assert.Equal(expected, await ShapeAsync(googleOnly));
+    }
+
+    [Fact]
+    public async Task LoginAfterVerifyingOpensASessionAndIsAudited()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var ct = TestContext.Current.CancellationToken;
+        var email = NewEmail();
+        var userId = (await RegisterAndVerifyAsync(CreateClient(factory), cs, email, Pw)).UserId;
+
+        var response = await LoginAsync(client, email, Pw); // cliente nuevo, sin cookie
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(
+            response.Headers.GetValues("Set-Cookie"),
+            c => c.StartsWith("qep_session=", StringComparison.Ordinal));
+        Assert.Equal(userId, (await response.Content.ReadFromJsonAsync<SessionPayload>(ct))!.UserId);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/v1/auth/me", ct)).StatusCode);
+        Assert.Equal(1, await CountAuditAsync(cs, userId, "identity.password.login.succeeded"));
+    }
+
+    // Review Focus 2
+    [Fact]
+    public async Task LoginNormalizesEmailCaseAndWhitespace()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        await RegisterAndVerifyAsync(CreateClient(factory), cs, email, Pw);
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await LoginAsync(client, "  " + email.ToUpperInvariant() + " ", Pw)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AFailedLoginForAnUnknownEmailIsAuditedWithoutTheEmail()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var unknownEmail = NewEmail();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(client, unknownEmail, Pw)).StatusCode);
+
+        Assert.Equal(1, await CountAuditByResourceAsync(cs, "identity.password.login.failed", "unknown"));
+        Assert.Equal(0, await CountAuditContainingAsync(cs, unknownEmail));
+        Assert.Equal(0, await CountAuditContainingAsync(cs, Pw));
+    }
+
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration
     {
         public Task<Guid> RegisterOwnerTenantAsync(

@@ -30,7 +30,54 @@ public static class PasswordAuthEndpoints
             .Produces<SessionResponse>()
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        endpoints.MapPost("/api/v1/auth/password/login", LoginAsync)
+            .AllowAnonymous()
+            .WithTags("Authentication")
+            .Accepts<PasswordLoginRequest>("application/json")
+            .Produces<SessionResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    // Un email desconocido, un usuario sin credencial y una contraseña errónea salen como el mismo
+    // 401 identity.credentials.invalid. Es un 401 de credenciales, no de sesión vencida: el frontend
+    // lo distingue por el código. Ni la contraseña ni el hash se registran en ningún lado.
+    private static async Task<IResult> LoginAsync(
+        HttpContext httpContext,
+        IPasswordLogin passwordLogin,
+        SessionEstablisher establisher,
+        CancellationToken cancellationToken)
+    {
+        PasswordLoginRequest? request = null;
+        try
+        {
+            if (httpContext.Request.HasJsonContentType())
+            {
+                request = await httpContext.Request.ReadFromJsonAsync<PasswordLoginRequest>(cancellationToken);
+            }
+        }
+        catch (JsonException)
+        {
+            request = null;
+        }
+
+        if (request is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "The request body is missing or malformed.");
+        }
+
+        // Un JSON con null en estos campos llega al validador como vacío (422), nunca como un 500.
+        var user = await passwordLogin.LoginAsync(
+            request.Email ?? string.Empty,
+            request.Password ?? string.Empty,
+            httpContext.TraceIdentifier,
+            cancellationToken);
+        return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
 
     // Un token inválido, vencido o usado sale como el mismo 422 identity.email_token.invalid. El
@@ -183,3 +230,5 @@ public sealed record RegisterTenantWithPasswordRequest(
     string? DateFormat = null);
 
 public sealed record VerifyEmailRequest(string Token);
+
+public sealed record PasswordLoginRequest(string Email, string Password);

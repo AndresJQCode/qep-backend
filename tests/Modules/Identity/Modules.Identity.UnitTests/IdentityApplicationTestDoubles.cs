@@ -1,4 +1,5 @@
 ﻿using BuildingBlocks.Application;
+using Modules.Audit.Domain;
 using Modules.Identity.Application;
 using Modules.Identity.Domain;
 
@@ -83,4 +84,54 @@ internal sealed class CountingIdentityUnitOfWork : IIdentityUnitOfWork
         Saves++;
         return Task.FromResult(0);
     }
+}
+
+internal sealed class FakePasswordHasher : IPasswordHasher
+{
+    public List<string?> VerifiedHashes { get; } = [];
+
+    public PasswordVerificationOutcome NextOutcome { get; set; } = PasswordVerificationOutcome.Success;
+
+    public string Hash(string password) => "rehashed";
+
+    // A null hash is the "run against the dummy" call: it never succeeds.
+    public PasswordVerificationOutcome Verify(string? hashedPassword, string providedPassword)
+    {
+        VerifiedHashes.Add(hashedPassword);
+        return hashedPassword is null ? PasswordVerificationOutcome.Failed : NextOutcome;
+    }
+}
+
+internal sealed class FakeEmailTokenIssuer : IEmailTokenIssuer
+{
+    public List<(Guid UserId, EmailTokenPurpose Purpose)> Issued { get; } = [];
+
+    public Task<string> IssueAsync(Guid userId, EmailTokenPurpose purpose, CancellationToken cancellationToken)
+    {
+        Issued.Add((userId, purpose));
+        return Task.FromResult("raw-token");
+    }
+}
+
+internal sealed class RecordingIdentityOutbox : IIdentityOutbox
+{
+    public List<(string EventName, object Payload)> Added { get; } = [];
+
+    public void Add(string eventName, object payload, string correlationId, DateTimeOffset occurredAt) =>
+        Added.Add((eventName, payload));
+}
+
+internal sealed class RecordingIdentityAuditRecorder : IIdentityAuditRecorder
+{
+    public List<(Guid ActorId, string Action, string ResourceId, AuditActorType ActorType)> Entries { get; } = [];
+
+    public void Record(
+        Guid actorId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        DateTimeOffset occurredAt,
+        AuditActorType actorType = AuditActorType.Human) =>
+        Entries.Add((actorId, action, resourceId, actorType));
 }

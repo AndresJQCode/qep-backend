@@ -38,6 +38,8 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IOwnerProvisioning, OwnerProvisioningService>();
         services.AddScoped<IPasswordRegistration, PasswordRegistrationService>();
         services.AddScoped<IEmailVerification, EmailVerificationService>();
+        services.AddScoped<PasswordCredentialVerifier>();
+        services.AddScoped<IPasswordLogin, PasswordLoginService>();
         services.AddScoped<IProviderIdentityResolver, ProviderIdentityResolver>();
         services.AddScoped<IUserDirectory, UserDirectory>();
         services.AddScoped<IUserPreferenceService, UserPreferenceService>();
