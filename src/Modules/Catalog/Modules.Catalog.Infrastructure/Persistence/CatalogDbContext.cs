@@ -212,9 +212,9 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasForeignKey(value => value.GalleryImageId)
             .OnDelete(DeleteBehavior.SetNull);
 
-        // Spec D3. Owned y no entidad propia: un precio no tiene identidad fuera de su variante y
-        // se carga siempre con ella. Las columnas heredadas price_base_usd/price_base_cop siguen en
-        // products, sin mapear, hasta DropLegacyProductPriceColumns (deploy N+1).
+        // Spec D3. Owned, not an entity of its own: a price has no identity outside its variant and
+        // always loads with it. This collection is the only price: the legacy price_base_usd and
+        // price_base_cop columns of products were dropped by DropLegacyProductPriceColumns (deploy N+1).
         variant.OwnsMany(value => value.Prices, price =>
         {
             price.ToTable("product_prices", "catalog", table =>
@@ -437,7 +437,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasMaxLength(20);
         scale.Property(value => value.Multiple).HasColumnName("multiple");
         scale.Property(value => value.AllowGrouping).HasColumnName("allow_grouping");
-        // final_usd/final_cop stay in the table, unmapped, until DropLegacyProductPriceColumns.
+        // No stored finals: DropLegacyProductPriceColumns dropped final_usd/final_cop, and a final is
+        // always PriceScale.FinalFor over the variant's price.
         scale.HasIndex(value => value.VariantId).HasDatabaseName("IX_product_price_scales_variant");
     }
 
