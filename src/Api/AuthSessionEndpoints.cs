@@ -1,14 +1,10 @@
 using System.Security.Claims;
 using Bootstrapper.Authentication;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using Modules.Authorization.Application;
-using Modules.Catalog.Application;
 using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Tenancy.Application;
-using Modules.Tenancy.Domain;
 
 namespace Api;
 

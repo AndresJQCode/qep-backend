@@ -1,8 +1,8 @@
 namespace Modules.Tenancy.Application;
 
-/// <summary>Consulta de sólo lectura: si ya existe un tenant con ese slug.</summary>
+/// <summary>Consulta de sÃ³lo lectura: si ya existe un tenant con ese slug.</summary>
 public interface ITenantSlugAvailability
 {
-    /// <param name="normalizedSlug">El slug ya recortado y en minúsculas.</param>
+    /// <param name="normalizedSlug">El slug ya recortado y en minÃºsculas.</param>
     Task<bool> IsTakenAsync(string normalizedSlug, CancellationToken cancellationToken);
 }

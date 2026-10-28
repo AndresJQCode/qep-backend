@@ -109,6 +109,26 @@ public sealed class PasswordAuthApiTests
         Assert.True(problem.Errors!.ContainsKey("Password"));
     }
 
+    [Fact]
+    public async Task ANonSlugFailureCreatingTheTenantLeavesNoUserBehind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        await using var failing = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddScoped<ITenantRegistration>(provider =>
+                new ThrowingRegistration(
+                    ActivatorUtilities.CreateInstance<TenantRegistrationService>(provider)))));
+        using var failingClient = failing.CreateClient(
+            new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+        var email = NewEmail();
+
+        var response = await RegisterAsync(failingClient, email, Pw, NewSlug());
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(0, await CountUsersWithEmailAsync(cs, email));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("short")]
@@ -505,6 +525,20 @@ public sealed class PasswordAuthApiTests
 
     // Review Focus 2
     [Fact]
+    public async Task AUserRegisteredWithAWhitespaceOnlyPasswordCanLogIn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        await using var factory = new PasswordAuthApiFactory(cs);
+        using var client = CreateClient(factory);
+        var email = NewEmail();
+        const string spaces = "          ";
+        await RegisterAndVerifyAsync(CreateClient(factory), cs, email, spaces);
+
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, spaces)).StatusCode);
+    }
+
+    [Fact]
     public async Task LoginNormalizesEmailCaseAndWhitespace()
     {
         await using var database = await StartDatabaseAsync();
@@ -709,10 +743,12 @@ public sealed class PasswordAuthApiTests
             (await LoginAsync(client, NewEmail(), "whatever password")).StatusCode);
     }
 
-    // Cierre del tercer anti-objetivo: ni la auditoría ni las notificaciones guardan una contraseña,
-    // un token crudo o el hash de un token.
+    // Cierre del tercer anti-objetivo: ni la auditoría ni el registro de fallas guardan una contraseña,
+    // un token crudo o el hash de un token. notifications.notifications no tiene columna de cuerpo
+    // (sólo destinatario, plantilla, estado y failure_reason), así que esa revisión cubre esas columnas
+    // y no el contenido de los correos. La outbox queda exenta por decisión del spec.
     [Fact]
-    public async Task NoAuditEntryOrNotificationCarriesAPasswordOrAToken()
+    public async Task NoAuditEntryOrFailureLogCarriesAPasswordOrAToken()
     {
         await using var database = await StartDatabaseAsync();
         var cs = database.GetConnectionString();
@@ -738,15 +774,35 @@ public sealed class PasswordAuthApiTests
 
         await WaitUntilAsync(() => Task.FromResult(channel.Sent.Count >= 2), TimeSpan.FromSeconds(45)); // el worker sondea cada 15 s
 
+        // Requests that fail while the secrets are in hand, so the failure log has something to leak.
+        await ResetAsync(client, "not-a-real-token", newPassword);
+        await VerifyAsync(client, verifyToken); // already used: 422
+
         var audit = await AllAuditTextAsync(cs);
         var notifications = await AllNotificationTextAsync(cs);
+        var failures = await AllRequestFailureTextAsync(cs);
         foreach (var secret in new[] { oldPassword, newPassword, verifyToken, resetToken })
         {
             Assert.DoesNotContain(secret, audit);
             Assert.DoesNotContain(secret, notifications);
+            Assert.DoesNotContain(secret, failures);
         }
 
         Assert.DoesNotContain(EmailTokenCodec.Hash(verifyToken), audit);
+        Assert.DoesNotContain(EmailTokenCodec.Hash(verifyToken), failures);
+    }
+
+    private sealed class ThrowingRegistration(ITenantRegistration inner) : ITenantRegistration
+    {
+        public Task<Guid> RegisterOwnerTenantAsync(
+            Guid ownerUserId,
+            TenantRegistrationData data,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated transient failure");
+
+        public Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken) =>
+            inner.EnsureRegistrableAsync(data, cancellationToken);
     }
 
     private sealed class SkipEnsureRegistration(ITenantRegistration inner) : ITenantRegistration

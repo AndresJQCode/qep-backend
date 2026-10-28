@@ -9,7 +9,7 @@ namespace Api;
 /// Registro y login con email y contraseña. Todos son anónimos: pasan antes de que exista una
 /// sesión y no revelan si un email tiene cuenta.
 /// </summary>
-public static class PasswordAuthEndpoints
+public static partial class PasswordAuthEndpoints
 {
     public static IEndpointRouteBuilder MapPasswordAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -208,6 +208,7 @@ public static class PasswordAuthEndpoints
         IConfiguration configuration,
         IPasswordRegistration passwordRegistration,
         ITenantRegistration tenantRegistration,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         if (!RegistrationEndpoints.IsEnabled(configuration))
@@ -287,12 +288,25 @@ public static class PasswordAuthEndpoints
                 correlationId,
                 cancellationToken);
         }
-        catch (TenantDomainException exception) when (exception.Code == "tenancy.slug.taken")
+        catch (Exception)
         {
-            // Perdió la carrera por el slug entre el chequeo y el insert. El usuario lo creó este
-            // request, así que se borra: si quedara, ese email tomaría para siempre el camino de
-            // «cuenta existente» y nunca tendría tenant. El 422 sale igual que el del chequeo previo.
-            await passwordRegistration.DiscardCreatedUserAsync(ownerUserId, CancellationToken.None);
+            // Cualquier falla del paso del tenant (slug perdido en la carrera, error transitorio de la
+            // base, request cancelado): el usuario lo creó este request, así que se borra. Si quedara,
+            // ese email tomaría para siempre el camino de «cuenta existente» y nunca tendría tenant.
+            // El 422 de slug.taken sale igual que el del chequeo previo; el resto, como siempre.
+            try
+            {
+                await passwordRegistration.DiscardCreatedUserAsync(ownerUserId, CancellationToken.None);
+            }
+            catch (Exception discardFailure)
+            {
+                // No enmascara el error original: se registra y se relanza aquel.
+                LogDiscardFailed(
+                    loggerFactory.CreateLogger(nameof(PasswordAuthEndpoints)),
+                    discardFailure,
+                    ownerUserId);
+            }
+
             throw;
         }
 
@@ -303,6 +317,11 @@ public static class PasswordAuthEndpoints
 
         return Results.Accepted(uri: null, value: new { });
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Could not discard user {UserId} after the tenant step of register-tenant failed.")]
+    private static partial void LogDiscardFailed(ILogger logger, Exception exception, Guid userId);
 }
 
 public sealed record RegisterTenantWithPasswordRequest(

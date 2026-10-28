@@ -166,4 +166,13 @@ public sealed class PasswordLoginServiceTests
             Assert.Single(audit.Entries));
         Assert.Equal(1, unitOfWork.Saves);
     }
+
+    // QepPassword accepts a whitespace-only password (NIST); login must not lock that user out.
+    [Fact]
+    public async Task AWhitespaceOnlyPasswordIsNotRejectedByValidation()
+    {
+        var result = await service.LoginAsync(Email, "          ", "c", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new AuthenticatedUser(user.Id.Value, Email), result);
+    }
 }

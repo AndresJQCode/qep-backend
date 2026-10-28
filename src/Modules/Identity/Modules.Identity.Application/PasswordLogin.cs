@@ -17,7 +17,11 @@ public sealed class PasswordLoginValidator : AbstractValidator<PasswordLoginInpu
     public PasswordLoginValidator()
     {
         RuleFor(input => input.Email).NotEmpty();
-        RuleFor(input => input.Password).NotEmpty();
+        // Not NotEmpty(): it also rejects whitespace-only, and QepPassword accepts such a password at
+        // register/reset/accept (NIST), so the account would be locked out.
+        RuleFor(input => input.Password).Must(password => !string.IsNullOrEmpty(password))
+            .WithErrorCode("NotEmptyValidator")
+            .WithMessage("'Password' must not be empty.");
     }
 }
 

@@ -299,6 +299,10 @@ internal static class PasswordAuthApiHarness
     public static Task<string> AllNotificationTextAsync(string connectionString) =>
         AllRowsAsTextAsync(connectionString, "notifications.notifications");
 
+    // Path and exception.ToString() of every failed request (platform.request_failures).
+    public static Task<string> AllRequestFailureTextAsync(string connectionString) =>
+        AllRowsAsTextAsync(connectionString, "platform.request_failures");
+
     private static async Task<string> AllRowsAsTextAsync(string connectionString, string table)
     {
         await using var connection = new NpgsqlConnection(connectionString);

@@ -60,12 +60,7 @@ internal sealed class SessionEstablisher(
     {
         var activeTenants = await activeTenantsQuery.ListActiveTenantsAsync(userId, cancellationToken);
         var activeTenantIds = activeTenants.Select(tenant => tenant.TenantId).ToArray();
-        var tenants = await ToActiveTenantResponsesAsync(
-            activeTenants,
-            roleCatalog,
-            tenantDirectory,
-            currenciesInUse,
-            cancellationToken);
+        var tenants = await ToActiveTenantResponsesAsync(activeTenants, cancellationToken);
         return new SessionResponse(userId, email, activeTenantIds, tenants, Currencies.All);
     }
 
@@ -84,11 +79,8 @@ internal sealed class SessionEstablisher(
     /// TenantRoleCatalog.cs:32-34 tolera sin fallar. Descartarla escondería un rol que la
     /// membresía sí tiene. El orden es el de la membresía, no el del catálogo.
     /// </remarks>
-    internal static async Task<IReadOnlyCollection<ActiveTenantResponse>> ToActiveTenantResponsesAsync(
+    private async Task<IReadOnlyCollection<ActiveTenantResponse>> ToActiveTenantResponsesAsync(
         IReadOnlyCollection<ActiveTenantSummary> activeTenants,
-        ITenantRoleCatalog roleCatalog,
-        ITenantDirectory tenantDirectory,
-        ICurrenciesInUse currenciesInUse,
         CancellationToken cancellationToken)
     {
         var responses = new List<ActiveTenantResponse>(activeTenants.Count);
