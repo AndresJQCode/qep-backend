@@ -27,6 +27,17 @@ public static class InvitationEndpoints
             .Produces<InvitationResponse>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Anónimo: quien acepta con contraseña todavía no tiene sesión; la sesión sale de esta llamada.
+        // TODO(Task 14): .RequireRateLimiting(RateLimiterPolicies.Credentials) cuando exista la política.
+        endpoints.MapPost("/api/v1/invitations/{token}/accept-with-password", AcceptWithPasswordAsync)
+            .AllowAnonymous()
+            .WithTags("Invitations")
+            .Accepts<AcceptInvitationWithPasswordRequest>("application/json")
+            .Produces<SessionResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         endpoints.MapPost("/api/v1/invitations/{token}/accept", AcceptAsync)
             .RequireAuthorization()
             .WithTags("Invitations")
@@ -43,6 +54,7 @@ public static class InvitationEndpoints
         string token,
         IInvitationService invitationService,
         IUserDirectory userDirectory,
+        IPasswordCredentials passwordCredentials,
         CancellationToken cancellationToken)
     {
         var invitation = await invitationService.FindByTokenAsync(token, cancellationToken);
@@ -51,7 +63,34 @@ public static class InvitationEndpoints
             invitation.TenantId.Value,
             invitation.TenantName,
             email ?? string.Empty,
-            ToStatus(invitation.Status)));
+            ToStatus(invitation.Status),
+            await passwordCredentials.HasPasswordAsync(invitation.UserId, cancellationToken)));
+    }
+
+    // Orden fijo: la invitación debe ser aceptable antes de crear o verificar una credencial, y la
+    // credencial antes de aceptar la membresía; recién ahí se abre la sesión (que acepta las demás).
+    private static async Task<IResult> AcceptWithPasswordAsync(
+        string token,
+        AcceptInvitationWithPasswordRequest request,
+        HttpContext httpContext,
+        IInvitationService invitationService,
+        IPasswordCredentials passwordCredentials,
+        SessionEstablisher establisher,
+        CancellationToken cancellationToken)
+    {
+        var invitation = await invitationService.FindByTokenAsync(token, cancellationToken);
+        InvitationAcceptability.EnsurePending(invitation);
+
+        var user = await passwordCredentials.AcceptInvitationAsync(
+            invitation.UserId,
+            request.Password ?? string.Empty,
+            cancellationToken);
+        await invitationService.AcceptAsync(
+            token,
+            user.UserId,
+            httpContext.TraceIdentifier,
+            cancellationToken);
+        return await establisher.EstablishAsync(httpContext, user.UserId, user.Email, cancellationToken);
     }
 
     private static async Task<IResult> AcceptAsync(
@@ -101,4 +140,7 @@ public sealed record InvitationResponse(
     Guid TenantId,
     string TenantName,
     string Email,
-    string Status);
+    string Status,
+    bool HasPassword);
+
+public sealed record AcceptInvitationWithPasswordRequest(string Password);

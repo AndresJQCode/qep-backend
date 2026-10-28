@@ -409,6 +409,29 @@ internal static class PasswordAuthApiHarness
             token ?? throw new InvalidOperationException($"No invitation token for membership {membershipId}."));
     }
 
+    public sealed record InvitationPayload(
+        Guid TenantId,
+        string TenantName,
+        string Email,
+        string Status,
+        bool HasPassword);
+
+    public static async Task<InvitationPayload> GetInvitationAsync(HttpClient client, string token)
+    {
+        var response = await client.GetAsync(
+            $"/api/v1/invitations/{token}",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<InvitationPayload>(
+            TestContext.Current.CancellationToken))!;
+    }
+
+    public static Task<HttpResponseMessage> AcceptWithPasswordAsync(
+        HttpClient client,
+        string token,
+        string password) =>
+        PostJsonAsync(client, $"/api/v1/invitations/{token}/accept-with-password", new { password });
+
     public static Task<HttpResponseMessage> LoginAsync(HttpClient client, string email, string password) =>
         PostJsonAsync(client, "/api/v1/auth/password/login", new { email, password });
 

@@ -41,6 +41,7 @@ public static class IdentityInfrastructureExtensions
         services.AddScoped<IPasswordReset, PasswordResetService>();
         services.AddScoped<PasswordCredentialVerifier>();
         services.AddScoped<IPasswordLogin, PasswordLoginService>();
+        services.AddScoped<IPasswordCredentials, PasswordCredentialsService>();
         services.AddScoped<IProviderIdentityResolver, ProviderIdentityResolver>();
         services.AddScoped<IUserDirectory, UserDirectory>();
         services.AddScoped<IUserPreferenceService, UserPreferenceService>();
