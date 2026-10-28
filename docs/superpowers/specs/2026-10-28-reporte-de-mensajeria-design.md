@@ -35,7 +35,7 @@ Response time only means something against the schedule the business promises, s
 - D-9 Range limits, 422 beyond them: day ≤ 92 days, week ≤ 53 weeks, month ≤ 24 months.
 - D-10 Lives in **Messaging**, not Reporting: `ArchitectureTests` forbid Reporting → Messaging.
 - D-11 The route needs module `messaging` only; the `reporting` module key is **not** required
-  (§Module gating, DECISIÓN-PENDIENTE DP-1).
+  (§Module gating, decided).
 - D-12 Campaign sends and system/event messages never count as responses.
 
 ## Findings that shape the design (verified in code)
@@ -105,7 +105,7 @@ For a tenant, in `[Start, EndExclusive)` (tenant-local days → UTC via `calenda
 - S3 A session without a start inbound (outbound-first conversation not yet answered by the contact, or a
   manual advisor reopen) is **not a response-time session**: no response clock exists. It still counts as
   a **conversation** (D-3) but is excluded from unanswered and from both response-time distributions.
-  DECISIÓN-PENDIENTE DP-2 (should manual reopen even count as a session?).
+  Decided (owner): a manual reopen without inbound counts as a conversation but not as a response-time session.
 - S4 **First response**: first `direction = 2` message in the session after the start inbound, excluding
   campaign messages (`message_id IN campaign_recipients`) and `kind = 13`/`direction = 3`. Status `Failed`
   outbounds do **not** count (nothing reached the contact). **First advisor response**: the same with
@@ -151,9 +151,7 @@ long BusinessSeconds(DateTimeOffset from, DateTimeOffset to,
 - The schedule is resolved **per connection** (assignment → default → none), so a tenant with two
   connections and different schedules is correct. Schedules are loaded once per request
   (`IBusinessHoursRepository.ListAsync` + `ListAssignmentsAsync`; tens per tenant).
-  `businessHoursApplied` = true if **at least one** session in scope used a schedule; DECISIÓN-PENDIENTE DP-3
-  (per-connection mix: expose `businessHoursApplied` as `"all" | "partial" | "none"`?). Recommend a bool
-  for v1 and `partial` counted as true, with the UI note below.
+  `businessHoursApplied` is a plain boolean (decided): true if **at least one** session in scope used a schedule.
 - Schedule edits are **not historical**: the report applies *today's* schedule to past sessions. Stated in
   the UI footnote; not versioning schedules.
 
@@ -195,7 +193,7 @@ that have a session in range only.
 - All timestamps are `created_at`; no `occurred_at` anywhere (D-3).
 - The previous equal-length period runs the same two queries with the shifted range (length in local days;
   for `month` grouping the comparison period is the same number of days, not "previous month", to stay
-  comparable with the other reports' comparison semantics — DECISIÓN-PENDIENTE DP-4).
+  comparable with the other reports' comparison semantics — decided: same number of days).
 - **Index (migration `AddMessagesTenantCreatedIndex`, Messaging):**
   `CREATE INDEX CONCURRENTLY IX_messages_tenant_created ON messaging.messages (tenant_id, created_at)
   INCLUDE (conversation_id, direction)` and a partial `IX_messages_events_reopened ON messages
@@ -206,8 +204,7 @@ that have a session in range only.
 - Volume: rows returned = sessions in range. 92 days × a busy tenant (say 2 000 sessions/day) = ~184 k
   rows × ~80 B ≈ 15 MB in memory — acceptable, and the max range keeps it bounded. Stream with
   `AsAsyncEnumerable`, accumulate into per-bucket aggregators; never materialize a list of full rows.
-  Above 250 k sessions in range → 422 `messaging.report.range_too_large`? (DECISIÓN-PENDIENTE DP-5; recommend
-  logging only for v1.)
+  Above 250 k sessions in range: log a warning only, no 422 (decided).
 
 ## Backend contract
 
@@ -265,18 +262,9 @@ nearest-rank, documented. Buckets are right-open: `<300`, `[300,900)`, `[900,360
 display string is the server's (Spanish, tuteo irrelevant) so the client does not invent it; deleted
 members → «Miembro eliminado».
 
-## Module gating and consistency (DP-1)
+## Module gating and consistency
 
-Backend: `MessagingAuthorization.EnsureAsync` gives 403 `authorization.denied` / `tenancy.module_not_enabled`.
-Reporting-module permissions are not involved. Frontend route: `ModuleGate modules={['messaging']}`
-(first entry is the screen's module, `module-gate.tsx` docs). The owner's initial idea of
-`['reporting','messaging']` would make the page vanish for a tenant with messaging but without the
-reporting module, while the backend would answer 200. **Recommendation: `['messaging']` only**, consistent
-with the backend, and the card/tab shown when messaging is on regardless of reporting. Consequence: the
-`/reports` hub itself is reachable only with module `reporting`, so a messaging-only tenant reaches the
-page by URL or sidebar only if the sidebar links it (DECISIÓN-PENDIENTE DP-1: either link it from the
-Mensajería sidebar group or require both on both sides — if both are required, add `reporting` to the
-handler with `TenantModuleGuard.EnsureEnabledAsync(…, TenantModuleKeys.Reporting)`).
+Backend: `MessagingAuthorization.EnsureAsync` gives 403 `authorization.denied` / `tenancy.module_not_enabled`; the Reporting module is not involved. Decided (owner): the frontend route is gated with `ModuleGate modules={['messaging']}` only, consistent with the backend.
 
 ## Frontend (`qep-frontend`, `features/reports`)
 
@@ -316,15 +304,14 @@ handler with `TenantModuleGuard.EnsureEnabledAsync(…, TenantModuleKeys.Reporti
 Per-conversation drill-down, CSV export, per-connection split, SLA targets, historical schedule
 versioning, chatbot-only performance, resolution-time metrics.
 
-## DECISIÓN-PENDIENTE
+## Resolved decisions
 
-- DP-1 Module gating: `['messaging']` (recommended) vs both `reporting` and `messaging` end to end.
-- DP-2 Does a manual advisor reopen (no inbound) count as a session? Recommend: counts as conversation, not
-  as response-time session.
-- DP-3 `businessHoursApplied` with mixed connections: bool (recommended) vs tri-state.
-- DP-4 Comparison period for `month` grouping: same number of days (recommended) vs previous calendar months.
-- DP-5 Guard for huge ranges (>250 k sessions): log only (recommended) vs 422.
-- DP-6 Failed outbounds ignored as responses (recommended) — confirm.
+- DP-1 Frontend route gated with `['messaging']` only (not `reporting`).
+- DP-2 A manual reopen without inbound counts as a conversation, not as a response-time session.
+- DP-3 `businessHoursApplied` is a plain boolean.
+- DP-4 Month-grouping comparison period = the same number of days.
+- DP-5 Over 250 k sessions in range: log a warning only; no 422.
+- DP-6 Failed outbound messages never count as a response.
 
 ## Test plan (TDD: RED before GREEN, literal evidence in the ledger)
 
