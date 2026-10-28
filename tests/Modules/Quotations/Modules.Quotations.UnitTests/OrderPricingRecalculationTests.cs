@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 
@@ -43,7 +44,7 @@ public sealed class OrderPricingRecalculationTests
             OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
 
         await OrderPricingRecalculation.ApplyAsync(
-            new StubPricingLookup(Product(kept)), new FixedQuotationSettingsStore(), TenantId, order, Now.AddDays(1),
+            new StubPricingLookup(Product(kept)), new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, order, Now.AddDays(1),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(
@@ -67,7 +68,7 @@ public sealed class OrderPricingRecalculationTests
         var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
 
         await OrderPricingRecalculation.ApplyAsync(
-            new StubPricingLookup(Product(productId)), new FixedQuotationSettingsStore(settings), TenantId, order,
+            new StubPricingLookup(Product(productId)), new FixedQuotationSettingsStore(settings), new FixedTenantPriceRounding(), TenantId, order,
             Now.AddDays(1), TestContext.Current.CancellationToken);
 
         Assert.Equal(0m, order.Items.Single().DiscountPercentage);
@@ -98,12 +99,70 @@ public sealed class OrderPricingRecalculationTests
                     sizeM, shirt, TenantId, "Camiseta – M", "CAM-M", true, prices,
                     [new QuotationPriceScaleRef(1, 999, 5m, QuotationPriceScaleRestriction.Multiple, 1, [], false)], 19),
                 new QuotationVariantPricingRef(sizeL, shirt, TenantId, "Camiseta – L", "CAM-L", true, prices, [], 19)),
-            new FixedQuotationSettingsStore(), TenantId, order, Now.AddDays(1), TestContext.Current.CancellationToken);
+            new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, order, Now.AddDays(1), TestContext.Current.CancellationToken);
 
         Assert.Equal(
             (5m, 0m),
             (order.Items.Single(item => item.VariantId == sizeM).DiscountPercentage,
                 order.Items.Single(item => item.VariantId == sizeL).DiscountPercentage));
+    }
+
+    // Spec 2026-10-27 §4: un pedido manual toma la regla vigente del tenant al recalcularse.
+    [Fact]
+    public async Task AManualOrderUsesTheTenantRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var order = UsdOrder(OrderSource.Manual, productId);
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(UsdProduct(productId)), new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))), TenantId, order,
+            Now.AddDays(1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), order.PriceRounding);
+        Assert.Equal(112.20m, order.Items.Single().Subtotal);
+    }
+
+    // Decisión del owner (spec §4): un pedido de una integración se precia siempre con el valor por defecto de su
+    // moneda, aun editado y aun con una regla distinta configurada.
+    [Fact]
+    public async Task EditingAShopifyOrderKeepsTheDefaultRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var order = UsdOrder(OrderSource.Shopify, productId);
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(UsdProduct(productId)), new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", new PriceRounding(2, PriceRoundingMode.Up))), TenantId, order,
+            Now.AddDays(1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Nearest), order.PriceRounding);
+        Assert.Equal(112.10m, order.Items.Single().Subtotal);
+    }
+
+    private static QuotationVariantPricingRef UsdProduct(Guid id) =>
+        new(id, id, TenantId, "Producto", "SKU", true, new Dictionary<string, decimal> { ["USD"] = 13.19m },
+            [new QuotationPriceScaleRef(1, 999, 15m, QuotationPriceScaleRestriction.Multiple, 1, [], false)], 19);
+
+    private static Order UsdOrder(OrderSource source, Guid productId)
+    {
+        var header = new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false);
+        var account = new QuotationBillingAccount
+        {
+            CompanyId = Guid.CreateVersion7(),
+            BankName = "Bancolombia",
+            AccountNumber = "12345678",
+            Currency = "USD",
+        };
+        var lines = new[] { new OrderLineInput(productId, productId, 10m, 13.19m, 15m, 19) };
+        return source == OrderSource.Manual
+            ? Order.CreateManual(
+                OrderId.New(), TenantId, "PED-2026-0009", header, QuotationParties.Empty, account, ShippingDetails.None,
+                lines, OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now)
+            : Order.CreateExternal(
+                OrderId.New(), TenantId, "PED-2026-0010", header, QuotationParties.Empty, account, lines,
+                OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now, source, "1001", ShippingDetails.None,
+                "1:1001", null);
     }
 
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup

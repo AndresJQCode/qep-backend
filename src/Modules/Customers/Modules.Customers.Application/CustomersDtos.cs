@@ -78,7 +78,9 @@ public sealed record CustomerDto(
     string? InstagramUsername = null,
     /// <summary>Spec 2026-10-24 §3.3: con un valor, la ficha es de un cliente fusionado. Sólo <c>GetCustomerHandler</c> lo llena;
     /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
-    CustomerMergedIntoDto? MergedInto = null);
+    CustomerMergedIntoDto? MergedInto = null,
+    /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; <c>null</c> es «sin tipo».</summary>
+    string? PersonType = null);
 
 /// <summary>
 /// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
@@ -114,7 +116,9 @@ public sealed record CustomerResponse(
     MarketingConsentDto MarketingConsent,
     /// <summary>Viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>): la pantalla distingue «no está fusionado» de «el campo
     /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
-    CustomerMergedIntoDto? MergedInto = null);
+    CustomerMergedIntoDto? MergedInto = null,
+    /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
+    string? PersonType = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -195,7 +199,9 @@ public sealed record CreateCustomerRequest(
     string? CityName,
     Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus);
+    bool VatSurplus,
+    /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
+    string? PersonType = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -210,7 +216,9 @@ public sealed record UpdateCustomerRequest(
     string? CityName,
     Guid? ClassificationId,
     bool WithRetention,
-    bool VatSurplus);
+    bool VatSurplus,
+    /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
+    string? PersonType = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -429,7 +437,8 @@ public sealed record CustomerMergePartyDto(
     string? Cuc,
     bool IsComplete,
     bool IsActive,
-    long Version);
+    long Version,
+    string? PersonType = null);
 
 /// <summary>Una clase de lo que la fusión mueve al que queda, con cuántas hay. <c>Kind</c> viaja con el nombre del enum.</summary>
 public sealed record CustomerMergeMoveDto(string Kind, int Count);
@@ -488,4 +497,5 @@ public sealed record CustomerMergeResponse(
     IReadOnlyCollection<TagDto> Tags,
     MarketingConsentDto MarketingConsent,
     CustomerMergedIntoDto? MergedInto,
+    string? PersonType,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

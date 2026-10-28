@@ -63,4 +63,24 @@ public sealed class UserTests
 
         Assert.Equal("identity.email.invalid", exception.Code);
     }
+
+    [Fact]
+    public void ANewUserHasNoVerifiedEmail()
+    {
+        var user = User.CreateInvited(UserId.New(), "person@example.com", CreatedAt);
+
+        Assert.Null(user.EmailVerifiedAt);
+    }
+
+    [Fact]
+    public void MarkEmailVerifiedSetsTheTimestampOnceAndIsIdempotent()
+    {
+        var user = User.CreateInvited(UserId.New(), "person@example.com", CreatedAt);
+
+        user.MarkEmailVerified(CreatedAt.AddMinutes(1));
+        user.MarkEmailVerified(CreatedAt.AddMinutes(2));
+
+        Assert.Equal(CreatedAt.AddMinutes(1), user.EmailVerifiedAt);
+        Assert.Equal(CreatedAt.AddMinutes(1), user.UpdatedAt);
+    }
 }

@@ -42,8 +42,8 @@ internal sealed partial class AutomationInboxWorker(
     [LoggerMessage(Level = LogLevel.Error, Message = "Automations sweep step {Step} failed; the other steps still run and this one runs again on the next interval.")]
     private static partial void LogSweepStepFailed(ILogger logger, Exception exception, string step);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep abandoned {Abandoned} runs, purged {Purged} processed inbox rows older than {Days} days and {PurgedCalls} HTTP block calls older than {CallDays} days.")]
-    private static partial void LogSwept(ILogger logger, int abandoned, int purged, int days, int purgedCalls, int callDays);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep abandoned {Abandoned} runs, purged {Purged} processed inbox rows older than {Days} days and {PurgedCalls} HTTP block calls older than {CallDays} days and {PurgedUnits} run units older than {UnitDays} days.")]
+    private static partial void LogSwept(ILogger logger, int abandoned, int purged, int days, int purgedCalls, int callDays, int purgedUnits, int unitDays);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Automations sweep deleted {Deleted} expired simulations.")]
     private static partial void LogSimulationsSwept(ILogger logger, int deleted);
@@ -117,7 +117,12 @@ internal sealed partial class AutomationInboxWorker(
         var purgedCalls = await StepAsync("http_calls_purge", () => PurgeAsync(
             (provider, batch) => provider.GetRequiredService<IHttpCallLog>().PurgeBeforeAsync(now.AddDays(-callDays), batch, cancellationToken)),
             cancellationToken);
-        LogSwept(logger, abandoned, purged, days, purgedCalls, callDays);
+        // Spec 2026-10-25 D-E7: el detalle por bloque dura 3 días; la corrida y su traza se quedan.
+        var unitDays = Math.Max(1, options.Value.RunDetailRetentionDays);
+        var purgedUnits = await StepAsync("run_units_purge", () => PurgeAsync(
+            (provider, batch) => provider.GetRequiredService<IRunUnitRepository>().PurgeBeforeAsync(now.AddDays(-unitDays), batch, cancellationToken)),
+            cancellationToken);
+        LogSwept(logger, abandoned, purged, days, purgedCalls, callDays, purgedUnits, unitDays);
     }
 
     /// <summary>D-S1: borra las simulaciones vencidas (<c>expires_at</c> ya pasó: 2 h sin mensajes). Internal para las pruebas.</summary>

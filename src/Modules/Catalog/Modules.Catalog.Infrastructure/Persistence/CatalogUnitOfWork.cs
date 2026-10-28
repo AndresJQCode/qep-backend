@@ -19,6 +19,9 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
     private const string VariantBarcodeIndex = "IX_product_variants_tenant_barcode";
     private const string TaxRateNameIndex = "IX_tax_rates_tenant_name";
     private const string ProductTaxRateForeignKey = "FK_products_tax_rates_tax_rate_id";
+    private const string CategoryNameIndex = "IX_product_categories_tenant_parent_name";
+    private const string ProductCategoryForeignKey = "FK_products_product_categories_category_id";
+    private const string CategoryParentForeignKey = "FK_product_categories_product_categories_parent_id";
     private const string OptionNameIndex = "IX_option_definitions_tenant_name";
     private const string ProductOptionForeignKey =
         "FK_product_options_option_definitions_option_definition_id";
@@ -87,6 +90,20 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.tax_rate.name_taken",
                 "Another tax rate in this tenant already uses that name.");
         }
+        // El nombre de una categoría choca con una hermana (sin mayúsculas, y raíces entre sí: el
+        // índice es NULLS NOT DISTINCT). Rama propia, como cada índice único del módulo.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(
+                      postgres.ConstraintName,
+                      CategoryNameIndex,
+                      StringComparison.Ordinal))
+        {
+            throw new CatalogDomainException(
+                "catalog.category.name_taken",
+                "Another category with that name already exists under the same parent.");
+        }
         // La biblioteca de opciones. Otro índice único, otro código: el nombre de la opción ya existe en
         // el tenant (sin mayúsculas: el índice es sobre lower(name)). Sin consulta previa en el
         // handler; el índice es lo único que cierra la carrera de dos POST a la vez.
@@ -154,6 +171,36 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
                 "catalog.product.tax_rate_not_found",
                 "The tax rate was not found in this tenant.");
         }
+        // La misma FK con la causa opuesta, como la de la tasa: borrando una categoría a la que alguien
+        // le asignó un producto entre la verificación de DeleteCategoryHandler y el commit. Va antes
+        // que la rama de abajo por ser la más específica.
+        catch (DbUpdateException exception)
+            when (IsProductCategoryViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasProducts();
+        }
+        // La FK de la jerarquía, también con dos causas: borrar una padre a la que le acaban de colgar
+        // una hija, o colgar (crear o mover) una hija de una padre que acaban de borrar.
+        catch (DbUpdateException exception)
+            when (IsCategoryParentViolation(exception) && IsDeletingACategory())
+        {
+            throw CategoryInUse.HasChildren();
+        }
+        catch (DbUpdateException exception) when (IsCategoryParentViolation(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.category.parent_not_found",
+                "The parent category does not exist.");
+        }
+        // Un producto que apunta a una categoría que no existe: la carrera entre la verificación
+        // del handler y el commit, o un borrado por SQL. Rama propia, nunca un `or` con la de la
+        // tasa: son dos FK y cada una devuelve su código.
+        catch (DbUpdateException exception) when (IsProductCategoryViolation(exception))
+        {
+            throw new CatalogDomainException(
+                "catalog.product.category_not_found",
+                "The category was not found in this tenant.");
+        }
     }
 
     public async Task<ICatalogTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
@@ -207,6 +254,27 @@ internal sealed class CatalogUnitOfWork(CatalogDbContext dbContext, IClock clock
             postgres.ConstraintName,
             ProductTaxRateForeignKey,
             StringComparison.Ordinal);
+
+    private static bool IsProductCategoryViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(
+            postgres.ConstraintName,
+            ProductCategoryForeignKey,
+            StringComparison.Ordinal);
+
+    private static bool IsCategoryParentViolation(DbUpdateException exception) =>
+        exception.InnerException is PostgresException postgres &&
+        IsForeignKeyOrRestrictViolation(postgres) &&
+        string.Equals(
+            postgres.ConstraintName,
+            CategoryParentForeignKey,
+            StringComparison.Ordinal);
+
+    // Por el ChangeTracker, como IsDeletingAnOptionOrValue: la entrada que EF adjunta a la excepción
+    // depende de qué sentencia del lote falló.
+    private bool IsDeletingACategory() =>
+        dbContext.ChangeTracker.Entries<ProductCategory>().Any(entry => entry.State == EntityState.Deleted);
 
     // El estado sigue siendo Deleted cuando SaveChanges falla: EF sólo lo pasa a Detached después
     // de un commit exitoso. Si eso cambiara, esta rama dejaría de entrar y el caso volvería a

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Pricing;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -39,6 +41,11 @@ public sealed class Order
     private readonly List<OrderItem> _items = [];
     private readonly List<OrderParty> _parties = [];
 
+    // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
+    // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
+    private int? _priceRoundingDecimals;
+    private PriceRoundingMode? _priceRoundingMode;
+
     private Order()
     {
         OrderNumber = string.Empty;
@@ -76,7 +83,7 @@ public sealed class Order
         GlobalScaleFloor = header.GlobalScaleFloor;
         CustomerWithRetention = header.CustomerWithRetention;
         CustomerVatSurplus = header.CustomerVatSurplus;
-        EnsureBillingIsConsistent(parties);
+        EnsureBillingIsConsistent(parties.BillsToFinalConsumer, parties.Billing is not null, parties.BillingUsesBusinessName);
         AssignParties(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
@@ -128,6 +135,40 @@ public sealed class Order
     public MemberId AdvisorId { get; private set; }
 
     public string Currency { get; private set; }
+
+    /// <summary>La regla de redondeo con la que se preció este documento. Cambiar la regla del tenant
+    /// después no la mueve: sólo la cambia <see cref="UsePriceRounding"/>, que corre dentro del
+    /// recálculo de una edición. Con cualquiera de las dos columnas nula (un documento anterior a la
+    /// regla) es la de siempre de su moneda.</summary>
+    public PriceRounding PriceRounding =>
+        _priceRoundingDecimals is { } decimals && _priceRoundingMode is { } mode
+            ? new PriceRounding(decimals, mode)
+            : PriceRounding.LegacyFor(Currency);
+
+    /// <summary>
+    /// Guarda la regla de redondeo y rehace <b>todas</b> las líneas con su cantidad, precio, descuento,
+    /// origen y tasa actuales. Si es igual a la vigente no hace nada.
+    ///
+    /// **No es una edición.** No toca <see cref="Version"/> ni <c>Updated*</c>, mismo contrato que
+    /// <c>ApplyGroupDiscounts</c>, y no exige un estado editable: la llama sólo el recálculo, que ya
+    /// corre dentro de una edición.
+    /// </summary>
+    public void UsePriceRounding(PriceRounding rounding, DateTimeOffset occurredAt)
+    {
+        if (rounding == PriceRounding)
+        {
+            return;
+        }
+
+        _priceRoundingDecimals = rounding.Decimals;
+        _priceRoundingMode = rounding.Mode;
+        foreach (var item in _items)
+        {
+            item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+        }
+
+        RecalculateTotals();
+    }
 
     /// <summary>Null sólo en un cálculo previo (<see cref="Preview"/>): la pantalla de «Nuevo pedido» precia
     /// la línea antes de que se elija la empresa que factura. Un pedido guardado siempre la tiene:
@@ -303,13 +344,16 @@ public sealed class Order
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
+        // La regla de la cotización, antes de copiar las líneas: el pedido tiene los mismos centavos.
+        order._priceRoundingDecimals = quotation.PriceRounding.Decimals;
+        order._priceRoundingMode = quotation.PriceRounding.Mode;
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var item in quotation.Items.OrderBy(item => item.Position))
         {
             var copy = OrderItem.Create(
                 OrderItemId.New(), order.Id, item.VariantId, item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage,
-                item.TaxPercentage, order._items.Count + 1, order.Currency, occurredAt);
-            copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, occurredAt);
+                item.TaxPercentage, order._items.Count + 1, order.Currency, order.PriceRounding, occurredAt);
+            copy.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, order.Currency, order.PriceRounding, occurredAt);
             if (item.ProductCode is not null)
             {
                 copy.CaptureProduct(new QuotationProductSnapshot(item.ProductCode, item.ProductName ?? string.Empty));
@@ -395,7 +439,7 @@ public sealed class Order
         if (source is OrderSource.Quotation or OrderSource.Manual)
         {
             throw new QuotationsDomainException(
-                "order.order.source_invalid",
+                ExternalOrderErrors.SourceInvalid,
                 "An external order needs an external source.");
         }
 
@@ -465,35 +509,111 @@ public sealed class Order
                 "An order needs at least one product.");
         }
 
-        if (Billing is { } billing && !billing.IsComplete)
+        EnsureBillingRules(Billing, PartyWithRetention, PartyVatSurplus);
+
+        if (Shipping is { } shipping && !shipping.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete,
+                "The shipping party must have all its fields filled.");
+        }
+    }
+
+    // Las reglas de facturación del alta, compartidas con SetBilling para que editar no pueda dejar un
+    // pedido que crear habría rechazado (spec 2026-10-26).
+    private static void EnsureBillingRules(OrderParty? billing, bool? partyWithRetention, bool? partyVatSurplus)
+    {
+        if (billing is null)
+        {
+            return;
+        }
+
+        if (!billing.IsComplete)
         {
             throw new QuotationsDomainException(
                 "order.billing.party_incomplete",
                 "The billing party must have all its fields filled.");
         }
 
-        if (Shipping is { } shipping && !shipping.IsComplete)
-        {
-            throw new QuotationsDomainException(
-                "order.shipping.party_incomplete",
-                "The shipping party must have all its fields filled.");
-        }
-
-        if (Billing is { } named
-            && !string.IsNullOrWhiteSpace(named.Name)
-            && string.IsNullOrWhiteSpace(named.IdentificationNumber))
+        if (!string.IsNullOrWhiteSpace(billing.Name)
+            && (string.IsNullOrWhiteSpace(billing.IdentificationNumber) || billing.IdentificationType is null))
         {
             throw new QuotationsDomainException(
                 "order.billing.identification_required",
                 "A billing party with its own name requires an identification number.");
         }
 
-        if (Billing is not null && (PartyWithRetention is null || PartyVatSurplus is null))
+        if (partyWithRetention is null || partyVatSurplus is null)
         {
             throw new QuotationsDomainException(
                 "order.billing.tax_profile_required",
                 "The billing party must state whether it applies withholding tax and VAT surplus.");
         }
+    }
+
+    /// <summary>
+    /// Cambia a quién se le factura en un pedido pendiente (spec 2026-10-26): la fila de facturación, el
+    /// consumidor final, la razón social y el perfil fiscal de la fila. La fila existente se <b>modifica</b>
+    /// y no se reemplaza: borrar y re-crear en el mismo guardado choca con <c>IX_order_parties_order_role</c>.
+    /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió. Con <paramref name="enforceCompleteness"/> en
+    /// <c>false</c> (el cálculo previo, que se hace mientras la persona teclea) se omiten las exigencias de fila
+    /// completa, identificación y perfil fiscal; la consistencia con el consumidor final sigue.
+    /// </summary>
+    public bool SetBilling(
+        QuotationPartyDetails? billing,
+        bool billsToFinalConsumer,
+        bool billingUsesBusinessName,
+        bool? partyWithRetention,
+        bool? partyVatSurplus,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt,
+        bool enforceCompleteness = true)
+    {
+        EnsurePending("The billing can only change while the order is pending.");
+        EnsureBillingIsConsistent(billsToFinalConsumer, billing is not null, billingUsesBusinessName);
+
+        // La fila candidata se arma aparte para validar lo normalizado antes de mutar nada.
+        var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
+        var withRetention = billing is null ? null : partyWithRetention;
+        var vatSurplus = billing is null ? null : partyVatSurplus;
+        if (enforceCompleteness)
+        {
+            EnsureBillingRules(candidate, withRetention, vatSurplus);
+        }
+
+        var current = Billing;
+        if (current?.ToDetails() == candidate?.ToDetails()
+            && (current is null) == (candidate is null)
+            && BillsToFinalConsumer == billsToFinalConsumer
+            && BillingUsesBusinessName == billingUsesBusinessName
+            && PartyWithRetention == withRetention
+            && PartyVatSurplus == vatSurplus)
+        {
+            return false;
+        }
+
+        if (candidate is null)
+        {
+            if (current is not null)
+            {
+                _parties.Remove(current);
+            }
+        }
+        else if (current is not null)
+        {
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+        }
+
+        BillsToFinalConsumer = billsToFinalConsumer;
+        BillingUsesBusinessName = billingUsesBusinessName;
+        PartyWithRetention = withRetention;
+        PartyVatSurplus = vatSurplus;
+        Touch(updatedBy, occurredAt);
+        return true;
     }
 
     public void AddItem(
@@ -537,10 +657,10 @@ public sealed class Order
 
         var item = OrderItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            _items.Count + 1, Currency, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, occurredAt);
         if (origin != QuotationDiscountOrigin.Own)
         {
-            item.ApplyDiscount(discountPercentage, origin, Currency, occurredAt);
+            item.ApplyDiscount(discountPercentage, origin, Currency, PriceRounding, occurredAt);
         }
 
         if (product is not null)
@@ -560,7 +680,7 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         EnsurePending("Products can only be edited while the order is pending.");
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -652,7 +772,7 @@ public sealed class Order
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, PriceRounding, occurredAt);
             }
         }
 
@@ -967,6 +1087,85 @@ public sealed class Order
         return true;
     }
 
+    /// <summary>
+    /// Spec 2026-10-26 §4.4: agrega la parte de envío que Shopify no pudo completar al crear el pedido (la ciudad
+    /// no se reconocía). <c>true</c> si la agregó; <c>false</c> si ya estaba esa misma parte, en esa ciudad o en otra (un
+    /// reintento: como un pedido no edita sus partes, desvío S1, la misma parte en otra ciudad la puso un intento anterior con
+    /// la ciudad que el sinónimo tenía entonces; el consumidor lee la que quedó en <see cref="Shipping"/>).
+    /// Quita de las notas toda línea que empiece por <paramref name="notesLinePrefix"/> (ordinal): la dirección en
+    /// crudo que se anotó mientras no había parte. Sólo pedidos externos pendientes, sin recogida en tienda y sin
+    /// otra parte de envío; la parte debe quedar completa. No recalcula totales.
+    /// </summary>
+    public bool AttachExternalShipping(QuotationPartyDetails shipping, string notesLinePrefix, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(shipping);
+        ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        EnsurePending("The shipping party can only be attached while the order is pending.");
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order takes its shipping party from the platform.");
+        }
+
+        if (IsStorePickup)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+        }
+
+        var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, shipping);
+        if (Shipping is { } current)
+        {
+            return SameExceptCity(current.ToDetails(), candidate.ToDetails())
+                ? false
+                : throw new QuotationsDomainException(
+                    ExternalOrderErrors.ShippingPartyPresent, "The order already has another shipping party.");
+        }
+
+        if (!candidate.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        _parties.Add(candidate);
+        Notes = NormalizeNotes(string.Join(
+            '\n',
+            (Notes ?? string.Empty).Split('\n').Where(line => !line.StartsWith(notesLinePrefix, StringComparison.Ordinal))));
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
+    /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
+    /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de
+    /// <paramref name="expected"/> (un reintento: la llevó un intento anterior, a ésta o a la que el sinónimo tenía entonces, y el
+    /// consumidor cayó antes de actualizar su huella; lee la que quedó en <see cref="Shipping"/>).
+    /// </summary>
+    public bool CorrectExternalShippingCity(
+        QuotationPartyDetails expected, Guid departmentId, Guid cityId, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        EnsurePending("The shipping city can only be corrected while the order is pending.");
+        if (Shipping is not { } party || !SameExceptCity(party.ToDetails(), expected))
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyChanged, "The shipping party is no longer the one the platform sent.");
+        }
+
+        if (party.ToDetails() != expected || (party.DepartmentId == departmentId && party.CityId == cityId))
+        {
+            return false;
+        }
+
+        party.Apply(party.ToDetails() with { DepartmentId = departmentId, CityId = cityId });
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
     // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
     // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
     // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).
@@ -990,11 +1189,16 @@ public sealed class Order
 
     private bool IsExternal => Source is not OrderSource.Quotation and not OrderSource.Manual;
 
+    // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
+    // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.
+    private static bool SameExceptCity(QuotationPartyDetails party, QuotationPartyDetails other) =>
+        party with { DepartmentId = other.DepartmentId, CityId = other.CityId } == other;
+
     private void EnsurePending(string message)
     {
         if (Status != OrderStatus.Pending)
         {
-            throw new QuotationsDomainException("order.order.not_pending", message);
+            throw new QuotationsDomainException(ExternalOrderErrors.NotPending, message);
         }
     }
 
@@ -1012,7 +1216,7 @@ public sealed class Order
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => item.Amounts),
-            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency),
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
             AppliesRetention);
         Subtotal = totals.Subtotal;
@@ -1039,9 +1243,9 @@ public sealed class Order
         }
     }
 
-    private static void EnsureBillingIsConsistent(QuotationParties parties)
+    private static void EnsureBillingIsConsistent(bool billsToFinalConsumer, bool hasBillingRow, bool usesBusinessName)
     {
-        if (parties.BillsToFinalConsumer && (parties.Billing is not null || parties.BillingUsesBusinessName))
+        if (billsToFinalConsumer && (hasBillingRow || usesBusinessName))
         {
             throw new QuotationsDomainException(
                 "order.billing.final_consumer_conflict",

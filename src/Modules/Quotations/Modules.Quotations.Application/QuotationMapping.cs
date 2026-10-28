@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -39,7 +40,7 @@ internal static class QuotationMapping
         quotation.CanBeSent,
         quotation.HasChangesSinceSent,
         quotation.CanBeConvertedToOrder,
-        quotation.Items.Select(ToDto).ToArray(),
+        quotation.Items.Select(item => ToDto(item, quotation.PriceRounding)).ToArray(),
         quotation.Version,
         quotation.ShippingDtoOf(),
         quotation.FreightSubtotal,
@@ -75,7 +76,9 @@ internal static class QuotationMapping
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType?.ToWireValue(),
+        party.IdentificationType?.ToWireValue());
 
     /// <summary>
     /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
@@ -105,7 +108,7 @@ internal static class QuotationMapping
         order?.Status.ToString(),
         quotation.ShippingDtoOf());
 
-    private static QuotationItemDto ToDto(QuotationItem item) => new(
+    private static QuotationItemDto ToDto(QuotationItem item, PriceRounding rounding) => new(
         item.Id.Value,
         item.VariantId,
         item.ProductId,
@@ -113,7 +116,7 @@ internal static class QuotationMapping
         item.UnitPrice,
         item.DiscountPercentage,
         item.DiscountAmount,
-        item.DiscountedUnitPrice,
+        item.DiscountedUnitPriceUnder(rounding),
         item.Subtotal,
         item.TaxPercentage,
         item.TaxAmount,
@@ -155,13 +158,15 @@ internal static class QuotationMapping
                 request.BillingWithRetention,
                 request.BillingVatSurplus);
 
-    private static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
+    internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null
             ? null
             : new QuotationPartyDetails
             {
                 Name = request.Name,
                 IdentificationNumber = request.IdentificationNumber,
+                PersonType = PartyFiscalTypesParser.ParsePersonType(request.PersonType),
+                IdentificationType = PartyFiscalTypesParser.ParseIdentificationType(request.IdentificationType),
                 Phone = request.Phone,
                 Email = request.Email,
                 Address = request.Address,

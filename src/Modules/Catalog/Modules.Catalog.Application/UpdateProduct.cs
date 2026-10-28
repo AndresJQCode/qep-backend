@@ -12,6 +12,7 @@ public sealed record UpdateProductCommand(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
@@ -31,6 +32,7 @@ public sealed class UpdateProductValidator : AbstractValidator<UpdateProductComm
 public sealed class UpdateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IProductCategoryRepository categoryRepository,
     IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
     IVariantUsageChecker usageChecker,
@@ -67,6 +69,8 @@ public sealed class UpdateProductHandler(
 
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
+        var categoryId = await ProductCategoryResolver.ResolveAsync(
+            categoryRepository, command.TenantId, command.CategoryId, cancellationToken);
 
         // CAT-05, igual que en el POST: sin esto un PUT puede meter en la galería un archivo de
         // otro tenant, que es la mitad del criterio CA-CAT-05-01.
@@ -152,7 +156,8 @@ public sealed class UpdateProductHandler(
             new ProductDetails
             {
                 Description = command.Description,
-                TaxRateId = taxRateId
+                TaxRateId = taxRateId,
+                CategoryId = categoryId
             },
             optionIds,
             InOriginalPositions(variants, body.Count, kept),

@@ -72,6 +72,19 @@ public sealed class StartConversationHandlerTests
     }
 
     [Fact]
+    public async Task AnExistingBlockedConversationRefusesTheTemplateWithoutMeta()
+    {
+        var bed = Bed();
+        var customer = bed.Customers.Add();
+        bed.OpenConversation(lastInboundHoursAgo: 90, assignedTo: bed.MemberId, customerId: customer.CustomerId, blocked: true);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.StartHandler().HandleAsync(Command(bed, customer.CustomerId), Ct));
+
+        Assert.Equal(MessagingErrorCodes.ContactBlocked, error.Code);
+        Assert.Empty(bed.Meta.TemplateSends);
+    }
+
+    [Fact]
     public async Task AnExistingConversationOfSomeoneElseKeepsTheAssignmentRule()
     {
         var bed = Bed();

@@ -99,8 +99,38 @@ public static class CustomerEngagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Spec 2026-10-26 D-8: el estado y el historial de la autorización de datos. Leer es customer.read; revocar tiene su propio permiso.
+        group.MapGet("/{customerId:guid}/data-consent", GetDataConsentAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerRead)
+            .Produces<CustomerDataConsentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Spec 2026-10-26 D-5 (medium) y D-9: responde lo mismo que el GET, para que la pantalla no vuelva a pedirlo.
+        group.MapPost("/{customerId:guid}/data-consent/revocations", RevokeDataConsentAsync)
+            .RequireAuthorization(CustomersPermissions.DataConsentRevoke)
+            .Accepts<RevokeDataConsentRequest>("application/json")
+            .Produces<CustomerDataConsentDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
+
+    private static async Task<IResult> GetDataConsentAsync(
+        Guid tenantId, Guid customerId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetCustomerDataConsentQuery(tenantId, customerId), cancellationToken));
+
+    private static async Task<IResult> RevokeDataConsentAsync(
+        Guid tenantId,
+        Guid customerId,
+        RevokeDataConsentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new RevokeDataConsentCommand(tenantId, customerId, request.Medium, request.ConversationId, request.Note), cancellationToken));
 
     private static async Task<IResult> ListNotesAsync(
         Guid tenantId, Guid customerId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>

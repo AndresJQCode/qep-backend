@@ -326,6 +326,15 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("voided_by");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CashSessionId", "CreatedAt")

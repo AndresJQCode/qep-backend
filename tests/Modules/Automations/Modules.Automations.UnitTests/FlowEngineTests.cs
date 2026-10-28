@@ -252,6 +252,16 @@ public sealed class FlowEngineTests
 
     // Spec 2026-10-24 D-T9.
     [Fact]
+    public void AHandoffBlockCarriesItsMember()
+    {
+        var member = Guid.Parse("44444444-4444-4444-4444-444444444444");
+
+        var result = Start(Flow(new HandoffNode("n1", "Asesor", Out(), null, member)));
+
+        Assert.Equal<Effect>([new Effect.Handoff("n1", HandoffReasons.Block, member)], result.Effects);
+    }
+
+    [Fact]
     public void AHandoffBlockSaysBlock()
     {
         var result = Start(Flow(new HandoffNode("n1", "Asesor", Out(), null)));

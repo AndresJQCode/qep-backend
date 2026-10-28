@@ -87,7 +87,8 @@ internal sealed class FakeCustomerDirectory : IShopifyCustomerDirectory
             throw fail();
         }
 
-        var created = new ShopifyCustomerRef(Guid.CreateVersion7(), true, true);
+        // Como Customers: el alta nueva nace en la versión 1 y dice que la creó (SC-05), que es la huella del cliente (S7).
+        var created = new ShopifyCustomerRef(Guid.CreateVersion7(), true, true, Created: true, Version: 1);
         ById[created.Id] = created;
         return Task.FromResult(created);
     }
@@ -96,7 +97,7 @@ internal sealed class FakeCustomerDirectory : IShopifyCustomerDirectory
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)
     {
         Incompletes.Add((name, phone, email, country));
-        var created = new ShopifyCustomerRef(Guid.CreateVersion7(), false, true);
+        var created = new ShopifyCustomerRef(Guid.CreateVersion7(), false, true, Created: true, Version: 1);
         ById[created.Id] = created;
         return Task.FromResult(created);
     }
@@ -125,17 +126,94 @@ internal sealed class FakeProductLookup : IShopifyProductLookup
 }
 
 /// <summary>Ciudades por <c>(departamento, ciudad)</c> exactos: la normalización de tildes y mayúsculas es de Geography y se
-/// prueba contra la semilla (<c>ColombiaProvinceCodesGeographyTests</c>).</summary>
+/// prueba contra la semilla (<c>ColombiaProvinceCodesGeographyTests</c>). <see cref="Departments"/> son los que resuelven aunque
+/// la ciudad no case (D-C11); el de una ciudad sembrada en <see cref="Cities"/> resuelve siempre.</summary>
 internal sealed class FakeGeographyLookup : IShopifyGeographyLookup
 {
     public Dictionary<(string Department, string City), ShopifyCityRef> Cities { get; } = [];
 
+    public Dictionary<string, Guid> Departments { get; } = new(StringComparer.Ordinal);
+
     public List<(string Department, string City)> Requests { get; } = [];
 
-    public Task<ShopifyCityRef?> FindCityAsync(string departmentName, string cityName, CancellationToken cancellationToken)
+    public Task<ShopifyCityLookup> LookupCityAsync(string departmentName, string cityName, CancellationToken cancellationToken)
     {
         Requests.Add((departmentName, cityName));
-        return Task.FromResult(Cities.GetValueOrDefault((departmentName, cityName)));
+        var city = Cities.GetValueOrDefault((departmentName, cityName));
+        Guid? department = city?.DepartmentId
+            ?? (Departments.TryGetValue(departmentName, out var id) ? id : null);
+        return Task.FromResult(new ShopifyCityLookup(department, city));
+    }
+}
+
+/// <summary>La bandeja de Geography vista desde Shopify: anota cada reporte y responde <see cref="Outcome"/>; <see cref="OnReport"/>
+/// puede lanzar, como Geography caída.</summary>
+internal sealed class FakeUnresolvedCityReporter : IShopifyUnresolvedCityReporter
+{
+    public List<ShopifyUnresolvedCityReport> Reports { get; } = [];
+
+    public ShopifyUnresolvedCityResult Outcome { get; set; } = new(ShopifyUnresolvedCityOutcome.Recorded, null);
+
+    public Func<Exception>? OnReport { get; set; }
+
+    public Task<ShopifyUnresolvedCityResult> ReportAsync(ShopifyUnresolvedCityReport report, CancellationToken cancellationToken)
+    {
+        Reports.Add(report);
+        if (OnReport is { } fail)
+        {
+            throw fail();
+        }
+
+        return Task.FromResult(Outcome);
+    }
+}
+
+/// <summary>Las huellas de los sinónimos (§4.6) en la «base»: lo agregado queda pendiente hasta el guardado de
+/// <see cref="FakeUnitOfWork"/>, y la búsqueda ve las dos cosas, como el tracker de EF.</summary>
+internal sealed class FakeCityCorrectionRepository(FakeShopifyDatabase database) : IShopifyCityCorrectionRepository
+{
+    public Task<ShopifyCityCorrection?> FindAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrections.Concat(database.PendingCityCorrections).FirstOrDefault(correction =>
+            correction.TenantId == tenantId && correction.SynonymId == synonymId && correction.Target == target
+            && correction.TargetId == targetId));
+
+    public Task<ShopifyCityCorrection?> FindByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrections.Concat(database.PendingCityCorrections).FirstOrDefault(correction => correction.Id == id));
+
+    public void Add(ShopifyCityCorrection correction) => database.PendingCityCorrections.Add(correction);
+
+    // Como la consulta de EF: sólo lo guardado, de todos los tenants, en orden de id.
+    public Task<IReadOnlyList<ShopifyCityCorrection>> ListBySynonymAsync(Guid synonymId, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"list:{synonymId}");
+        return Task.FromResult<IReadOnlyList<ShopifyCityCorrection>>(
+            [.. database.CityCorrections.Where(correction => correction.SynonymId == synonymId).OrderBy(correction => correction.Id)]);
+    }
+}
+
+/// <summary>Los trabajos de corrección (spec 2026-10-26 D-C6) en la «base»: lo agregado queda pendiente hasta el guardado de
+/// <see cref="FakeUnitOfWork"/>.</summary>
+internal sealed class FakeCityCorrectionJobRepository(FakeShopifyDatabase database) : IShopifyCityCorrectionJobRepository
+{
+    public Task<ShopifyCityCorrectionJob?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs).FirstOrDefault(job => job.Id == id));
+
+    public void Add(ShopifyCityCorrectionJob job) => database.PendingCityCorrectionJobs.Add(job);
+
+    public Task<bool> ResolveExistsAsync(
+        Guid tenantId, Guid synonymId, ShopifyCityCorrectionTarget target, Guid targetId, CancellationToken cancellationToken) =>
+        Task.FromResult(database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs).Any(job =>
+            job.TenantId == tenantId && job.SynonymId == synonymId && job.Kind == ShopifyCityCorrectionJobKind.Resolve
+            && job.Target == target && job.TargetId == targetId));
+
+    public Task<bool> LockIfPendingAsync(Guid id, CancellationToken cancellationToken)
+    {
+        database.Log.Add($"job-lock:{id}");
+        return Task.FromResult(
+            !database.CityCorrectionJobsFinishedElsewhere.Contains(id)
+            && database.CityCorrectionJobs.Concat(database.PendingCityCorrectionJobs)
+                .Any(job => job.Id == id && job.Status == ShopifyCityCorrectionJobStatus.Pending));
     }
 }
 
@@ -265,6 +343,8 @@ internal sealed class ImporterWorld
         Database = new FakeShopifyDatabase();
         UnitOfWork = new FakeUnitOfWork(Database);
         Mirrors = new FakeOrderMirrorRepository(Database);
+        CityCorrections = new FakeCityCorrectionRepository(Database);
+        CityCorrectionJobs = new FakeCityCorrectionJobRepository(Database);
         Writer = new FakeOrderWriter(UnitOfWork);
         Members.Active.Add(AdvisorId);
         Billing.Account = new ShopifyBillingAccountRef(CompanyId, "Bancolombia", "123-456", "COP");
@@ -299,6 +379,15 @@ internal sealed class ImporterWorld
 
     public FakeShippingLookup Shipping { get; } = new();
 
+    public FakeCityCorrectionRepository CityCorrections { get; }
+
+    public FakeCityCorrectionJobRepository CityCorrectionJobs { get; }
+
+    public FakeUnresolvedCityReporter UnresolvedCities { get; } = new();
+
+    /// <summary>Lo que el importador relee bajo el candado del sinónimo; sin sinónimos, nada que recorregir.</summary>
+    public FakeCitySynonymLookup Synonyms { get; } = new();
+
     public FakeOrderWriter Writer { get; }
 
     public ShopifyStore Store { get; set; }
@@ -309,7 +398,24 @@ internal sealed class ImporterWorld
     public ShopifyCustomerResolver Resolver => new(Customers, Mirrors, Geography);
 
     public ShopifyOrderImporter Importer =>
-        new(Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)), UnitOfWork, new FakeClock(Now));
+        new(
+            Members, Billing, Resolver, Products, Shipping, Writer, new ShopifyOrderChanges(Writer, Customers, new FakeClock(Now)),
+            CityCorrections, CityCorrectionJobs, UnresolvedCities, Synonyms, UnitOfWork, new FakeClock(Now));
+
+    /// <summary>La tienda con clasificación por defecto: con documento y dirección, el comprador puede nacer completo.</summary>
+    public ImporterWorld WithClassification()
+    {
+        Store.Configure(
+            AdvisorId,
+            new ShopifyBillingAccount(CompanyId, "Bancolombia", "123-456", "COP"),
+            ClassificationId,
+            ShopifyStore.DefaultDocumentAttributeKey,
+            ShopifyStore.DefaultDocumentTypeAttributeKey,
+            ShopifyStore.DefaultIdentificationTypeCode,
+            AdvisorId,
+            Now.AddDays(-1));
+        return this;
+    }
 
     /// <summary>La fila en espera, ya guardada, para un snapshot.</summary>
     public ShopifyOrderMirror RowFor(ShopifyOrderSnapshot snapshot)

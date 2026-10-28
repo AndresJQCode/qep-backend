@@ -22,6 +22,10 @@ public sealed class AutomationsWorkerOptions
     /// <summary>D-H6: los días que una fila de <c>automations.http_calls</c> se conserva antes de que el barrido la borre.</summary>
     public int HttpCallRetentionDays { get; set; } = 30;
 
+    /// <summary>Spec 2026-10-25 D-E7: los días que una fila de <c>automations.run_units</c> (el detalle bloque por bloque de una corrida)
+    /// se conserva antes de que el barrido la borre. La corrida y su traza no se purgan.</summary>
+    public int RunDetailRetentionDays { get; set; } = 3;
+
     /// <summary>D-S1: cada cuánto se borran las simulaciones vencidas (2 h sin mensajes), en su propio bucle.</summary>
     public int SimulationSweepMinutes { get; set; } = 10;
 }

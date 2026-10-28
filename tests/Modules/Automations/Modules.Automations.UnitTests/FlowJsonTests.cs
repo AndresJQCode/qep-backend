@@ -120,14 +120,85 @@ public sealed class FlowJsonTests
             issues.Select(issue => (issue.Code, issue.NodeId!)));
     }
 
-    [Fact]
-    public void OutputsOfAButtonsNodeAreItsButtonsPlusOther()
+    // Spec 2026-10-25 D-3: «otra respuesta» es una salida sólo cuando el canvas la dibuja, o sea con otherOutput.
+    [Theory]
+    [InlineData("repeat", false)]
+    [InlineData("handoff", false)]
+    [InlineData("otherOutput", true)]
+    public void OutputsOfButtonsAndListIncludeOtherOnlyWithOtherOutput(string fallback, bool includesOther)
     {
-        var node = new ButtonsNode(
+        var buttons = new ButtonsNode(
             "n1", "Motivo", new Dictionary<string, string?>(), "¿Qué necesitas?",
-            [new FlowButton("tech", "Servicio técnico"), new FlowButton("maint", "Mantenimiento")], null, "repeat");
+            [new FlowButton("tech", "Servicio técnico"), new FlowButton("maint", "Mantenimiento")], null, fallback);
+        var list = List(new ListOptions("fixed", [new ListFixedRow("a", "A", null)], null, null, null, null, null)) with { Fallback = fallback };
 
-        Assert.Equal(["tech", "maint", "other"], FlowNodeKinds.OutputsOf(node));
+        Assert.Equal(includesOther ? ["tech", "maint", "other"] : ["tech", "maint"], FlowNodeKinds.OutputsOf(buttons));
+        Assert.Equal(includesOther ? ["chosen", "other"] : ["chosen"], FlowNodeKinds.OutputsOf(list));
+    }
+
+    private const string DestinationsJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "b1" },
+          "variables": [],
+          "nodes": [
+            { "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [ { "id": "a", "label": "A" } ], "saveTo": null, "fallback": "handoff", "fallbackMemberId": "44444444-4444-4444-4444-444444444444", "outputs": { "a": "l1" } },
+            { "id": "l1", "kind": "list", "title": "L", "text": "t", "buttonLabel": "Ver", "options": { "kind": "fixed", "fixed": [ { "id": "n", "title": "N", "description": null } ], "collection": null, "idField": null, "titleField": null, "descriptionField": null, "extraOption": null }, "saveTo": "x", "fallback": "handoff", "fallbackMemberId": "55555555-5555-5555-5555-555555555555", "outputs": { "chosen": "h1" } },
+            { "id": "h1", "kind": "handoff", "title": "H", "text": null, "memberId": "66666666-6666-6666-6666-666666666666", "outputs": {} }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void TheHandoffDestinationsRoundTrip()
+    {
+        var flow = FlowJson.Parse(DestinationsJson);
+
+        Assert.Equal(Guid.Parse("44444444-4444-4444-4444-444444444444"), Assert.IsType<ButtonsNode>(flow.Nodes[0]).FallbackMemberId);
+        Assert.Equal(Guid.Parse("55555555-5555-5555-5555-555555555555"), Assert.IsType<ListNode>(flow.Nodes[1]).FallbackMemberId);
+        Assert.Equal(Guid.Parse("66666666-6666-6666-6666-666666666666"), Assert.IsType<HandoffNode>(flow.Nodes[2]).MemberId);
+        // Los records con listas no se comparan por valor: el idempotente de Serialize es la prueba de ida y vuelta.
+        var serialized = FlowJson.Serialize(flow);
+        Assert.Equal(serialized, FlowJson.Serialize(FlowJson.Parse(serialized)));
+        AssertContains(JsonNode.Parse(DestinationsJson), JsonNode.Parse(serialized), "$");
+    }
+
+    [Fact]
+    public void SerializeWritesNullDestinationsWhenThereAreNone()
+    {
+        var json = FlowJson.Serialize(FlowJson.Parse(EveryKindJson));
+        var nodes = JsonNode.Parse(json)!["nodes"]!.AsArray();
+
+        foreach (var kind in new[] { "buttons", "list", "handoff" })
+        {
+            var node = nodes.Single(n => n!["kind"]!.GetValue<string>() == kind)!.AsObject();
+            var key = kind == "handoff" ? "memberId" : "fallbackMemberId";
+            Assert.True(node.ContainsKey(key), $"{kind} no escribió {key}");
+            Assert.Null(node[key]);
+        }
+    }
+
+    // D-4: el JSON de antes de este cambio no trae las claves y se lee «sin asignar».
+    [Fact]
+    public void AFlowWithoutDestinationsReadsUnassigned()
+    {
+        var flow = FlowJson.Parse(EveryKindJson);
+
+        Assert.All(flow.Nodes.OfType<ButtonsNode>(), node => Assert.Null(node.FallbackMemberId));
+        Assert.All(flow.Nodes.OfType<ListNode>(), node => Assert.Null(node.FallbackMemberId));
+        Assert.All(flow.Nodes.OfType<HandoffNode>(), node => Assert.Null(node.MemberId));
+    }
+
+    [Theory]
+    [InlineData("""{ "id": "h1", "kind": "handoff", "title": "H", "memberId": "ana" }""")]
+    [InlineData("""{ "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [], "fallback": "handoff", "fallbackMemberId": "ana" }""")]
+    public void ADestinationThatIsNotAGuidIsMalformed(string node)
+    {
+        var json = $$"""{ "schema": 1, "start": { "firstNodeId": null }, "variables": [], "nodes": [ {{node}} ] }""";
+
+        var exception = Assert.Throws<FlowFormatException>(() => FlowJson.Parse(json));
+
+        Assert.Equal("flow.malformed", exception.Code);
     }
 
     [Fact]
@@ -136,11 +207,129 @@ public sealed class FlowJsonTests
         var fixedRows = new ListOptions("fixed", [new ListFixedRow("a", "A", null)], null, null, null, null, null);
         var dynamicWithExtra = new ListOptions("dynamic", null, "equipos", "id", "name", null, new ListFixedRow("x", "Otra", null));
 
-        Assert.Equal(["chosen", "other"], FlowNodeKinds.OutputsOf(List(fixedRows)));
-        Assert.Equal(["chosen", "extra", "tooMany", "other"], FlowNodeKinds.OutputsOf(List(dynamicWithExtra)));
+        Assert.Equal(["chosen"], FlowNodeKinds.OutputsOf(List(fixedRows)));
+        Assert.Equal(["chosen", "extra", "tooMany"], FlowNodeKinds.OutputsOf(List(dynamicWithExtra)));
+        Assert.Equal(["chosen", "other"], FlowNodeKinds.OutputsOf(List(fixedRows) with { Fallback = "otherOutput" }));
         Assert.Empty(FlowNodeKinds.OutputsOf(new ResolveNode("n1", "Listo", new Dictionary<string, string?>(), null, null)));
         Assert.True(FlowNodeKinds.IsTerminal(FlowNodeKinds.Handoff));
         Assert.False(FlowNodeKinds.IsTerminal(FlowNodeKinds.Message));
+    }
+
+    private const string DataConsentJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n7" },
+          "variables": [],
+          "nodes": [
+            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", "outputs": { "accepted": "n8", "rejected": "n9" } },
+            { "id": "n8", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null },
+            { "id": "n9", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void ADataConsentNodeRoundTrips()
+    {
+        var flow = FlowJson.Parse(DataConsentJson);
+        var consent = Assert.IsType<DataConsentNode>(flow.Nodes[0]);
+
+        Assert.Equal("Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", consent.Text);
+        Assert.Equal("Política de datos", consent.Title);
+        Assert.Equal("n8", consent.Outputs["accepted"]);
+        Assert.Equal("n9", consent.Outputs["rejected"]);
+
+        var serialized = FlowJson.Serialize(flow);
+        var again = Assert.IsType<DataConsentNode>(FlowJson.Parse(serialized).Nodes[0]);
+        Assert.Equal(consent.Text, again.Text);
+        Assert.Equal(consent.Outputs, again.Outputs);
+        Assert.Equal(serialized, FlowJson.Serialize(FlowJson.Parse(serialized)));
+
+        var written = Assert.IsType<JsonObject>(JsonNode.Parse(serialized)!["nodes"]![0]);
+        Assert.False(written.ContainsKey("buttons"));
+        Assert.False(written.ContainsKey("saveTo"));
+        Assert.False(written.ContainsKey("fallback"));
+    }
+
+    [Fact]
+    public void ADataConsentWithoutTextReadsEmpty()
+    {
+        var flow = FlowJson.Parse(DataConsentJson.Replace("\"text\": \"Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.\", ", string.Empty));
+
+        Assert.Equal(string.Empty, Assert.IsType<DataConsentNode>(flow.Nodes[0]).Text);
+    }
+
+    // Spec 2026-10-26 repetir R-1, R-2: el modo, el tope y el destino de «Si no acepta» viajan en el bloque.
+    private const string DataConsentRepeatJson = """
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n7" },
+          "variables": [],
+          "nodes": [
+            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://empresa.co/datos y dinos si aceptas.",
+              "onReject": "repeat", "maxAsks": 3, "onRejectMemberId": null, "outputs": { "accepted": "n8" } },
+            { "id": "n8", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void ADataConsentWithItsRejectSettingsRoundTrips()
+    {
+        var flow = FlowJson.Parse(DataConsentRepeatJson);
+        var consent = Assert.IsType<DataConsentNode>(flow.Nodes[0]);
+
+        Assert.Equal(("repeat", 3, (Guid?)null), (consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId));
+
+        var serialized = FlowJson.Serialize(flow);
+        var again = Assert.IsType<DataConsentNode>(FlowJson.Parse(serialized).Nodes[0]);
+        Assert.Equal((consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId), (again.OnReject, again.MaxAsks, again.OnRejectMemberId));
+        Assert.Equal(consent.Outputs, again.Outputs);
+        var written = Assert.IsType<JsonObject>(JsonNode.Parse(serialized)!["nodes"]![0]);
+        Assert.Equal("repeat", written["onReject"]!.GetValue<string>());
+        Assert.Equal(3, written["maxAsks"]!.GetValue<int>());
+        Assert.True(written.ContainsKey("onRejectMemberId"));
+        Assert.Null(written["onRejectMemberId"]);
+    }
+
+    // Review Focus 2: un bloque guardado antes de R-1 se lee como hoy, saliendo por «No acepto».
+    [Fact]
+    public void AnOldDataConsentReadsAsRejectedOutput()
+    {
+        var consent = Assert.IsType<DataConsentNode>(FlowJson.Parse(DataConsentJson).Nodes[0]);
+
+        Assert.Equal(("rejectedOutput", 3, (Guid?)null), (consent.OnReject, consent.MaxAsks, consent.OnRejectMemberId));
+        Assert.Equal("n9", consent.Outputs["rejected"]);
+    }
+
+    [Fact]
+    public void AnUnknownRejectActionIsMalformed()
+    {
+        var exception = Assert.Throws<FlowFormatException>(() => FlowJson.Parse(DataConsentRepeatJson.Replace("\"onReject\": \"repeat\"", "\"onReject\": \"ask\"")));
+
+        Assert.Equal("flow.malformed", exception.Code);
+    }
+
+    [Theory]
+    [InlineData("rejectedOutput", new[] { "accepted", "rejected" })]
+    [InlineData("repeat", new[] { "accepted" })]
+    [InlineData("handoff", new[] { "accepted" })]
+    public void OutputsOfADataConsentDependOnTheRejectAction(string onReject, string[] expected)
+    {
+        var node = new DataConsentNode("n7", "Política", new Dictionary<string, string?>(), "t", onReject);
+
+        Assert.Equal(expected, FlowNodeKinds.OutputsOf(node));
+    }
+
+    [Fact]
+    public void OutputsOfADataConsentAreAcceptedAndRejected()
+    {
+        var node = new DataConsentNode("n7", "Política", new Dictionary<string, string?>(), "t");
+
+        Assert.Equal(["accepted", "rejected"], FlowNodeKinds.OutputsOf(node));
+        Assert.Contains(FlowNodeKinds.DataConsent, FlowNodeKinds.All);
+        Assert.Equal(["Acepto", "No acepto"], DataConsentButtons.All.Select(button => button.Label));
+        Assert.Equal(["accepted", "rejected"], DataConsentButtons.All.Select(button => button.Id));
     }
 
     private const string EveryKindJson = """
@@ -158,6 +347,7 @@ public sealed class FlowJsonTests
             { "id": "c1", "kind": "condition", "title": "¿Hay documento?", "match": "any", "rules": [ { "variable": "doc", "operator": "equals", "value": "123" }, { "variable": "foto.url", "operator": "isNotEmpty", "value": null } ], "outputs": { "yes": "bh", "no": "h1" } },
             { "id": "bh", "kind": "businessHours", "title": "Horario", "outputs": { "open": "w1", "closed": "h1" } },
             { "id": "w1", "kind": "http", "title": "Crear cliente", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "POST", "path": "/customers/{doc}", "query": [ { "key": "source", "value": "bot" } ], "body": { "kind": "multipart", "template": null, "fields": [ { "key": "doc", "value": "{doc}" } ], "fileField": "file", "fileVariable": "foto" }, "timeoutSeconds": 5, "okWhen": [ 200, 201 ], "mapping": [ { "from": "data.id", "to": "orden" } ], "sampleResponse": { "data": { "id": 7, "tags": [ "a" ] } }, "outputs": { "ok": "r1", "error": "h1" } },
+            { "id": "dc", "kind": "dataConsent", "title": "Datos", "text": "Lee https://empresa.co/datos y acepta.", "outputs": { "accepted": "r1", "rejected": "h1" } },
             { "id": "h1", "kind": "handoff", "title": "Asesor", "text": "Te paso con un asesor.", "outputs": {} },
             { "id": "r1", "kind": "resolve", "title": "Listo", "text": "Tu orden es la {orden.id}.", "reasonId": "33333333-3333-3333-3333-333333333333", "outputs": {} }
           ]

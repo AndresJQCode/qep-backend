@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
 using Modules.Customers.Application;
+using Modules.Geography.Application;
 using Modules.Integrations.Application;
 using Modules.Messaging.Application;
 using Modules.Pipeline.Application;
@@ -174,17 +175,42 @@ public sealed class CompositionRootTests
     /// entitlements, las 7 de POS, las tres <c>operator.*</c> y las dos <c>integrations.*</c> de los
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
-    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec y <c>customers.customer.merge</c> del spec 2026-10-24.</summary>
+    /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
+    /// <c>operator.cities.*</c> del spec 2026-10-26.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyFourConstants()
+    public void PermissionDiscoveryFindsTheSixtySevenConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
         // + el de plantillas (spec 2026-10-14 D-T5) + el de motivos de resolución (spec 2026-10-15 D-R8)
         // + el de horarios de atención (spec 2026-10-21 D-H8) + los dos de chatbots (spec 2026-10-21 D-C10)
         // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4)
-        // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1).
-        Assert.Equal(64, PermissionConstants().Length);
+        // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1)
+        // + el de revocar la autorización de datos (spec 2026-10-26 D-9)
+        // + los dos de ciudades del operador (spec 2026-10-26 §6).
+        Assert.Equal(67, PermissionConstants().Length);
+    }
+
+    /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
+    /// el rol global <c>admin</c>; <c>OperatorPermissionFilter</c> las deja vivas sólo en el tenant operador.</summary>
+    [Fact]
+    public void OnlyTheAdminRoleCarriesTheCityOperatorPermissions()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] cityPermissions = [GeographyOperatorPermissions.CitiesRead, GeographyOperatorPermissions.CitiesManage];
+
+        Assert.Equal(["operator.cities.read", "operator.cities.manage"], cityPermissions);
+        Assert.All(cityPermissions, permission =>
+        {
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+            var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == permission);
+            Assert.Equal("Operator", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
     }
 
     /// <summary>Spec 2026-10-11 §6.4 y decisión 16: de núcleo (el módulo lo revisa cada handler) y de fábrica sólo en <c>admin</c>:
@@ -251,6 +277,24 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("billing"));
         Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerMerge);
+        Assert.Equal("Customers", definition.Category);
+        Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
+    }
+
+    /// <summary>Spec 2026-10-26 D-9: registrar la revocación de una autorización de datos es un permiso aparte; de fábrica en
+    /// <c>admin</c> y <c>advisor</c>, no en <c>billing</c> ni <c>cashier</c>.</summary>
+    [Fact]
+    public void AdminAndAdvisorCarryTheDataConsentRevokePermission()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("customers.data_consent.revoke", CustomersPermissions.DataConsentRevoke);
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("admin"));
+        Assert.Contains(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(CustomersPermissions.DataConsentRevoke, catalog.PermissionsFor("cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.DataConsentRevoke);
         Assert.Equal("Customers", definition.Category);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
     }
@@ -522,6 +566,17 @@ public sealed class CompositionRootTests
             provider.GetServices<IHostedService>(),
             service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyReconcileWorker");
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<ICommandHandler<SyncShopifyStoreCommand, ShopifySyncResult>>());
+        // Spec 2026-10-26 D-C6: sin el consumidor, confirmar un sinónimo publica su evento y ningún pedido se corrige nunca.
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.CitySynonymEventsWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCitySynonymEventApplier>());
+        // Y sin el worker que corrige, los trabajos sembrados quedan Pending para siempre: el procesador necesita los dos puertos
+        // que registra Bootstrapper (el sinónimo de Geography y el escritor sobre Quotations y Customers).
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Shopify.Infrastructure.Workers.ShopifyCityCorrectionWorker");
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<ShopifyCityCorrectionProcessor>());
     }
 
     /// <summary>
@@ -552,6 +607,27 @@ public sealed class CompositionRootTests
         using var scope = provider.CreateScope();
         Assert.IsType<Modules.Automations.Infrastructure.Http.HttpBlockExecutor>(
             scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Http.IHttpBlockExecutor>());
+    }
+
+    /// <summary>
+    /// Spec 2026-10-25 D-E5: <c>RunUnitWriter</c> es un parámetro opcional de <c>RunProcessor</c>, así que sin su registro el contenedor
+    /// arma el procesador igual, sin registro de unidades, y ninguna corrida deja su fila en <c>run_units</c> sin error en ningún lado.
+    /// </summary>
+    [Fact]
+    public void TheContainerBuildsTheRunProcessorWithItsRunUnitWriter()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var processor = scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.RunProcessor>();
+
+        var writer = typeof(Modules.Automations.Application.Engine.RunProcessor)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(field => field.FieldType == typeof(Modules.Automations.Application.Engine.RunUnitWriter));
+        Assert.NotNull(writer.GetValue(processor));
     }
 
     [Fact]

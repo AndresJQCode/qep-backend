@@ -22,7 +22,8 @@ internal sealed class IdentityInboxMessage
     public int Attempts { get; set; }
 }
 
-// Proyección de sólo lectura del Outbox de plataforma, consumida independiente por este módulo.
+// Proyección del Outbox de plataforma: la leen los consumidores de este módulo y la escribe
+// IdentityOutboxWriter, en la unidad de trabajo del llamador.
 internal sealed class OutboxRecord
 {
     public Guid Id { get; init; }
@@ -31,5 +32,9 @@ internal sealed class OutboxRecord
 
     public string PayloadJson { get; init; } = "{}";
 
+    public string CorrelationId { get; init; } = string.Empty;
+
     public DateTimeOffset OccurredAt { get; init; }
+
+    public int Attempts { get; init; }
 }

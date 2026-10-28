@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
 using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
@@ -93,5 +95,33 @@ public sealed class AutomationEnginePersistenceTests
         var messageId = await SeedOutboundAsync(connectionString, conversationId, tenantId, connectionId, "wamid.1");
 
         Assert.Equal(1, await ScalarAsync<short>(connectionString, "SELECT sent_by_kind FROM messaging.messages WHERE id = @id", ("id", messageId)));
+    }
+
+    [Fact]
+    public async Task LinkCustomerFillsOnlyAnEmptyCustomerAndWritesTheEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (connectionString, conversationId, tenantId, _) = await SeedAsync(database);
+        using var factory = new QepApiFactory(connectionString);
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+
+        async Task<Guid?> LinkAsync(Guid tenant, Guid customer)
+        {
+            using var scope = factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<IConversationRepository>()
+                .LinkCustomerAsync(tenant, conversationId, customer, created: true, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(first, await LinkAsync(tenantId, first));
+        Assert.Equal(first, await ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM messaging.messages WHERE direction = 3 AND details->>'type' = 'CustomerCreated'"));
+
+        Assert.Equal(first, await LinkAsync(tenantId, second));
+        Assert.Equal(first, await ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 3"));
+
+        Assert.Null(await LinkAsync(Guid.CreateVersion7(), second));
     }
 }

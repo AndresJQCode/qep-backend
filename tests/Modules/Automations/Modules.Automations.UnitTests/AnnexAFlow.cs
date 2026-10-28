@@ -24,7 +24,8 @@ internal static class AnnexAFlow
         new HashSet<string> { "WhatsApp" },
         new HashSet<Guid> { CustomersApi, ServiceOrdersApi },
         new HashSet<Guid>(),
-        AllConnectionsHaveBusinessHours: true);
+        AllConnectionsHaveBusinessHours: true,
+        HandoffMembers: new HashSet<Guid>());
 
     private static string ReadFixture()
     {

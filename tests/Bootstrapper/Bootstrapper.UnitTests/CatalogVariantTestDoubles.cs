@@ -34,11 +34,19 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
             .Where(product => product.TenantId == tenantId && product.Variants.Any(variant => variantIds.Contains(variant.Id)))
             .ToList());
 
-    // Sin relevancia ni filtro de texto: lo que se prueba es el mapeo del adaptador, no la consulta.
+    /// <summary>Las categorías de la última búsqueda, tal como llegaron (null = sin filtro).</summary>
+    public IReadOnlyCollection<Guid>? LastCategoryIds { get; private set; }
+
+    public int SearchCalls { get; private set; }
+
+    // Sin relevancia ni filtro de texto ni de categoría: lo que se prueba es el mapeo del adaptador, no
+    // la consulta. Las categorías sólo se graban, para ver qué le pidió el adaptador al repositorio.
     public Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? code, bool? isActive, int page, int pageSize,
+        Guid tenantId, string? search, string? name, string? code, bool? isActive, IReadOnlyCollection<Guid>? categoryIds, int page, int pageSize,
         CancellationToken cancellationToken)
     {
+        SearchCalls++;
+        LastCategoryIds = categoryIds;
         var matching = products
             .Where(product => product.TenantId == tenantId && (isActive is null || product.IsActive == isActive))
             .ToList();
@@ -47,7 +55,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
     }
 
     public Task<IReadOnlyList<Product>> ListForExportAsync(
-        Guid tenantId, string? name, string? code, bool? isActive, int skip, int take,
+        Guid tenantId, string? search, string? name, string? code, bool? isActive, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Product>> FindVariantsByIdsForUpdateAsync(
@@ -75,6 +83,7 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>
@@ -86,6 +95,9 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
 
     public Task<bool> AnyWithTaxRateAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(products.Count(product => product.TenantId == tenantId && product.IsActive));
 }
 
 /// <summary>La biblioteca de opciones en memoria; <see cref="ListByIdsAsync"/> filtra por tenant como la real.</summary>

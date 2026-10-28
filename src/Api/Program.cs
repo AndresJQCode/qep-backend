@@ -58,6 +58,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
+builder.Services.AddScoped<SessionEstablisher>();
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
@@ -82,6 +83,19 @@ builder.Services.AddRateLimiter(options =>
         httpContext => RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: FixedWindow));
+
+    // Endpoints de credenciales: 10 por minuto por IP y por endpoint. La clave usa el PATRÓN de ruta,
+    // no el path, para que /invitations/{token}/accept-with-password no abra una partición por token.
+    options.AddPolicy(
+        RateLimiterPolicies.Credentials,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{httpContext.Connection.RemoteIpAddress}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 
     // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
     // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
@@ -162,6 +176,7 @@ app.MapVersionEndpoint();
 app.MapAuthSessionEndpoints();
 app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
+app.MapPasswordAuthEndpoints();
 app.MapAuthorizationCatalogEndpoints();
 app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
@@ -174,11 +189,14 @@ app.MapStorageEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogTaxRateEndpoints();
 app.MapCatalogOptionEndpoints();
+app.MapCatalogCategoryEndpoints();
 app.MapCompanyEndpoints();
 app.MapCustomerEndpoints();
 app.MapClientClassificationEndpoints();
 app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
+// Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
+app.MapCityOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();

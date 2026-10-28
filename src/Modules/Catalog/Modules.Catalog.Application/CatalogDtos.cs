@@ -22,6 +22,7 @@ public sealed record ProductDto(
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<ProductOptionResponse> Options,
     IReadOnlyList<ProductVariantResponse> Variants,
     IReadOnlyList<ProductGalleryImageResponse> Gallery,
@@ -41,6 +42,7 @@ public sealed record ProductResponse(
     // catalog. Viene en null si la imagen no fue publicada o es de otro tenant.
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     // Las opciones del producto en su orden, con sus nombres ya resueltos de la biblioteca.
     IReadOnlyList<ProductOptionResponse> Options,
     // **Todas** las variantes en orden de presentación, activas e inactivas: el formulario edita
@@ -134,6 +136,7 @@ public sealed record ProductListItemDto(
     Guid? ImageFileId,
     string? ImageUrl,
     Guid? TaxRateId,
+    Guid? CategoryId,
     int VariantCount,
     IReadOnlyDictionary<string, PriceRangeResponse> PriceRange,
     long Version,
@@ -255,6 +258,7 @@ public sealed record CreateProductRequest(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery);
@@ -327,6 +331,7 @@ public sealed record UpdateProductRequest(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
@@ -358,3 +363,45 @@ public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items
 public sealed record CreateTaxRateRequest(string Name, int Percentage);
 
 public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+
+public sealed record CategoryDto(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
+
+/// <param name="ProductCount">
+/// Los productos asignados **directamente** a la categoria, activos e inactivos; los de las
+/// descendientes no suman. El POS trae otro conteo.
+/// </param>
+/// <param name="Version">El <c>If-Match</c> de editar y borrar. Cambiar el acceso rápido no la sube.</param>
+/// <param name="PosQuickAccessPosition">
+/// Lugar entre los chips de acceso rápido de la caja (1..N, contiguos por tenant); null si no está fijada.
+/// </param>
+public sealed record CategoryResponse(
+    Guid Id,
+    string Name,
+    Guid? ParentId,
+    int ProductCount,
+    long Version,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    int? PosQuickAccessPosition);
+
+public sealed record CategoriesResponse(IReadOnlyList<CategoryResponse> Items);
+
+public sealed record CreateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>Renombra y/o mueve: los dos campos viajan siempre. <c>ParentId</c> null la deja como raíz.</summary>
+public sealed record UpdateCategoryRequest(string Name, Guid? ParentId);
+
+/// <summary>
+/// Reemplaza la lista entera del acceso rápido: el orden es la posición (índice 0 → posición 1).
+/// Lista vacía = nada fijado. Anulable sólo para que un cuerpo sin el campo salga como 422 del
+/// validador y no como un 500 al recorrerlo.
+/// </summary>
+public sealed record ReplacePosQuickAccessRequest(IReadOnlyList<Guid>? CategoryIds);

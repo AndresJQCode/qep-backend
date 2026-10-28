@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure.Admin;
+using Modules.Shopify.Infrastructure.Messaging;
 using Modules.Shopify.Infrastructure.Parsing;
 using Modules.Shopify.Infrastructure.Persistence;
 using Modules.Shopify.Infrastructure.Workers;
@@ -37,6 +38,8 @@ public static class ShopifyInfrastructureExtensions
         services.AddScoped<IShopifyWebhookDeliveryQueue>(provider => provider.GetRequiredService<WebhookDeliveries>());
         services.AddScoped<IShopifyStoreRepository, ShopifyStoreRepository>();
         services.AddScoped<IShopifyOrderMirrorRepository, ShopifyOrderMirrorRepository>();
+        services.AddScoped<IShopifyCityCorrectionRepository, ShopifyCityCorrectionRepository>();
+        services.AddScoped<IShopifyCityCorrectionJobRepository, ShopifyCityCorrectionJobRepository>();
         services.AddSingleton<IShopifyOrderPayloadParser, ShopifyOrderPayloadParser>();
 
         // §5.3: la conciliación. El cliente GraphQL es scoped (lleva el estado del balde de Shopify de una corrida) y su
@@ -79,6 +82,25 @@ public static class ShopifyInfrastructureExtensions
     public static IServiceCollection AddShopifyWebhookWorker(this IServiceCollection services)
     {
         services.AddHostedService<ShopifyWebhookDeliveryWorker>();
+        return services;
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-C6: el consumidor de los eventos de sinónimos de Geography (<c>shopify.city-synonym-events</c>), que
+    /// siembra los trabajos de corrección, y el worker que los corrige. Sin esto, confirmar un sinónimo publica el evento y ningún
+    /// pedido se corrige nunca, sin error en ningún lado (lo amarra <c>CompositionRootTests</c>). El procesador del worker depende
+    /// de <see cref="IShopifyCitySynonymLookup"/> e <see cref="IShopifyCityCorrectionWriter"/>, que registra Bootstrapper. Las
+    /// pruebas quitan los dos workers y corren el consumidor (<c>ProcessBatchAsync</c>) y el que corrige (<c>DrainAsync</c>) a mano.
+    /// </summary>
+    public static IServiceCollection AddShopifyCityCorrections(this IServiceCollection services)
+    {
+        services.AddScoped<ShopifyCitySynonymEventApplier>();
+        services.AddSingleton<CitySynonymEventsProcessor>();
+        services.AddHostedService<CitySynonymEventsWorker>();
+        services.AddScoped<IShopifyCityCorrectionJobQueue, ShopifyCityCorrectionJobQueue>();
+        services.AddScoped<IShopifyCityCorrectionJobs, ShopifyCityCorrectionJobs>();
+        services.AddScoped<ShopifyCityCorrectionProcessor>();
+        services.AddHostedService<ShopifyCityCorrectionWorker>();
         return services;
     }
 

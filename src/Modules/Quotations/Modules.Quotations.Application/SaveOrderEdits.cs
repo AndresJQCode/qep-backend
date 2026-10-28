@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -19,12 +20,13 @@ public sealed record SaveOrderEditsCommand(
     string? Notes,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    ShippingRequest? Shipping = null,
+    OrderBillingEditRequest? Billing = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
     public SaveOrderEditsValidator()
-        : base(requireFileIds: true)
+        : base(requireFileIds: true, requireBillingIdentification: true)
     {
     }
 }
@@ -36,6 +38,7 @@ public sealed class SaveOrderEditsHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
     IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
@@ -164,6 +167,22 @@ public sealed class SaveOrderEditsHandler(
                 order.SetGlobalScaleFloor(command.GlobalScaleFloor, updatedBy, now);
             }
 
+            // La facturación, en la misma escritura que el envío y antes de recalcular el estado de pago: una
+            // retención nueva baja el neto que los comprobantes cubren. La fila existente se modifica, no se
+            // reemplaza (IX_order_parties_order_role).
+            string? billingSummary = null;
+            if (command.Billing is not null)
+            {
+                var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                    new TenantId(command.TenantId), cancellationToken);
+                billingSummary = OrderBillingEdits.Apply(
+                    order, command.Billing, regional?.Country, strict: true, updatedBy, now);
+                await BillingPersonTypeRequirement.EnsureForOrderAsync(
+                    tenantDirectory, command.TenantId, order, cancellationToken);
+            }
+
+            var billingChanged = billingSummary is not null;
+
             // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
             // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
             var shippingBefore = order.ShippingDetails;
@@ -181,7 +200,7 @@ public sealed class SaveOrderEditsHandler(
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
             if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
-                && !shippingChanged)
+                && !shippingChanged && !billingChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(
@@ -228,6 +247,16 @@ public sealed class SaveOrderEditsHandler(
 
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.shipping_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            if (billingChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    billingSummary!, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.billing_changed",
                     order.Id.ToString(), "success", now);
             }
 
@@ -279,7 +308,7 @@ public sealed class SaveOrderEditsHandler(
             // Antes de mirar el total: las líneas que cambiaron mueven el tramo de las que agrupan
             // con ellas, y el detal o el piso cambian todos los descuentos.
             await OrderPricingRecalculation.ApplyAsync(
-                pricingLookup, settingsStore, command.TenantId, order, now, cancellationToken);
+                pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
             order.RecalculatePaymentStatus(now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }

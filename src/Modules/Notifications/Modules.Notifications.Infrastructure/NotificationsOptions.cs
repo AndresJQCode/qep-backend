@@ -21,5 +21,9 @@ public sealed class NotificationsOptions
     // que el frontend resuelve contra GET /api/v1/invitations/{token}.
     public string InvitationUrl { get; init; } = "http://localhost:3002/invitations";
 
+    // Base de los links que no son de una invitación (verificación de correo, restablecer la
+    // contraseña): el email lleva "{AppBaseUrl}/<ruta del frontend>?token=...".
+    public string AppBaseUrl { get; init; } = "http://localhost:3002";
+
     public InfobipOptions Infobip { get; init; } = new();
 }

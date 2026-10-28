@@ -237,6 +237,7 @@ public sealed class CreateQuotationHandlerTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
             pricing ?? new StubQuotationProductPricingLookup(),
             settings,
+            new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
             defaultCurrency ?? new FixedTenantDefaultCurrency());
 

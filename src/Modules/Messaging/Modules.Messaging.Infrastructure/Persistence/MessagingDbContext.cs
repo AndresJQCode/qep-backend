@@ -54,6 +54,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: un asistente en curso (o pausado) siempre sabe qué chatbot es.</summary>
     public const string AutomationChatbotCheck = "automation_status = 'None' OR automation_chatbot_id IS NOT NULL";
 
+    /// <summary>Spec 2026-10-26 §3.1: el bloqueo son tres columnas que se escriben y se borran juntas.</summary>
+    public const string BlockCheck =
+        "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)";
+
     public const string SentByKindCheck = "sent_by_kind IN (1,2)";
 
     /// <summary>El autor es chatbot si y sólo si hay chatbot.</summary>
@@ -175,6 +179,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_conversations_automation_assignment", AutomationAssignmentCheck);
             table.HasCheckConstraint("CK_conversations_automation_resolved", AutomationResolvedCheck);
             table.HasCheckConstraint("CK_conversations_automation_chatbot", AutomationChatbotCheck);
+            table.HasCheckConstraint("CK_conversations_block", BlockCheck);
         });
         conversation.HasKey(value => value.Id);
         conversation.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -224,6 +229,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.AutomationChatbotId).HasColumnName("automation_chatbot_id");
         conversation.Property(value => value.AutomationStep).HasColumnName("automation_step").HasMaxLength(120);
         conversation.Property(value => value.AutomationResumedAt).HasColumnName("automation_resumed_at");
+        // Spec 2026-10-26 §3.1: el bloqueo del contacto. blocked_by_member_id es referencia blanda a la membresía (sin FK, como
+        // automation_paused_by_member_id); blocked_wa_id congela el número bloqueado, y los tres viajan juntos (CK_conversations_block).
+        conversation.Property(value => value.BlockedAt).HasColumnName("blocked_at");
+        conversation.Property(value => value.BlockedByMemberId).HasColumnName("blocked_by_member_id");
+        conversation.Property(value => value.BlockedWaId).HasColumnName("blocked_wa_id").HasMaxLength(Conversation.WaIdMaxLength);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas

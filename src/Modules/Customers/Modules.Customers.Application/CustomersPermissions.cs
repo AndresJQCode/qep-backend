@@ -31,6 +31,10 @@ public static class CustomersPermissions
     // Spec 2026-10-24 D-F1. Fusionar varios clientes en uno no se puede deshacer, así que es un permiso aparte de
     // CustomerManage: un rol custom puede tener uno y no el otro.
     public const string CustomerMerge = "customers.customer.merge";
+
+    // Spec 2026-10-26 D-9. Registrar que un titular revocó su autorización de datos personales no es editar su ficha: un rol
+    // custom puede tener CustomerManage sin este permiso.
+    public const string DataConsentRevoke = "customers.data_consent.revoke";
 }
 
 /// <summary>

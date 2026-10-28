@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Pricing;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
 using Modules.Tenancy.Application;
@@ -55,6 +56,18 @@ public sealed class FakeTenantDefaultCurrency(string currency = "COP") : ITenant
         RequestedTenantIds.Add(tenantId);
         return Task.FromResult(currency);
     }
+}
+
+/// <summary>La regla de redondeo del tenant: <see cref="Rule"/> manda sobre cualquier moneda; sin ella, la de siempre.</summary>
+internal sealed class FakeTenantPriceRounding : ITenantPriceRounding
+{
+    public PriceRounding? Rule { get; set; }
+
+    public Task<PriceRounding> GetAsync(Guid tenantId, string currency, CancellationToken cancellationToken) =>
+        Task.FromResult(Rule ?? PriceRoundingDefaults.For(currency));
+
+    public Task<IReadOnlyDictionary<string, PriceRounding>> GetAllAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class InMemoryCashSessionRepository : ICashSessionRepository
@@ -326,11 +339,15 @@ internal sealed class FakeProductLookup : IPosProductLookup
         Products[index] = (Products[index].TenantId, product);
     }
 
+    /// <summary>La categoría de la última búsqueda: el doble la graba y no filtra por ella (eso lo prueba el adaptador).</summary>
+    public Guid? LastCategoryId { get; private set; }
+
     // Como el adaptador: productos con alguna variante activa que coincide por nombre del producto,
     // Code o código de barras, cada uno con sus variantes activas.
     public Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken)
+        Guid tenantId, string? search, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken)
     {
+        LastCategoryId = categoryId;
         var matches = Products
             .Where(entry => entry.TenantId == tenantId && entry.Product.IsActive)
             .Select(entry => entry.Product)
@@ -360,6 +377,22 @@ internal sealed class FakeProductLookup : IPosProductLookup
         Task.FromResult<IReadOnlyDictionary<Guid, PosProductRef>>(Products
             .Where(entry => entry.TenantId == tenantId && variantIds.Contains(entry.Product.VariantId))
             .ToDictionary(entry => entry.Product.VariantId, entry => entry.Product));
+}
+
+/// <summary>
+/// Las categorías de la caja en memoria, con el <c>ProductCount</c> ya acumulado como lo entrega el adaptador;
+/// <see cref="Totals"/> es el total de productos activos de cada tenant (con o sin categoría).
+/// </summary>
+internal sealed class FakeCategoryLookup : IPosCategoryLookup
+{
+    public List<(Guid TenantId, PosCategoryRef Category)> Categories { get; } = [];
+
+    public Dictionary<Guid, int> Totals { get; } = [];
+
+    public Task<PosCategoryList> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(new PosCategoryList(
+            Categories.Where(entry => entry.TenantId == tenantId).Select(entry => entry.Category).ToList(),
+            Totals.GetValueOrDefault(tenantId)));
 }
 
 /// <summary>
@@ -475,6 +508,8 @@ internal sealed class PosTestBed
 
     public FakeProductLookup Products { get; } = new();
 
+    public FakeCategoryLookup Categories { get; } = new();
+
     public FakeCustomerLookup Customers { get; } = new();
 
     public FakeClock Clock { get; } = new(PosFixtures.Now);
@@ -483,6 +518,9 @@ internal sealed class PosTestBed
 
     /// <summary>La moneda por defecto del tenant que lee la apertura de caja.</summary>
     public FakeTenantDefaultCurrency DefaultCurrency { get; init; } = new();
+
+    /// <summary>La regla de redondeo que lee la vista previa y la venta; sin fijarla, la de siempre de cada moneda.</summary>
+    public FakeTenantPriceRounding PriceRounding { get; } = new();
 
     /// <summary>El usuario autenticado de las pruebas; instancia para que Context no sea estático (CA1822).</summary>
     public Guid SubjectId { get; } = UserId;

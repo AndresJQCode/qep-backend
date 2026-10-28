@@ -70,7 +70,7 @@ public sealed class RunProcessorTests
         Assert.Equal(RunOutcomes.Ended, outcome);
         Assert.Equal([DeterministicClientId.For(run.Id, 0, 0), DeterministicClientId.For(run.Id, 0, 1)], bed.Messenger.Sent);
         var (context, variables) = Assert.Single(http.Calls);
-        Assert.Equal(new HttpCallContext(TenantId, run.Id, null, "n2"), context);
+        Assert.Equal(new HttpCallContext(TenantId, run.Id, null, "n2", StepNumber: 2), context);
         Assert.Equal("Laura", variables.TextOf("nombre"));
         Assert.Equal("Laura", run.ToState().Variables.TextOf("cliente.firstName"));
     }
@@ -157,6 +157,70 @@ public sealed class RunProcessorTests
         Assert.Equal((RunStatus.HandedOff, (string?)null), (run.Status, run.FailureCode));
     }
 
+    /// <summary>Spec 2026-10-25 D-1: el bloque de traspaso trae el miembro elegido y el procesador se lo pasa al adaptador.</summary>
+    [Fact]
+    public async Task AHandoffBlockPassesItsMember()
+    {
+        var member = Guid.CreateVersion7();
+        var flow = $$"""
+            { "schema": 1, "start": { "firstNodeId": "n2" }, "variables": [],
+              "nodes": [
+                { "id": "n2", "kind": "handoff", "title": "Pasar a un asesor", "text": null, "memberId": "{{member}}", "outputs": {} }
+              ] }
+            """;
+        var bed = new Bed(null, flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.Block, null, "n2", "Pasar a un asesor", null, null, null), (Guid?)member),
+            Assert.Single(bed.Conversations.Handoffs));
+    }
+
+    /// <summary>Spec 2026-10-25 D-4: la pregunta sin salida <c>invalid</c> que agota sus intentos traspasa con la causa
+    /// <c>AttemptsExhausted</c> y el miembro que dice la regla del chatbot.</summary>
+    [Fact]
+    public async Task AnExhaustedQuestionHandsOffWithItsCauseAndMember()
+    {
+        var member = Guid.CreateVersion7();
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "q" }, "variables": [],
+              "nodes": [ { "id": "q", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc",
+                "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "outputs": { "answered": null, "invalid": null } } ] }
+            """;
+        var bed = new Bed(
+            null, ActiveState(), flow: flow, engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, member));
+        bed.Runs.Added.Add(ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "q", Attempts = 2 }, DateTimeOffset.UtcNow.AddMinutes(-1)));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "q", "Documento", null, null, null), (Guid?)member),
+            Assert.Single(bed.Conversations.Handoffs));
+    }
+
+    /// <summary>Spec 2026-10-25 D-1: un fallo nunca asigna, aunque el chatbot tenga un miembro en su regla de agotamiento.</summary>
+    [Fact]
+    public async Task AFailureNeverAssigns()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "n2" }, "variables": [],
+              "nodes": [
+                { "id": "n2", "kind": "http", "title": "Consultar", "connectionId": "11111111-1111-1111-1111-111111111111", "method": "GET", "path": "/status", "mapping": [], "outputs": { "ok": "n2", "error": null } }
+              ] }
+            """;
+        var bed = new Bed(
+            null, flow: flow, http: new RecordingHttpBlocks(new HttpCallResult(true, 200, RunVariables.Empty(), HttpCallOutcomes.Ok, null)),
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, Guid.CreateVersion7()));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HandoffCauseKind.FlowFailed, Assert.Single(bed.Conversations.Handoffs).Cause.Kind);
+        Assert.Null(bed.Conversations.Handoffs[0].Member);
+    }
+
     /// <summary>Fila 1 con HTTP (caso 2 del owner): el paso empezó con el 404 del bloque HTTP.</summary>
     [Fact]
     public async Task AHandoffBlockAfterAFailedHttpNamesTheHttpBlock()
@@ -214,6 +278,22 @@ public sealed class RunProcessorTests
         Assert.Equal((RunStatus.Failed, "messaging.connection_unavailable"), (run.Status, run.FailureCode));
     }
 
+    /// <summary>Spec 2026-10-26 §3.4: el contacto quedó bloqueado entre el reclamo y el envío. No es un fallo ni un traspaso (nadie tiene que
+    /// atenderlo): la corrida termina <c>Interrupted</c> en silencio y la conversación no cambia de estado.</summary>
+    [Fact]
+    public async Task ABlockedSendInterruptsTheRunWithoutHandingOff()
+    {
+        var bed = new Bed(null);
+        bed.Messenger.Reply = _ => new BotSendOutcome.Blocked();
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal((RunStatus.Interrupted, (string?)null), (run.Status, run.FailureCode));
+        Assert.Equal((0, 0), (bed.Conversations.HandedOff, bed.Conversations.Ended));
+        Assert.DoesNotContain(AutomationsAuditActions.RunFailed, bed.Audit.Actions);
+    }
+
     /// <summary>D-T2: un traspaso por falla no le escribe al cliente. Sólo el intento que falló; nada después del traspaso.</summary>
     [Fact]
     public async Task AFailureHandsOffWithoutSendingAnything()
@@ -245,6 +325,34 @@ public sealed class RunProcessorTests
             new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.target_missing", "n1", "Hola", null, null, null),
             Assert.Single(bed.Conversations.Causes));
         Assert.Equal("automations.run.target_missing", Assert.Single(bed.Runs.Added).FailureCode);
+    }
+
+    /// <summary>Spec 2026-10-25 D-4 (Review Focus 1): la regla se lee del chatbot en cada entrante, no de lo que la corrida guardó al
+    /// arrancar. Una corrida que espera con dos intentos hechos y un chatbot que hoy dice «pasar a un asesor» termina traspasada.</summary>
+    [Fact]
+    public async Task AWaitingRunUsesTheRuleTheChatbotHasNow()
+    {
+        var memberId = Guid.CreateVersion7();
+        var flow = """
+            { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
+              "nodes": [ { "id": "n1", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc",
+                "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "outputs": { "answered": null, "invalid": null } } ] }
+            """;
+        var bed = new Bed(
+            null, ActiveState(), flow: flow,
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Handoff, memberId));
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "n1", Attempts = 2 }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunStatus.HandedOff, run.Status);
+        Assert.Equal(1, bed.Conversations.HandedOff);
+        Assert.Equal(
+            (new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "n1", "Documento", null, null, null), (Guid?)memberId),
+            Assert.Single(bed.Conversations.Handoffs));
     }
 
     /// <summary>Fila 6 (P2-R6): la versión de la corrida viva ya no existe; no hay flujo del que sacar un bloque.</summary>
@@ -606,6 +714,269 @@ public sealed class RunProcessorTests
         Assert.Equal([AutomationsAuditActions.RunAbandoned], bed.Audit.Actions);
     }
 
+    // ---- Spec 2026-10-26: Política de datos por el puerto IAutomationDataConsents. ----
+
+    /// <summary>Política de datos → un Mensaje por cada salida.</summary>
+    private const string ConsentFlow = """
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d y dinos si aceptas.", "outputs": { "accepted": "ok", "rejected": "no" } },
+            { "id": "ok", "kind": "message", "title": "Gracias", "text": "Gracias por aceptar.", "outputs": { "next": null } },
+            { "id": "no", "kind": "message", "title": "Entendido", "text": "Entendido.", "outputs": { "next": null } }
+          ] }
+        """;
+
+    /// <summary>D-2 y D-6: sin aceptación vigente pregunta con los botones fijos, espera, y recuerda el mensaje que salió.</summary>
+    [Fact]
+    public async Task TheConsentBlockAsksWhenThereIsNoAcceptance()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        var (message, messageId) = Assert.Single(bed.Messenger.Interactives);
+        var buttons = Assert.IsType<InteractiveMessage.Buttons>(message);
+        Assert.Equal([("accepted", "Acepto"), ("rejected", "No acepto")], buttons.Items);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal(new ConsentPrompt("consent", "Lee https://e.co/d y dinos si aceptas.", messageId), run.ToState().ConsentPrompt);
+        Assert.Equal([(TenantId, ConversationId)], bed.DataConsents.Checks);
+        Assert.Empty(bed.Messenger.Texts);
+    }
+
+    /// <summary>D-2: con una aceptación vigente no pregunta y sigue por <c>accepted</c>.</summary>
+    [Fact]
+    public async Task ACurrentAcceptanceSkipsTheQuestion()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.Accepted));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Messenger.Interactives);
+        Assert.Equal(["Gracias por aceptar."], bed.Messenger.Texts);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>D-7: sin cliente al que registrarle la respuesta no pregunta, sale por <c>rejected</c> y lo audita el sistema.</summary>
+    [Fact]
+    public async Task AnUnresolvableCustomerLeavesByRejectedAndAuditsTheSystem()
+    {
+        var bed = new Bed(null, flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.Unavailable));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Empty(bed.Messenger.Interactives);
+        Assert.Equal(["Entendido."], bed.Messenger.Texts);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnavailable, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.data_consent_unavailable", AutomationsAuditActions.DataConsentUnavailable);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>D-5 y D-10: el toque se registra con la versión de la corrida, el texto que se mostró, el mensaje de la pregunta y el
+    /// entrante que la respondió, antes de enviar el bloque siguiente.</summary>
+    [Fact]
+    public async Task ATapIsRecordedWithTheRunVersionAndTheReply()
+    {
+        var prompt = Guid.CreateVersion7();
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        bed.Runs.Added.Add(ConsentRun(new ConsentPrompt("consent", "Texto", prompt)));
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+        int? sentBeforeRecord = null;
+        bed.DataConsents.OnRecord = () => sentBeforeRecord = bed.Messenger.Sent.Count;
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [new DataConsentRecord(
+                TenantId, ConversationId, DataConsentDecision.Accepted, "Texto", prompt, Item.MessageId, ChatbotId, "Bienvenida", VersionId, 1, "consent")],
+            bed.DataConsents.Records);
+        Assert.Equal(0, sentBeforeRecord);
+        Assert.Equal(["Gracias por aceptar."], bed.Messenger.Texts);
+    }
+
+    /// <summary>D-5: una respuesta que no se pudo registrar falla la corrida antes de seguir; el Mensaje de <c>accepted</c> no sale.</summary>
+    [Fact]
+    public async Task AReplyThatCannotBeRecordedFailsTheRunBeforeContinuing()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted, records: false));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal((RunStatus.Failed, "automations.run.data_consent_unrecorded"), (run.Status, run.FailureCode));
+        Assert.Equal(AutomationsRunFailures.DataConsentUnrecorded, run.FailureCode);
+        Assert.Equal(
+            new HandoffCause(HandoffCauseKind.FlowFailed, "automations.run.data_consent_unrecorded", "consent", "Política de datos", null, null, null),
+            Assert.Single(bed.Conversations.Causes));
+        Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>Una excepción del puerto (un conflicto de concurrencia de Customers) no es «no se pudo registrar»: sube, la unidad se
+    /// deshace y la fila se reintenta, sin fallar la corrida ni enviar el bloque siguiente.</summary>
+    [Fact]
+    public async Task ARecordThatThrowsLeavesTheUnitRetryable()
+    {
+        var dataConsents = new RecordingDataConsents(DataConsentCheck.NotAccepted)
+        {
+            Failure = new RequestConcurrencyException("concurrency.conflict", "El cliente cambió."),
+        };
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: dataConsents);
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "accepted");
+
+        var outcome = await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Retry, outcome);
+        Assert.Equal([$"retry {Item.MessageId} 1 00:00:02"], bed.Inbox.Calls);
+        Assert.Equal((RunStatus.Waiting, (string?)null), (run.Status, run.FailureCode));
+        Assert.Empty(bed.Conversations.Handoffs);
+        Assert.Empty(bed.Messenger.Sent);
+    }
+
+    /// <summary>D-4: agotar los intentos sale por <c>rejected</c> sin registrar nada, y queda la auditoría.</summary>
+    [Fact]
+    public async Task ExhaustingTheConsentAuditsAndRecordsNothing()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+
+        for (var reply = 0; reply < 3; reply++)
+        {
+            await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Empty(bed.DataConsents.Records);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnanswered, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.data_consent_unanswered", AutomationsAuditActions.DataConsentUnanswered);
+        Assert.Equal(["Entendido."], bed.Messenger.Texts);
+        Assert.Equal(RunStatus.Completed, run.Status);
+    }
+
+    /// <summary>Una unidad que murió a mitad de la verificación deja la corrida <c>Running</c> en el bloque: se vuelve a preguntar.</summary>
+    [Fact]
+    public async Task ARunStuckOnTheConsentCheckAsksAgain()
+    {
+        var bed = new Bed(null, ActiveState(), flow: ConsentFlow, dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Running, CurrentNodeId = "consent" }, DateTimeOffset.UtcNow.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal([(TenantId, ConversationId)], bed.DataConsents.Checks);
+        Assert.Single(bed.Messenger.Interactives);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir: Política de datos con un modo de «No acepto» y su miembro (sin salida <c>rejected</c>).</summary>
+    private static string ConsentModeFlow(string onReject, Guid member) => $$"""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d y dinos si aceptas.",
+              "onReject": "{{onReject}}", "maxAsks": 1, "onRejectMemberId": "{{member}}", "outputs": { "accepted": "ok" } },
+            { "id": "ok", "kind": "message", "title": "Gracias", "text": "Gracias por aceptar.", "outputs": { "next": null } }
+          ] }
+        """;
+
+    /// <summary>Spec 2026-10-26 repetir R-4c: el «No acepto» al tope de <c>repeat</c> registra la fila y traspasa con la causa de la
+    /// política de datos y el miembro del bloque.</summary>
+    [Fact]
+    public async Task ARejectionAtTheCapHandsOffWithTheConsentCause()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("repeat", member), dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "rejected");
+        int? handoffsBeforeRecord = null;
+        bed.DataConsents.OnRecord = () => handoffsBeforeRecord = bed.Conversations.Handoffs.Count;
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(DataConsentDecision.Rejected, Assert.Single(bed.DataConsents.Records).Decision);
+        Assert.Equal(0, handoffsBeforeRecord);
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.DataConsentRejected, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Equal(RunStatus.HandedOff, run.Status);
+        Assert.Contains((AutomationsAuditActions.RunHandedOff, true), bed.Audit.Entries);
+        Assert.Equal("automations.run.handed_off", AutomationsAuditActions.RunHandedOff);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-4b: sin cliente al que registrarle la respuesta, <c>handoff</c> traspasa con la causa
+    /// «no disponible» y el miembro del bloque, y queda la auditoría de sistema.</summary>
+    [Fact]
+    public async Task AnUnrecordableCustomerHandsOffWithTheUnavailableCause()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, flow: ConsentModeFlow("handoff", member), dataConsents: new RecordingDataConsents(DataConsentCheck.Unavailable));
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.DataConsentUnavailable, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnavailable, true), bed.Audit.Entries);
+        Assert.Contains((AutomationsAuditActions.RunHandedOff, true), bed.Audit.Entries);
+        Assert.Empty(bed.DataConsents.Records);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-4: agotar las respuestas inválidas de una Política de datos en <c>repeat</c> traspasa como
+    /// intentos agotados con el miembro del bloque, aunque la regla del chatbot sea reiniciar.</summary>
+    [Fact]
+    public async Task ExhaustedConsentHandsOffAsAttemptsExhausted()
+    {
+        var member = Guid.CreateVersion7();
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("repeat", member), dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted),
+            engineSettings: new EngineSettings(Chatbot.DefaultRestartKeyword, 3, AttemptsExhaustedAction.Restart));
+        bed.Runs.Added.Add(ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7())));
+
+        for (var reply = 0; reply < 3; reply++)
+        {
+            await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            [(new HandoffCause(HandoffCauseKind.AttemptsExhausted, null, "consent", "Política de datos", null, null, null), (Guid?)member)],
+            bed.Conversations.Handoffs);
+        Assert.Contains((AutomationsAuditActions.DataConsentUnanswered, true), bed.Audit.Entries);
+    }
+
+    /// <summary>Spec 2026-10-26 repetir R-3: un «No acepto» que no se pudo registrar falla la corrida y no traspasa con la causa de la
+    /// política de datos.</summary>
+    [Fact]
+    public async Task ARecordThatFailsDoesNotHandOff()
+    {
+        var bed = new Bed(
+            null, ActiveState(), flow: ConsentModeFlow("handoff", Guid.CreateVersion7()),
+            dataConsents: new RecordingDataConsents(DataConsentCheck.NotAccepted, records: false));
+        var run = ConsentRun(new ConsentPrompt("consent", "Texto", Guid.CreateVersion7()));
+        bed.Runs.Added.Add(run);
+        bed.Inbox.Messages[Item.MessageId] = Tapped(Item.MessageId, "rejected");
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        Assert.Equal((RunStatus.Failed, "automations.run.data_consent_unrecorded"), (run.Status, run.FailureCode));
+        Assert.DoesNotContain(bed.Conversations.Handoffs, handoff => handoff.Cause.Kind == HandoffCauseKind.DataConsentRejected);
+    }
+
+    private static ConversationRun ConsentRun(ConsentPrompt prompt) =>
+        ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "consent", ConsentPrompt = prompt },
+            DateTimeOffset.UtcNow.AddMinutes(-1));
+
+    private static InboundMessage Tapped(Guid messageId, string replyId) =>
+        new(messageId, CustomerMessageKinds.Interactive, replyId == "accepted" ? "Acepto" : "No acepto", replyId, null, DateTimeOffset.UtcNow);
+
     /// <summary>Pedir adjunto → pregunta → mensaje que usa la url del adjunto (D-M8).</summary>
     private const string AttachmentFlow = """
         { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [ { "name": "factura", "type": "attachment" } ],
@@ -639,9 +1010,12 @@ public sealed class RunProcessorTests
 
     private sealed class Bed(
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
-        IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null)
+        IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
+        EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null)
     {
         public RecordingInbox Inbox { get; } = new();
+
+        public RecordingDataConsents DataConsents { get; } = dataConsents ?? new(DataConsentCheck.NotAccepted);
 
         public MemoryRuns Runs { get; } = new();
 
@@ -658,9 +1032,10 @@ public sealed class RunProcessorTests
             var hours = new OpenHours();
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, NullLogger<RunEffects>.Instance);
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings),
+                NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
@@ -723,7 +1098,7 @@ public sealed class RunProcessorTests
     }
 
     /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
-    private sealed class ServingChatbots(string? flow) : IChatbotRepository
+    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
@@ -732,7 +1107,10 @@ public sealed class RunProcessorTests
         public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
         public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
-            Task.FromResult<EngineSettings?>(new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
+            Task.FromResult<EngineSettings?>(settings ?? new EngineSettings(Chatbot.DefaultRestartKeyword, 3));
+
+        public Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
+            Task.FromResult<ChatbotVersionLabel?>(tenantId == TenantId && versionId == VersionId ? new ChatbotVersionLabel("Bienvenida", 1) : null);
 
         public Task<Chatbot?> FindAsync(Guid tenantId, Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -785,7 +1163,10 @@ public sealed class RunProcessorTests
         public int HandedOff { get; private set; }
 
         /// <summary>Spec 2026-10-24: la causa de cada traspaso, en orden.</summary>
-        public List<HandoffCause> Causes { get; } = [];
+        public List<HandoffCause> Causes => [.. Handoffs.Select(handoff => handoff.Cause)];
+
+        /// <summary>Spec 2026-10-25 D-1: la causa y el miembro al que se pidió asignar, en orden.</summary>
+        public List<(HandoffCause Cause, Guid? Member)> Handoffs { get; } = [];
 
         public int Started { get; private set; }
 
@@ -808,10 +1189,10 @@ public sealed class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken)
+        public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
         {
             HandedOff++;
-            Causes.Add(cause);
+            Handoffs.Add((cause, assignToMemberId));
             return Task.CompletedTask;
         }
 
@@ -835,6 +1216,9 @@ public sealed class RunProcessorTests
 
         public List<string> Texts { get; } = [];
 
+        /// <summary>Cada interactivo enviado con el id de mensaje que Mensajería devolvió.</summary>
+        public List<(InteractiveMessage Message, Guid MessageId)> Interactives { get; } = [];
+
         /// <summary>Cómo responde Mensajería a cada texto; sin respuesta, lo da por enviado.</summary>
         public Func<string, BotSendOutcome>? Reply { get; set; }
 
@@ -849,7 +1233,9 @@ public sealed class RunProcessorTests
             Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, InteractiveMessage message, CancellationToken cancellationToken)
         {
             Sent.Add(clientId);
-            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(Guid.CreateVersion7()));
+            var messageId = Guid.CreateVersion7();
+            Interactives.Add((message, messageId));
+            return Task.FromResult<BotSendOutcome>(new BotSendOutcome.Sent(messageId));
         }
     }
 
@@ -913,10 +1299,48 @@ public sealed class RunProcessorTests
 
     private sealed class RecordingAudit : IAutomationsAuditRecorder
     {
-        public List<string> Actions { get; } = [];
+        public List<(string Action, bool BySystem)> Entries { get; } = [];
+
+        public List<string> Actions => [.. Entries.Select(entry => entry.Action)];
 
         public void Record(Guid tenantId, Guid actorId, bool bySystem, string action, string resourceType, Guid resourceId, DateTimeOffset at) =>
-            Actions.Add(action);
+            Entries.Add((action, bySystem));
+    }
+
+    /// <summary>Spec 2026-10-26: el registro de Customers de mentira. Responde <paramref name="check"/> a cada verificación y
+    /// <paramref name="records"/> a cada registro; con <see cref="Failure"/>, el registro lanza como lo haría el adaptador.</summary>
+    private sealed class RecordingDataConsents(DataConsentCheck check, bool records = true) : IAutomationDataConsents
+    {
+        public List<(Guid TenantId, Guid ConversationId)> Checks { get; } = [];
+
+        public List<DataConsentRecord> Records { get; } = [];
+
+        public Exception? Failure { get; init; }
+
+        /// <summary>Corre al registrar, para que la prueba mire qué había salido hasta ese momento.</summary>
+        public Action? OnRecord { get; set; }
+
+        public Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            Checks.Add((tenantId, conversationId));
+            return Task.FromResult(check);
+        }
+
+        public Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken)
+        {
+            OnRecord?.Invoke();
+            if (Failure is not null)
+            {
+                return Task.FromException<bool>(Failure);
+            }
+
+            if (records)
+            {
+                Records.Add(record);
+            }
+
+            return Task.FromResult(records);
+        }
     }
 
     private sealed class FixedClock : IClock

@@ -23,6 +23,7 @@ public sealed class AddQuotationItemHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
@@ -98,7 +99,7 @@ public sealed class AddQuotationItemHandler(
         // las que ya estaban (agrupación) y mueve el total contra el que se mide la compra mínima.
         // El que vale sale de acá.
         await QuotationPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, command.TenantId, quotation, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, quotation, now, cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
 

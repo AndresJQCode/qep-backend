@@ -38,9 +38,14 @@ public static class TenancyInfrastructureExtensions
         // request (TenantClock).
         services.AddScoped<ITenantClock, TenantClock>();
         services.AddScoped<ITenantDefaultCurrency, TenantDefaultCurrency>();
+        // Spec 2026-10-27: la regla de redondeo por moneda. El lector es el puerto que usan los módulos
+        // de negocio; el repositorio, el que usa el PUT (con tracking).
+        services.AddScoped<ITenantPriceRoundingRepository, TenantPriceRoundingRepository>();
+        services.AddScoped<ITenantPriceRounding, TenantPriceRoundingReader>();
         services.AddScoped<IMembershipRepository, MembershipRepository>();
         services.AddScoped<IMembershipActivation, MembershipActivationService>();
         services.AddScoped<IInvitationService, InvitationService>();
+        services.AddScoped<ITenantSlugAvailability, TenantSlugAvailability>();
         services.AddScoped<ITenantRegistration, TenantRegistrationService>();
         // Spec 2026-10-07: ValidateOnStart, como Notifications, para que un valor que no es
         // booleano tumbe el arranque en vez del primer signup.

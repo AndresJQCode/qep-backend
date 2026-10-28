@@ -302,6 +302,7 @@ public static class CustomerEndpoints
             survivor.Tags,
             survivor.MarketingConsent,
             survivor.MergedInto,
+            survivor.PersonType,
             result.DroppedTags));
     }
 
@@ -326,7 +327,8 @@ public static class CustomerEndpoints
                 request.CityName,
                 request.ClassificationId,
                 request.WithRetention,
-                request.VatSurplus),
+                request.VatSurplus,
+                request.PersonType),
             cancellationToken);
 
         return Results.Created(
@@ -357,7 +359,8 @@ public static class CustomerEndpoints
                 request.CityName,
                 request.ClassificationId,
                 request.WithRetention,
-                request.VatSurplus),
+                request.VatSurplus,
+                request.PersonType),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -576,7 +579,8 @@ public static class CustomerEndpoints
         customer.IsComplete,
         customer.Tags,
         customer.MarketingConsent,
-        customer.MergedInto);
+        customer.MergedInto,
+        customer.PersonType);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,

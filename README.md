@@ -145,7 +145,7 @@ local y por variable de entorno en k8s
 | `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 2`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
 | `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
 | `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
 | `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
@@ -162,6 +162,44 @@ En k8s no se define `OpenTelemetry:Endpoint`: el Collector se referencia con la
 variable estándar `OTEL_EXPORTER_OTLP_ENDPOINT` (leída directamente por el
 exportador OTLP), junto con `OTEL_SERVICE_NAME` y, opcionalmente,
 `OTEL_RESOURCE_ATTRIBUTES` para `service.namespace`/`service.instance.id`.
+
+### R2: regla de ciclo de vida de las respuestas HTTP de chatbots
+
+**Configuración obligatoria fuera del código, antes de desplegar RC-B1b** (captura de respuestas del bloque HTTP,
+spec [`2026-10-25-chatbot-reproduccion-de-corridas-design.md`](docs/superpowers/specs/2026-10-25-chatbot-reproduccion-de-corridas-design.md)
+§ «Ciclo de vida de R2»). El cuerpo de cada respuesta se guarda en R2 bajo
+`automations/http-responses/{tenantId}/{responseId}.json.gz` y **nada en el código lo borra**: la regla de ciclo de
+vida es la única retención. Sin ella los cuerpos se acumulan sin límite y el backend responde
+`automations.http_response.expired` a los 3 días aunque el objeto siga ahí.
+
+**Va sólo en el bucket privado**, el de `Storage:R2:Bucket` (`STORAGE_R2_BUCKET` del grupo `Backend-prod`,
+`k8s/prod-configMap.yaml:77`). El bucket público (`Storage:R2:PublicBucket`) no recibe nunca estos cuerpos (traen datos
+de clientes y se sirven sólo por `GET …/response`, con tenant y permiso) y no lleva esta regla. Se repite en cada
+ambiente que tenga su propio bucket privado y despliegue RC-B1b.
+
+El bucket privado guarda también los adjuntos de Mensajería, el staging y los comprobantes de pago: **una regla sin
+prefijo los borraría a los 3 días**. El prefijo lleva la barra final.
+
+Panel de Cloudflare: R2 → el bucket privado → Settings → Object lifecycle rules → Add rule.
+
+| Campo | Valor |
+| --- | --- |
+| Nombre | `automations-http-responses-3d` |
+| Prefijo | `automations/http-responses/` |
+| Acción | Delete objects, 3 días después de creado |
+
+Nada más marcado. Alternativa por CLI, en PowerShell (wrangler pide su propio login; no se usa ninguna credencial de
+`qep-backend-secret`). Confirma la sintaxis con `--help`, porque wrangler la cambió entre versiones:
+
+```powershell
+npx wrangler r2 bucket lifecycle add --help
+npx wrangler r2 bucket lifecycle add <bucket-privado> automations-http-responses-3d automations/http-responses/ --expire-days 3
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+`list` tiene que mostrar una sola regla nueva, con ese prefijo. La ventana de 3 días es fija en el código
+(plan D-P8, `HttpResponseObjects.Window`, que llega con RC-B1b): si la regla cambia de días, el backend y el bucket
+dejan de coincidir.
 
 ### Secretos de usuario
 
@@ -550,6 +588,100 @@ El cuerpo va a archivo porque PowerShell rompe las comillas dobles al pasarlas a
 escribe en UTF-8 sin BOM y con el mismo formato del archivo, así que el diff muestra sólo los
 municipios que cambiaron. Después corre `Modules.Geography.UnitTests` antes de commitear.
 
+## Sinónimos de ciudades
+
+Cuando una importación trae un texto de ciudad que no casa con ningún municipio del departamento (`CALLI` en vez de `CALI`),
+el pedido entra igual y el texto queda en una bandeja que el operador resuelve (spec `2026-10-26`). Confirmarlo como sinónimo
+de una ciudad real hace que **los pedidos siguientes casen solos** y que los ya importados se corrijan. Hoy sólo Shopify
+reporta a la bandeja; es el estado de hoy, no una regla: van a reportar más proveedores. Uno nuevo necesita su propio reporter
+hacia el puerto de Geography (`IUnresolvedCityReporter`, con su `source`) y su propio consumidor de los eventos
+`geography.city_synonym.*` con su worker que corrige, porque los de hoy viven en el módulo de Shopify. Las tablas de Geography ya
+llevan `source`. Módulo `geography` (sinónimos y bandeja) y `shopify` (el trabajo que corrige).
+
+**Orden de coincidencia.** Primero el nombre de la ciudad, luego el nombre oficial del DANE y, sólo si ninguno casa, el
+sinónimo vivo del departamento (`CityRepository.MatchByNameAsync`). Un texto que ya es el nombre de una ciudad real no se
+puede confirmar como sinónimo: 422 `geography.synonym.matches_city`.
+
+**Consola del operador.** Todo bajo `/api/v1/tenants/{tenantId}/operator/cities`, con el tenant operador en la ruta
+(`Platform:OperatorTenantId`) y doble capa: la política `operator.cities.read` o `operator.cities.manage` y el handler.
+
+| Ruta | Permiso | Qué hace |
+| --- | --- | --- |
+| `GET summary` | read | Contadores: pendientes, descartados, sinónimos y pedidos esperando. |
+| `GET unresolved`, `GET unresolved/{id}` | read | La bandeja y el detalle, con hasta tres sugerencias (similitud mínima 50). |
+| `POST unresolved/{id}/impact` `{ cityId }` | read | Qué pasaría al confirmar; no escribe. |
+| `POST unresolved/{id}/resolve` `{ cityId }` | manage | Crea el sinónimo y publica `resolved`. 409 si ya hay uno vivo. |
+| `POST unresolved/{id}/discard`, `.../restore` | manage | Saca o devuelve una fila de la bandeja. |
+| `GET synonyms` | read | La lista, con los contadores de lo corregido, pendiente y fallido. |
+| `POST synonyms/{id}/impact` `{ cityId }` | read | Qué pasaría al corregirlo a otra ciudad. |
+| `PUT synonyms/{id}` `{ cityId, expectedVersion }` | manage | Cambia la ciudad y publica `corrected`. 412 si la versión cambió. |
+| `DELETE synonyms/{id}` | manage | Borrado lógico: deja de casar y no deshace lo corregido; no publica nada. |
+| `POST synonyms/{id}/retry` | manage | Devuelve a `Pending` los trabajos `Failed` del sinónimo. |
+| `POST backfill` | manage | Recorre los pedidos ya importados (ver abajo). |
+
+Un `cityId` de otro departamento es 422 `geography.city.not_in_department`; los listados devuelven la `page` pedida, sin
+recortarla.
+
+**Eventos.** `resolved` y `corrected` salen por el outbox de plataforma en la misma transacción que el cambio, con el id del
+sinónimo como `correlation_id`: `geography.city_synonym.resolved.v1` (con las ocurrencias de la fila: pedido, cliente y si a
+cada uno sólo le faltaba la ciudad) y `geography.city_synonym.corrected.v1` (con la ciudad anterior y la nueva). Los nombres
+de campo son contrato con Shopify: los escribe `GeographyEventPublisher` y los lee `CitySynonymEventPayloads`.
+
+**Consumidor y worker.** `CitySynonymEventsWorker` llama cada 10 s al consumidor `shopify.city-synonym-events`, que reclama
+los mensajes del outbox y siembra los trabajos de `shopify.city_correction_jobs` y marca el inbox en el mismo guardado: un
+mensaje procesado nunca queda sin sus trabajos. Un mensaje que falla vuelve a los 5 s, 30 s y 5 minutos, y después cada 5
+minutos: nunca se abandona. `resolved` siembra un trabajo por pedido (y uno por cliente que sólo le faltaba la ciudad);
+`corrected` siembra una recorrección por cada corrección ya escrita con otra ciudad. `ShopifyCityCorrectionWorker` también
+corre cada 10 s: toma lotes de 50 trabajos, los reclama uno a uno (un solo ganador entre réplicas) y los procesa cada uno en su
+scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido salió de
+`Pending`, o ya tiene parte de envío, el trabajo termina `Skipped` con su motivo (`synonym_deleted`, `order_not_pending`,
+`shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
+`Failed` con la causa. La corrección escribe en Quotations y Customers, deja su huella en `shopify.city_corrections` y una
+auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y las `city_corrected` de la recorrección) en el tenant del pedido.
+
+**Reintentar lo fallido.** El contador `failedCorrections` de `GET synonyms` dice cuántos hay. `POST synonyms/{id}/retry`
+los devuelve a `Pending` con los intentos en cero y el worker los toma en su siguiente pasada; el endpoint devuelve el sinónimo
+con los contadores frescos.
+
+**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen `Pending`, sin parte de
+envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
+`{ scanned, reported, alreadyReported, nowMatching, skipped }`. Es idempotente: un texto ya reportado cuenta como
+`alreadyReported`, y correrlo otra vez es seguro.
+
+Si el texto de un pedido ya casa por un **sinónimo vivo** (no por el nombre real de la ciudad), cuenta como `nowMatching` y además
+siembra el trabajo `Resolve` de ese pedido, sin operador ni mensaje de origen: el evento de la confirmación no traía ese pedido y
+nadie más lo iba a corregir. La siembra usa la misma regla del evento y del importador (`ResolveJobs`) y no repite un trabajo del
+mismo (sinónimo, pedido), aunque el anterior siga pendiente. Si casa por el nombre real no se siembra nada: el pedido no necesita
+un sinónimo.
+
+El recorrido es **síncrono** y revisa cada fila `Imported` del espejo de todos los tenants: con un espejo grande puede toparse con
+el 524 de Cloudflare. Córrelo una vez, justo después de desplegar.
+
+### Riesgos conocidos
+
+Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
+
+- **Lease solapado y huella de cliente.** Si dos pasadas del worker se solapan sobre el mismo trabajo en una intercalación
+  estrecha, se puede perder la huella de un cliente y su auditoría. La mitigación (registrar la ciudad pedida antes de leer el
+  sinónimo, o releer `requested_city_ids` y reintentar una vez ante `NotEligible`) **no está implementada**. Si un cliente
+  completado no tiene huella, no entra en «corregido» al cambiar el sinónimo: se corrige a mano.
+- **Auditoría del pedido.** La entrada de una corrección de pedido lleva `resource_type = "order"`, no `"quotation"` como las
+  auditorías de pedidos del propio Quotations: un filtro por tipo de recurso no las junta.
+- **Reintento tras un commit entre módulos.** El worker escribe en Quotations y Customers en su propia unidad de trabajo y
+  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya fuera de `Pending` y terminar
+  `Skipped` con `order_not_pending` aunque la ciudad ya esté escrita. Es no atomicidad inherente a que sean módulos distintos.
+- **`ShopifyClaimedOutboxConsumer` y `ShopifyInbox` son copia literal de las de Pipeline.** Un arreglo a la lógica de reclamo
+  va en los dos sitios.
+- **Impacto sin tope.** `POST synonyms/{id}/impact` lee todas las huellas del sinónimo, y la vista previa de `resolve` y su
+  evento leen todas las ocurrencias de la fila, porque el contrato exige la lista completa de `ordersNotPending`. Es un límite
+  conocido al volumen de hoy.
+- **El recorrido no completa clientes.** `POST backfill` nunca siembra un cliente: la importación reutiliza clientes
+  incompletos que ya existían (por ejemplo, uno nacido en WhatsApp, con versión 1), y un sinónimo no debe completarlos. El
+  tenant los completa a mano.
+- **Auditoría del recorrido y del reintento.** La del recorrido se escribe sólo si todo el recorrido termina bien. Y en
+  `POST synonyms/{id}/retry` los trabajos `Failed` vuelven a `Pending` en una sentencia que se confirma sola, antes de guardar la
+  auditoría: si ésta falla, los trabajos ya se reintentan sin su rastro.
+
 ## Numeración de documentos por tenant
 
 El número de cotización y el de pedido salen de un formato **por tenant y por tipo de documento**,
@@ -642,6 +774,66 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
   queda un hueco en la serie. Diez de prefijo, más el año con separador, más diez dígitos no caben:
   haz la cuenta antes de configurar.
 
+## Redondeo de precios
+
+Cada tenant decide cómo se redondea su lista de precios, moneda por moneda (spec 2026-10-27). La
+fórmula de la línea es **una sola** para todas las monedas y todos los tenants, el unitario primero:
+
+```
+lista     = R(precio de lista)
+unitario  = R(lista × (1 − descuento/100))
+línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
+descuento = Round2(cantidad × lista) − línea
+IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
+base      = línea − IVA
+```
+
+`R` es la regla de la moneda: `(decimales, modo)`. El modo es `Nearest` (al más cercano, la mitad se
+aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de `0` a los del
+catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
+`(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
+`(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
+los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.
+
+### Configurarla
+
+`GET` y `PUT /api/v1/tenants/{tenantId}/settings/price-rounding`, con `SettingsRead` y
+`SettingsUpdate`. La respuesta trae **todas** las monedas del catálogo, en su orden, también las que
+usan el valor por defecto (`isDefault`), con `maxDecimals` ya resuelto. La sesión
+(`ActiveTenantResponse.PriceRoundings`) la lleva igual. Sólo se guarda una fila por moneda no
+predeterminada (`tenancy.tenant_price_roundings`); el cambio se audita como
+`tenancy.price_rounding.updated`.
+
+```json
+{
+  "currencies": [
+    { "currency": "COP", "decimals": 0, "mode": "Nearest" },
+    { "currency": "USD", "decimals": 2, "mode": "Up" }
+  ]
+}
+```
+
+### Qué documentos se recalculan y cuándo
+
+- **Editables:** cotización `Draft`/`Sent` y pedido `Pending` se recalculan con la regla vigente la
+  próxima vez que alguien los edita. Abrirlos no los recalcula: ningún `GET` escribe, y no hay
+  recálculo masivo al guardar la regla.
+- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`, pedido `Approved`,
+  `Cancelled` o `Invoiced`, venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
+  columnas nullable; `null` cuenta como el valor por defecto de su moneda).
+- **Conversión:** el pedido hereda la regla guardada de la cotización.
+- **Pedidos externos (Shopify):** usan siempre el valor por defecto de su moneda, aun editados.
+- **POS:** lee la regla en cada vista previa y en cada venta. Si cambia entre la vista previa y la
+  venta, la venta responde `pos.sale.payment_insufficient` y el carrito se refresca.
+
+### Riesgo con Siigo
+
+La facturación masiva de Ritual manda a Siigo `round("Valor Unit" × (1 + IVA)) × cantidad`. Con COP en
+`(0, Nearest)` QEP y Siigo cuadran. Si un admin pone COP en `Up` o `Down`, pueden diferir en un peso
+por unidad.
+
 ## Módulos por tenant
 
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
@@ -649,7 +841,7 @@ fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un m
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
 `catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations` y `suppliers`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, el triage de `pipeline` queda vacío; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -818,6 +1010,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/memberships`           | `POST`, `GET`, y `suspend`, `remove`, `reactivate`, `roles`, `profile` por membership   | `advisorship.invite` / `.read` / `.manage`                                            |
 | `/api/v1/tenants/{tenantId}/catalog/products`      | `GET` (`includeVariants`), `POST`, `export`, `price-scales/copy`, y por producto `GET`, `PUT` (`expectedVersion`), `activate`, `deactivate` (ver [Catálogo](#catálogo-opciones-variantes-y-galería)) | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/catalog/options`       | `GET`, `POST`, y por opción `PUT`, `DELETE`                                                 | `catalog.product.read` / `.manage`                                                           |
+| `/api/v1/tenants/{tenantId}/catalog/categories`    | `GET`, `POST`; por categoría `PUT` y `DELETE` (`If-Match`); `PUT pos-quick-access`           | `catalog.product.read` / `.manage`                                                           |
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
@@ -1278,6 +1471,26 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
 
 ### Catálogo: opciones, variantes y galería
 
+Las **categorías de producto** (spec 2026-10-26) son un árbol por tenant, de profundidad máxima 10. Un producto
+tiene a lo sumo una (`categoryId`, que viaja en todas las respuestas de producto; en el `PUT`, `null` la limpia).
+El nombre (máx. 80) es único entre hermanas sin distinguir mayúsculas, también entre dos raíces. Errores:
+`catalog.category.name_required`, `catalog.category.name_too_long`, `catalog.category.parent_not_found`,
+`catalog.category.too_deep`, `catalog.category.name_taken` y, al asignarla a un producto,
+`catalog.product.category_not_found`. `GET /catalog/categories` trae el `productCount` de cada una: sólo los
+productos directos, activos e inactivos.
+
+Spec 2026-10-26-categorias-pos-acceso-rapido. `PUT /catalog/categories/{id}` (`{ name, parentId }`) renombra y/o
+mueve con todo su subárbol, y `DELETE /catalog/categories/{id}` (204) borra; los dos exigen `If-Match` con la
+`version` (428 `precondition.if_match_required` sin él, 412 `concurrency.conflict` si es vieja) y responden 404
+`catalog.category.not_found`. Mover debajo de sí misma o de una descendiente es 422 `catalog.category.cycle`, y
+`catalog.category.too_deep` mira la hoja más honda del subárbol movido. Borrar una con productos (activos o no)
+o con hijas es 422 `catalog.category.has_products` / `catalog.category.has_children`: se mueven primero. Las FK
+`RESTRICT` siguen como última red, y `CatalogUnitOfWork` traduce su carrera a los mismos códigos.
+`PUT /catalog/categories/pos-quick-access` (`{ categoryIds }`, sin `If-Match`) reemplaza la lista ordenada de chips
+de la caja: el índice es la posición (`posQuickAccessPosition`, 1..N contiguas; `null` sin fijar), un id repetido
+es 422 `catalog.category.quick_access_duplicate` y uno desconocido o ajeno 422 `catalog.category.not_found`; responde
+la lista completa. Fijar no sube la `version` de la categoría. Borrar una fijada la saca y recompacta las demás.
+
 Spec 2026-10-20 (`docs/superpowers/specs/2026-10-20-variantes-de-producto-design.md`). Un producto tiene
 hasta **3 opciones** (Talla, Color…) y hasta **2.048 variantes**, una por combinación de valores, como
 Shopify. El código, el código de barras, los precios, las escalas y los empaques son de **cada variante**;
@@ -1477,6 +1690,7 @@ contraentrega.
   hay transportadora elegida, que recaude (`cash_on_delivery_not_supported`). Con contraentrega, el PDF
   imprime «Forma de pago: Contraentrega» en lugar de la forma de pago escrita.
 - Cambiar el envío de un pedido pendiente se audita como `quotation.order.shipping_changed`.
+- Cambiar la facturación de un pedido pendiente se audita como `quotation.order.billing_changed`.
 
 Los códigos de error nuevos, con lo que los corrige:
 [guía de integración § Códigos de error](docs/integracion-cotizaciones-y-pedidos.md#códigos-de-error-propios-del-módulo).
@@ -1633,7 +1847,8 @@ el spec del slice; esta tabla es el inventario.
 | `POST /sessions/{sessionId}/close` | `pos.register.operate` | Cierra la caja con el conteo (`countedCash`, obligatorio); exige `If-Match`      |
 | `GET /sessions`                    | `pos.sale.read`        | Lista paginada de sesiones de caja                                               |
 | `GET /sessions/{sessionId}`        | `pos.sale.read`        | Detalle y arqueo de una sesión                                                   |
-| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles |
+| `GET /products`                    | `pos.sale.create`      | Búsqueda paginada por nombre, `Code` o código de barras: productos con sus variantes vendibles; `categoryId` filtra por esa categoría y sus descendientes (un id ajeno o desconocido da página vacía) |
+| `GET /categories`                  | `pos.sale.create`      | Categorías con el conteo de productos activos acumulado, incluidas las de 0, `quickAccessPosition` (chips de acceso rápido, `null` sin fijar; la lista sigue por nombre) y `total` de activos del tenant con o sin categoría |
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
@@ -2965,7 +3180,6 @@ cuando se prende un módulo, así que no hay otro lugar donde engancharse.
 | `POST` | `/deals/{dealId}/quotations/{quotationId}/link\|primary` | `pipeline.deal.manage` |
 | `GET` | `/owners` | `pipeline.deal.manage` |
 | `GET` | `/customers/{customerId}/summary?conversationId=` | `pipeline.deal.read` |
-| `GET` | `/triage` | `pipeline.deal.read` |
 | `POST` | `/triage/{conversationId}` (`create` \| `dismiss`) | `pipeline.deal.manage` |
 | `GET`/`PUT` | `/settings/stages`, `/settings/loss-reasons`, `/settings/dismiss-reasons` | `pipeline.deal.read` / `pipeline.settings.manage` |
 
@@ -2979,8 +3193,8 @@ válido» sigue en el backend. Un miembro activo sin nombre ni correo se lista c
 omitirlo, y si ninguna membresía califica la respuesta es `[]` con 200. Exige `pipeline.deal.manage`; con cualquier
 403 el frontend oculta el selector.
 El tablero trae todas las columnas, sumas por moneda, como máximo 200 tarjetas por columna con el conteo real, y
-`Ganado`/`Perdido` sólo de los últimos 30 días. El triage trae como máximo 200 conversaciones con el conteo
-real. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único
+`Ganado`/`Perdido` sólo de los últimos 30 días. No hay lista de pendientes de triage: el estado de una conversación
+lo da el bloque `triage` del resumen del cliente. Cada decisión de triage guarda el último entrante contra el que se tomó: con el índice único
 `IX_triage_decisions_conversation_inbound`, si dos asesores deciden a la vez uno recibe
 `pipeline.triage.already_decided` y queda un solo negocio. Un mensaje nuevo del cliente permite decidir otra vez.
 
@@ -3483,7 +3697,7 @@ nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibl
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
-| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | defaults del código (`ShopifyWebhookOptions`: 1 MiB y 3 s); se pisan por configuración si hace falta | Tope del cuerpo (413) y sondeo del worker |
+| `Shopify:Webhook:MaxBodyBytes`, `DeliveryPollSeconds` | defaults del código (`ShopifyWebhookOptions`: 1 MiB y 15 s); se pisan por configuración si hace falta | Tope del cuerpo (413) y sondeo del worker |
 
 En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `ClientId`, `ClientSecret`,
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable

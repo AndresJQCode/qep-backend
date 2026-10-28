@@ -23,6 +23,16 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 
     internal DbSet<CustomersOutboxMessage> Outbox => Set<CustomersOutboxMessage>();
 
+    internal DbSet<CustomerDataConsent> DataConsents => Set<CustomerDataConsent>();
+
+    /// <summary>Spec 2026-10-26 D-5: una respuesta, una fila. <c>CustomersUnitOfWork</c> lo traduce por este nombre a
+    /// <c>DataConsentReplyRecordedException</c>.</summary>
+    internal const string DataConsentReplyIndex = "IX_data_consents_reply_message";
+
+    /// <summary>La FK a <c>customers.customers</c>. No está en el modelo: la agrega a mano la migración
+    /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
+    internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
+
     /// <summary>Spec 2026-10-10 §7.2 (D-A11): exactamente las columnas que antes eran NOT NULL. Teléfono, correo y
     /// ciudad siguen exigidos por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19
     /// (decisión del owner): una ficha completa puede no tenerla, y su CUC va sin prefijo.</summary>
@@ -51,6 +61,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         ConfigureCustomerNote(modelBuilder);
         ConfigureTag(modelBuilder);
         ConfigureCustomerTagAssignment(modelBuilder);
+        ConfigureDataConsent(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
@@ -202,6 +213,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // traduce por este nombre.
         customer.Property(value => value.InstagramUserId).HasColumnName("instagram_user_id").HasMaxLength(Customer.InstagramUserIdMaxLength);
         customer.Property(value => value.InstagramUsername).HasColumnName("instagram_username").HasMaxLength(Customer.InstagramUsernameMaxLength);
+        // Spec 2026-10-26: texto ("Natural" / "Juridica") y nulable; sin backfill, un cliente existente queda en NULL.
+        customer.Property(value => value.PersonType).HasColumnName("person_type").HasConversion<string>().HasMaxLength(16);
         customer.HasIndex(value => new { value.TenantId, value.InstagramUserId }, "IX_customers_tenant_instagram_user_id")
             .IsUnique().HasFilter("instagram_user_id IS NOT NULL");
 
@@ -385,6 +398,87 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasForeignKey(value => value.TagId)
             .HasConstraintName("FK_customer_tags_tags_tag_id")
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-5: el registro de consentimiento de datos (Ley 1581), sólo de inserción. Los siete CHECK son la
+    /// garantía de que cada fila es prueba completa: las del bot llevan la evidencia y ninguna nota, una revocación lleva
+    /// miembro, medio y nota, y la identidad falta sólo en una revocación por otro medio. <c>wa_id</c> es siempre opcional.
+    ///
+    /// Sin <c>HasOne&lt;Customer&gt;()</c> a propósito: con la relación en el modelo EF agrega por convención un índice sobre
+    /// <c>customer_id</c> solo, que sobra —el de orden ya empieza por <c>(tenant_id, customer_id)</c> y un cliente nunca se
+    /// borra—. La FK real (<see cref="DataConsentCustomerForeignKey"/>, <c>ON DELETE RESTRICT</c>) la agrega a mano la
+    /// migración, como <c>FK_customers_cities_city_id</c>.
+    /// </summary>
+    private static void ConfigureDataConsent(ModelBuilder modelBuilder)
+    {
+        var consent = modelBuilder.Entity<CustomerDataConsent>();
+        consent.ToTable("data_consents", "customers", table =>
+        {
+            table.HasCheckConstraint("CK_data_consents_event", "event IN ('Accepted', 'Rejected', 'Revoked')");
+            table.HasCheckConstraint("CK_data_consents_channel", "channel IS NULL OR channel IN ('WhatsApp', 'Instagram')");
+            table.HasCheckConstraint("CK_data_consents_medium", "medium IS NULL OR medium IN ('ThisConversation', 'Other')");
+            table.HasCheckConstraint(
+                "CK_data_consents_actor",
+                "(event IN ('Accepted', 'Rejected') AND actor_kind = 'Chatbot' AND actor_user_id IS NULL) "
+                + "OR (event = 'Revoked' AND actor_kind = 'Member' AND actor_user_id IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_data_consents_chatbot_fields",
+                "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL "
+                + "AND reply_message_id IS NULL "
+                + "AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL "
+                + "AND chatbot_version_number IS NULL AND node_id IS NULL) "
+                + "OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL "
+                + "AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL "
+                + "AND node_id IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_data_consents_revocation_fields",
+                "(event = 'Revoked' AND medium IS NOT NULL AND note IS NOT NULL AND length(btrim(note)) BETWEEN 1 AND 500) "
+                + "OR (event <> 'Revoked' AND medium IS NULL AND note IS NULL)");
+            table.HasCheckConstraint(
+                "CK_data_consents_identity",
+                "(event = 'Revoked' AND medium = 'Other' AND conversation_id IS NULL AND channel IS NULL "
+                + "AND channel_user_id IS NULL AND wa_id IS NULL) "
+                + "OR ((event <> 'Revoked' OR medium = 'ThisConversation') AND conversation_id IS NOT NULL "
+                + "AND channel IS NOT NULL AND channel_user_id IS NOT NULL)");
+        });
+        consent.HasKey(value => value.Id);
+        consent.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        // Como http_calls.id (AutomationsDbContext): la da la base y desempata dos filas con el mismo occurred_at.
+        consent.Property(value => value.Sequence).HasColumnName("sequence").UseIdentityAlwaysColumn().ValueGeneratedOnAdd();
+        consent.Property(value => value.TenantId).HasColumnName("tenant_id");
+        consent.Property(value => value.CustomerId)
+            .HasColumnName("customer_id")
+            .HasConversion(id => id.Value, value => new CustomerId(value));
+        consent.Property(value => value.Event).HasColumnName("event").HasConversion<string>().HasMaxLength(16);
+        consent.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        consent.Property(value => value.Channel).HasColumnName("channel").HasConversion<string>().HasMaxLength(16);
+        consent.Property(value => value.ChannelUserId).HasColumnName("channel_user_id").HasMaxLength(150);
+        consent.Property(value => value.WaId).HasColumnName("wa_id").HasMaxLength(20);
+        consent.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        consent.Property(value => value.ActorKind).HasColumnName("actor_kind").HasConversion<string>().HasMaxLength(16);
+        consent.Property(value => value.ActorUserId).HasColumnName("actor_user_id");
+        consent.Property(value => value.ShownText).HasColumnName("shown_text");
+        consent.Property(value => value.PromptMessageId).HasColumnName("prompt_message_id");
+        consent.Property(value => value.RepliedToMessageId).HasColumnName("replied_to_message_id");
+        consent.Property(value => value.ReplyMessageId).HasColumnName("reply_message_id");
+        consent.Property(value => value.ReplyWamid).HasColumnName("reply_wamid");
+        consent.Property(value => value.ChatbotId).HasColumnName("chatbot_id");
+        consent.Property(value => value.ChatbotName).HasColumnName("chatbot_name").HasMaxLength(80);
+        consent.Property(value => value.ChatbotVersionId).HasColumnName("chatbot_version_id");
+        consent.Property(value => value.ChatbotVersionNumber).HasColumnName("chatbot_version_number");
+        consent.Property(value => value.NodeId).HasColumnName("node_id").HasMaxLength(64);
+        consent.Property(value => value.Medium).HasColumnName("medium").HasConversion<string>().HasMaxLength(24);
+        consent.Property(value => value.Note).HasColumnName("note").HasMaxLength(CustomerDataConsent.NoteMaxLength);
+
+        // La historia de la ficha y el estado vigente (la primera fila de este orden).
+        consent.HasIndex(value => new { value.TenantId, value.CustomerId, value.OccurredAt, value.Sequence })
+            .IsDescending(false, false, true, true)
+            .HasDatabaseName("IX_data_consents_tenant_customer_order");
+        consent.HasIndex(value => value.ReplyMessageId)
+            .IsUnique()
+            .HasFilter("reply_message_id IS NOT NULL")
+            .HasDatabaseName(DataConsentReplyIndex);
     }
 
     private static void ConfigureClientClassification(ModelBuilder modelBuilder)

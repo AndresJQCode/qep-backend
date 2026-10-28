@@ -11,7 +11,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <!-- Avisos de SixLabors.ImageSharp 3.1.12 (la 4.x es la única corregida). Se silencian porque
+  <!-- Avisos de SixLabors.ImageSharp 3.1.12 (corregidos sólo en 3.2.0 y 4.x). Se silencian porque
        ninguno es alcanzable desde Storage ni desde Bootstrapper (el compresor de imágenes del
        asesor, ImageSharpMessagingImageCompressor, decodifica con una Configuration propia que
        sólo registra JPEG y PNG: sin TIFF, sin ICC Convert, sin ecualización):
@@ -23,7 +23,10 @@
        - GHSA-wmxv-xphr-5c9g: bucle infinito al decodificar BigTIFF. Es el único alcanzable por
          contenido subido, y lo cierra ImageSharpConfiguration: el decodificador de TIFF no está
          registrado, así que un TIFF falla como storage.image.invalid.
-       Quitar estas supresiones exige subir a ImageSharp 4.x, y la 4.x pide una licencia de Six
+       - GHSA-v76p-62qx-wwq2 (2026-10-27): escritura fuera de límites al decodificar un TIFF por
+         tiles con compresión fax. Mismo cierre que el anterior: ninguna Configuration registra el
+         decodificador de TIFF.
+       Quitar estas supresiones exige subir a 3.2.0 o 4.x, y las dos piden una licencia de Six
        Labors (sixlabors.lic o SixLaborsLicenseKey): sin ella los builds Release fallan. -->
   <ItemGroup>
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j3p4-wp97-rph4" />
@@ -31,5 +34,6 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-gwg2-r3hj-4w44" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-wmxv-xphr-5c9g" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-v76p-62qx-wwq2" />
   </ItemGroup>
 </Project>

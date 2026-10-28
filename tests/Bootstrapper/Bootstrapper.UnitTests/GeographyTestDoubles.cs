@@ -30,6 +30,10 @@ internal sealed class CountingCityRepository(params City[] cities) : ICityReposi
         DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<CityNameMatch?> MatchByNameAsync(
+        DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<IReadOnlyList<City>> ListByDepartmentsAsync(
         IReadOnlyCollection<DepartmentId> departmentIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

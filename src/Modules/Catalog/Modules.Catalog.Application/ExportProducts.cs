@@ -16,11 +16,13 @@ namespace Modules.Catalog.Application;
 /// producto y la variante estan activos.
 ///
 /// Los filtros son los mismos que <see cref="ListProductsQuery"/> a proposito: se exporta lo que se
-/// esta viendo en la grilla. Sin ninguno, se exporta el catalogo entero. <c>Search</c> queda afuera:
-/// ese criterio existe para el combobox de cotizaciones, no para el listado desde donde se exporta.
+/// esta viendo en la grilla. Sin ninguno, se exporta el catalogo entero. <c>Search</c> incluido: la
+/// grilla filtra con esa caja (nombre, codigo o codigo de barras), y sin el el Excel traeria mas de
+/// lo que se ve.
 /// </summary>
 public sealed record ExportProductsCommand(
     Guid TenantId,
+    string? Search,
     string? Name,
     string? Code,
     bool? IsActive) : ICommand<ExportProductsResult>;
@@ -143,6 +145,7 @@ public sealed class ExportProductsHandler(
         {
             var batch = await repository.ListForExportAsync(
                 command.TenantId,
+                command.Search,
                 command.Name,
                 command.Code,
                 command.IsActive,

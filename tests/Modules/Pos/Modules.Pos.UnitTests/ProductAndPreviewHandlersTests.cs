@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
@@ -20,7 +21,7 @@ public sealed class ProductAndPreviewHandlersTests
             new FindPosProductByCodeValidator());
 
     private static PreviewPosSaleHandler Preview(PosTestBed bed, params string[] permissions) =>
-        new(bed.Products, bed.Sessions, bed.Memberships, bed.DefaultCurrency, bed.Context(permissions),
+        new(bed.Products, bed.Sessions, bed.Memberships, bed.DefaultCurrency, bed.PriceRounding, bed.Context(permissions),
             new PreviewPosSaleValidator());
 
     private static PosPreviewLineRequest[] WorkedExampleCart() =>
@@ -69,6 +70,19 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.False(inactive.Sellable);
         Assert.Equal("Inactive", inactive.UnsellableReason);
         Assert.Equal("pos.product.not_found", missing.Code);
+    }
+
+    // Spec 2026-10-26 §3.4: el handler no resuelve categorías; le pasa el id al adaptador, que expande las descendientes.
+    [Fact]
+    public async Task SearchForwardsTheCategoryToTheLookup()
+    {
+        var bed = new PosTestBed();
+        var categoryId = Guid.CreateVersion7();
+
+        await Search(bed, Seller).HandleAsync(
+            new SearchPosProductsQuery(TenantId, null, 1, 40, categoryId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(categoryId, bed.Products.LastCategoryId);
     }
 
     [Fact]
@@ -184,6 +198,23 @@ public sealed class ProductAndPreviewHandlersTests
         Assert.Equal(11_900m, shampoo.UnitPrice);
         Assert.Equal(19, shampoo.TaxPercentage);
         Assert.Equal((2_380m, 3_420m, 18_000m, 21_420m), (shampoo.DiscountAmount, shampoo.TaxAmount, shampoo.Subtotal, shampoo.LineTotal));
+    }
+
+    // Spec 2026-10-27: la vista previa lee la regla del tenant en cada llamada.
+    [Fact]
+    public async Task ThePreviewUsesTheTenantRule()
+    {
+        var bed = new PosTestBed();
+        var item = Guid.CreateVersion7();
+        bed.Products.Add("KIT-1", "Kit", 40_000m, 0, priceUsd: 13.19m, id: item);
+        bed.OpenSessionInStore(currency: "USD");
+        bed.PriceRounding.Rule = new PriceRounding(2, PriceRoundingMode.Up);
+
+        var preview = await Preview(bed, Discounter).HandleAsync(
+            new PreviewPosSaleCommand(TenantId, [new(item, 10m, 15m)]), TestContext.Current.CancellationToken);
+
+        Assert.Equal(112.20m, preview.Lines[0].LineTotal);
+        Assert.Equal(112.20m, preview.Total);
     }
 
     // Fix 2026-10-14: la vista previa cobra lo mismo que la venta y que la cotización en COP.

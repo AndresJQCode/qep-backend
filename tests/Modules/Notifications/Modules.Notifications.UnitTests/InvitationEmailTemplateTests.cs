@@ -39,4 +39,19 @@ public sealed class InvitationEmailTemplateTests
         // En texto plano no hay entidades que declarar: el nombre va crudo.
         Assert.Contains("Flores & Co <Bogotá>", message.TextBody, StringComparison.Ordinal);
     }
+
+    // Texto exacto: no hay librería de snapshots en el repositorio; el cuerpo completo es la instantánea.
+    [Fact]
+    public void TheInvitationTextBodyOffersGoogleOrAPassword()
+    {
+        var message = InvitationEmailTemplate.Render("a@x.com", "https://q/invitations/t", "Acme");
+
+        Assert.Equal(
+            "Hola,\n\nHas sido invitado a Acme.\n" +
+            "Abre este enlace para aceptar la invitación. Puedes entrar con tu cuenta de Google o crear una contraseña.\n\n" +
+            "https://q/invitations/t\n\n" +
+            "Si no esperabas esta invitación, puedes ignorar este mensaje.\n",
+            message.TextBody);
+        Assert.Contains("crear una contraseña", message.HtmlBody, StringComparison.Ordinal);
+    }
 }

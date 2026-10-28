@@ -48,3 +48,10 @@ public sealed class ServiceUnavailableException(string code, string message) : E
 {
     public string Code { get; } = code;
 }
+
+// 502: un servicio externo respondió algo que no reconocemos, falló o no respondió (spec 2026-10-26 §3.3: Meta al bloquear un
+// contacto). Distinta de un 500: no es un error del código, y el cliente puede ofrecer reintentar en vez de "algo falló".
+public sealed class UpstreamServiceException(string code, string message) : Exception(message)
+{
+    public string Code { get; } = code;
+}

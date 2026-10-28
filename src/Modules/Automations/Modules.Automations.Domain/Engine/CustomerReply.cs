@@ -37,6 +37,7 @@ internal static partial class CustomerReply
             ButtonsNode buttons => Choose(buttons, message),
             ListNode list => Choose(list, message, variables),
             AttachmentNode attachment => Receive(attachment, message),
+            DataConsentNode => Choose(DataConsentButtons.All, message),
             _ => throw new ArgumentOutOfRangeException(nameof(waiting), waiting.Kind, "El bloque no espera al cliente."),
         };
     }
@@ -213,11 +214,7 @@ internal static partial class CustomerReply
     /// mensaje viejo) no vale aunque el título coincida. Sin id, el texto escrito se compara con las etiquetas (<see cref="Typed"/>).</summary>
     private static ReplyOutcome Choose(ButtonsNode node, EngineInput.CustomerMessage message)
     {
-        var button = message.ReplyId is { } replyId
-            ? node.Buttons.FirstOrDefault(candidate => candidate.Id == replyId)
-            : Typed(node.Buttons, message, candidate => [candidate.Label]);
-
-        if (button is null)
+        if (Pressed(node.Buttons, message) is not { } button)
         {
             return ReplyOutcome.Invalid.Instance;
         }
@@ -225,6 +222,16 @@ internal static partial class CustomerReply
         var saved = string.IsNullOrWhiteSpace(node.SaveTo) ? null : new JsonObject { ["id"] = button.Id, ["title"] = button.Label };
         return new ReplyOutcome.Output(button.Id, saved);
     }
+
+    /// <summary>Spec 2026-10-26 D-1 y D-I5: los botones fijos de Política de datos, con la regla de Botones. No guarda nada: la respuesta
+    /// la registra el motor como efecto, no una variable.</summary>
+    private static ReplyOutcome Choose(IReadOnlyList<FlowButton> buttons, EngineInput.CustomerMessage message) =>
+        Pressed(buttons, message) is { } button ? new ReplyOutcome.Output(button.Id, null) : ReplyOutcome.Invalid.Instance;
+
+    private static FlowButton? Pressed(IReadOnlyList<FlowButton> buttons, EngineInput.CustomerMessage message) =>
+        message.ReplyId is { } replyId
+            ? buttons.FirstOrDefault(candidate => candidate.Id == replyId)
+            : Typed(buttons, message, candidate => [candidate.Label]);
 
     /// <summary>Como en Botones (D-I5). La fila elegida guarda <c>{ id, title }</c>, y en una lista dinámica también el elemento entero de
     /// la colección (<c>item</c>), para que los bloques que siguen lean cualquier campo del equipo o la dirección elegida. La

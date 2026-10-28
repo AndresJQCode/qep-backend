@@ -158,7 +158,20 @@ public sealed record SaveOrderEditsRequest(
     bool IsRetail = false,
     /// <summary>El envío del pedido pendiente (spec 2026-10-17 §5.4). <b>Ausente deja el guardado</b>: un
     /// frontend viejo no lo borra. No cambia recoger o enviar, que el pedido no edita.</summary>
-    ShippingRequest? Shipping = null);
+    ShippingRequest? Shipping = null,
+    /// <summary>A quién se le factura (spec 2026-10-26). <b>Ausente deja la facturación</b>: un frontend viejo
+    /// no la borra (Desvío 6). Presente, reemplaza el bloque entero: sin <c>Party</c> ni consumidor final
+    /// factura a los datos del cliente.</summary>
+    OrderBillingEditRequest? Billing = null);
+
+/// <summary>El bloque de facturación de «Editar pedido»: la parte propia (o ninguna), el consumidor final,
+/// la razón social del cliente y el perfil fiscal de la parte, como en <see cref="QuotationPartiesRequest"/>.</summary>
+public sealed record OrderBillingEditRequest(
+    QuotationPartyRequest? Party,
+    bool BillsToFinalConsumer = false,
+    bool BillingUsesBusinessName = false,
+    bool? BillingWithRetention = null,
+    bool? BillingVatSurplus = null);
 
 /// <summary>
 /// El envío del detalle del pedido: los campos de <see cref="ShippingResponse"/> más

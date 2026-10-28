@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
@@ -36,7 +37,8 @@ public sealed class CreatePosSaleHandlerTests
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Cashiers,
-            bed.Memberships, bed.Customers, bed.Context(permissions), bed.Clock, bed.TenantClock, new CreatePosSaleValidator());
+            bed.Memberships, bed.Customers, bed.PriceRounding, bed.Context(permissions), bed.Clock, bed.TenantClock,
+            new CreatePosSaleValidator());
 
     // La venta "del otro request" que el choque deja en la base: mismo id, mismo cajero, misma huella.
     private static PosSale WinnerFor(CreatePosSaleCommand command, CashSession session)
@@ -70,6 +72,42 @@ public sealed class CreatePosSaleHandlerTests
         var audit = Assert.Single(bed.Audit.Entries);
         Assert.Equal(("pos.sale.created", "pos_sale"), (audit.Action, audit.ResourceType));
         Assert.Equal(["discount:1:SH-400:10"], audit.ChangedFields.ToArray());
+    }
+
+    // Spec 2026-10-27: la venta guarda la regla con la que se cobró, leída al momento de cobrar.
+    [Fact]
+    public async Task TheSaleStoresTheRuleReadAtSaleTime()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("KIT-1", "Kit", 40_000m, 0, priceUsd: 13.19m, id: Shampoo);
+        var session = bed.OpenSessionInStore(currency: "USD");
+        bed.PriceRounding.Rule = new PriceRounding(2, PriceRoundingMode.Up);
+        var command = Command(
+            session, lines: [new(Shampoo, 10m, 15m, 13.19m, 0)], payments: [new("Card", 112.20m, null, "1234")]);
+
+        var result = await Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.Equal(112.20m, result.Sale.Total);
+        Assert.Equal(new PriceRounding(2, PriceRoundingMode.Up), Assert.Single(bed.Sales.Stored).PriceRounding);
+    }
+
+    // D8 del spec: una regla que cambia entre la vista previa y el cobro NO es price_changed (el precio de
+    // lista del catálogo no se movió); lo que la caja ve es que lo que cobró ya no alcanza.
+    [Fact]
+    public async Task ARuleChangedAfterThePreviewAnswersWithThePaymentMismatch()
+    {
+        var bed = new PosTestBed();
+        bed.Products.Add("KIT-1", "Kit", 40_000m, 0, priceUsd: 13.19m, id: Shampoo);
+        var session = bed.OpenSessionInStore(currency: "USD");
+        bed.PriceRounding.Rule = new PriceRounding(2, PriceRoundingMode.Nearest);
+        var command = Command(
+            session, lines: [new(Shampoo, 10m, 15m, 13.19m, 0)], payments: [new("Card", 112.10m, null, "1234")]);
+        bed.PriceRounding.Rule = new PriceRounding(2, PriceRoundingMode.Up);
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(
+            () => Handler(bed, Discounter).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.payment_insufficient", error.Code);
     }
 
     // Decisión 55: la transacción se abre y el candado se toma antes de buscar la repetición, para

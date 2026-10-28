@@ -148,6 +148,25 @@ public sealed class PosCustomerLookupTests
         public Task<ProvisionedCustomer> CreateIncompleteAsync(
             Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            CompleteCustomerData data,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<ExternalCustomerCityOutcome> CorrectCityAsync(
+            Guid tenantId,
+            Guid customerId,
+            long expectedVersion,
+            Guid previousCityId,
+            Guid cityId,
+            IReadOnlyCollection<Guid> requestedCityIds,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class PosFakeCustomers(params Customer[] customers) : ICustomerRepository

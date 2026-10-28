@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -276,6 +277,119 @@ public sealed class AuthSessionApiTests
             .Select(tenant => tenant.TenantId)
             .ToArray();
         Assert.Equal(expectedOrder, session.ActiveTenants.Select(tenant => tenant.TenantId));
+    }
+
+    // Spec 2026-10-26: la SPA decide el país de la parte y si exige tipo de persona desde la sesión,
+    // porque `cashier` no puede leer /settings. Publica el requisito **efectivo**, no el guardado.
+    [Fact]
+    public async Task SessionCarriesTheTenantCountryAndEffectivePersonTypeRequirement()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await StoreSettingsAsync(factory, "CO", PersonTypeRequirement.OnCustomerSave);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("CO", tenant.GetProperty("country").GetString());
+        Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
+    }
+
+    // Un tenant no colombiano guarda el valor pero la sesión publica Never: el cliente no tiene que
+    // repetir la regla del país.
+    [Fact]
+    public async Task ANonColombianTenantPublishesNever()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await StoreSettingsAsync(factory, "ES", PersonTypeRequirement.OnOrderApproval);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        Assert.Equal("ES", tenant.GetProperty("country").GetString());
+        Assert.Equal("Never", tenant.GetProperty("personTypeRequirement").GetString());
+    }
+
+    // Spec de redondeo de precios (D9): el cajero no tiene `tenancy.settings.read`, así que la regla de
+    // cada moneda viaja en la sesión. Se lee con un miembro sin ese permiso y en orden de catálogo.
+    // Se usa POST /auth/session y no GET /auth/me porque con el stub este último responde 401 y ambos
+    // arman la respuesta con el mismo método (ver SessionListsRolesPerTenant...).
+    [Fact]
+    public async Task TheSessionCarriesThePriceRoundingOfEveryCurrency()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        var email = NewEmail();
+        using (var admin = CreateAdminClient(factory))
+        {
+            var put = await admin.PutAsJsonAsync(
+                $"/api/v1/tenants/{SeededTenantId}/settings/price-rounding",
+                new
+                {
+                    currencies = new object[]
+                    {
+                        new { currency = "COP", decimals = 0, mode = "Nearest" },
+                        new { currency = "USD", decimals = 2, mode = "Up" },
+                        new { currency = "EUR", decimals = 2, mode = "Nearest" },
+                    },
+                },
+                TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+            Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
+        }
+
+        using var client = CreateLoginClient(factory, Guid.CreateVersion7().ToString(), email, verified: true);
+        // Un permiso cualquiera que no sea de settings: sin X-Permissions el stub concede settings.read.
+        client.DefaultRequestHeaders.Add("X-Permissions", TenancyPermissions.AdvisorshipRead);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        var tenant = body.GetProperty("activeTenants").EnumerateArray()
+            .Single(item => item.GetProperty("tenantId").GetGuid() == Guid.Parse(SeededTenantId));
+
+        var roundings = tenant.GetProperty("priceRoundings").EnumerateArray()
+            .Select(item => (
+                item.GetProperty("currency").GetString(),
+                item.GetProperty("decimals").GetInt32(),
+                item.GetProperty("mode").GetString()))
+            .ToArray();
+        Assert.Equal(
+            new (string?, int, string?)[] { ("COP", 0, "Nearest"), ("USD", 2, "Up"), ("EUR", 2, "Nearest") },
+            roundings);
+    }
+
+    private static async Task StoreSettingsAsync(
+        QepApiFactory factory, string country, PersonTypeRequirement requirement)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var tenant = dbContext.Tenants.Single();
+        tenant.UpdateSettings(
+            tenant.DisplayName, tenant.DefaultCulture, tenant.TimeZone, tenant.DateFormat,
+            tenant.DefaultCurrency, tenant.NumberFormat, country, requirement, DateTimeOffset.UtcNow);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<JsonElement> LoginAndGetSeededTenantAsync(QepApiFactory factory)
+    {
+        var email = NewEmail();
+        using (var admin = CreateAdminClient(factory))
+        {
+            await InviteAsync(admin, email);
+        }
+
+        using var client = CreateLoginClient(factory, Guid.CreateVersion7().ToString(), email, verified: true);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        return body.GetProperty("activeTenants").EnumerateArray()
+            .Single(tenant => tenant.GetProperty("tenantId").GetGuid() == Guid.Parse(SeededTenantId));
     }
 
     [Fact]

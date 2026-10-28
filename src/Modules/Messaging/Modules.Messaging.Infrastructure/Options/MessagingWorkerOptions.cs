@@ -9,8 +9,9 @@ public sealed class MessagingWorkerOptions
 
     public int MediaPollSeconds { get; set; } = 5;
 
-    /// <summary>Spec 2026-10-11 §6.3: el tick del worker de campañas, 2 s.</summary>
-    public int CampaignPollSeconds { get; set; } = 2;
+    /// <summary>Spec 2026-10-11 §6.3: el tick del worker de campañas. El sondeo es costo en reposo contra una base compartida
+    /// y sólo retrasa el arranque de una campaña programada; <c>DrainAsync</c> sostiene el caudal.</summary>
+    public int CampaignPollSeconds { get; set; } = 10;
 
     public int PurgeIntervalHours { get; set; } = 24;
 

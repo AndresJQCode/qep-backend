@@ -11,7 +11,7 @@ public sealed record QuotationItemDto(
     decimal DiscountAmount,
     /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
     /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
-    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento) y no quien lo muestra: la pantalla y el PDF lo
     /// derivaban cada uno por su cuenta.</summary>
     decimal DiscountedUnitPrice,
     decimal Subtotal,
@@ -174,7 +174,11 @@ public sealed record QuotationPartyDto(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>"Natural" o "Juridica"; sólo en facturación (spec 2026-10-26), siempre null en la entrega.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE"; sólo en facturación, siempre null en la entrega.</summary>
+    string? IdentificationType = null);
 
 /// <summary>La cuenta con la que se factura, tal como sale hacia el cliente HTTP. Es la copia
 /// guardada, no lo que la empresa tenga hoy.</summary>
@@ -210,7 +214,12 @@ public sealed record QuotationPartyRequest(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    /// <summary>"Natural" o "Juridica" (spec 2026-10-26). Sólo en facturación; en la entrega se ignora.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE": el tipo de <c>IdentificationNumber</c>. En facturación con
+    /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
+    string? IdentificationType = null);
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
@@ -445,7 +454,14 @@ public sealed record QuotationClientResponse(
     /// <summary>Última edición de la ficha. La pantalla la usa para decir desde cuándo un
     /// cliente está inactivo.</summary>
     DateTimeOffset UpdatedAt,
-    IReadOnlyCollection<QuotationClientAddressResponse> Addresses);
+    IReadOnlyCollection<QuotationClientAddressResponse> Addresses,
+    /// <summary>País del cliente (ISO 3166-1 alfa-2), el que decide si a quien se factura aplica la regla
+    /// colombiana (spec 2026-10-26). Null cuando quien arma la referencia no lo trae.</summary>
+    string? Country = null,
+    /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
+    string? PersonType = null,
+    /// <summary>"NIT", "CC", "CE" o "PASAPORTE" de la ficha del cliente. Null si no lo tiene.</summary>
+    string? IdentificationType = null);
 
 public sealed record QuotationClientAddressResponse(
     Guid Id,
@@ -618,7 +634,9 @@ public sealed record QuotationPartyResponse(
     string? Email,
     string? Address,
     Guid? DepartmentId,
-    Guid? CityId);
+    Guid? CityId,
+    string? PersonType = null,
+    string? IdentificationType = null);
 
 public sealed record QuotationListItemResponse(
     Guid Id,

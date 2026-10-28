@@ -18,6 +18,8 @@ public sealed record ProductDetails
 
     public TaxRateId? TaxRateId { get; init; }
 
+    public ProductCategoryId? CategoryId { get; init; }
+
     // Espeja el ancho de columna, igual que Name y Code en Product: un valor demasiado largo
     // falla como 422 con código de dominio en vez de llegar a PostgreSQL y volver como 500.
     public const int DescriptionMaxLength = 2000;

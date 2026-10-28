@@ -5,12 +5,13 @@ using Microsoft.Extensions.Logging;
 namespace Modules.Tenancy.Infrastructure.Messaging;
 
 // Poller de fondo que drena el Outbox a intervalo fijo. Cada tick corre en su
-// propio scope para que el DbContext scoped y los handlers estén frescos.
+// propio scope para que el DbContext scoped y los handlers estén frescos. El sondeo es costo en
+// reposo contra una base compartida y nadie espera este worker de forma interactiva.
 internal sealed partial class OutboxPublisherWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<OutboxPublisherWorker> logger) : BackgroundService
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Outbox processing tick failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);

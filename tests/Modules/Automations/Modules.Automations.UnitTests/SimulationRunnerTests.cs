@@ -40,6 +40,42 @@ public sealed class SimulationRunnerTests
         """);
 
     [Fact]
+    public void ASimulationKeepsTheConsentPrompt()
+    {
+        var prompt = new ConsentPrompt("c", "Texto", Guid.CreateVersion7());
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial() with { ConsentPrompt = prompt }, DateTimeOffset.UtcNow);
+
+        Assert.Equal(prompt, simulation.ToState().ConsentPrompt);
+
+        var without = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        Assert.Null(without.ToState().ConsentPrompt);
+    }
+
+    [Fact]
+    public void AnOldStateJsonWithoutTheKeyHasNoConsentPrompt()
+    {
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        var field = typeof(Simulation).GetProperty(nameof(Simulation.StateJson))!;
+        field.SetValue(simulation, """{"status":"Running","currentNodeId":null,"stepNumber":0,"attempts":0,"variables":{},"trace":[]}""");
+
+        Assert.Null(simulation.ToState().ConsentPrompt);
+    }
+
+    [Fact]
+    public void ASimulationKeepsTheConsentRejections()
+    {
+        var simulation = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial() with { ConsentRejections = 2 }, DateTimeOffset.UtcNow);
+
+        Assert.Equal(2, simulation.ToState().ConsentRejections);
+
+        var old = Simulation.Start(TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, Initial(), DateTimeOffset.UtcNow);
+        var field = typeof(Simulation).GetProperty(nameof(Simulation.StateJson))!;
+        field.SetValue(old, """{"status":"Running","currentNodeId":null,"stepNumber":0,"attempts":0,"variables":{},"trace":[]}""");
+
+        Assert.Equal(0, old.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public async Task StartTranscribesTheBotMessagesAndStopsAtTheWait()
     {
         var http = new RecordingHttpBlocks(null);
@@ -117,9 +153,29 @@ public sealed class SimulationRunnerTests
 
         Assert.Equal(["bot", "system"], transcript.Select(entry => entry.From));
         Assert.Equal("Te paso con un asesor.", transcript[0].Text);
-        Assert.Equal("Pasaría a un asesor", transcript[1].Text);
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar", transcript[1].Text);
         Assert.Equal("Pasar a un asesor", transcript[1].NodeTitle);
         Assert.Equal(RunStatus.HandedOff, state.Status);
+    }
+
+    /// <summary>Spec 2026-10-25 D-4: el simulador dice adónde iría el traspaso: a la bandeja sin asignar o al miembro elegido.</summary>
+    [Fact]
+    public async Task TheSimulatorSaysWhereTheHandoffGoes()
+    {
+        var unassigned = FlowJson.Parse("""
+            { "schema": 1, "start": { "firstNodeId": "n9" }, "variables": [],
+              "nodes": [ { "id": "n9", "kind": "handoff", "title": "Pasar a un asesor", "text": null } ] }
+            """);
+        var assigned = FlowJson.Parse($$"""
+            { "schema": 1, "start": { "firstNodeId": "n9" }, "variables": [],
+              "nodes": [ { "id": "n9", "kind": "handoff", "title": "Pasar a un asesor", "text": null, "memberId": "{{Guid.CreateVersion7()}}" } ] }
+            """);
+
+        var (_, withoutMember) = await Runner(new RecordingHttpBlocks(null)).RunAsync(unassigned, Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+        var (_, withMember) = await Runner(new RecordingHttpBlocks(null)).RunAsync(assigned, Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar", withoutMember.Single(entry => entry.From == "system").Text);
+        Assert.Equal("Pasaría la conversación al miembro elegido", withMember.Single(entry => entry.From == "system").Text);
     }
 
     /// <summary>El motor corta un ciclo dentro de un recorrido (P2-R13), pero no uno que pasa por un bloque HTTP: cada resultado es un
@@ -141,6 +197,143 @@ public sealed class SimulationRunnerTests
         var line = Assert.Single(transcript);
         Assert.Equal("system", line.From);
         Assert.Equal("Terminó: el flujo da vueltas sin esperar al cliente", line.Text);
+    }
+
+    /// <summary>Spec 2026-10-26 D-11: el simulador siempre pregunta (nunca da por vigente un consentimiento) y nunca registra nada.</summary>
+    private static FlowDefinition ConsentFlow() => FlowJson.Parse("""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
+              "outputs": { "accepted": "yes", "rejected": "no" } },
+            { "id": "yes", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } },
+            { "id": "no", "kind": "message", "title": "Entendido", "text": "Entendido", "outputs": { "next": null } }
+          ] }
+        """);
+
+    private static async Task<(RunState State, IReadOnlyList<TranscriptEntry> Transcript)> AskConsentAsync()
+    {
+        var (state, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(ConsentFlow(), Settings, Initial(), new EngineInput.Start(), Context(), Ct);
+        return (state, transcript);
+    }
+
+    [Fact]
+    public async Task TheConsentBlockAlwaysAsksInTheSimulator()
+    {
+        var (state, transcript) = await AskConsentAsync();
+
+        var line = Assert.Single(transcript);
+        Assert.Equal("bot", line.From);
+        Assert.Equal<(string, string)>([("accepted", "Acepto"), ("rejected", "No acepto")], line.Buttons!.Select(button => (button.Id, button.Title)));
+        Assert.Equal(RunStatus.Waiting, state.Status);
+    }
+
+    [Theory]
+    [InlineData("accepted", "Acepto", "Registraría que el cliente aceptó la política de datos.", "Gracias")]
+    [InlineData("rejected", "No acepto", "Registraría que el cliente no aceptó la política de datos.", "Entendido")]
+    public async Task TappingAcceptWritesTheSystemLine(string replyId, string title, string systemText, string followUp)
+    {
+        var (asked, _) = await AskConsentAsync();
+
+        var (_, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(
+            ConsentFlow(), Settings, asked, new EngineInput.CustomerMessage("Interactive", title, replyId, null), Context(), Ct);
+
+        Assert.Equal(["system", "bot"], transcript.Take(2).Select(entry => entry.From));
+        Assert.Equal(systemText, transcript[0].Text);
+        Assert.Equal(followUp, transcript[1].Text);
+    }
+
+    [Fact]
+    public async Task ExhaustingTheConsentSaysItRecordsNothing()
+    {
+        var (state, _) = await AskConsentAsync();
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await Runner(new RecordingHttpBlocks(null)).RunAsync(
+                ConsentFlow(), Settings, state, new EngineInput.CustomerMessage("Text", "hola", null, null), Context(), Ct);
+        }
+
+        Assert.Contains(transcript, entry => entry is { From: "system", Text: "Seguiría por «No acepto» sin registrar nada: se agotaron los intentos." });
+        Assert.Contains(transcript, entry => entry is { From: "bot", Text: "Entendido" });
+    }
+
+    private static FlowDefinition ConsentFlowWith(string onReject, int maxAsks = 3, Guid? member = null) => FlowJson.Parse($$"""
+        { "schema": 1, "start": { "firstNodeId": "consent" }, "variables": [],
+          "nodes": [
+            { "id": "consent", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://e.co/d",
+              "onReject": "{{onReject}}", "maxAsks": {{maxAsks}}, "onRejectMemberId": {{(member is null ? "null" : $"\"{member}\"")}},
+              "outputs": { "accepted": "yes" } },
+            { "id": "yes", "kind": "message", "title": "Gracias", "text": "Gracias", "outputs": { "next": null } }
+          ] }
+        """);
+
+    private static async Task<(RunState State, IReadOnlyList<TranscriptEntry> Transcript)> SendAsync(
+        FlowDefinition flow, RunState state, string text, string? replyId = null) =>
+        await Runner(new RecordingHttpBlocks(null)).RunAsync(
+            flow, Settings, state, new EngineInput.CustomerMessage(replyId is null ? "Text" : "Interactive", text, replyId, null), Context(), Ct);
+
+    private static async Task<RunState> StartAsync(FlowDefinition flow) =>
+        (await Runner(new RecordingHttpBlocks(null)).RunAsync(flow, Settings, Initial(), new EngineInput.Start(), Context(), Ct)).State;
+
+    [Fact]
+    public async Task RepeatingShowsEachRejectionAndTheQuestionAgain()
+    {
+        var flow = ConsentFlowWith("repeat");
+        var asked = await StartAsync(flow);
+
+        var (state, transcript) = await SendAsync(flow, asked, "No acepto", "rejected");
+
+        Assert.Equal("Registraría que el cliente no aceptó la política de datos.", Assert.Single(transcript, entry => entry.From == "system").Text);
+        var question = Assert.Single(transcript, entry => entry.From == "bot");
+        Assert.Equal<(string, string)>([("accepted", "Acepto"), ("rejected", "No acepto")], question.Buttons!.Select(button => (button.Id, button.Title)));
+        Assert.Equal(RunStatus.Waiting, state.Status);
+    }
+
+    [Theory]
+    [InlineData(false, "Pasaría la conversación a la bandeja, sin asignar: no aceptó 3 veces.")]
+    [InlineData(true, "Pasaría la conversación al miembro elegido: no aceptó 3 veces.")]
+    public async Task ReachingTheCapSaysWhereItWouldGo(bool withMember, string expected)
+    {
+        var flow = ConsentFlowWith("repeat", 3, withMember ? Guid.CreateVersion7() : null);
+        var state = await StartAsync(flow);
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await SendAsync(flow, state, "No acepto", "rejected");
+        }
+
+        Assert.Equal(expected, transcript.Last(entry => entry.From == "system").Text);
+        Assert.NotEqual(RunStatus.Waiting, state.Status);
+        Assert.NotEqual(RunStatus.Running, state.Status);
+    }
+
+    [Theory]
+    [InlineData("handoff", 3)]
+    [InlineData("repeat", 1)]
+    public async Task HandingOffOnTheFirstRejectionSaysItDidNotAccept(string onReject, int maxAsks)
+    {
+        var flow = ConsentFlowWith(onReject, maxAsks);
+        var asked = await StartAsync(flow);
+
+        var (_, transcript) = await SendAsync(flow, asked, "No acepto", "rejected");
+
+        Assert.Equal("Pasaría la conversación a la bandeja, sin asignar: no aceptó la política de datos.", transcript.Last(entry => entry.From == "system").Text);
+    }
+
+    [Fact]
+    public async Task ExhaustingWithoutRejectedSaysItRecordsNothingAndHandsOff()
+    {
+        var flow = ConsentFlowWith("repeat");
+        var state = await StartAsync(flow);
+        IReadOnlyList<TranscriptEntry> transcript = [];
+        for (var i = 0; i < 3; i++)
+        {
+            (state, transcript) = await SendAsync(flow, state, "hola");
+        }
+
+        Assert.Equal(
+            ["No registraría nada: se agotaron los intentos.", "Pasaría la conversación a la bandeja, sin asignar"],
+            transcript.Where(entry => entry.From == "system").Select(entry => entry.Text));
     }
 
     private static SimulationRunner Runner(IHttpBlockExecutor http) => new(http, new ClosedHours(), new FixedClock());

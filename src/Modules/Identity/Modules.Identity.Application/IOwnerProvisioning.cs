@@ -9,9 +9,14 @@ namespace Modules.Identity.Application;
 /// </summary>
 public interface IOwnerProvisioning
 {
-    Task<Guid> ProvisionOwnerAsync(
+    /// <summary>
+    /// Un email vacío o sin verificar devuelve <c>Denied("email_not_verified")</c> sin crear ni
+    /// tocar nada. El vínculo pasa por <see cref="IVerifiedProviderLinker"/>.
+    /// </summary>
+    Task<ProviderLinkOutcome> ProvisionOwnerAsync(
         string provider,
         string subject,
-        string email,
+        string? email,
+        bool emailVerified,
         CancellationToken cancellationToken);
 }

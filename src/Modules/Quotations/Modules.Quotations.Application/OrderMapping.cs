@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.Application;
@@ -36,7 +37,7 @@ internal static class OrderMapping
             ? new QuotationBillingAccountDto(account.CompanyId, account.BankName, account.AccountNumber, account.Currency)
             : null,
         order.Parties.Select(ToDto).ToArray(),
-        order.Items.OrderBy(item => item.Position).Select(ToDto).ToArray(),
+        order.Items.OrderBy(item => item.Position).Select(item => ToDto(item, order.PriceRounding)).ToArray(),
         order.ConvertedAt,
         order.ConvertedBy.Value,
         order.ApprovedAt,
@@ -106,9 +107,11 @@ internal static class OrderMapping
         party.Email,
         party.Address,
         party.DepartmentId,
-        party.CityId);
+        party.CityId,
+        party.PersonType?.ToWireValue(),
+        party.IdentificationType?.ToWireValue());
 
-    private static QuotationItemDto ToDto(OrderItem item) => new(
+    private static QuotationItemDto ToDto(OrderItem item, PriceRounding rounding) => new(
         item.Id.Value,
         item.VariantId,
         item.ProductId,
@@ -116,7 +119,7 @@ internal static class OrderMapping
         item.UnitPrice,
         item.DiscountPercentage,
         item.DiscountAmount,
-        item.DiscountedUnitPrice,
+        item.DiscountedUnitPriceUnder(rounding),
         item.Subtotal,
         item.TaxPercentage,
         item.TaxAmount,

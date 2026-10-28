@@ -19,6 +19,26 @@ public sealed class ShopifyImportResultTests
     private static readonly ShopifyAddress Medellin = new(
         "Laura Gómez", "Calle 10 # 43-20", "Apto 301", "Medellín", "Antioquia", "ANT", "CO", "+573001112233");
 
+    private static readonly Guid ValleId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+    private static readonly Guid CaliId = Guid.Parse("01900000-0000-7000-8000-0000000000e2");
+    private static readonly Guid SynonymId = Guid.Parse("01900000-0000-7000-8000-0000000000e3");
+
+    private static readonly ShopifyAddress Calli = new(
+        "Laura Gómez", "Cra 5 # 10-20", null, "CALLI", "Valle del Cauca", "VAC", "CO", "+573001112233");
+
+    private static readonly Dictionary<string, string> Document = new(StringComparer.Ordinal)
+    {
+        ["Documento"] = "1020304050",
+        ["Tipo de documento"] = "CC",
+    };
+
+    private static ImporterWorld WorldWithValle()
+    {
+        var world = new ImporterWorld();
+        world.Geography.Departments["VALLE DEL CAUCA"] = ValleId;
+        return world;
+    }
+
     private static ShopifyShippingLine Line(decimal amount, string? title = "Servientrega", string? code = "standard") =>
         new(code, title, amount, 0m, false);
 
@@ -319,6 +339,283 @@ public sealed class ShopifyImportResultTests
         Assert.Equal("Shopify #1001\nDejar en portería", draft.Notes);
         Assert.Null(row.Warnings);
         Assert.Empty(world.Shipping.CarrierRequests);
+    }
+
+    // ---- Spec 2026-10-26 §4.2 y D-C13: la ciudad sin resolver va a la bandeja; la que casó por sinónimo deja huella ----
+
+    // La ciudad es lo único que faltó para la parte de envío y para el alta completa: la ocurrencia lleva el pedido, el cliente
+    // que esta importación creó incompleto (desvío S4) y la dirección cruda de las notas como muestra.
+    [Fact]
+    public async Task AnUnmatchedCityIsReportedWithTheOrderAndTheBornIncompleteCustomer()
+    {
+        var world = WorldWithValle().WithClassification();
+        var orderId = Guid.CreateVersion7();
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(orderId, "PED-0020", 119_000m, alreadyExisted: false, draft.ClientId);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var customerId = Assert.IsType<Guid>(row.QepCustomerId);
+        Assert.False(world.Customers.ById[customerId].IsComplete);
+        Assert.Equal(
+            new ShopifyUnresolvedCityReport(
+                TenantId, row.Id, orderId, customerId, ValleId, "CALLI",
+                "Cra 5 # 10-20, CALLI, Valle del Cauca, CO", "VAC",
+                PartyCityOnly: true, CustomerCityOnly: true, Now),
+            Assert.Single(world.UnresolvedCities.Reports));
+        Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+    }
+
+    // La muestra se ve en la consola del operador, que cruza tenants: lleva sólo la dirección, nunca el nombre ni el teléfono del
+    // comprador (las notas del pedido sí, porque son del tenant). Las partes en blanco se saltan.
+    [Fact]
+    public async Task TheSampleAddressLeavesOutTheBuyerNameAndPhone()
+    {
+        var world = WorldWithValle();
+        var address = Calli with { Address2 = " Apto 301 ", Province = "  " };
+        var snapshot = Order(address: address, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        var sample = Assert.Single(world.UnresolvedCities.Reports).SampleAddress;
+        Assert.Equal("Cra 5 # 10-20, Apto 301, CALLI, CO", sample);
+        Assert.Equal(sample, ShopifyUnresolvedCitySample.Of(address));
+        Assert.DoesNotContain("Laura", sample, StringComparison.Ordinal);
+        Assert.DoesNotContain("3001112233", sample, StringComparison.Ordinal);
+        Assert.Contains("Laura Gómez", Assert.Single(world.Writer.Creates).Draft.Notes, StringComparison.Ordinal);
+    }
+
+    // Sin teléfono la parte de envío tampoco nacería con la ciudad: igual entra a la bandeja, pero no es «sólo la ciudad». Y sin
+    // documento el cliente no nació incompleto por la ciudad, aunque esta importación lo haya creado.
+    [Fact]
+    public async Task AnUnmatchedCityWithoutPhoneIsNotPartyCityOnly()
+    {
+        var world = WorldWithValle();
+        var snapshot = Order(
+            buyer: new ShopifyBuyer("Laura", "Gómez", "laura@verde.co", null), address: Calli with { Phone = null }, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var report = Assert.Single(world.UnresolvedCities.Reports);
+        Assert.Equal((false, false, row.QepCustomerId), (report.PartyCityOnly, report.CustomerCityOnly, report.CustomerId));
+    }
+
+    // El sinónimo se confirmó entre el match y el reporte: su evento ya salió sin esta ocurrencia, así que nadie más la va a
+    // sembrar. El importador siembra los trabajos con las mismas reglas del evento, sin mensaje de origen ni operador, en la misma
+    // unidad de trabajo que marca la fila importada.
+    [Fact]
+    public async Task ASynonymConfirmedDuringTheImportSeedsTheJobDirectly()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.UnresolvedCities.Outcome = new ShopifyUnresolvedCityResult(ShopifyUnresolvedCityOutcome.SynonymExists, SynonymId);
+        var orderId = Guid.CreateVersion7();
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(orderId, "PED-0024", 119_000m, alreadyExisted: false, draft.ClientId);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var customerId = Assert.IsType<Guid>(row.QepCustomerId);
+        Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+        Assert.Equal(
+            [
+                (ShopifyCityCorrectionJobKind.Resolve, TenantId, SynonymId, ShopifyCityCorrectionTarget.Order, orderId, (Guid?)row.Id, Guid.Empty, (Guid?)null, Now),
+                (ShopifyCityCorrectionJobKind.Resolve, TenantId, SynonymId, ShopifyCityCorrectionTarget.Customer, customerId, row.Id, Guid.Empty, null, Now),
+            ],
+            world.Database.PendingCityCorrectionJobs.Select(job =>
+                (job.Kind, job.TenantId, job.SynonymId, job.Target, job.TargetId, job.MirrorOrderId, job.OperatorSubjectId, job.SourceMessageId, job.CreatedAt)));
+    }
+
+    // Si Geography no responde, la importación lanza: la fila no queda importada y nada de lo que iba en el guardado final (el
+    // trabajo que habría sembrado un sinónimo) queda confirmado. La entrega se reintenta y la ocurrencia es idempotente.
+    [Fact]
+    public async Task AFailingReportMakesTheImportThrow()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.UnresolvedCities.OnReport = () => new InvalidOperationException("Geography is down.");
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => world.ImportAsync(row, snapshot));
+
+        Assert.Equal("Geography is down.", error.Message);
+        Assert.Equal(ShopifyImportState.Waiting, row.ImportState);
+        Assert.Single(world.UnresolvedCities.Reports);
+        Assert.Empty(world.Database.CityCorrections);
+        Assert.Empty(world.Database.CityCorrectionJobs);
+        Assert.Empty(world.Database.PendingCityCorrectionJobs);
+    }
+
+    // D-C11: sin departamento no hay en qué lista sugerir; el pedido entra como hoy, con la dirección cruda en las notas.
+    [Fact]
+    public async Task WithoutDepartmentNothingIsReported()
+    {
+        var world = WorldWithValle();
+        var snapshot = Order(address: Calli with { ProvinceCode = "XX", Province = "Narnia" }, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        Assert.Empty(world.UnresolvedCities.Reports);
+        Assert.Equal(ShopifyImportState.Imported, row.ImportState);
+        Assert.Contains(ShopifyOrderImporter.RawAddressLabel, Assert.Single(world.Writer.Creates).Draft.Notes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AForeignAddressIsNeverReported()
+    {
+        var world = WorldWithValle().WithClassification();
+        var snapshot = Order(
+            attributes: Document, address: new ShopifyAddress("Laura Gómez", "Av. Arequipa 123", null, "Limaa", "Lima", "LIM", "PE", "+5112345678"));
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        Assert.Empty(world.UnresolvedCities.Reports);
+        Assert.Empty(world.Geography.Requests);
+    }
+
+    // O8: la parte de envío que casó por un sinónimo deja una fila origin = import, con la parte como la guardó Quotations (la
+    // normalizada que devolvió el alta), no como la armó el borrador.
+    [Fact]
+    public async Task AShippingPartyMatchedBySynonymLeavesAnImportCorrection()
+    {
+        var world = WorldWithValle();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        var orderId = Guid.CreateVersion7();
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+57 300 111 2233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            orderId, "PED-0021", 119_000m, alreadyExisted: false, draft.ClientId, persisted);
+        var snapshot = Order(address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var drafted = Assert.Single(world.Writer.Creates).Draft.ShippingParty!;
+        Assert.Equal((ValleId, CaliId), (drafted.DepartmentId, drafted.CityId));
+        var correction = Assert.Single(world.Database.CityCorrections);
+        Assert.Equal(
+            (TenantId, SynonymId, ShopifyCityCorrectionOrigin.Import, ShopifyCityCorrectionTarget.Order, orderId, (Guid?)row.Id, (Guid?)null, Now),
+            (correction.TenantId, correction.SynonymId, correction.Origin, correction.Target, correction.TargetId, correction.MirrorOrderId,
+                correction.PreviousCityId, correction.AppliedAt));
+        Assert.Equal(persisted, correction.Party);
+        Assert.Empty(world.UnresolvedCities.Reports);
+    }
+
+    // La huella de import se escribe como la del worker: en su propia transacción, bajo el candado del sinónimo que comparte con el
+    // evento corrected, y guardada en el acto. Con el candado tomado se relee el sinónimo: si ya no apunta a la ciudad que casó (el
+    // operador lo corrigió durante la importación), el evento pudo listar las huellas antes de ésta, así que la recorrección se
+    // siembra acá, en el mismo guardado.
+    [Fact]
+    public async Task AnImportCorrectionIsSavedUnderTheSynonymLockAndSeedsARecorrectionIfTheSynonymMoved()
+    {
+        var world = WorldWithValle();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        world.Synonyms.Point(SynonymId, ValleId, Guid.Parse("01900000-0000-7000-8000-0000000000e9"));
+        world.Synonyms.Log = world.Database.Log;
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            Guid.CreateVersion7(), "PED-0024", 119_000m, alreadyExisted: false, draft.ClientId, persisted);
+        var snapshot = Order(address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(
+            ["begin", $"synonym-lock:{SynonymId}", "synonym-read", "save", "commit"],
+            world.Database.Log.SkipWhile(entry => entry != "begin"));
+        var correction = Assert.Single(world.Database.CityCorrections);
+        var recorrect = Assert.Single(world.Database.CityCorrectionJobs);
+        Assert.Equal(
+            (ShopifyCityCorrectionJobKind.Recorrect, (Guid?)correction.Id, Guid.Empty, (Guid?)null),
+            (recorrect.Kind, recorrect.CorrectionId, recorrect.OperatorSubjectId, recorrect.SourceMessageId));
+    }
+
+    // Si el sinónimo sigue en la ciudad que casó, no hay nada que recorregir.
+    [Fact]
+    public async Task AnImportCorrectionOfASynonymThatDidNotMoveSeedsNothing()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        world.Synonyms.Point(SynonymId, ValleId, CaliId);
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            Guid.CreateVersion7(), "PED-0025", 119_000m, alreadyExisted: false, draft.ClientId, persisted);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Equal(2, world.Database.CityCorrections.Count);
+        Assert.Empty(world.Database.CityCorrectionJobs);
+        Assert.Equal([SynonymId, SynonymId], world.UnitOfWork.SynonymLocks);
+    }
+
+    // Con AlreadyExisted la parte guardada puede no ser la que armó este intento (una persona la cambió a otra ciudad): esa no
+    // casó por el sinónimo, y una huella suya haría que corregir el sinónimo pisara lo que la persona puso.
+    [Fact]
+    public async Task AShippingPartyInAnotherCityLeavesNoImportCorrection()
+    {
+        var world = WorldWithValle();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        var elsewhere = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, Guid.CreateVersion7());
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            Guid.CreateVersion7(), "PED-0023", 119_000m, alreadyExisted: true, draft.ClientId, elsewhere);
+        var snapshot = Order(address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+
+        Assert.Empty(world.Database.PendingCityCorrections);
+    }
+
+    // O8 y D-C4: el cliente que nació completo gracias a un sinónimo guarda su versión (1, desvío S7), y la fila va en el mismo
+    // guardado que anota el cliente en el espejo, antes del pedido.
+    [Fact]
+    public async Task ACustomerCompletedBySynonymLeavesAnImportCorrection()
+    {
+        var world = WorldWithValle().WithClassification();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        var snapshot = Order(attributes: Document, address: Calli, shippingLines: [Line(19_000m)]);
+        var row = world.RowFor(snapshot);
+
+        await world.ImportAsync(row, snapshot);
+
+        var customerId = Assert.IsType<Guid>(row.QepCustomerId);
+        Assert.Equal(CaliId, Assert.Single(world.Customers.Completes).CityId);
+        var correction = Assert.Single(world.Database.CityCorrections);
+        Assert.Equal(
+            (SynonymId, ShopifyCityCorrectionOrigin.Import, ShopifyCityCorrectionTarget.Customer, customerId, (Guid?)row.Id, ValleId, CaliId, (long?)1L),
+            (correction.SynonymId, correction.Origin, correction.Target, correction.TargetId, correction.MirrorOrderId, correction.DepartmentId,
+                correction.CityId, correction.CustomerVersion));
+        Assert.Null(correction.Party);
+        Assert.Equal(1, Assert.Single(world.Writer.Creates).SavesSoFar);
+    }
+
+    // Review Focus 2 (desvío S3): la fila de import va en la unidad de trabajo de Shopify. Si el guardado final se perdió, el
+    // reintento (el pedido ya existe, AlreadyExisted) la agrega; si ya estaba —la fila del espejo se borró y el pedido volvió a
+    // llegar—, no la duplica.
+    [Fact]
+    public async Task ARetriedImportDoesNotDuplicateTheImportCorrection()
+    {
+        var world = WorldWithValle();
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        var orderId = Guid.CreateVersion7();
+        var persisted = new ShopifyShippingFingerprint("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", ValleId, CaliId);
+        var attempts = 0;
+        world.Writer.Result = draft => ShopifyOrderWriteResult.Written(
+            orderId, "PED-0022", 119_000m, alreadyExisted: attempts++ > 0, draft.ClientId, persisted);
+        var snapshot = Order(address: Calli, shippingLines: [Line(19_000m)]);
+
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+        world.UnitOfWork.DiscardPendingChanges();
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+        await world.UnitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await world.ImportAsync(world.RowFor(snapshot), snapshot);
+        await world.UnitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, attempts);
+        var correction = Assert.Single(world.Database.CityCorrections);
+        Assert.Equal((ShopifyCityCorrectionTarget.Order, orderId), (correction.Target, correction.TargetId));
     }
 
     // Un pedido sin dirección de envío (p. ej. un producto digital) no tiene parte de envío ni nada que avisar.

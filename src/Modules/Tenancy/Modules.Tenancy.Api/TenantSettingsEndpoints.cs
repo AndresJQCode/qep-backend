@@ -51,7 +51,49 @@ public static class TenantSettingsEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-10-27: la regla de redondeo de precios por moneda. Sin If-Match: la regla no es parte
+        // del agregado Tenant (no sube su versión), y el PUT reemplaza la lista entera.
+        group.MapGet("/price-rounding", GetPriceRoundingAsync)
+            .RequireAuthorization(TenancyPermissions.SettingsRead)
+            .Produces<PriceRoundingSettingsResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/price-rounding", UpdatePriceRoundingAsync)
+            .RequireAuthorization(TenancyPermissions.SettingsUpdate)
+            .Accepts<UpdatePriceRoundingRequest>("application/json")
+            .Produces<PriceRoundingSettingsResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> GetPriceRoundingAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var settings = await dispatcher.QueryAsync(
+            new GetPriceRoundingQuery(new TenantId(tenantId)),
+            cancellationToken);
+        return Results.Ok(PriceRoundingSettingsResponse.From(settings));
+    }
+
+    private static async Task<IResult> UpdatePriceRoundingAsync(
+        Guid tenantId,
+        UpdatePriceRoundingRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var settings = await dispatcher.SendAsync(
+            new UpdatePriceRoundingCommand(
+                new TenantId(tenantId),
+                request.Currencies?
+                    .Select(currency => new CurrencyPriceRoundingInput(
+                        currency.Currency, currency.Decimals, currency.Mode))
+                    .ToArray()),
+            cancellationToken);
+        return Results.Ok(PriceRoundingSettingsResponse.From(settings));
     }
 
     private static async Task<IResult> GetAsync(
@@ -108,7 +150,8 @@ public static class TenantSettingsEndpoints
                 numberFormat,
                 request.Country,
                 expectedVersion,
-                httpContext.TraceIdentifier),
+                httpContext.TraceIdentifier,
+                request.PersonTypeRequirement),
             cancellationToken);
         return SettingsResult(settings, httpContext);
     }
@@ -158,7 +201,8 @@ public static class TenantSettingsEndpoints
             settings.NumberFormat,
             settings.Country,
             settings.Version,
-            settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null));
+            settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null,
+            settings.PersonTypeRequirement));
     }
 }
 
@@ -169,9 +213,29 @@ public sealed record UpdateTenantSettingsRequest(
     string DateFormat,
     string? DefaultCurrency,
     string? NumberFormat,
-    string? Country);
+    string? Country,
+    string? PersonTypeRequirement = null);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
+
+public sealed record UpdatePriceRoundingRequest(IReadOnlyList<CurrencyPriceRoundingRequest>? Currencies);
+
+public sealed record CurrencyPriceRoundingRequest(string Currency, int Decimals, string Mode);
+
+public sealed record PriceRoundingSettingsResponse(IReadOnlyList<CurrencyPriceRoundingResponse> Currencies)
+{
+    public static PriceRoundingSettingsResponse From(PriceRoundingSettingsDto settings) =>
+        new(settings.Currencies
+            .Select(currency => new CurrencyPriceRoundingResponse(
+                currency.Currency, currency.Decimals, currency.Mode, currency.MaxDecimals, currency.IsDefault))
+            .ToArray());
+}
+
+/// <summary>`MaxDecimals` e `IsDefault` viajan resueltos (regla BFF del repo): el select de decimales
+/// de cada fila no conoce el catálogo, y «sin configurar» no se deduce de `Decimals` y `Mode`. El porqué
+/// completo está en `CurrencyPriceRoundingDto`. Spec 2026-10-27.</summary>
+public sealed record CurrencyPriceRoundingResponse(
+    string Currency, int Decimals, string Mode, int MaxDecimals, bool IsDefault);
 
 /// <summary>`Url` viaja resuelta (regla BFF del repo): el sidebar necesita un `src` listo, no una
 /// clave que armar con una base que el navegador no conoce. Sólo es `null` si el bucket público se
@@ -191,4 +255,7 @@ public sealed record TenantSettingsResponse(
     /// clientes); el backend sólo guarda el código.</summary>
     string Country,
     long Version,
-    TenantLogoResponse? Logo);
+    TenantLogoResponse? Logo,
+    /// <summary>`Never` | `OnCustomerSave` | `OnOrderApproval`: lo guardado, no lo efectivo
+    /// (`/auth/me` publica el efectivo). Spec 2026-10-26.</summary>
+    string PersonTypeRequirement);

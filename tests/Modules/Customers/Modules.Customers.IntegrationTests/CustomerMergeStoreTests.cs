@@ -167,6 +167,30 @@ public sealed class CustomerMergeStoreTests
         .Select(row => ((string)row[0]!, (Guid)row[1]!, (bool)row[2]!))
         .ToList();
 
+    // La tabla es de sólo inserción para la aplicación: la prueba siembra por SQL las filas del bot de dos clientes y de un tenant ajeno.
+    private static Task InsertConsentAsync(string connectionString, Guid tenant, Guid customerId, string decision, DateTimeOffset occurredAt) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO customers.data_consents
+                (id, tenant_id, customer_id, event, occurred_at, channel, channel_user_id, wa_id, conversation_id, actor_kind,
+                 shown_text, prompt_message_id, reply_message_id, reply_wamid, chatbot_id, chatbot_name, chatbot_version_id,
+                 chatbot_version_number, node_id)
+            VALUES (@id, @tenant, @customer, @event, @at, 'WhatsApp', 'CO.123456789', '573001234567', @conversation, 'Chatbot',
+                    '¿Aceptas nuestra política de datos?', @prompt, @reply, 'wamid.HBgM', @bot, 'Bienvenida', @version, 3, 'n4')
+            """,
+            ("id", Guid.CreateVersion7()), ("tenant", tenant), ("customer", customerId), ("event", decision), ("at", occurredAt),
+            ("conversation", Guid.CreateVersion7()), ("prompt", Guid.CreateVersion7()), ("reply", Guid.CreateVersion7()),
+            ("bot", Guid.CreateVersion7()), ("version", Guid.CreateVersion7()));
+
+    private static async Task<List<(Guid CustomerId, string Event)>> ConsentsAsync(string connectionString, IReadOnlyCollection<Guid> customerIds) =>
+        (await RowsAsync(
+            connectionString,
+            "SELECT customer_id, event FROM customers.data_consents WHERE customer_id = ANY(@ids) ORDER BY customer_id, event",
+            ("ids", customerIds.ToArray())))
+        .Select(row => ((Guid)row[0]!, (string)row[1]!))
+        .ToList();
+
     private static async Task<Guid?> MergedIntoAsync(string connectionString, Guid customerId) =>
         (Guid?)(await RowsAsync(
             connectionString, "SELECT merged_into_id FROM customers.customers WHERE id = @id", ("id", customerId)))[0][0];
@@ -205,6 +229,36 @@ public sealed class CustomerMergeStoreTests
                 ("Quien Queda", survivor, true)
             ],
             addresses.ToArray());
+    }
+
+    [Fact]
+    public async Task MoveOwnedMovesTheDataConsents()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var fixture = await StartAsync(factory, database.GetConnectionString());
+        using var _client = fixture.Client;
+        var survivor = await fixture.CreateCustomerAsync("Quien Queda");
+        var merged = await fixture.CreateCustomerAsync("El Fusionado");
+        var bystander = await fixture.CreateCustomerAsync("Otro del Tenant");
+        var foreign = await InsertCustomerAsync(fixture.ConnectionString, OtherTenant, "Ajeno");
+        var at = new DateTimeOffset(2026, 10, 26, 10, 0, 0, TimeSpan.Zero);
+        await InsertConsentAsync(fixture.ConnectionString, Tenant, survivor, "Accepted", at);
+        await InsertConsentAsync(fixture.ConnectionString, Tenant, merged, "Rejected", at.AddHours(1));
+        await InsertConsentAsync(fixture.ConnectionString, Tenant, merged, "Accepted", at.AddHours(2));
+        await InsertConsentAsync(fixture.ConnectionString, Tenant, bystander, "Accepted", at);
+        await InsertConsentAsync(fixture.ConnectionString, OtherTenant, foreign, "Accepted", at);
+
+        await fixture.WithStoreAsync(store =>
+            store.MoveOwnedAsync(Tenant, survivor, [merged, foreign], TestContext.Current.CancellationToken));
+
+        Assert.Empty(await ConsentsAsync(fixture.ConnectionString, [merged]));
+        Assert.Equal(
+            [(survivor, "Accepted"), (survivor, "Accepted"), (survivor, "Rejected")],
+            (await ConsentsAsync(fixture.ConnectionString, [survivor])).ToArray());
+        Assert.Single(await ConsentsAsync(fixture.ConnectionString, [bystander]));
+        // El de otro tenant no se mueve aunque su id venga en la lista.
+        Assert.Equal([(foreign, "Accepted")], (await ConsentsAsync(fixture.ConnectionString, [foreign])).ToArray());
     }
 
     [Fact]

@@ -10,6 +10,7 @@ public sealed record CreateProductCommand(
     string Name,
     string? Description,
     Guid? TaxRateId,
+    Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery) : ICommand<ProductDto>, IProductWriteCommand;
@@ -28,6 +29,7 @@ public sealed class CreateProductValidator : AbstractValidator<CreateProductComm
 public sealed class CreateProductHandler(
     IProductRepository repository,
     ITaxRateRepository taxRateRepository,
+    IProductCategoryRepository categoryRepository,
     IOptionDefinitionRepository optionRepository,
     IProductImageLookup imageLookup,
     ICatalogUnitOfWork unitOfWork,
@@ -54,6 +56,8 @@ public sealed class CreateProductHandler(
         // tenant. Ver ProductTaxRateResolver.
         var taxRateId = await ProductTaxRateResolver.ResolveAsync(
             taxRateRepository, command.TenantId, command.TaxRateId, cancellationToken);
+        var categoryId = await ProductCategoryResolver.ResolveAsync(
+            categoryRepository, command.TenantId, command.CategoryId, cancellationToken);
 
         // CAT-05: cada foto es referencia blanda a Storage, sin FK, así que esta comprobación es
         // la única red. Ver ProductImageResolver.
@@ -91,7 +95,8 @@ public sealed class CreateProductHandler(
             new ProductDetails
             {
                 Description = command.Description,
-                TaxRateId = taxRateId
+                TaxRateId = taxRateId,
+                CategoryId = categoryId
             },
             optionIds,
             variants,

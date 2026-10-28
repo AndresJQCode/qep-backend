@@ -237,6 +237,12 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("owner_membership_id");
 
+                    b.Property<string>("PersonTypeRequirement")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("person_type_requirement");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(63)
@@ -402,6 +408,36 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantPriceRounding", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<short>("Decimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("decimals");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("mode");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("TenantId", "Currency");
+
+                    b.ToTable("tenant_price_roundings", "tenancy");
+                });
+
             modelBuilder.Entity("Modules.Tenancy.Domain.TenantProvider", b =>
                 {
                     b.Property<Guid>("TenantId")
@@ -553,6 +589,15 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("Modules.Tenancy.Domain.TenantModule", b =>
+                {
+                    b.HasOne("Modules.Tenancy.Domain.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Modules.Tenancy.Domain.TenantPriceRounding", b =>
                 {
                     b.HasOne("Modules.Tenancy.Domain.Tenant", null)
                         .WithMany()

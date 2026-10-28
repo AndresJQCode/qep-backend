@@ -34,6 +34,9 @@ public static class MetaErrorCodes
     /// <summary>La plantilla no existe en ese idioma (decisión 15).</summary>
     public const int TemplateDoesNotExist = 132001;
 
+    /// <summary>Pasaron más de 24 horas desde el último mensaje de la persona: sólo se aceptan plantillas.</summary>
+    public const int CustomerWindowClosed = 131047;
+
     /// <summary>La plantilla está pausada.</summary>
     public const int TemplatePaused = 132015;
 

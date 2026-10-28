@@ -68,7 +68,9 @@ internal sealed partial class SessionRevocationWorker(
     private static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5)];
 
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    /// <summary>Costo en reposo contra una base compartida: nadie espera este worker de forma
+    /// interactiva.</summary>
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>El esqueleto compartido, con la curva de este worker. Interno para que las pruebas
     /// lean la curva de la instancia que corre.</summary>

@@ -124,6 +124,77 @@ public sealed class AutomationsPersistenceTests
     }
 
     [Fact]
+    public async Task TheConsentPromptSurvivesTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        var prompt = new Modules.Automations.Domain.Engine.ConsentPrompt("c", "Texto enviado", Guid.CreateVersion7());
+        var state = Modules.Automations.Domain.Engine.RunState.Initial(Modules.Automations.Domain.Engine.RunVariables.Empty()) with { ConsentPrompt = prompt };
+        var run = ConversationRun.Start(
+            Guid.CreateVersion7(), tenantId, conversationId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), state, Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IConversationRunRepository>().AddAsync(run, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var read = await reader.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+        Assert.NotNull(read);
+        Assert.Equal(prompt, read.ToState().ConsentPrompt);
+    }
+
+    [Fact]
+    public async Task ARunSavedBeforeTheCounterReadsZero()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var conversationId = Guid.CreateVersion7();
+        // Una fila de antes de la columna: el INSERT no la nombra y la base le pone el default.
+        await using (var connection = new Npgsql.NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(Ct);
+            await using var command = new Npgsql.NpgsqlCommand(
+                """
+                INSERT INTO automations.conversation_runs (id, tenant_id, conversation_id, connection_id, chatbot_id, chatbot_version_id, status, started_at, updated_at)
+                VALUES (@id, @tenant, @conversation, @connection, @chatbot, @version, 'Waiting', now(), now())
+                """,
+                connection);
+            command.Parameters.AddWithValue("id", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("tenant", tenantId);
+            command.Parameters.AddWithValue("conversation", conversationId);
+            command.Parameters.AddWithValue("connection", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("chatbot", Guid.CreateVersion7());
+            command.Parameters.AddWithValue("version", Guid.CreateVersion7());
+            await command.ExecuteNonQueryAsync(Ct);
+        }
+
+        using (var old = factory.Services.CreateScope())
+        {
+            var read = await old.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+            Assert.NotNull(read);
+            Assert.Equal(0, read.ConsentRejections);
+
+            // FindLatestAsync lee sin seguimiento: se reengancha la fila para que el guardado la escriba.
+            read.Apply(read.ToState() with { ConsentRejections = 2 }, Now);
+            old.ServiceProvider.GetRequiredService<AutomationsDbContext>().Runs.Update(read);
+            await old.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var reader = factory.Services.CreateScope();
+        var saved = await reader.ServiceProvider.GetRequiredService<IConversationRunRepository>().FindLatestAsync(tenantId, conversationId, Ct);
+
+        Assert.NotNull(saved);
+        Assert.Equal(2, saved.ConsentRejections);
+        Assert.Equal(2, saved.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public async Task TodayCountsRunsStartedTodayOnly()
     {
         await using var database = await StartDatabaseAsync();
@@ -375,6 +446,91 @@ public sealed class AutomationsPersistenceTests
             () => scope.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct));
 
         Assert.Equal("concurrency.conflict", error.Code);
+    }
+
+    /// <summary>Spec 2026-10-25 D-2: la regla sobrevive a la base y la leen tanto el agregado como las dos proyecciones del motor.</summary>
+    [Fact]
+    public async Task TheAttemptsExhaustedRuleSurvivesTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var memberId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Ventas");
+        chatbot.SetConnections([connectionId], Now);
+        chatbot.SetAttemptsExhausted(AttemptsExhaustedAction.Handoff, memberId, Now);
+        chatbot.Publish([], Guid.CreateVersion7(), Now);
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+        var loaded = await repository.FindAsync(tenantId, chatbot.Id, Ct);
+        Assert.NotNull(loaded);
+        Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)memberId), (loaded.ExhaustedAction, loaded.ExhaustedMemberId));
+
+        var settings = await repository.FindEngineSettingsAsync(tenantId, chatbot.Id, Ct);
+        Assert.Equal(new Modules.Automations.Domain.Engine.EngineSettings(
+            chatbot.RestartKeyword, chatbot.MaxAttempts, AttemptsExhaustedAction.Handoff, memberId), settings);
+
+        var serving = await repository.FindServingByConnectionAsync(tenantId, connectionId, Ct);
+        Assert.NotNull(serving);
+        Assert.Equal((AttemptsExhaustedAction.Handoff, (Guid?)memberId), (serving.ExhaustedAction, serving.ExhaustedMemberId));
+    }
+
+    /// <summary>Spec 2026-10-26 D-10: el registro de la respuesta lleva el nombre actual del chatbot y el número de la versión de la
+    /// corrida, no el de la publicada; otro tenant no la ve.</summary>
+    [Fact]
+    public async Task TheVersionLabelIsTheChatbotNameAndTheVersionNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var chatbot = NewChatbot(tenantId, "Bienvenida");
+        var first = chatbot.Publish([], Guid.CreateVersion7(), Now);
+        chatbot.Publish([], Guid.CreateVersion7(), Now.AddMinutes(5));
+        using (var seed = factory.Services.CreateScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IChatbotRepository>().AddAsync(chatbot, Ct);
+            await seed.ServiceProvider.GetRequiredService<IAutomationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+
+        Assert.Equal(new ChatbotVersionLabel("Bienvenida", 1), await repository.FindVersionLabelAsync(tenantId, first.Id, Ct));
+        Assert.Null(await repository.FindVersionLabelAsync(Guid.CreateVersion7(), first.Id, Ct));
+    }
+
+    /// <summary>Spec 2026-10-25 D-2: una fila anterior a las columnas (insertada sin ellas) se lee como «reiniciar», sin miembro.</summary>
+    [Fact]
+    public async Task AnExistingRowReadsRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantId = Guid.CreateVersion7();
+        var chatbotId = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@id, @tenantId, 'Antiguo', '{}'::jsonb, now(), @by, now(), @by, now())
+            """,
+            ("id", chatbotId), ("tenantId", tenantId), ("by", Guid.CreateVersion7()));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IChatbotRepository>();
+        var loaded = await repository.FindAsync(tenantId, chatbotId, Ct);
+
+        Assert.NotNull(loaded);
+        Assert.Equal((AttemptsExhaustedAction.Restart, (Guid?)null), (loaded.ExhaustedAction, loaded.ExhaustedMemberId));
+        Assert.Equal(
+            (AttemptsExhaustedAction.Restart, (Guid?)null),
+            (await repository.FindEngineSettingsAsync(tenantId, chatbotId, Ct) is { } settings ? (settings.ExhaustedAction, settings.ExhaustedMemberId) : default));
     }
 
     private static async Task<Guid> InsertTemplateAsync(string connectionString, Guid tenantId, string name)

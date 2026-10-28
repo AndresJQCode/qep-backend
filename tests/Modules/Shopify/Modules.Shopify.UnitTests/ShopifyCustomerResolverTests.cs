@@ -21,6 +21,13 @@ public sealed class ShopifyCustomerResolverTests
     private static readonly ShopifyAddress Medellin =
         new("Laura Gómez", "Cra 43A # 1-50", "Apto 301", "Medellín", "Antioquia", "ANT", "CO", "+573001234567");
 
+    private static readonly ShopifyAddress Calli =
+        new("Laura Gómez", "Cra 5 # 10-20", null, " CALLI ", "Valle del Cauca", "VAC", "CO", "+573001234567");
+
+    private static readonly Guid ValleId = Guid.Parse("01900000-0000-7000-8000-0000000000e1");
+    private static readonly Guid CaliId = Guid.Parse("01900000-0000-7000-8000-0000000000e2");
+    private static readonly Guid SynonymId = Guid.Parse("01900000-0000-7000-8000-0000000000e3");
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
@@ -120,7 +127,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.True(created.IsComplete);
+        Assert.True(created.Customer.IsComplete);
         Assert.Equal(
             new ShopifyCompleteCustomer(
                 "Laura Gómez", "CC", "1020304050", "+573001234567", "laura@verde.co", "Cra 43A # 1-50 Apto 301", "CO",
@@ -140,7 +147,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.True(created.IsComplete);
+        Assert.True(created.Customer.IsComplete);
         Assert.Equal(city.CityId, Assert.Single(world.Customers.Completes).CityId);
         Assert.Equal([("Antioquia", "Medellín")], world.Geography.Requests);
     }
@@ -154,7 +161,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.False(created.IsComplete);
+        Assert.False(created.Customer.IsComplete);
         Assert.Empty(world.Customers.Completes);
         Assert.Equal(("Laura Gómez", "+573001234567", "laura@verde.co", "CO"), Assert.Single(world.Customers.Incompletes));
     }
@@ -169,7 +176,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.True(created.IsComplete);
+        Assert.True(created.Customer.IsComplete);
         var sent = Assert.Single(world.Customers.Completes);
         Assert.Equal(("PE", (Guid?)null, "Lima", "Av. Arequipa 123"), (sent.Country, sent.CityId, sent.CityName, sent.Address));
         Assert.Empty(world.Geography.Requests);
@@ -188,7 +195,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.False(created.IsComplete);
+        Assert.False(created.Customer.IsComplete);
         Assert.Single(world.Customers.Completes);
         Assert.Equal(("Laura Gómez", "+573001234567", (string?)null, "CO"), Assert.Single(world.Customers.Incompletes));
     }
@@ -251,7 +258,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.True(created.IsComplete);
+        Assert.True(created.Customer.IsComplete);
         Assert.Equal(new string('A', 150) + " " + new string('B', 9), Assert.Single(world.Customers.Completes).Name);
     }
 
@@ -274,7 +281,7 @@ public sealed class ShopifyCustomerResolverTests
 
         var created = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
 
-        Assert.False(created.IsComplete);
+        Assert.False(created.Customer.IsComplete);
         Assert.Equal(("Cliente de Shopify", (string?)null, (string?)null, (string?)null), Assert.Single(world.Customers.Incompletes));
     }
 
@@ -357,6 +364,65 @@ public sealed class ShopifyCustomerResolverTests
         await world.ImportAsync(row, snapshot);
 
         Assert.Equal(0, Assert.Single(world.Writer.Creates).SavesSoFar);
+    }
+
+    // ---- Spec 2026-10-26: por dónde casó la ciudad y cuándo es ella la que frena ----
+
+    // D-C11: el departamento resolvió aunque la ciudad no casara por ninguno de los tres caminos; es el que la bandeja necesita.
+    [Fact]
+    public async Task ResolveCityTellsTheDepartmentWhenTheCityDoesNotMatch()
+    {
+        var world = new ImporterWorld();
+        world.Geography.Departments["VALLE DEL CAUCA"] = ValleId;
+
+        var resolution = await world.Resolver.ResolveCityAsync(Calli, Ct);
+
+        Assert.Equal(new ShopifyCityResolution(null, ValleId, "CALLI"), resolution);
+    }
+
+    // D-C13: la ciudad que casó por un sinónimo trae el sinónimo; sin departamento sin casar.
+    [Fact]
+    public async Task ResolveCityCarriesTheSynonymId()
+    {
+        var world = new ImporterWorld();
+        var bySynonym = new ShopifyCityRef(ValleId, CaliId, SynonymId);
+        world.Geography.Cities[("VALLE DEL CAUCA", "CALLI")] = bySynonym;
+
+        var resolution = await world.Resolver.ResolveCityAsync(Calli, Ct);
+
+        Assert.Equal(new ShopifyCityResolution(bySynonym, null, "CALLI"), resolution);
+    }
+
+    // Desvío S4: documento, clasificación, nombre y dirección estaban; sólo la ciudad impidió el alta completa.
+    [Fact]
+    public async Task ACityBlockedCreationSaysSo()
+    {
+        var world = new ImporterWorld();
+        world.Store = ConfiguredStore(classificationId: ClassificationId);
+        world.Geography.Departments["VALLE DEL CAUCA"] = ValleId;
+        var snapshot = Order(attributes: Document, address: Calli);
+
+        var creation = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
+
+        Assert.Equal((false, (ShopifyCityRef?)null, true), (creation.Customer.IsComplete, creation.City, creation.CityBlocked));
+        Assert.Empty(world.Customers.Completes);
+        Assert.Single(world.Customers.Incompletes);
+        Assert.True(ShopifyCustomerResolver.CompletableExceptCity(world.Store, snapshot));
+    }
+
+    [Fact]
+    public async Task AMissingDocumentIsNotCityBlocked()
+    {
+        var world = new ImporterWorld();
+        world.Store = ConfiguredStore(classificationId: ClassificationId);
+        world.Geography.Departments["VALLE DEL CAUCA"] = ValleId;
+        var snapshot = Order(address: Calli);
+
+        var creation = await world.Resolver.CreateAsync(world.Store, snapshot, Ct);
+
+        Assert.Equal((false, false), (creation.Customer.IsComplete, creation.CityBlocked));
+        Assert.False(ShopifyCustomerResolver.CompletableExceptCity(world.Store, snapshot));
+        Assert.Null(ShopifyCustomerResolver.CompleteDataWithCity(world.Store, snapshot, CaliId));
     }
 
     [Theory]

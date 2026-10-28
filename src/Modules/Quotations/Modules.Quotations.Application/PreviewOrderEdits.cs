@@ -15,12 +15,13 @@ public sealed record PreviewOrderEditsQuery(
     string? Notes,
     int? GlobalScaleFloor,
     bool IsRetail,
-    ShippingRequest? Shipping = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    ShippingRequest? Shipping = null,
+    OrderBillingEditRequest? Billing = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
     public PreviewOrderEditsValidator()
-        : base(requireFileIds: false)
+        : base(requireFileIds: false, requireBillingIdentification: false)
     {
     }
 }
@@ -30,6 +31,7 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationRepository quotationRepository,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationCustomerLookup customerLookup,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
@@ -100,6 +102,11 @@ public sealed class PreviewOrderEditsHandler(
             order.SetGlobalScaleFloor(query.GlobalScaleFloor, updatedBy, now);
         }
 
+        // Mismo orden que el guardado: la facturación mueve la retención y el excedente de IVA, así que va antes
+        // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.
+        OrderBillingEdits.Apply(
+            order, query.Billing, tenantCountry: null, strict: false, updatedBy, now);
+
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(
             query.TenantId, query.Shipping, order.ShippingDetails, order.IsStorePickup, order.Currency,
@@ -110,7 +117,7 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, query.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
         order.RecalculatePaymentStatus(now);
 
         var quotationNumber = order.QuotationId is { } quotationId

@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Pricing;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -28,6 +30,11 @@ public sealed class Quotation
     private readonly List<QuotationItem> _items = [];
 
     private readonly List<QuotationParty> _parties = [];
+
+    // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
+    // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
+    private int? _priceRoundingDecimals;
+    private PriceRoundingMode? _priceRoundingMode;
 
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
@@ -267,6 +274,40 @@ public sealed class Quotation
     /// pidió. Vuelve a cambiar recién cuando se elige otra cuenta.
     /// </summary>
     public string Currency { get; private set; } = string.Empty;
+
+    /// <summary>La regla de redondeo con la que se preció este documento. Cambiar la regla del tenant
+    /// después no la mueve: sólo la cambia <see cref="UsePriceRounding"/>, que corre dentro del
+    /// recálculo de una edición. Con cualquiera de las dos columnas nula (un documento anterior a la
+    /// regla) es la de siempre de su moneda.</summary>
+    public PriceRounding PriceRounding =>
+        _priceRoundingDecimals is { } decimals && _priceRoundingMode is { } mode
+            ? new PriceRounding(decimals, mode)
+            : PriceRounding.LegacyFor(Currency);
+
+    /// <summary>
+    /// Guarda la regla de redondeo y rehace <b>todas</b> las líneas con su cantidad, precio, descuento,
+    /// origen y tasa actuales. Si es igual a la vigente no hace nada.
+    ///
+    /// **No es una edición.** No toca <see cref="Version"/> ni <c>Updated*</c>, mismo contrato que
+    /// <c>ApplyGroupDiscounts</c>, y no exige un estado editable: la llama sólo el recálculo, que ya
+    /// corre dentro de una edición.
+    /// </summary>
+    public void UsePriceRounding(PriceRounding rounding, DateTimeOffset occurredAt)
+    {
+        if (rounding == PriceRounding)
+        {
+            return;
+        }
+
+        _priceRoundingDecimals = rounding.Decimals;
+        _priceRoundingMode = rounding.Mode;
+        foreach (var item in _items)
+        {
+            item.ApplyDiscount(item.DiscountPercentage, item.DiscountOrigin, Currency, rounding, occurredAt);
+        }
+
+        RecalculateTotals();
+    }
 
     /// <summary>
     /// Cuando la facturación sigue los datos del cliente, si el nombre que va en el documento es
@@ -544,7 +585,7 @@ public sealed class Quotation
 
         var item = QuotationItem.Create(
             itemId, Id, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
-            _items.Count + 1, Currency, occurredAt);
+            _items.Count + 1, Currency, PriceRounding, occurredAt);
         _items.Add(item);
         Touch(updatedBy, occurredAt);
     }
@@ -561,7 +602,7 @@ public sealed class Quotation
     {
         EnsureEditable();
 
-        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, occurredAt);
+        FindItem(itemId).UpdateQuantity(quantity, discountPercentage, taxPercentage, Currency, PriceRounding, occurredAt);
         Touch(updatedBy, occurredAt);
     }
 
@@ -642,6 +683,11 @@ public sealed class Quotation
             return;
         }
 
+        // La regla guardada es de la moneda vieja: se descarta y las líneas nacen con la de siempre de
+        // la nueva. La del tenant para esa moneda la baja el recálculo (UsePriceRounding) a continuación.
+        _priceRoundingDecimals = null;
+        _priceRoundingMode = null;
+        var rounding = PriceRounding.LegacyFor(currency);
         foreach (var item in _items)
         {
             if (repricing is null || !repricing.TryGetValue(item.VariantId, out var pricing))
@@ -651,7 +697,7 @@ public sealed class Quotation
                     "Every line needs a price in the new currency before the quotation can change currency.");
             }
 
-            item.Reprice(pricing, currency, occurredAt);
+            item.Reprice(pricing, currency, rounding, occurredAt);
         }
 
         Currency = currency;
@@ -975,7 +1021,7 @@ public sealed class Quotation
         {
             if (discounts.TryGetValue(item.Id, out var discount))
             {
-                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, occurredAt);
+                item.ApplyDiscount(discount.Percentage, discount.Origin, Currency, PriceRounding, occurredAt);
             }
         }
 
@@ -1052,7 +1098,7 @@ public sealed class Quotation
     private bool BillingLacksIdentification =>
         Billing is { } billing
         && !string.IsNullOrWhiteSpace(billing.Name)
-        && string.IsNullOrWhiteSpace(billing.IdentificationNumber);
+        && (string.IsNullOrWhiteSpace(billing.IdentificationNumber) || billing.IdentificationType is null);
 
     // Reemplaza las dos partes siempre, incluidas las ausentes: `UpdateDetails` reemplaza el
     // recurso entero, así que una parte que llega null borra la fila que hubiera -- que es
@@ -1112,7 +1158,7 @@ public sealed class Quotation
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
-            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency),
+            FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
             AppliesRetention);
         Subtotal = totals.Subtotal;

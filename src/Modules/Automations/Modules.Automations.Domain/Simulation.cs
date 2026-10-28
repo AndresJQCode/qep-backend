@@ -93,17 +93,22 @@ public sealed class Simulation
             ?? throw new JsonException("El estado de la simulación está vacío.");
         return new RunState(
             row.Status, row.CurrentNodeId, row.StepNumber, row.Attempts, RunVariables.Parse(row.Variables?.ToJsonString() ?? string.Empty),
-            [.. (row.Trace ?? []).Select(entry => new TraceEntry(entry.At, entry.NodeId, entry.Kind, entry.Outcome))]);
+            [.. (row.Trace ?? []).Select(entry => new TraceEntry(entry.At, entry.NodeId, entry.Kind, entry.Outcome))],
+            row.ConsentPrompt, row.ConsentRejections);
     }
 
     // Las variables van como objeto JSON y no como texto escapado, igual que conversation_runs.variables: se pueden leer en la base.
     private static string WriteState(RunState state) => JsonSerializer.Serialize(
         new StateRow(
             state.Status, state.CurrentNodeId, state.StepNumber, state.Attempts, JsonNode.Parse(state.Variables.ToJson()) as JsonObject,
-            [.. state.Trace.Select(entry => new TraceRow(entry.At, entry.NodeId, entry.Kind, entry.Outcome))]),
+            [.. state.Trace.Select(entry => new TraceRow(entry.At, entry.NodeId, entry.Kind, entry.Outcome))], state.ConsentPrompt,
+            state.ConsentRejections),
         JsonOptions);
 
-    private sealed record StateRow(RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, JsonObject? Variables, IReadOnlyList<TraceRow>? Trace);
+    // ConsentPrompt (D-6) y ConsentRejections (repetir R-3) llegan al final y con default: un state guardado antes de esas claves se lee sin ellas.
+    private sealed record StateRow(
+        RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, JsonObject? Variables, IReadOnlyList<TraceRow>? Trace,
+        ConsentPrompt? ConsentPrompt = null, int ConsentRejections = 0);
 
     private sealed record TraceRow(DateTimeOffset At, string NodeId, string Kind, string Outcome);
 }

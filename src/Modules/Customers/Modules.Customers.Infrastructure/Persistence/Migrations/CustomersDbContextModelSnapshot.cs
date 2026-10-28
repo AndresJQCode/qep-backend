@@ -189,6 +189,11 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(160)")
                         .HasColumnName("name");
 
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
+
                     b.Property<string>("Phone")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
@@ -336,6 +341,147 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_customer_addresses_principal");
 
                     b.ToTable("customer_addresses", "customers");
+                });
+
+            modelBuilder.Entity("Modules.Customers.Domain.CustomerDataConsent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActorKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("actor_kind");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<string>("Channel")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("channel");
+
+                    b.Property<string>("ChannelUserId")
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("channel_user_id");
+
+                    b.Property<Guid?>("ChatbotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_id");
+
+                    b.Property<string>("ChatbotName")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("chatbot_name");
+
+                    b.Property<Guid?>("ChatbotVersionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("chatbot_version_id");
+
+                    b.Property<int?>("ChatbotVersionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("chatbot_version_number");
+
+                    b.Property<Guid?>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("event");
+
+                    b.Property<string>("Medium")
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasColumnName("medium");
+
+                    b.Property<string>("NodeId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("node_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid?>("PromptMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prompt_message_id");
+
+                    b.Property<Guid?>("RepliedToMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("replied_to_message_id");
+
+                    b.Property<Guid?>("ReplyMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reply_message_id");
+
+                    b.Property<string>("ReplyWamid")
+                        .HasColumnType("text")
+                        .HasColumnName("reply_wamid");
+
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("sequence");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Sequence"));
+
+                    b.Property<string>("ShownText")
+                        .HasColumnType("text")
+                        .HasColumnName("shown_text");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("WaId")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("wa_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReplyMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_data_consents_reply_message")
+                        .HasFilter("reply_message_id IS NOT NULL");
+
+                    b.HasIndex("TenantId", "CustomerId", "OccurredAt", "Sequence")
+                        .IsDescending(false, false, true, true)
+                        .HasDatabaseName("IX_data_consents_tenant_customer_order");
+
+                    b.ToTable("data_consents", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_data_consents_actor", "(event IN ('Accepted', 'Rejected') AND actor_kind = 'Chatbot' AND actor_user_id IS NULL) OR (event = 'Revoked' AND actor_kind = 'Member' AND actor_user_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_channel", "channel IS NULL OR channel IN ('WhatsApp', 'Instagram')");
+
+                            t.HasCheckConstraint("CK_data_consents_chatbot_fields", "(event = 'Revoked' AND shown_text IS NULL AND prompt_message_id IS NULL AND replied_to_message_id IS NULL AND reply_message_id IS NULL AND reply_wamid IS NULL AND chatbot_id IS NULL AND chatbot_name IS NULL AND chatbot_version_id IS NULL AND chatbot_version_number IS NULL AND node_id IS NULL) OR (event <> 'Revoked' AND shown_text IS NOT NULL AND reply_message_id IS NOT NULL AND chatbot_id IS NOT NULL AND chatbot_name IS NOT NULL AND chatbot_version_id IS NOT NULL AND chatbot_version_number IS NOT NULL AND node_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_event", "event IN ('Accepted', 'Rejected', 'Revoked')");
+
+                            t.HasCheckConstraint("CK_data_consents_identity", "(event = 'Revoked' AND medium = 'Other' AND conversation_id IS NULL AND channel IS NULL AND channel_user_id IS NULL AND wa_id IS NULL) OR ((event <> 'Revoked' OR medium = 'ThisConversation') AND conversation_id IS NOT NULL AND channel IS NOT NULL AND channel_user_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_data_consents_medium", "medium IS NULL OR medium IN ('ThisConversation', 'Other')");
+
+                            t.HasCheckConstraint("CK_data_consents_revocation_fields", "(event = 'Revoked' AND medium IS NOT NULL AND note IS NOT NULL AND length(btrim(note)) BETWEEN 1 AND 500) OR (event <> 'Revoked' AND medium IS NULL AND note IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerNote", b =>

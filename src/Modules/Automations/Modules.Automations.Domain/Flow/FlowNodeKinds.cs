@@ -15,15 +15,16 @@ public static class FlowNodeKinds
     public const string Http = "http";
     public const string Handoff = "handoff";
     public const string Resolve = "resolve";
+    public const string DataConsent = "dataConsent";
 
     public static readonly IReadOnlySet<string> All = new[]
     {
-        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve,
+        Message, OpenQuestion, Buttons, List, Attachment, Condition, BusinessHours, Http, Handoff, Resolve, DataConsent,
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
     /// Las salidas que el motor puede tomar desde el bloque, en el orden en que el editor las pinta. Las de Botones son
-    /// los <c>id</c> de sus botones más <c>other</c>; la Lista tiene <c>extra</c> sólo con <c>extraOption</c> y
+    /// los <c>id</c> de sus botones más <c>other</c> (sólo con <c>otherOutput</c>, D-3); la Lista tiene <c>extra</c> sólo con <c>extraOption</c> y
     /// <c>tooMany</c> sólo si es dinámica (con filas fijas el tope se valida al guardar).
     /// </summary>
     public static IReadOnlyList<string> OutputsOf(FlowNode node) => node switch
@@ -33,15 +34,25 @@ public static class FlowNodeKinds
         ConditionNode => [FlowOutputs.Yes, FlowOutputs.No],
         HttpNode => [FlowOutputs.Ok, FlowOutputs.Error],
         OpenQuestionNode => [FlowOutputs.Answered, FlowOutputs.Invalid],
-        ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), FlowOutputs.Other],
+        ButtonsNode buttons => [.. buttons.Buttons.Select(button => button.Id), .. OtherOutput(buttons.Fallback)],
         ListNode list => ListOutputs(list),
         AttachmentNode => [FlowOutputs.Received, FlowOutputs.Invalid],
+        DataConsentNode consent => [FlowOutputs.Accepted, .. RejectedOutput(consent.OnReject)],
         HandoffNode or ResolveNode => [],
         _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Bloque sin salidas definidas."),
     };
 
     /// <summary>Pasar a un asesor y Resolver terminan la corrida: no tienen salidas.</summary>
     public static bool IsTerminal(string kind) => kind is Handoff or Resolve;
+
+    /// <summary><c>other</c> existe sólo con <c>fallback = otherOutput</c> (spec 2026-10-25 D-3): con <c>repeat</c> o <c>handoff</c> el
+    /// canvas no la dibuja y nadie debe seguirla.</summary>
+    private static string[] OtherOutput(string fallback) => fallback == InteractiveFallbacks.OtherOutput ? [FlowOutputs.Other] : [];
+
+    /// <summary><c>rejected</c> existe sólo con <c>onReject = rejectedOutput</c> (spec 2026-10-26 repetir R-1): con <c>repeat</c> o
+    /// <c>handoff</c> «No acepto» no sale por ninguna salida y nadie debe seguir una conexión vieja.</summary>
+    private static string[] RejectedOutput(string onReject) =>
+        onReject == DataConsentRejectActions.RejectedOutput ? [FlowOutputs.Rejected] : [];
 
     private static List<string> ListOutputs(ListNode list)
     {
@@ -56,7 +67,7 @@ public static class FlowNodeKinds
             outputs.Add(FlowOutputs.TooMany);
         }
 
-        outputs.Add(FlowOutputs.Other);
+        outputs.AddRange(OtherOutput(list.Fallback));
         return outputs;
     }
 }
@@ -78,4 +89,6 @@ public static class FlowOutputs
     public const string Closed = "closed";
     public const string Ok = "ok";
     public const string Error = "error";
+    public const string Accepted = "accepted";
+    public const string Rejected = "rejected";
 }

@@ -1,5 +1,6 @@
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.Application;
 
@@ -34,8 +35,10 @@ public sealed class OrderDraftBuilder(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationProductLookup productLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
-    ITenantDefaultCurrency tenantDefaultCurrency)
+    ITenantDefaultCurrency tenantDefaultCurrency,
+    ITenantDirectory tenantDirectory)
 {
     // El preview no tiene número: el handler lo borra antes de responder.
     private const string PreviewOrderNumber = "PREVIEW";
@@ -49,13 +52,18 @@ public sealed class OrderDraftBuilder(
             ?? throw new QuotationsDomainException(
                 "order.billing.account_required", "An order needs a billing account.");
         var (header, parties, lines) = await PriceAsync(input, customer, account.Currency, cancellationToken);
+        // Sólo al guardar: el cálculo previo corre mientras la persona escribe (spec 2026-10-26).
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(input.TenantId), cancellationToken);
+        BillingPartyFiscalRules.EnsureConsistent(parties.Billing, regional?.Country);
         var shipping = await ResolveShippingAsync(input, parties, account.Currency, cancellationToken);
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+        await BillingPersonTypeRequirement.EnsureForOrderAsync(
+            tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
         return order;
     }
 
@@ -77,7 +85,7 @@ public sealed class OrderDraftBuilder(
             shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
         return order;
     }
 

@@ -35,6 +35,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
     public async Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId,
+        string? search,
         string? name,
         string? code,
         bool? isActive,
@@ -60,19 +61,8 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.IsActive == isActive);
         }
 
-        var namePattern = LikePattern(name);
-        if (namePattern is not null)
-        {
-            query = query.Where(product =>
-                EF.Functions.ILike(product.Name, namePattern, LikeEscapeCharacter));
-        }
-
-        var codePattern = LikePattern(code);
-        if (codePattern is not null)
-        {
-            query = query.Where(product => product.Variants.Any(variant =>
-                EF.Functions.ILike(variant.Code, codePattern, LikeEscapeCharacter)));
-        }
+        // Los mismos filtros de texto que el listado: se exporta lo que la grilla está mostrando.
+        query = ApplyTextFilters(query, search, name, code);
 
         // Por codigo y no por relevancia: una planilla se lee y se compara en un orden estable,
         // y el export no tiene un termino de busqueda contra el cual medir relevancia.
@@ -96,6 +86,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -103,7 +94,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         // CAT-09: sin los Include, las escalas llegan vacías en cada listado — EF no trae
         // colecciones hijas por su cuenta.
         var (ordered, total) = await SearchQueryAsync(
-            Aggregates().AsNoTracking(), tenantId, search, name, code, isActive, cancellationToken);
+            Aggregates().AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var items = await ordered
             .Skip((page - 1) * pageSize)
@@ -123,12 +114,13 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         var (ordered, total) = await SearchQueryAsync(
-            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, cancellationToken);
+            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var rows = await ordered
             .Skip((page - 1) * pageSize)
@@ -140,6 +132,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.IsActive,
                 product.Description,
                 product.TaxRateId,
+                product.CategoryId,
                 ImageFileId = product.Gallery
                     .OrderBy(image => image.Position)
                     .Select(image => (Guid?)image.FileId)
@@ -209,6 +202,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.IsActive,
                 row.Description,
                 row.TaxRateId,
+                row.CategoryId,
                 row.ImageFileId,
                 variantStats.GetValueOrDefault(row.Id)?.Count ?? 0,
                 variantStats.GetValueOrDefault(row.Id) is { } stats
@@ -342,36 +336,26 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .ToArray();
     }
 
-    // El filtro y el orden del listado, compartidos por el que trae el agregado (POS) y el que
-    // proyecta la fila (listado de productos): que los dos ordenen y cuenten igual es lo que hace
-    // que una misma búsqueda dé la misma página en las dos pantallas.
-    private static async Task<(IOrderedQueryable<Product> Ordered, int Total)> SearchQueryAsync(
-        IQueryable<Product> source,
-        Guid tenantId,
+    // Los filtros de texto del listado, compartidos con la exportación: que los dos filtren con el
+    // mismo código es lo que hace que el Excel traiga exactamente lo que la grilla muestra.
+    //
+    // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
+    // sólo los dos que pone LikePattern: `%` y `_` son comodines de LIKE, así que un
+    // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
+    // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
+    // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
+    // afirmaba justo lo que no pasaba.
+    private static IQueryable<Product> ApplyTextFilters(
+        IQueryable<Product> query,
         string? search,
         string? name,
-        string? code,
-        bool? isActive,
-        CancellationToken cancellationToken)
+        string? code)
     {
-        var query = source.Where(product => product.TenantId == tenantId);
-        if (isActive is not null)
-        {
-            query = query.Where(product => product.IsActive == isActive);
-        }
-
-        // ILike es la coincidencia case-insensitive de Npgsql. Los comodines tienen que ser
-        // sólo los dos que pone LikePattern: `%` y `_` son comodines de LIKE, así que un
-        // término sin escapar los convierte en parte de la sintaxis. `?search=_` devolvía el
-        // catálogo entero —coincide con cualquier carácter—, que es lo contrario de filtrar.
-        // Lo encontró la revisión de fiabilidad de CAT-02, contra un comentario previo que
-        // afirmaba justo lo que no pasaba.
-        //
         // Con variantes, `search` también encuentra por código de barras de una variante
-        // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado y del
-        // combobox de cotizaciones, que también quedan encontrando por código de barras: es la
-        // misma caja de búsqueda y no hay motivo para que un código escaneado no la encuentre.
-        // name/code (las cajas separadas del listado) no cambian.
+        // (spec 2026-10-20 §5, la búsqueda del POS). Lo usan el POS y el `search` del listado, del
+        // combobox de cotizaciones y de la exportación, que también quedan encontrando por código
+        // de barras: es la misma caja de búsqueda y no hay motivo para que un código escaneado no
+        // la encuentre. name/code (las cajas separadas del listado) no cambian.
         var searchPattern = LikePattern(search);
         if (searchPattern is not null)
         {
@@ -384,7 +368,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         }
 
         // Las dos cajas separadas del listado (CAT-FILTROS-01), cada una filtra su propia
-        // columna y se combinan con AND cuando el llamador manda las dos.
+        // columna y se combinan con AND entre sí y con `search` cuando el llamador manda varias.
         var namePattern = LikePattern(name);
         if (namePattern is not null)
         {
@@ -399,6 +383,46 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             query = query.Where(product => product.Variants.Any(variant =>
                 EF.Functions.ILike(variant.Code, codePattern, LikeEscapeCharacter)));
         }
+
+        return query;
+    }
+
+    // El filtro y el orden del listado, compartidos por el que trae el agregado (POS) y el que
+    // proyecta la fila (listado de productos): que los dos ordenen y cuenten igual es lo que hace
+    // que una misma búsqueda dé la misma página en las dos pantallas.
+    private static async Task<(IOrderedQueryable<Product> Ordered, int Total)> SearchQueryAsync(
+        IQueryable<Product> source,
+        Guid tenantId,
+        string? search,
+        string? name,
+        string? code,
+        bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
+        CancellationToken cancellationToken)
+    {
+        var query = source.Where(product => product.TenantId == tenantId);
+        if (isActive is not null)
+        {
+            query = query.Where(product => product.IsActive == isActive);
+        }
+
+        // null = sin filtro; una colección vacía no devuelve filas. Lo usa el POS; el listado de
+        // productos no lo expone todavía (spec 2026-10-26 §3.3).
+        if (categoryIds is not null)
+        {
+            // Los ids con el tipo exacto de la propiedad, ProductCategoryId? (nullable), y el Contains sobre
+            // la propiedad entera. Con ProductCategoryId[] contra product.CategoryId.Value, EF le aplicaba
+            // al parámetro el conversor de la columna nullable a elementos no nullable y el GET respondía 500
+            // (TargetInvocationException; lo encontró PosCategoryApiTests contra Postgres). Un producto sin
+            // categoría no entra: null nunca está en la lista.
+            var ids = categoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            query = query.Where(product => ids.Contains(product.CategoryId));
+        }
+
+        query = ApplyTextFilters(query, search, name, code);
+        var searchPattern = LikePattern(search);
+        var namePattern = LikePattern(name);
+        var codePattern = LikePattern(code);
 
         // El total se cuenta sobre la consulta ya filtrada y antes de paginar — mismo criterio
         // que CustomerRepository.SearchAsync.
@@ -558,5 +582,11 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         CancellationToken cancellationToken) =>
         dbContext.Products.AnyAsync(
             product => product.TenantId == tenantId && product.TaxRateId == taxRateId,
+            cancellationToken);
+
+    // CountAsync sobre el DbSet: un SELECT count(*) sin materializar productos ni variantes.
+    public Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        dbContext.Products.CountAsync(
+            product => product.TenantId == tenantId && product.IsActive,
             cancellationToken);
 }

@@ -62,6 +62,10 @@ public sealed class ChatbotsApiTests
     private static async Task<ChatbotEditorDto> GetAsync(Setup setup, Guid chatbotId) =>
         (await setup.Client.GetFromJsonAsync<ChatbotEditorDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{chatbotId}", Ct))!;
 
+    /// <summary>El Anexo A como queda guardado: normalizado (spec 2026-10-25 D-3, D-4: sin <c>outputs.other</c> ni miembro de reserva
+    /// huérfanos) y serializado en la forma del modelo.</summary>
+    private static string StoredAnnexAFlow() => FlowJson.Serialize(FlowNormalizer.Normalize(FlowJson.Parse(AnnexA.Json)));
+
     private static bool SameJson(JsonElement actual, string expected) =>
         JsonNode.DeepEquals(JsonNode.Parse(actual.GetRawText()), JsonNode.Parse(expected));
 
@@ -317,7 +321,7 @@ public sealed class ChatbotsApiTests
         Assert.All(saved.Issues, issue => Assert.Equal("Warning", issue.Severity));
         var reloaded = await GetAsync(setup, editor.Chatbot.Id);
         // D-C2: el servidor guarda el flujo en su forma (la del modelo) y el editor dibuja lo que vuelve.
-        Assert.True(SameJson(reloaded.Draft.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(reloaded.Draft.Flow, StoredAnnexAFlow()));
         Assert.True(SameJson(reloaded.Draft.Layout, layout));
         Assert.Equal(saved.Version, reloaded.Chatbot.Version);
         Assert.Equal(saved.UpdatedAt, reloaded.Draft.UpdatedAt);
@@ -435,6 +439,32 @@ public sealed class ChatbotsApiTests
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.draft_saved'", ("id", editor.Chatbot.Id.ToString())));
     }
 
+    // Spec 2026-10-25 D-3: «otra respuesta» sólo existe con otherOutput; al guardar se quita la conexión que el canvas no dibuja.
+    [Fact]
+    public async Task SavingADraftDropsTheRouteTheCanvasDoesNotDraw()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "b1" }, "variables": [],
+              "nodes": [
+                { "id": "b1", "kind": "buttons", "title": "B", "text": "t", "buttons": [ { "id": "a", "label": "A" } ], "saveTo": null, "fallback": "repeat", "outputs": { "a": "r1", "other": "r1" } },
+                { "id": "r1", "kind": "resolve", "title": "R", "text": null, "reasonId": null, "outputs": {} } ] }
+            """;
+
+        var saved = await SaveDraftAsync(setup, editor, flow);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var outputs = reloaded.Draft.Flow.GetProperty("nodes")[0].GetProperty("outputs");
+        Assert.Equal("r1", outputs.GetProperty("a").GetString());
+        Assert.False(outputs.TryGetProperty("other", out var hidden), $"other sobrevivió: {hidden}");
+    }
+
     // Un borrador guardado que ya no se lee (dato viejo, cambio de esquema) abre el editor con un error en vez de un 500.
     [Fact]
     public async Task AStoredFlowThatNoLongerParsesIsAnIssueNotA500()
@@ -532,6 +562,367 @@ public sealed class ChatbotsApiTests
         var reloaded = await GetAsync(setup, editor.Chatbot.Id);
         Assert.Equal(("Draft", editor.Chatbot.Version), (reloaded.Chatbot.Status, reloaded.Chatbot.Version));
         Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbot_versions"));
+    }
+
+    // Spec 2026-10-25 D-5: el editor trae la regla y los miembros que pueden responder (los de «Transferir»), no los que no.
+    [Fact]
+    public async Task TheEditorBringsTheRuleAndTheMembersWhoCanReply()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var billing = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Facturación Fer", role: "billing");
+        var editor = await CreateAsync(setup);
+
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+
+        Assert.Equal(("Restart", (Guid?)null), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+        Assert.Contains(new ChatbotMemberDto(advisor.MembershipId, "Asesora Ana"), reloaded.Members);
+        Assert.DoesNotContain(reloaded.Members, member => member.Id == billing.MembershipId);
+        Assert.Equal(reloaded.Members.OrderBy(member => member.Name, StringComparer.CurrentCultureIgnoreCase), reloaded.Members);
+    }
+
+    // Spec 2026-10-25 D-5: un traspaso a un miembro que no puede responder es un Error del bloque, y bloquea publicar.
+    [Fact]
+    public async Task AHandoffToAMemberWhoCannotReplyBlocksPublishing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "n1" },
+              "nodes": [ { "id": "n1", "kind": "handoff", "title": "Asesor", "text": "Un asesor te escribe.", "memberId": "{{stranger}}" } ]
+            }
+            """;
+        var save = await SaveDraftAsync(setup, editor, flow);
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        var saved = await save.Content.ReadFromJsonAsync<DraftSavedDto>(Ct);
+
+        var issue = Assert.Single((await GetAsync(setup, editor.Chatbot.Id)).Issues, item => item.Code == FlowIssueCodes.HandoffMemberInvalid);
+        var response = await ActAsync(setup.Client, setup, editor.Chatbot.Id, "publish", saved!.Version);
+
+        Assert.Equal((nameof(FlowIssueSeverity.Error), "n1"), (issue.Severity, issue.NodeId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var errors = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(errors, item => item.StartsWith($"{FlowIssueCodes.HandoffMemberInvalid}: ", StringComparison.Ordinal));
+    }
+
+    // Spec 2026-10-25 D-5: el miembro de la regla de agotamiento también tiene que poder responder al publicar. La regla se escribe por
+    // SQL porque el PUT de ajustes recién la aprende en la Task 8.
+    [Fact]
+    public async Task TheExhaustedMemberMustStillReplyToPublish()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var (id, _) = await PublishableAsync(setup);
+        await ExecuteAsync(connectionString,
+            "UPDATE automations.chatbots SET exhausted_action = 'Handoff', exhausted_member_id = @member WHERE id = @id",
+            ("member", advisor.MembershipId), ("id", id));
+        Assert.DoesNotContain((await GetAsync(setup, id)).Issues, item => item.Code == FlowIssueCodes.ExhaustedMemberInvalid);
+        await ExecuteAsync(connectionString,
+            "UPDATE tenancy.memberships SET state = 'Suspended' WHERE id = @id", ("id", advisor.MembershipId));
+
+        var editor = await GetAsync(setup, id);
+        var response = await ActAsync(setup.Client, setup, id, "publish", editor.Chatbot.Version);
+
+        var issue = Assert.Single(editor.Issues, item => item.Code == FlowIssueCodes.ExhaustedMemberInvalid);
+        Assert.Equal((nameof(FlowIssueSeverity.Error), (string?)null), (issue.Severity, issue.NodeId));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        var errors = problem.RootElement.GetProperty("errors").GetProperty("flow").EnumerateArray().Select(item => item.GetString()!).ToList();
+        Assert.Contains(errors, item => item.StartsWith($"{FlowIssueCodes.ExhaustedMemberInvalid}: ", StringComparison.Ordinal));
+    }
+
+    private static Task<HttpResponseMessage> SaveRuleAsync(Setup setup, ChatbotEditorDto editor, string? action, Guid? memberId) =>
+        PutAsync(
+            setup,
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
+            new UpdateChatbotRequest("Servicio técnico", "", "NewConversation", [], "reiniciar", 3, [setup.WhatsAppId], null, action, memberId),
+            editor.Chatbot.Version);
+
+    // Spec 2026-10-25 D-2: los ajustes guardan la regla; con Restart el miembro se descarta.
+    [Fact]
+    public async Task SettingsSaveTheAttemptsExhaustedRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+
+        var handoff = await ReadEditorAsync(await SaveRuleAsync(setup, editor, "Handoff", advisor.MembershipId));
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        var restart = await ReadEditorAsync(await SaveRuleAsync(setup, handoff, "Restart", advisor.MembershipId));
+
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (handoff.ExhaustedAction, handoff.ExhaustedMemberId));
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+        Assert.Equal(("Restart", (Guid?)null), (restart.ExhaustedAction, restart.ExhaustedMemberId));
+    }
+
+    // Spec 2026-10-25 D-4: sin las claves el PUT guarda Restart (también pisa una regla anterior).
+    [Fact]
+    public async Task AnOmittedRuleSavesRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var handoff = await ReadEditorAsync(await SaveRuleAsync(setup, editor, "Handoff", advisor.MembershipId));
+
+        var response = await PutAsync(
+            setup, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}",
+            new
+            {
+                name = "Servicio técnico", description = "", trigger = "NewConversation", keywords = Array.Empty<string>(),
+                restartKeyword = "reiniciar", maxAttempts = 3, connectionIds = new[] { setup.WhatsAppId },
+            },
+            handoff.Chatbot.Version);
+
+        var saved = await ReadEditorAsync(response);
+        Assert.Equal(("Restart", (Guid?)null), (saved.ExhaustedAction, saved.ExhaustedMemberId));
+    }
+
+    [Fact]
+    public async Task AnUnknownActionIsAValidationError()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await SaveRuleAsync(setup, editor, "Later", null);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal("validation.failed", code);
+        Assert.Equal(["exhaustedAction"], keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Spec 2026-10-25 D-5: guardar con un miembro que no puede responder se rechaza, sin tocar el chatbot.
+    [Fact]
+    public async Task AMemberWhoCannotReplyIsRefusedOnSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+
+        var response = await SaveRuleAsync(setup, editor, "Handoff", Guid.CreateVersion7());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("automations.chatbot.member_cannot_reply", (await ProblemAsync(response)).Code);
+        var reloaded = await GetAsync(setup, editor.Chatbot.Id);
+        Assert.Equal(editor.Chatbot.Version, reloaded.Chatbot.Version);
+        Assert.Equal(("Restart", (Guid?)null), (reloaded.ExhaustedAction, reloaded.ExhaustedMemberId));
+    }
+
+    private static string HandoffFlow(Guid memberId) => $$"""
+        {
+          "schema": 1,
+          "start": { "firstNodeId": "n1" },
+          "nodes": [ { "id": "n1", "kind": "handoff", "title": "Asesor", "text": "Un asesor te escribe.", "memberId": "{{memberId}}" } ]
+        }
+        """;
+
+    private static Guid? HandoffMember(JsonElement flow) =>
+        flow.GetProperty("nodes")[0].TryGetProperty("memberId", out var member) && member.ValueKind == JsonValueKind.String ? member.GetGuid() : null;
+
+    private static async Task<ChatbotEditorDto> ReadCreatedAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<ChatbotEditorDto>(Ct))!;
+    }
+
+    // Spec 2026-10-25 D-8: duplicar lleva la regla y los miembros de los bloques, por los dos caminos.
+    [Fact]
+    public async Task DuplicateKeepsTheRuleAndTheMembers()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var withFlow = await SaveDraftAsync(setup, editor, HandoffFlow(advisor.MembershipId));
+        Assert.Equal(HttpStatusCode.OK, withFlow.StatusCode);
+        var original = await ReadEditorAsync(await SaveRuleAsync(
+            setup, await GetAsync(setup, editor.Chatbot.Id), "Handoff", advisor.MembershipId));
+
+        var duplicated = await setup.Client.PostAsync($"{ChatbotsUrl(setup.Tenant.TenantId)}/{original.Chatbot.Id}/duplicate", null, Ct);
+        var created = await setup.Client.PostAsJsonAsync(
+            ChatbotsUrl(setup.Tenant.TenantId),
+            new CreateChatbotRequest("Otra copia", "", "NewConversation", [], [], new ChatbotSourceRequest("duplicate", null, original.Chatbot.Id, null)),
+            Ct);
+
+        foreach (var copy in new[] { await ReadCreatedAsync(duplicated), await ReadCreatedAsync(created) })
+        {
+            Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (copy.ExhaustedAction, copy.ExhaustedMemberId));
+            Assert.Equal(advisor.MembershipId, HandoffMember(copy.Draft.Flow));
+        }
+    }
+
+    [Fact]
+    public async Task ExportCarriesTheRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await ReadEditorAsync(await SaveRuleAsync(setup, await CreateAsync(setup), "Handoff", advisor.MembershipId));
+
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (export.ExhaustedAction, export.ExhaustedMemberId));
+    }
+
+    // Spec 2026-10-25 D-8 y Review Focus 4: importar conserva la acción, suelta los miembros que no pueden responder aquí y normaliza.
+    [Fact]
+    public async Task ImportDropsMembersWhoCannotReplyHereAndKeepsTheAction()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "b1" },
+              "variables": [],
+              "nodes": [
+                { "id": "b1", "kind": "buttons", "title": "Menú", "text": "¿Qué necesitas?", "buttons": [ { "id": "a", "label": "A" } ],
+                  "saveTo": null, "fallback": "handoff", "fallbackMemberId": "{{stranger}}", "outputs": { "a": "h1" } },
+                { "id": "b2", "kind": "buttons", "title": "Otro", "text": "¿Y ahora?", "buttons": [ { "id": "a", "label": "A" } ],
+                  "saveTo": null, "fallback": "repeat", "outputs": { "a": "h1", "other": "h1" } },
+                { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "memberId": "{{stranger}}", "outputs": {} }
+              ]
+            }
+            """;
+        var file = export with
+        {
+            Flow = JsonDocument.Parse(flow).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = stranger,
+        };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Handoff", (Guid?)null), (imported.ExhaustedAction, imported.ExhaustedMemberId));
+        var nodes = imported.Draft.Flow.GetProperty("nodes").EnumerateArray().ToDictionary(node => node.GetProperty("id").GetString()!);
+        Assert.False(nodes["b1"].TryGetProperty("fallbackMemberId", out var fallback) && fallback.ValueKind == JsonValueKind.String);
+        Assert.False(nodes["h1"].TryGetProperty("memberId", out var member) && member.ValueKind == JsonValueKind.String);
+        Assert.False(nodes["b2"].GetProperty("outputs").TryGetProperty("other", out var otherOutput) && otherOutput.ValueKind == JsonValueKind.String);
+    }
+
+    // Spec 2026-10-26 repetir R-5: el destino de «Si no acepta» también se suelta al importar, y la acción y el tope se conservan.
+    [Fact]
+    public async Task ImportDropsARejectMemberWhoCannotReplyHere()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var stranger = Guid.CreateVersion7();
+        var flow = $$"""
+            {
+              "schema": 1,
+              "start": { "firstNodeId": "c1" },
+              "variables": [],
+              "nodes": [
+                { "id": "c1", "kind": "dataConsent", "title": "Política de datos", "text": "Lee https://empresa.co/datos",
+                  "onReject": "handoff", "maxAsks": 4, "onRejectMemberId": "{{stranger}}", "outputs": { "accepted": "h1" } },
+                { "id": "h1", "kind": "handoff", "title": "Asesor", "text": null, "memberId": null, "outputs": {} }
+              ]
+            }
+            """;
+        var file = export with { Flow = JsonDocument.Parse(flow).RootElement };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        var consent = imported.Draft.Flow.GetProperty("nodes").EnumerateArray().Single(node => node.GetProperty("id").GetString() == "c1");
+        Assert.Equal(("handoff", 4), (consent.GetProperty("onReject").GetString(), consent.GetProperty("maxAsks").GetInt32()));
+        Assert.False(consent.TryGetProperty("onRejectMemberId", out var member) && member.ValueKind == JsonValueKind.String);
+    }
+
+    // Un miembro que sí puede responder aquí se conserva al importar.
+    [Fact]
+    public async Task ImportKeepsAMemberWhoCanReplyHere()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var file = export with
+        {
+            Flow = JsonDocument.Parse(HandoffFlow(advisor.MembershipId)).RootElement, ExhaustedAction = "Handoff", ExhaustedMemberId = advisor.MembershipId,
+        };
+
+        var response = await setup.Client.PostAsJsonAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new ImportChatbotRequest("Importado", file, null), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Handoff", (Guid?)advisor.MembershipId), (imported.ExhaustedAction, imported.ExhaustedMemberId));
+        Assert.Equal(advisor.MembershipId, HandoffMember(imported.Draft.Flow));
+    }
+
+    [Fact]
+    public async Task AnOldExportWithoutTheRuleImportsAsRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var editor = await CreateAsync(setup);
+        var export = (await setup.Client.GetFromJsonAsync<ChatbotExportDto>($"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}/export", Ct))!;
+        var old = JsonNode.Parse(JsonSerializer.Serialize(new ImportChatbotRequest("Viejo", export, null), JsonSerializerOptions.Web))!;
+        var file = old["export"]!.AsObject();
+        file.Remove("exhaustedAction");
+        file.Remove("exhaustedMemberId");
+
+        var response = await setup.Client.PostAsync(
+            $"{ChatbotsUrl(setup.Tenant.TenantId)}/import", new StringContent(old.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), Ct);
+
+        var imported = await ReadCreatedAsync(response);
+        Assert.Equal(("Restart", (Guid?)null), (imported.ExhaustedAction, imported.ExhaustedMemberId));
     }
 
     // Ruling P2-R8: el disparador por palabra clave sin palabras es un problema de los ajustes; los ajustes se guardan, publicar no.
@@ -1085,7 +1476,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var export = (await response.Content.ReadFromJsonAsync<ChatbotExportDto>(Ct))!;
         Assert.Equal((1, "Servicio técnico", "NewConversation", "reiniciar", 3), (export.Schema, export.Name, export.Trigger, export.RestartKeyword, export.MaxAttempts));
-        Assert.True(SameJson(export.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(export.Flow, StoredAnnexAFlow()));
         Assert.Equal([AnnexA.CustomersApi, AnnexA.ServiceOrdersApi], export.ExternalApis.Select(api => api.Id).Order());
         Assert.All(export.ExternalApis, api => Assert.Equal("Active", api.Status));
     }
@@ -1109,7 +1500,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal(("Copia", "Draft"), (imported.Chatbot.Name, imported.Chatbot.Status));
         Assert.Empty(imported.Chatbot.Connections);
         var reloaded = await GetAsync(setup, imported.Chatbot.Id);
-        Assert.True(SameJson(reloaded.Draft.Flow, FlowJson.Serialize(FlowJson.Parse(AnnexA.Json))));
+        Assert.True(SameJson(reloaded.Draft.Flow, StoredAnnexAFlow()));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.imported'", ("id", imported.Chatbot.Id.ToString())));
 

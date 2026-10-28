@@ -93,6 +93,64 @@ public sealed class ConversationEventJsonTests
     public void AHandoffRoundTrips() =>
         Assert.Equal(HandoffEvent, ConversationEventJson.Parse(ConversationEventJson.Serialize(HandoffEvent)));
 
+    // Spec 2026-10-25 D-8: a quién quedó asignada la conversación al agotarse los intentos.
+    private static ConversationEvent AssignedEvent(Guid? member) => new(
+        ConversationEventType.AutomationPaused,
+        PauseReason: AutomationPauseReason.Handoff,
+        Handoff: AutomationHandoff.Create(
+            AutomationHandoffKind.AttemptsExhausted, null, "ask", "Número de documento", null, null, null, member));
+
+    [Fact]
+    public void AnAssignedHandoffRoundTrips()
+    {
+        var value = AssignedEvent(Guid.CreateVersion7());
+
+        Assert.Equal(value, ConversationEventJson.Parse(ConversationEventJson.Serialize(value)));
+    }
+
+    [Fact]
+    public void TheAssignedMemberIsWrittenAsAssignedMemberId()
+    {
+        var member = Guid.CreateVersion7();
+
+        var assigned = ConversationEventJson.Serialize(AssignedEvent(member));
+        var unassigned = ConversationEventJson.Serialize(AssignedEvent(null));
+
+        Assert.Contains("\"kind\":\"AttemptsExhausted\"", assigned, StringComparison.Ordinal);
+        Assert.Contains($"\"assignedMemberId\":\"{member:D}\"", assigned, StringComparison.Ordinal);
+        Assert.DoesNotContain("assignedMemberId", unassigned, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-10-26 repetir R-4c y R-4b: las causas de la política de datos viajan por nombre con el miembro asignado.
+    [Theory]
+    [InlineData(AutomationHandoffKind.DataConsentRejected)]
+    [InlineData(AutomationHandoffKind.DataConsentUnavailable)]
+    public void TheConsentKindsRoundTrip(AutomationHandoffKind kind)
+    {
+        var value = new ConversationEvent(
+            ConversationEventType.AutomationPaused,
+            PauseReason: AutomationPauseReason.Handoff,
+            Handoff: AutomationHandoff.Create(kind, null, "consent", "Política de datos", null, null, null, Guid.CreateVersion7()));
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Contains($"\"kind\":\"{kind}\"", json, StringComparison.Ordinal);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
+
+    [Theory]
+    [InlineData("\"ana\"")]
+    [InlineData("12")]
+    public void AnUnreadableAssignedMemberReadsAsNull(string value)
+    {
+        var parsed = ConversationEventJson.Parse(
+            $$$"""{"type":"AutomationPaused","pauseReason":"Handoff","handoff":{"kind":"AttemptsExhausted","nodeId":"ask","assignedMemberId":{{{value}}}}}""");
+
+        Assert.Null(parsed!.Handoff!.AssignedMemberId);
+        Assert.Equal("ask", parsed.Handoff.NodeId);
+        Assert.Equal(AutomationHandoffKind.AttemptsExhausted, parsed.Handoff.Kind);
+    }
+
     [Fact]
     public void TheHandoffIsWrittenWithItsNames()
     {

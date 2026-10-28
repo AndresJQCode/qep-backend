@@ -97,7 +97,9 @@ internal sealed partial class OrphanUserCleanupWorker(
     private static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(15)];
 
-    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    /// <summary>Costo en reposo contra una base compartida: nadie espera este worker de forma
+    /// interactiva.</summary>
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>El esqueleto compartido, con la curva de este worker. Interno para que las pruebas
     /// lean la curva de la instancia que corre.</summary>

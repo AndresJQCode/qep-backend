@@ -125,13 +125,14 @@ internal sealed class MessagingTestBed
 
     public ConversationRow OpenConversation(
         int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567",
-        ConversationChannel channel = ConversationChannel.WhatsApp)
+        ConversationChannel channel = ConversationChannel.WhatsApp, bool blocked = false)
     {
         var row = new ConversationRow(
             Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
             CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
-            null, null, null, null, null, null, Now, 1, channel);
+            null, null, null, null, null, null, Now, 1, channel,
+            BlockedAt: blocked ? Now.AddHours(-2) : null, BlockedByMemberId: blocked ? MemberId : null);
         Conversations.Rows.Add(row);
         return row;
     }
@@ -619,6 +620,23 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(true);
     }
 
+    /// <summary>Spec 2026-10-26 §2: lo que responde Block Users; por defecto, aplicado.</summary>
+    public MessagingGraphResult<BlockUsersResult> NextBlock { get; set; } = new(new BlockUsersResult(true, null), null);
+
+    public List<(string Direction, string WaId)> BlockCalls { get; } = [];
+
+    public Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("block", waId));
+        return Task.FromResult(NextBlock);
+    }
+
+    public Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken)
+    {
+        BlockCalls.Add(("unblock", waId));
+        return Task.FromResult(NextBlock);
+    }
+
     /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
     public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
 
@@ -754,6 +772,8 @@ internal sealed class FakeConversationRepository : IConversationRepository
     public Task<bool> SetAutomationStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> SetAutomationChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Guid?> LinkCustomerAsync(Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeMessageQueries : IMessageQueries

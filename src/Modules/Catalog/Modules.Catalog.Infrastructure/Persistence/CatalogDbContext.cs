@@ -10,6 +10,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
 
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+
     internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
 
     /// <summary>
@@ -38,6 +40,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureOptionDefinition(modelBuilder);
         ConfigureOptionValue(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
@@ -77,6 +80,17 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .WithMany()
             .HasForeignKey(value => value.TaxRateId)
             .OnDelete(DeleteBehavior.Restrict);
+        product.Property(value => value.CategoryId)
+            .HasColumnName("category_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new ProductCategoryId(value.Value) : null);
+        // RESTRICT y no CASCADE; la FK no sabe de tenants, eso lo verifica ProductCategoryResolver.
+        product.HasOne<ProductCategory>()
+            .WithMany()
+            .HasForeignKey(value => value.CategoryId)
+            .OnDelete(DeleteBehavior.Restrict);
+        product.HasIndex(value => value.CategoryId).HasDatabaseName("IX_products_category");
         product.Property(value => value.Version)
             .HasColumnName("version")
             .IsConcurrencyToken();
@@ -354,6 +368,46 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.HasIndex(value => new { value.TenantId, value.Name })
             .IsUnique()
             .HasDatabaseName("IX_tax_rates_tenant_name");
+    }
+
+    private static void ConfigureProductCategory(ModelBuilder modelBuilder)
+    {
+        var category = modelBuilder.Entity<ProductCategory>();
+        category.ToTable("product_categories", "catalog");
+        category.HasKey(value => value.Id);
+        category.Property(value => value.Id)
+            .HasColumnName("id")
+            .HasConversion(id => id.Value, value => new ProductCategoryId(value))
+            .ValueGeneratedNever();
+        category.Property(value => value.TenantId).HasColumnName("tenant_id");
+        category.Property(value => value.Name)
+            .HasColumnName("name")
+            .HasMaxLength(ProductCategory.NameMaxLength);
+        category.Property(value => value.ParentId)
+            .HasColumnName("parent_id")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new ProductCategoryId(value.Value) : null);
+        // RESTRICT: borrar una categoría con hijas no debe arrastrarlas.
+        category.HasOne<ProductCategory>()
+            .WithMany()
+            .HasForeignKey(value => value.ParentId)
+            .OnDelete(DeleteBehavior.Restrict);
+        category.Property(value => value.Version)
+            .HasColumnName("version")
+            .IsConcurrencyToken();
+        category.Property(value => value.CreatedAt).HasColumnName("created_at");
+        category.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Quick access of the register (spec 2026-10-26-categorias-pos-acceso-rapido D-4): a column
+        // here and not a POS table, because POS has no settings table and the aggregate is Catalog's.
+        // No unique index on (tenant_id, position): EF writes a reorder row by row, and a swap
+        // would trip a non-deferrable index halfway. Contiguity is ProductCategoryQuickAccess's job.
+        category.Property(value => value.PosQuickAccessPosition).HasColumnName("pos_quick_access_position");
+        category.HasIndex(value => value.TenantId).HasDatabaseName("IX_product_categories_tenant");
+        category.HasIndex(value => value.ParentId).HasDatabaseName("IX_product_categories_parent");
+        // El índice único (tenant_id, parent_id, lower(name)) NULLS NOT DISTINCT no se modela acá:
+        // EF no expresa índices sobre expresiones. Se crea a mano en la migración
+        // AddProductCategories, y CatalogUnitOfWork lo traduce por nombre.
     }
 
     private static void ConfigurePriceScale(ModelBuilder modelBuilder)

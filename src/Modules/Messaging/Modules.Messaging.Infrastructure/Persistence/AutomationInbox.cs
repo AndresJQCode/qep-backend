@@ -80,7 +80,8 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             SELECT message.id AS "MessageId", message.kind AS "Kind", COALESCE(message.text, message.caption) AS "Text",
                    COALESCE(message.details->'button_reply'->>'id', message.details->'list_reply'->>'id') AS "ReplyId",
                    media.mime_type AS "MimeType", media.file_name AS "FileName", (media.stored_at IS NOT NULL) AS "Stored",
-                   message.occurred_at AS "OccurredAt"
+                   message.occurred_at AS "OccurredAt", message.wamid AS "Wamid", message.reply_to_message_id AS "ReplyToMessageId",
+                   message.conversation_id AS "ConversationId"
               FROM messaging.messages AS message
               LEFT JOIN messaging.message_media AS media ON media.message_id = message.id
              WHERE message.id = {messageId} AND message.tenant_id = {tenantId} AND message.direction = 1
@@ -117,7 +118,8 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
     }
 
     private sealed record InboundRow(
-        Guid MessageId, short Kind, string? Text, string? ReplyId, string? MimeType, string? FileName, bool Stored, DateTimeOffset OccurredAt)
+        Guid MessageId, short Kind, string? Text, string? ReplyId, string? MimeType, string? FileName, bool Stored, DateTimeOffset OccurredAt, string? Wamid,
+        Guid? ReplyToMessageId, Guid ConversationId)
     {
         public InboundForAutomation ToInbound() => new(
             MessageId,
@@ -125,6 +127,9 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             Text,
             ReplyId,
             MimeType is null ? null : new InboundMediaForAutomation(MimeType, FileName, Stored),
-            OccurredAt);
+            OccurredAt,
+            Wamid,
+            ReplyToMessageId,
+            ConversationId);
     }
 }

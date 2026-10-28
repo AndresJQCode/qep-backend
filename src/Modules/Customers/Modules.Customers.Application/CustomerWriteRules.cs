@@ -33,6 +33,9 @@ public interface ICustomerWriteCommand
     string? CityName { get; }
 
     Guid? ClassificationId { get; }
+
+    /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; en blanco es «sin tipo».</summary>
+    string? PersonType { get; }
 }
 
 /// <summary>
@@ -88,6 +91,15 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .WithMessage(command =>
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+
+        // Spec 2026-10-26: el tipo de persona es opcional, pero uno que no se reconoce se rechaza aca para que el 422
+        // lleve el mapa errors con la clave PersonType. Se comprueba contra la misma tabla que el dominio
+        // (PersonTypeParser), por lo mismo que el tipo de documento.
+        RuleFor(command => command.PersonType)
+            .Must(IsSupportedPersonType)
+            .WithMessage(
+                $"The person type must be one of {Join(PersonTypeParser.SupportedWireValues)}.")
+            .When(command => !string.IsNullOrWhiteSpace(command.PersonType));
 
         // La clasificacion es opcional (decision del owner, 2026-10-19): sin ella el CUC no lleva
         // prefijo. Lo que se rechaza es Guid.Empty, que es un id roto y no una forma de decir
@@ -150,6 +162,19 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         try
         {
             IdentificationTypeParser.Parse(value);
+            return true;
+        }
+        catch (CustomersDomainException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSupportedPersonType(string? value)
+    {
+        try
+        {
+            PersonTypeParser.ParseOptional(value);
             return true;
         }
         catch (CustomersDomainException)

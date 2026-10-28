@@ -35,9 +35,19 @@ public interface ITenantDirectory
     Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken);
 }
 
-/// <summary>Los cuatro valores que deciden cómo se muestran fechas, horas y montos del tenant.</summary>
+/// <summary>Los cuatro valores que deciden cómo se muestran fechas, horas y montos del tenant, más
+/// el país y el requisito de tipo de persona (spec 2026-10-26), que `/auth/me` publica por la misma
+/// razón: `cashier` no puede leer `/settings`. Los dos con default para no tocar a quien sólo arma
+/// el formato regional.</summary>
 public sealed record TenantRegionalSettings(
     string TimeZone,
     string DateFormat,
     string DefaultCurrency,
-    string NumberFormat);
+    string NumberFormat,
+    string Country = "CO",
+    PersonTypeRequirement PersonTypeRequirement = PersonTypeRequirement.Never)
+{
+    /// <summary>Lo guardado sólo manda si el tenant es colombiano; es lo que se publica.</summary>
+    public PersonTypeRequirement EffectivePersonTypeRequirement =>
+        PersonTypeRequirementPolicy.Effective(Country, PersonTypeRequirement);
+}

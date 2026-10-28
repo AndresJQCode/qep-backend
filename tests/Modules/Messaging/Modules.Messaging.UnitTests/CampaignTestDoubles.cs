@@ -136,6 +136,10 @@ internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
 
     public Exception? Failure { get; set; }
 
+    public int Discards { get; private set; }
+
+    public void DiscardPendingChanges() => Discards++;
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         if (Failure is { } failure)

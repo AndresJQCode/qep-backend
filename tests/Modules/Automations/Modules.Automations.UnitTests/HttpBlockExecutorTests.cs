@@ -233,6 +233,50 @@ public sealed class HttpBlockExecutorTests
         Assert.Equal([("error_status", "http_404"), ("ok", null)], bed.Log.Entries.Select(entry => (entry.Outcome, entry.ErrorCode)));
     }
 
+    /// <summary>Spec 2026-10-25 D-E3: la fila dice en qué visita al bloque salió la llamada y cuántos bytes de respuesta se leyeron
+    /// (sólo el número: el cuerpo no se guarda).</summary>
+    [Fact]
+    public async Task TheEntryCarriesTheVisitAndTheBytesRead()
+    {
+        var body = "{\"data\":\"" + new string('a', 321 - 11) + "\"}";
+        Assert.Equal(321, Encoding.UTF8.GetByteCount(body));
+        var bed = new Bed(_ => Json(HttpStatusCode.OK, body));
+
+        var result = await bed.Executor().ExecuteAsync(
+            Context with { StepNumber = 7 }, Node("/customers", mapping: [new HttpMapping("data", "x")]), Variables(), Ct);
+
+        Assert.True(result.Ok);
+        var entry = Assert.Single(bed.Log.Entries);
+        Assert.Equal(((int?)7, (int?)321), (entry.StepNumber, entry.ResponseBytes));
+    }
+
+    /// <summary>Sin cuerpo leído no hay bytes que contar: timeout, red, url rechazada y cuerpo de más de 1 MB quedan en <c>null</c>.</summary>
+    [Fact]
+    public async Task NoBytesWithoutABodyRead()
+    {
+        var timeout = new Bed(async (_, cancellationToken) =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            return Json(HttpStatusCode.OK, "{}");
+        });
+        var network = new Bed(_ => throw new HttpRequestException("connection refused"));
+        var rejected = new Bed(_ => Json(HttpStatusCode.OK, "{}"), rejection: "scheme_not_https");
+        var big = new string('a', (1024 * 1024) + 10);
+        var tooLarge = new Bed(_ => Json(HttpStatusCode.OK, $"\"{big}\""));
+        var errorStatus = new Bed(_ => Json(HttpStatusCode.NotFound, "{}"));
+
+        await timeout.Executor().ExecuteAsync(Context, Node(timeoutSeconds: 1), Variables(), Ct);
+        await network.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        await rejected.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        await tooLarge.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        await errorStatus.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        foreach (var bed in new[] { timeout, network, rejected, tooLarge, errorStatus })
+        {
+            Assert.Null(Assert.Single(bed.Log.Entries).ResponseBytes);
+        }
+    }
+
     [Fact]
     public async Task ATimeoutIsTimeout()
     {

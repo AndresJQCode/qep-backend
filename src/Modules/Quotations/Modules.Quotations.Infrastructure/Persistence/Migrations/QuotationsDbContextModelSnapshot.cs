@@ -398,6 +398,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("QuotationId")
@@ -598,6 +607,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
 
+                    b.Property<string>("IdentificationType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
+
                     b.Property<string>("Name")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
@@ -606,6 +620,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("OrderId")
                         .HasColumnType("uuid")
                         .HasColumnName("order_id");
+
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(32)
@@ -902,6 +921,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<short?>("_priceRoundingDecimals")
+                        .HasColumnType("smallint")
+                        .HasColumnName("price_rounding_decimals");
+
+                    b.Property<string>("_priceRoundingMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("price_rounding_mode");
+
                     b.HasKey("Id");
 
                     b.HasIndex("AdvisorId")
@@ -1093,10 +1121,20 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("identification_number");
 
+                    b.Property<string>("IdentificationType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("identification_type");
+
                     b.Property<string>("Name")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
                         .HasColumnName("name");
+
+                    b.Property<string>("PersonType")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("person_type");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(32)

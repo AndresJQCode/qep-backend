@@ -185,6 +185,37 @@ public sealed class TemplatesApiTests
         Assert.Contains(created.Issues, issue => issue.Code == FlowIssueCodes.HttpConnectionMissing);
     }
 
+    // Spec 2026-10-25 D-8: una plantilla no copia ajustes, así que la regla vuelve a Restart; el miembro del bloque sí viaja con el flujo.
+    [Fact]
+    public async Task CreatingFromATemplateStartsWithRestart()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var advisor = await SeedMemberAsync(connectionString, setup.Tenant.TenantId, "Asesora Ana");
+        var editor = await CreateBlankAsync(setup);
+        var version = await SaveDraftAsync(setup, editor, $$"""
+            { "schema": 1, "start": { "firstNodeId": "n1" },
+              "nodes": [ { "id": "n1", "kind": "handoff", "title": "Asesor", "text": "Un asesor te escribe.", "memberId": "{{advisor.MembershipId}}" } ] }
+            """);
+        var settings = new HttpRequestMessage(HttpMethod.Put, $"{ChatbotsUrl(setup.Tenant.TenantId)}/{editor.Chatbot.Id}")
+        {
+            Content = JsonContent.Create(new UpdateChatbotRequest(
+                "Servicio técnico", "", "NewConversation", [], "reiniciar", 3, [setup.WhatsAppId], null, "Handoff", advisor.MembershipId)),
+        };
+        settings.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        Assert.Equal(HttpStatusCode.OK, (await setup.Client.SendAsync(settings, Ct)).StatusCode);
+        var template = (await (await SaveAsTemplateAsync(setup, editor.Chatbot.Id, "Con asesor")).Content.ReadFromJsonAsync<TemplateDto>(Ct))!;
+
+        var created = await CreatedAsync(await setup.Client.PostAsJsonAsync(
+            ChatbotsUrl(setup.Tenant.TenantId), Request("Desde la plantilla", new ChatbotSourceRequest("template", template.Id, null, null)), Ct));
+
+        Assert.Equal(("Restart", (Guid?)null), (created.ExhaustedAction, created.ExhaustedMemberId));
+        Assert.Equal(advisor.MembershipId, created.Draft.Flow.GetProperty("nodes")[0].GetProperty("memberId").GetGuid());
+    }
+
     [Fact]
     public async Task SaveAsTemplateWithARepeatedNameIs409AndAnUnknownCategoryIs422()
     {
@@ -308,10 +339,10 @@ public sealed class TemplatesApiTests
             "SELECT count(*) FROM automations.chatbots WHERE tenant_id = @tenantId", ("tenantId", other.Tenant.TenantId)));
     }
 
-    /// <summary>El Anexo A como lo guarda el modelo, con los <c>connectionId</c> de sus bloques HTTP en <c>null</c>.</summary>
+    /// <summary>El Anexo A como lo guarda el modelo (normalizado, spec 2026-10-25 D-3, D-4), con los <c>connectionId</c> de sus bloques HTTP en <c>null</c>.</summary>
     private static string AnnexAWithoutConnections()
     {
-        var node = JsonNode.Parse(FlowJson.Serialize(FlowJson.Parse(AnnexA.Json)))!;
+        var node = JsonNode.Parse(FlowJson.Serialize(FlowNormalizer.Normalize(FlowJson.Parse(AnnexA.Json))))!;
         foreach (var block in node["nodes"]!.AsArray())
         {
             if ((string?)block!["kind"] == "http")

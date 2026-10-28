@@ -27,7 +27,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
@@ -42,7 +42,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(19_609.24m, item.DiscountedUnitPriceWithoutTax);
         Assert.Equal(1_166_500m, item.DiscountAmount);
         Assert.Equal(2_333_500m, quotation.Total);
@@ -55,7 +55,7 @@ public sealed class QuotationWholePesoUnitPriceTests
         var quotation = NewQuotation("COP");
         AddItem(quotation, quantity: 2m, unitPrice: 1_001m, discountPercentage: 50m, taxPercentage: 19);
 
-        Assert.Equal(501m, quotation.Items.Single().DiscountedUnitPrice);
+        Assert.Equal(501m, quotation.Items.Single().DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(1_002m, quotation.Total);
     }
 
@@ -69,7 +69,7 @@ public sealed class QuotationWholePesoUnitPriceTests
 
         var item = quotation.Items.Single();
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(0m, item.DiscountAmount);
         Assert.Equal(2_333_500m, quotation.Total);
     }
@@ -89,18 +89,19 @@ public sealed class QuotationWholePesoUnitPriceTests
             },
             Now);
 
-        Assert.Equal(23_335m, item.DiscountedUnitPrice);
+        Assert.Equal(23_335m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(2_333_500m, quotation.Total);
     }
 
-    // En dólares los centavos son plata: 24,63 con 5% siguen siendo 23,3985 por unidad.
+    // En dólares el unitario se cobra en centavos (spec 2026-10-27): 24,63 × 0,95 = 23,3985 → 23,40,
+    // y 100 × 23,40 = 2.340,00 (antes 2.339,85 con el unitario sin redondear).
     [Fact]
-    public void InUsdTheCentsStay()
+    public void InUsdTheUnitIsChargedInCents()
     {
         var quotation = NewQuotation("USD");
         AddItem(quotation, quantity: 100m, unitPrice: 24.63m, discountPercentage: 5m, taxPercentage: 19);
 
-        Assert.Equal(2_339.85m, quotation.Total);
+        Assert.Equal(2_340.00m, quotation.Total);
     }
 
     // Pasar de USD a COP vuelve a calcular las líneas con la moneda nueva, no con la vieja.

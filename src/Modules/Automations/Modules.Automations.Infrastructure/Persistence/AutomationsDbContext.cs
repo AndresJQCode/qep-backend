@@ -37,6 +37,16 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
     /// arranques.</summary>
     public const string LiveRunIndex = "IX_conversation_runs_live";
 
+    /// <summary>Spec 2026-10-25 §6.1: un entrante, una unidad confirmada (P2-R24), único por <c>(run_id, inbound_message_id)</c> sólo
+    /// con entrante: los cierres del barrido no lo tienen.</summary>
+    public const string RunUnitInboundIndex = "IX_run_units_run_inbound";
+
+    /// <summary>Spec 2026-10-25 D-E7: la purga de 3 días filtra por <c>started_at</c> en cada barrido; sin este índice el último lote de
+    /// cada pasada recorre toda la tabla de una base compartida.</summary>
+    public const string RunUnitStartedIndex = "IX_run_units_started_at";
+
+    public const string RunUnitInboundFilter = "inbound_message_id IS NOT NULL";
+
     public const string LiveRunFilter = "status IN ('Running','Waiting')";
 
     public const string StatusCheck = "status IN ('Draft','Active','Paused')";
@@ -47,6 +57,12 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
     public const string PublishedCheck = "(status = 'Draft') = (published_version_id IS NULL)";
 
     public const string MaxAttemptsCheck = "max_attempts BETWEEN 1 AND 5";
+
+    /// <summary>Spec 2026-10-25 D-2: los dos valores de <c>AttemptsExhaustedAction</c>, por nombre.</summary>
+    public const string ExhaustedActionCheck = "exhausted_action IN ('Restart','Handoff')";
+
+    /// <summary>Spec 2026-10-25 D-2: sólo <c>Handoff</c> lleva miembro; <c>Restart</c> ⇒ sin miembro (el agregado ya lo garantiza).</summary>
+    public const string ExhaustedMemberCheck = "exhausted_action = 'Handoff' OR exhausted_member_id IS NULL";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -62,6 +78,8 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
 
     internal DbSet<HttpCallRecord> HttpCalls => Set<HttpCallRecord>();
 
+    internal DbSet<RunUnitRecord> RunUnits => Set<RunUnitRecord>();
+
     public DbSet<Simulation> Simulations => Set<Simulation>();
 
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -74,6 +92,7 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         ConfigureTemplate(modelBuilder);
         ConfigureRun(modelBuilder);
         ConfigureHttpCall(modelBuilder);
+        ConfigureRunUnit(modelBuilder);
         ConfigureSimulation(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
@@ -87,6 +106,8 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
             table.HasCheckConstraint("CK_chatbots_trigger", TriggerCheck);
             table.HasCheckConstraint("CK_chatbots_published", PublishedCheck);
             table.HasCheckConstraint("CK_chatbots_max_attempts", MaxAttemptsCheck);
+            table.HasCheckConstraint("CK_chatbots_exhausted_action", ExhaustedActionCheck);
+            table.HasCheckConstraint("CK_chatbots_exhausted_member", ExhaustedMemberCheck);
         });
         chatbot.HasKey(value => value.Id);
         chatbot.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -113,6 +134,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
             .HasDefaultValue(Chatbot.DefaultRestartKeyword);
         chatbot.Property(value => value.MaxAttempts).HasColumnName("max_attempts").HasConversion<short>()
             .HasDefaultValue(Chatbot.DefaultMaxAttempts).HasSentinel(-1);
+        // Spec 2026-10-25 D-2: por nombre, como trigger; el centinela hace que EF escriba también el 0 del enum (Restart).
+        chatbot.Property(value => value.ExhaustedAction).HasColumnName("exhausted_action").HasConversion<string>().HasMaxLength(16)
+            .HasDefaultValue(AttemptsExhaustedAction.Restart).HasSentinel((AttemptsExhaustedAction)(-1));
+        chatbot.Property(value => value.ExhaustedMemberId).HasColumnName("exhausted_member_id");
         chatbot.Property(value => value.DraftFlowJson).HasColumnName("draft_flow").HasColumnType("jsonb");
         chatbot.Property(value => value.DraftLayoutJson).HasColumnName("draft_layout").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         chatbot.Property(value => value.DraftUpdatedAt).HasColumnName("draft_updated_at");
@@ -191,8 +216,10 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         run.Property(value => value.CurrentNodeId).HasColumnName("current_node_id").HasMaxLength(64);
         run.Property(value => value.StepNumber).HasColumnName("step_number").HasDefaultValue(0);
         run.Property(value => value.Attempts).HasColumnName("attempts").HasColumnType("smallint").HasDefaultValue(0);
+        run.Property(value => value.ConsentRejections).HasColumnName("consent_rejections").HasColumnType("smallint").HasDefaultValue(0);
         run.Property(value => value.VariablesJson).HasColumnName("variables").HasColumnType("jsonb").HasDefaultValueSql("'{}'");
         run.Property(value => value.TraceJson).HasColumnName("trace").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
+        run.Property(value => value.ConsentPromptJson).HasColumnName("consent_prompt").HasColumnType("jsonb");
         run.Property(value => value.StartedAt).HasColumnName("started_at");
         run.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         run.Property(value => value.EndedAt).HasColumnName("ended_at");
@@ -229,7 +256,32 @@ public sealed class AutomationsDbContext(DbContextOptions<AutomationsDbContext> 
         call.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
         call.Property(value => value.ErrorCode).HasColumnName("error_code").HasMaxLength(64);
         call.Property(value => value.CalledAt).HasColumnName("called_at");
+        call.Property(value => value.StepNumber).HasColumnName("step_number");
+        call.Property(value => value.ResponseBytes).HasColumnName("response_bytes");
         call.HasIndex(value => new { value.TenantId, value.CalledAt }, "IX_http_calls_tenant_called").IsDescending(false, true);
+    }
+
+    private static void ConfigureRunUnit(ModelBuilder modelBuilder)
+    {
+        var unit = modelBuilder.Entity<RunUnitRecord>();
+        unit.ToTable("run_units", Schema);
+        unit.HasKey(value => value.Id);
+        unit.Property(value => value.Id).HasColumnName("id").UseIdentityAlwaysColumn();
+        unit.Property(value => value.TenantId).HasColumnName("tenant_id");
+        unit.Property(value => value.RunId).HasColumnName("run_id");
+        unit.Property(value => value.BaseStep).HasColumnName("base_step");
+        unit.Property(value => value.Trigger).HasColumnName("trigger").HasMaxLength(16);
+        unit.Property(value => value.InboundMessageId).HasColumnName("inbound_message_id");
+        unit.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
+        unit.Property(value => value.StartedAt).HasColumnName("started_at");
+        unit.Property(value => value.EndedAt).HasColumnName("ended_at");
+        unit.Property(value => value.StepsJson).HasColumnName("steps").HasColumnType("jsonb").HasDefaultValueSql("'[]'");
+        unit.Property(value => value.ClosedStatus).HasColumnName("closed_status").HasMaxLength(16);
+        unit.Property(value => value.ClosedReason).HasColumnName("closed_reason").HasMaxLength(64);
+        // Sin FK a conversation_runs: la purga de 3 días borra unidades sin tocar la corrida, y la corrida no se purga nunca.
+        unit.HasIndex(value => new { value.RunId, value.InboundMessageId }, RunUnitInboundIndex).IsUnique().HasFilter(RunUnitInboundFilter);
+        unit.HasIndex(value => new { value.TenantId, value.RunId, value.BaseStep }, "IX_run_units_tenant_run");
+        unit.HasIndex(value => value.StartedAt, RunUnitStartedIndex);
     }
 
     private static void ConfigureSimulation(ModelBuilder modelBuilder)

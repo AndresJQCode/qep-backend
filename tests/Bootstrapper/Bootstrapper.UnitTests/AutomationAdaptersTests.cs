@@ -47,6 +47,20 @@ public sealed class AutomationAdaptersTests
             result.Select(connection => (connection.Id, connection.Channel, connection.Handle, connection.Status)));
     }
 
+    // Spec 2026-10-25 D-5: los miembros del chatbot son los mismos que ofrece «Transferir», en el mismo orden.
+    [Fact]
+    public async Task TheMembersAreTheAssigneesOfMessaging()
+    {
+        var ana = Guid.CreateVersion7();
+        var luis = Guid.CreateVersion7();
+        var assignees = new StubAssignees([new AssigneeDto(ana, "Ana"), new AssigneeDto(luis, "Luis")]);
+
+        var result = await new AutomationMembers(assignees).ListAsync(TenantId, Ct);
+
+        Assert.Equal(TenantId, assignees.RequestedTenant);
+        Assert.Equal([(ana, "Ana"), (luis, "Luis")], result.Select(member => (member.Id, member.Name)));
+    }
+
     [Fact]
     public async Task ExternalApisComeFromTheExternalApiProvider()
     {
@@ -257,6 +271,7 @@ public sealed class AutomationAdaptersTests
             (new BotSendResult.Sent(messageId, AlreadySent: true), new BotSendOutcome.Sent(messageId)),
             (new BotSendResult.NotAutomated(), new BotSendOutcome.NotAutomated()),
             (new BotSendResult.WindowClosed(), new BotSendOutcome.WindowClosed()),
+            (new BotSendResult.Blocked(), new BotSendOutcome.Blocked()),
             (new BotSendResult.ConnectionUnavailable(), new BotSendOutcome.Rejected(MessagingErrorCodes.ConnectionUnavailable)),
             // Spec 2026-10-24 §3.3: el motivo y el nombre de la conexión de WhatsApp pasan al motor.
             (new BotSendResult.ConnectionUnavailable("secret_unreadable", "Servicio Clasic"),
@@ -297,6 +312,14 @@ public sealed class AutomationAdaptersTests
         inbox.Inbound = new InboundForAutomation(messageId, MessageKind.Document, "leyenda", null, new InboundMediaForAutomation("application/pdf", "f.pdf", false), createdAt);
         Assert.Equal(
             new InboundMessage(messageId, "Document", "leyenda", null, new InboundAttachment("application/pdf", "f.pdf", false), createdAt),
+            await queue.ReadAsync(TenantId, messageId, Ct));
+
+        // Final review F1: el mensaje citado viaja para que Política de datos ate el toque a su pregunta.
+        var quoted = Guid.CreateVersion7();
+        inbox.Inbound = new InboundForAutomation(
+            messageId, MessageKind.Interactive, "Acepto", "accepted", null, createdAt, "wamid.R", ReplyToMessageId: quoted, ConversationId: conversationId);
+        Assert.Equal(
+            new InboundMessage(messageId, "Interactive", "Acepto", "accepted", null, createdAt, quoted),
             await queue.ReadAsync(TenantId, messageId, Ct));
 
         inbox.Inbound = null;
@@ -433,6 +456,19 @@ public sealed class AutomationAdaptersTests
 
         public Task<Uri> CreateDownloadUrlAsync(string key, TimeSpan lifetime, CancellationToken cancellationToken) =>
             Task.FromResult(new Uri($"https://r2.test/{key}?minutes={lifetime.TotalMinutes}"));
+    }
+
+    private sealed class StubAssignees(IReadOnlyList<AssigneeDto> items) : IMessagingAssignees
+    {
+        public Guid? RequestedTenant { get; private set; }
+
+        public Task<bool> CanReplyAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<AssigneeDto>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            RequestedTenant = tenantId;
+            return Task.FromResult(items);
+        }
     }
 
     private sealed class StubDirectory(IReadOnlyList<MessagingConnectionRef> all, IReadOnlyList<MessagingConnectionDto> active) : IMessagingConnectionDirectory

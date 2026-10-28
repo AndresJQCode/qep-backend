@@ -154,4 +154,68 @@ public sealed class ConversationAutomationTests
         Assert.Null(change.Handoff);
         Assert.Equal(new ConversationEvent(ConversationEventType.AutomationPaused, PauseReason: AutomationPauseReason.Handoff), change);
     }
+
+    // Spec 2026-10-25 D-1, D-7, D-8: el traspaso del sistema asigna sin actor y sin evento «Transferred».
+    [Fact]
+    public void AHandoffToAMemberPausesAndAssignsWithoutActor()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+        var member = Guid.CreateVersion7();
+        var handoff = AutomationHandoff.Create(AutomationHandoffKind.AttemptsExhausted, null, "q", "Documento", null, null, null, member);
+        var at = Now.AddMinutes(3);
+
+        var change = conversation.HandOffAutomation(handoff, at);
+
+        Assert.Equal(ConversationAutomationStatus.Paused, conversation.AutomationStatus);
+        Assert.Equal(AutomationPauseReason.Handoff, conversation.AutomationPauseReason);
+        Assert.Null(conversation.AutomationPausedByMemberId);
+        Assert.Equal(member, conversation.AssignedMemberId);
+        Assert.Equal(at, conversation.AssignedAt);
+        Assert.Equal(ConversationEventType.AutomationPaused, change.Type);
+        Assert.Null(change.Actor);
+        Assert.Equal(member, change.Handoff!.AssignedMemberId);
+    }
+
+    [Fact]
+    public void AnUnassignedHandoffLeavesNoAssignee()
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+
+        var change = conversation.HandOffAutomation(Cause, Now);
+
+        Assert.Null(conversation.AssignedMemberId);
+        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationPaused, PauseReason: AutomationPauseReason.Handoff, Handoff: Cause), change);
+    }
+
+    [Fact]
+    public void AHandoffNeedsAnOpenConversationWithAnActiveAssistant()
+    {
+        var member = Guid.CreateVersion7();
+        var handoff = AutomationHandoff.Create(AutomationHandoffKind.AttemptsExhausted, null, null, null, null, null, null, member);
+
+        var paused = Open();
+        paused.StartAutomation(ChatbotId, Now);
+        paused.PauseAutomation(null, AutomationPauseReason.Manual, Now);
+        var none = Open();
+        var resolved = Open();
+        resolved.StartAutomation(ChatbotId, Now);
+        resolved.Resolve(Now);
+
+        foreach (var (conversation, code) in new[]
+        {
+            (paused, MessagingErrorCodes.AutomationAlreadyPaused),
+            (none, MessagingErrorCodes.AutomationNotAvailable),
+            (resolved, MessagingErrorCodes.ConversationNotOpen),
+        })
+        {
+            var version = conversation.Version;
+            var error = Assert.Throws<MessagingDomainException>(() => conversation.HandOffAutomation(handoff, Now.AddMinutes(1)));
+
+            Assert.Equal(code, error.Code);
+            Assert.Null(conversation.AssignedMemberId);
+            Assert.Equal(version, conversation.Version);
+        }
+    }
 }

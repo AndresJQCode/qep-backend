@@ -19,7 +19,7 @@ public interface IUserRepository
     /// <summary>
     /// Borrado físico. Sólo lo usa <c>OrphanUserCleanupWorker</c>, después de que ningún
     /// módulo declaró retener al usuario; ningún caso de uso de request lo llama. Los vínculos
-    /// de proveedor y las preferencias caen por cascada; las sesiones no tienen FK y las borra
+    /// de proveedor, las preferencias, la credencial de contraseña y los tokens de email caen por cascada; las sesiones no tienen FK y las borra
     /// el mismo worker. Lo que otros módulos guardan del usuario sin retenerlo —sus membresías
     /// quitadas o vencidas— ya lo borraron antes sus <c>IUserReferencePurger</c>.
     /// </summary>

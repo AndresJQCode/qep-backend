@@ -23,11 +23,11 @@ public sealed class GetOrdersExportLayoutHandlerTests
 
         Assert.Equal(TenantId, dto.TenantId);
         Assert.Equal(1, dto.Version);
-        Assert.Equal(55, dto.Columns.Count);
+        Assert.Equal(57, dto.Columns.Count);
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
-        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17) y "variant" (2026-10-21), que nacen ocultas.
+        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
         Assert.All(dto.Columns, column => Assert.Equal(column.DefaultVisible, column.Visible));
         Assert.All(dto.Columns, column => Assert.Null(column.Value));
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), dto.Columns[0]);
@@ -92,12 +92,12 @@ public sealed class GetOrdersExportLayoutHandlerTests
             new OrdersExportColumnDto("Catalog", "coordinadora_city", "Ciudad Coordinadora", 41, false, "Ciudad (P4)", null, true),
             dto.Columns[1]);
         // El resto nace visible, menos las "Forma de pago N" (ajuste 2026-10-03) y "carrier" (ajuste
-        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17) y "variant" (2026-10-21), que nacen ocultas.
+        // 2026-10-05) y las cuatro del flete salvo "freight_amount" (2026-10-17), "variant" (2026-10-21) y "customer_person_type" (2026-10-26), que nacen ocultas.
         Assert.All(
             dto.Columns.Skip(2),
             column => Assert.Equal(
                 !column.Key!.StartsWith("payment_method_", StringComparison.Ordinal) && column.Key != "carrier"
-                    && column.Key is not ("freight_without_tax" or "freight_tax" or "freight_charge_mode" or "cash_on_delivery" or "variant"),
+                    && column.Key is not ("freight_without_tax" or "freight_tax" or "freight_charge_mode" or "cash_on_delivery" or "variant" or "customer_person_type" or "business_name"),
                 column.DefaultVisible));
         Assert.Equal(5, dto.Columns.Count(column => column.DefaultVisible == false && column.Key!.StartsWith("payment_method_", StringComparison.Ordinal)));
     }
@@ -132,8 +132,8 @@ public sealed class GetOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        // 55 del catálogo (desde las variantes, 2026-10-21) + 1 fija.
-        Assert.Equal(56, dto.Columns.Count);
+        // 57 del catálogo (desde «Razon social», 2026-10-28) + 1 fija.
+        Assert.Equal(58, dto.Columns.Count);
         Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, true, "Correo", null, true), dto.Columns[1]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), dto.Columns[2]);

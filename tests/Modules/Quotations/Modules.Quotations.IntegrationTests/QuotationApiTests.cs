@@ -101,6 +101,121 @@ public sealed class QuotationApiTests
         Assert.Equal(elsewhere.CityId, principal.CityId);
     }
 
+    // Spec 2026-10-26: tipo de persona y de documento de la parte de facturación, ida y vuelta por la base. La
+    // entrega los descarta aunque lleguen.
+    [Fact]
+    public async Task BillingPartyPersonTypeAndIdentificationTypeRoundTrip()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+
+        var created = await CreateQuotationAsync(
+            client, tenantId, clientId,
+            parties: new QuotationPartiesRequest(
+                new QuotationPartyRequest(
+                    "Sede administrativa", "900123456-1", null, null, null, null, null,
+                    PersonType: "Juridica", IdentificationType: "NIT"),
+                new QuotationPartyRequest(
+                    "Bodega Fontibon", null, null, null, "Zona Franca", null, null,
+                    PersonType: "Natural", IdentificationType: "CC")));
+
+        foreach (var quotation in new[] { created, await GetQuotationAsync(client, tenantId, created.Id) })
+        {
+            var billing = Assert.Single(quotation.Parties, party => party.Role == "Billing");
+            Assert.Equal(("Juridica", "NIT"), (billing.PersonType, billing.IdentificationType));
+            var shipping = Assert.Single(quotation.Parties, party => party.Role == "Shipping");
+            Assert.Equal((null, null), (shipping.PersonType, shipping.IdentificationType));
+        }
+    }
+
+    // La regla NIT sólo vale con el tenant colombiano (el de la prueba es CO por defecto): una jurídica con CC es 422
+    // con el campo en `errors`.
+    [Fact]
+    public async Task JuridicaBillingWithCcIsA422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+
+        var response = await client.PostAsJsonAsync(
+            QuotationsUrl(tenantId),
+            new CreateQuotationRequest(
+                clientId, TodayInBogota().AddDays(30), null, null,
+                new QuotationPartiesRequest(
+                    new QuotationPartyRequest(
+                        "Sede administrativa", "1020304050", null, null, null, null, null,
+                        PersonType: "Juridica", IdentificationType: "CC"),
+                    null),
+                null),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("quotations.party.person_type_requires_nit", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.IdentificationType", out var field));
+    }
+
+    // Spec 2026-10-26: con OnCustomerSave una fila de facturación sin tipo de persona no se envía. La cotización se
+    // crea con el ajuste en Never (si no, crear ya la frenaría) y el ajuste se prende después.
+    [Fact]
+    public async Task SendingWithOnCustomerSaveAndABillingRowWithoutPersonTypeIsA422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, clientId,
+            parties: new QuotationPartiesRequest(
+                new QuotationPartyRequest(
+                    "Sede administrativa", "1020304050", null, null, null, null, null,
+                    IdentificationType: "CC"),
+                null));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider
+                .GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE tenancy.tenants SET person_type_requirement = 'OnCustomerSave' WHERE id = {tenantId}",
+                TestContext.Current.CancellationToken);
+        }
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = System.Text.Json.JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("quotation.billing.person_type_required", body.RootElement.GetProperty("code").GetString());
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.PersonType", out var field));
+    }
+
+    [Fact]
+    public async Task TheClientBlockCarriesCountryPersonTypeAndIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, personType: "Juridica");
+
+        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+
+        Assert.NotNull(quotation.Client);
+        Assert.Equal(("CO", "Juridica", "NIT"),
+            (quotation.Client.Country, quotation.Client.PersonType, quotation.Client.IdentificationType));
+    }
+
     /// <summary>El paso 2 del runbook del README para cotizaciones: el mismo UPSERT con GREATEST,
     /// sobre <c>quotation_number_counters</c>.</summary>
     internal static async Task SetQuotationCounterAsync(
@@ -371,5 +486,13 @@ public sealed class QuotationApiTests
             $"{QuotationsUrl(tenantId)}/{Guid.NewGuid()}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    private static async Task<QuotationResponse> GetQuotationAsync(HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var quotation = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotationId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(quotation);
+        return quotation;
     }
 }

@@ -14,9 +14,11 @@ public interface IPosProductLookup
     /// ProductRepository.SearchAsync, cada uno con sus variantes vendibles (activas) en el orden del
     /// producto: la cuadrícula muestra productos y el selector de opciones elige entre sus
     /// variantes sin otra llamada (spec §5). <c>Total</c> cuenta productos.
+    /// Con <paramref name="categoryId"/>, sólo los de esa categoría y sus descendientes (spec 2026-10-26
+    /// §3.4); un id inexistente o de otro tenant da una página vacía, nunca un 404.
     /// </summary>
     Task<(IReadOnlyList<PosCatalogProductRef> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, int page, int pageSize, CancellationToken cancellationToken);
+        Guid tenantId, string? search, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken);
 
     /// <summary>
     /// El escáner (spec §5): primero por código de barras de una variante y, si ninguna lo tiene,

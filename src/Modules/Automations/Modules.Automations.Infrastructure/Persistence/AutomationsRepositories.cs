@@ -25,7 +25,7 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
                 && chatbot.Connections.Any(connection => connection.ConnectionId == connectionId && connection.Active))
             .Select(chatbot => new ServingChatbot(
                 chatbot.Id, chatbot.Name, chatbot.Status, chatbot.Trigger, chatbot.Keywords, chatbot.RestartKeyword, chatbot.MaxAttempts,
-                chatbot.PublishedVersionId!.Value))
+                chatbot.PublishedVersionId!.Value, chatbot.ExhaustedAction, chatbot.ExhaustedMemberId))
             .SingleOrDefaultAsync(cancellationToken);
 
     public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
@@ -37,7 +37,19 @@ internal sealed class ChatbotRepository(AutomationsDbContext dbContext) : IChatb
     public Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
         dbContext.Chatbots.AsNoTracking()
             .Where(chatbot => chatbot.TenantId == tenantId && chatbot.Id == chatbotId)
-            .Select(chatbot => new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts))
+            .Select(chatbot => new EngineSettings(chatbot.RestartKeyword, chatbot.MaxAttempts, chatbot.ExhaustedAction, chatbot.ExhaustedMemberId))
+            .SingleOrDefaultAsync(cancellationToken);
+
+    // Spec 2026-10-26 D-10: el nombre es el actual del chatbot; el número, el de la versión de la corrida (no el de la publicada).
+    public Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) =>
+        dbContext.ChatbotVersions.AsNoTracking()
+            .Where(version => version.TenantId == tenantId && version.Id == versionId)
+            .Join(
+                dbContext.Chatbots.Where(chatbot => chatbot.TenantId == tenantId),
+                version => version.ChatbotId,
+                chatbot => chatbot.Id,
+                (version, chatbot) => new { chatbot.Name, version.Number })
+            .Select(row => new ChatbotVersionLabel(row.Name, row.Number))
             .SingleOrDefaultAsync(cancellationToken);
 
     // Proyección: la lista no necesita el borrador ni el flujo de cada versión publicada (jsonb de hasta 512 KB cada uno).

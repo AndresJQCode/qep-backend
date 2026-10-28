@@ -176,8 +176,7 @@
         "fallback": "repeat",
         "outputs": {
           "acepto": "policy-known-phone",
-          "no-acepto": "policy-declined",
-          "other": "handoff"
+          "no-acepto": "policy-declined"
         }
       },
       {
@@ -378,8 +377,7 @@
         "fallback": "repeat",
         "outputs": {
           "leave": "new-first-name",
-          "other-doc": "document",
-          "other": "handoff"
+          "other-doc": "document"
         }
       },
       {
@@ -507,8 +505,7 @@
         "fallback": "repeat",
         "outputs": {
           "chosen": "invoice-photo",
-          "tooMany": "handoff",
-          "other": "handoff"
+          "tooMany": "handoff"
         }
       },
       {
@@ -656,8 +653,7 @@
         "outputs": {
           "chosen": "open-order-check",
           "extra": "other-address",
-          "tooMany": "handoff",
-          "other": "handoff"
+          "tooMany": "handoff"
         }
       },
       {
@@ -696,8 +692,7 @@
         "fallback": "repeat",
         "outputs": {
           "another": "equipment",
-          "agent": "handoff",
-          "other": "handoff"
+          "agent": "handoff"
         }
       },
       {
@@ -740,8 +735,7 @@
         "fallback": "repeat",
         "outputs": {
           "tech": "failures",
-          "maint": "maintenance-service",
-          "other": "handoff"
+          "maint": "maintenance-service"
         }
       },
       {
@@ -794,8 +788,7 @@
         "fallback": "repeat",
         "outputs": {
           "chosen": "contact-name",
-          "tooMany": "handoff",
-          "other": "handoff"
+          "tooMany": "handoff"
         }
       },
       {

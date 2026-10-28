@@ -33,6 +33,12 @@ public sealed class User
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// Cuándo se probó que el usuario controla su email: por un proveedor externo que lo
+    /// verificó o por el link de verificación. Null mientras no se probó.
+    /// </summary>
+    public DateTimeOffset? EmailVerifiedAt { get; private set; }
+
     public IReadOnlyCollection<ProviderLink> ProviderLinks => _providerLinks.AsReadOnly();
 
     /// <summary>
@@ -55,6 +61,21 @@ public sealed class User
         }
 
         Status = UserStatus.Active;
+        UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Registra que el email quedó verificado. Es idempotente: no pisa una fecha ya puesta ni
+    /// toca <see cref="UpdatedAt"/> la segunda vez.
+    /// </summary>
+    public void MarkEmailVerified(DateTimeOffset occurredAt)
+    {
+        if (EmailVerifiedAt is not null)
+        {
+            return;
+        }
+
+        EmailVerifiedAt = occurredAt;
         UpdatedAt = occurredAt;
     }
 

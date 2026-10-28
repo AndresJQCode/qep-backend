@@ -74,6 +74,35 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("1,234.56", body.GetProperty("numberFormat").GetString());
     }
 
+    // Spec 2026-10-26: arranca en Never; un PUT con el requisito lo guarda y un PUT sin él (frontend
+    // anterior) lo conserva.
+    [Fact]
+    public async Task PersonTypeRequirementRoundTripsAndDefaultsToNever()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        Assert.Equal("Never", settings.GetProperty("personTypeRequirement").GetString());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var put = await PutAsync(
+            client, TenantId, etag, NewDisplayName(), personTypeRequirement: "OnCustomerSave");
+
+        put.EnsureSuccessStatusCode();
+        var body = await put.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("OnCustomerSave", body.GetProperty("personTypeRequirement").GetString());
+
+        var again = await PutAsync(client, TenantId, put.Headers.ETag!.Tag, NewDisplayName());
+        again.EnsureSuccessStatusCode();
+        var kept = await again.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("OnCustomerSave", kept.GetProperty("personTypeRequirement").GetString());
+    }
+
     [Fact]
     public async Task GetReturnsColombiaAndPutChangesTheCountry()
     {
@@ -418,7 +447,8 @@ public sealed class TenantSettingsApiTests
         string displayName,
         string defaultCurrency = "COP",
         string numberFormat = "1.234,56",
-        string country = "CO")
+        string country = "CO",
+        string? personTypeRequirement = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -432,7 +462,8 @@ public sealed class TenantSettingsApiTests
                 dateFormat = "dd/MM/yyyy",
                 defaultCurrency,
                 numberFormat,
-                country
+                country,
+                personTypeRequirement
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

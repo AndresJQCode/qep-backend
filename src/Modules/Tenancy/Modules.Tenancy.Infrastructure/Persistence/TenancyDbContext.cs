@@ -18,6 +18,8 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
 
     public DbSet<TenantChange> TenantChanges => Set<TenantChange>();
 
+    public DbSet<TenantPriceRounding> TenantPriceRoundings => Set<TenantPriceRounding>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     internal DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
@@ -33,6 +35,7 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         ConfigureTenantModule(modelBuilder);
         ConfigureTenantProvider(modelBuilder);
         ConfigureTenantChange(modelBuilder);
+        ConfigureTenantPriceRounding(modelBuilder);
         ConfigureMembership(modelBuilder);
         // audit.entries es propiedad del módulo Audit; acá se mapea como proyección de
         // escritura ExcludeFromMigrations para que las auditorías críticas commiteen atómicas en
@@ -75,6 +78,11 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         tenant.Property(value => value.DefaultCurrency).HasColumnName("default_currency").HasMaxLength(3).IsRequired();
         tenant.Property(value => value.NumberFormat).HasColumnName("number_format").HasMaxLength(10).IsRequired();
         tenant.Property(value => value.Country).HasColumnName("country").HasMaxLength(2).IsRequired();
+        tenant.Property(value => value.PersonTypeRequirement)
+            .HasColumnName("person_type_requirement")
+            .HasMaxLength(20)
+            .HasConversion<string>()
+            .IsRequired();
         // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
         // la clave que se guarda acá es esa misma.
         tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");
@@ -236,6 +244,34 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .IsDescending(false, true)
             .HasDatabaseName("IX_tenant_changes_tenant_id_occurred_at");
         change.HasOne<Tenant>().WithMany()
+            .HasForeignKey(value => value.TenantId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    // Spec 2026-10-27: una fila por (tenant, moneda) sólo cuando la regla se aparta del valor por defecto
+    // (guardar el valor por defecto la borra). La FK va en el modelo por la misma razón que tenant_modules.
+    // La regla se guarda en dos columnas (decimals, mode); Rule es un valor derivado y no se mapea.
+    private static void ConfigureTenantPriceRounding(ModelBuilder modelBuilder)
+    {
+        var rounding = modelBuilder.Entity<TenantPriceRounding>();
+        rounding.ToTable("tenant_price_roundings", "tenancy");
+        rounding.HasKey(value => new { value.TenantId, value.Currency });
+        rounding.Property(value => value.TenantId)
+            .HasColumnName("tenant_id")
+            .HasConversion(id => id.Value, value => new TenantId(value));
+        rounding.Property(value => value.Currency)
+            .HasColumnName("currency")
+            .HasMaxLength(TenantPriceRounding.CurrencyMaxLength);
+        rounding.Property(value => value.Decimals)
+            .HasColumnName("decimals")
+            .HasConversion<short>();
+        rounding.Property(value => value.Mode)
+            .HasColumnName("mode")
+            .HasConversion<string>()
+            .HasMaxLength(TenantPriceRounding.ModeMaxLength);
+        rounding.Ignore(value => value.Rule);
+        rounding.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        rounding.HasOne<Tenant>().WithMany()
             .HasForeignKey(value => value.TenantId)
             .OnDelete(DeleteBehavior.Cascade);
     }

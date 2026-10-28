@@ -30,6 +30,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     private const string CreatedAtColumn = "Creado";
     private const string UpdatedAtColumn = "Actualizado";
     private const string CompletenessColumn = "Estado de la ficha";
+    private const string PersonTypeColumn = "Tipo de persona";
 
     private static readonly IReadOnlyList<string> Columns =
     [
@@ -38,7 +39,9 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         CreatedAtColumn,
         UpdatedAtColumn,
         // Spec 2026-10-10 §5.2: al final, no en medio.
-        CompletenessColumn
+        CompletenessColumn,
+        // Spec 2026-10-26: al final y fuera de CustomerImportColumns, porque la planilla de importación no la lee.
+        PersonTypeColumn
     ];
 
     public CustomerExportFile Build(
@@ -126,6 +129,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [CreatedAtColumn] = calendar.ToLocal(customer.CreatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
         [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
         [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
+        [PersonTypeColumn] = customer.PersonType ?? string.Empty,
     };
 
     private static void ApplyMinimumWidth(IXLColumns columns)

@@ -15,6 +15,15 @@ public enum HandoffCauseKind
 
     /// <summary>Un ciclo, un bloque inexistente o una versión borrada.</summary>
     FlowFailed,
+
+    /// <summary>Spec 2026-10-25 D-1: se agotaron los reintentos de una pregunta.</summary>
+    AttemptsExhausted,
+
+    /// <summary>Spec 2026-10-26 repetir R-4c: Política de datos con «No acepto» al tope de <c>repeat</c>, o al primero en <c>handoff</c>.</summary>
+    DataConsentRejected,
+
+    /// <summary>Spec 2026-10-26 repetir R-4b: Política de datos en <c>repeat</c> o <c>handoff</c> sin cliente al que registrarle la respuesta.</summary>
+    DataConsentUnavailable,
 }
 
 /// <summary>Spec 2026-10-24 D-T6: el bloque HTTP fallido que arrancó el paso que terminó en traspaso. Sólo códigos y la foto del título y

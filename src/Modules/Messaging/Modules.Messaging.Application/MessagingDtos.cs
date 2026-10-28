@@ -20,6 +20,9 @@ public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
     public IReadOnlyList<MessagingTagRef> Tags { get; init; } = [];
 }
 
+/// <summary>Spec 2026-10-26 §3.5: <c>blockedByName</c> llega resuelto (o «Miembro eliminado»); <c>null</c> sólo si no se registró quién bloqueó.</summary>
+public sealed record ConversationBlockDto(DateTimeOffset BlockedAt, string? BlockedByName);
+
 public sealed record LastMessageDto(string Direction, string Kind, string? Preview, string Status, DateTimeOffset At);
 
 /// <summary><c>connectionName</c> llega resuelto (o «Conexión eliminada», D-M17) porque la fila de la
@@ -48,7 +51,10 @@ public sealed record ConversationSummary(
     ResolutionReasonRefDto? ResolutionReason = null,
     /// <summary>Spec 2026-10-21 D-A10 (BFF): <c>null</c> cuando la conversación no tiene asistente (<c>None</c>): la bandeja no dibuja nada,
     /// y así la fila sin asistente no obliga a la pantalla a conocer el enum para saber que no hay qué mostrar.</summary>
-    ConversationAutomationDto? Automation = null)
+    ConversationAutomationDto? Automation = null,
+    /// <summary>Spec 2026-10-26 §3.5 (BFF): <c>null</c> si el contacto no está bloqueado. Viaja como <c>null</c> explícito: el frontend distingue
+    /// «backend nuevo, sin bloqueo» de «backend viejo», que no manda la clave.</summary>
+    ConversationBlockDto? Blocked = null)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
@@ -117,11 +123,12 @@ public sealed record MessageEventDto(
     EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
-/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>): uno desconocido
-/// lo pinta con el texto genérico. Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
+/// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido
+/// lo pinta con el texto genérico. <c>AssignedTo</c> (spec 2026-10-25 D-8): a quién quedó asignada la conversación; <c>null</c> = sin asignar.
+/// Ningún campo trae texto de una API externa: sólo títulos de bloques y nombres de conexiones.</summary>
 public sealed record AutomationHandoffDto(
     string Kind, string? Code, string? NodeId, string? NodeTitle, string? ConnectionName, string? ConnectionReason,
-    AutomationHandoffHttpDto? Http);
+    AutomationHandoffHttpDto? Http, MemberRefDto? AssignedTo = null);
 
 /// <summary>Spec 2026-10-24 §6: el bloque HTTP fallido que arrancó el paso del traspaso. <c>Status</c> sólo si la API respondió.</summary>
 public sealed record AutomationHandoffHttpDto(

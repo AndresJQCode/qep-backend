@@ -660,7 +660,7 @@ public sealed class OrderExportApiTests
         Assert.Equal("MIGRACION 1", sheet.Name);
         Assert.Equal(QuotationsSeedTests.SeededLayoutHeaders, sheet.Rows[0]);
         var row = sheet.Rows[1];
-        Assert.Equal(49, row.Count);
+        Assert.Equal(50, row.Count);
         Assert.Equal("QEP Comercial S.A.S.", row[0]);
         Assert.Equal(["FV", "PM", string.Empty], row.Skip(1).Take(3));
         Assert.Contains(row[4], new[] { Iso(today), Iso(today.AddDays(1)) });

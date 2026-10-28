@@ -6,23 +6,8 @@ using Modules.Tenancy.Domain;
 
 namespace Modules.Pipeline.Application;
 
-/// <summary>D37: la cola trae como máximo 200, con el Count real.</summary>
-public static class TriageLimits
-{
-    public const int MaxItems = 200;
-}
-
-public sealed record TriageItemDto(Guid ConversationId, Guid CustomerId, string CustomerName, bool CustomerIsComplete, DateTimeOffset? LastInboundAt);
-
-/// <summary>BFF (D30, D37): <see cref="Enabled"/> en <c>false</c> sin la capacidad <c>messaging</c>, y la bandeja oculta el
-/// contador sin conocer las capacidades del tenant. <see cref="Count"/> es el real aunque <see cref="Items"/> traiga 200: es el
-/// contador de la bandeja.</summary>
-public sealed record TriageListDto(bool Enabled, int Count, IReadOnlyList<TriageItemDto> Items);
-
 /// <summary>Con <c>Created</c> viaja el negocio entero, para que el panel del chat lo dibuje sin otra llamada.</summary>
 public sealed record TriageResultDto(Guid ConversationId, string Decision, DealDetailDto? Deal);
-
-public sealed record ListTriageQuery(Guid TenantId) : IQuery<TriageListDto>;
 
 public sealed record DecideTriageCommand(Guid TenantId, Guid ConversationId, string? Action, string? Title, Guid? DismissReasonId)
     : ICommand<TriageResultDto>;
@@ -38,7 +23,8 @@ public sealed class DecideTriageValidator : AbstractValidator<DecideTriageComman
     }
 }
 
-/// <summary>§5.1: si una conversación está pendiente y cuál fue su última decisión. Lo comparten el triage y la ficha (D36).</summary>
+/// <summary>§5.1: si una conversación está pendiente y cuál fue su última decisión. Lo comparten la decisión de triage y la ficha
+/// (D36).</summary>
 internal static class TriageState
 {
     public static async Task<(bool Pending, TriageDecision? Last)> EvaluateAsync(
@@ -54,35 +40,6 @@ internal static class TriageState
     /// <summary>D30: sin <c>messaging</c> no hay triage. Con el tenant simulado por el stub (sin fila), como <c>TenantModuleGuard</c>, no bloquea.</summary>
     public static async Task<bool> MessagingEnabledAsync(ITenantModules tenantModules, Guid tenantId, CancellationToken cancellationToken) =>
         await tenantModules.FindAsync(tenantId, cancellationToken) is not { } modules || modules.IsEnabled(TenantModuleKeys.Messaging);
-}
-
-public sealed class ListTriageHandler(
-    IExecutionContext executionContext,
-    ITenantModules tenantModules,
-    IPipelineConversationDirectory conversations,
-    IPipelineCustomerDirectory customers)
-    : IQueryHandler<ListTriageQuery, TriageListDto>
-{
-    public async Task<TriageListDto> HandleAsync(ListTriageQuery query, CancellationToken cancellationToken)
-    {
-        await PipelineAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, PipelinePermissions.DealRead, cancellationToken);
-        if (!await TriageState.MessagingEnabledAsync(tenantModules, query.TenantId, cancellationToken))
-        {
-            return new TriageListDto(false, 0, []);
-        }
-
-        // D37 y P16: la consulta ya trae sólo las pendientes (§5.1, D35), en el orden del contrato (P13), con el tope y el Count
-        // real. Acá no se filtra ni se corta nada más.
-        var page = await conversations.ListOpenAsync(query.TenantId, TriageLimits.MaxItems, cancellationToken);
-        var refs = await customers.FindAsync(query.TenantId, [.. page.Items.Select(item => item.CustomerId!.Value).Distinct()], cancellationToken);
-
-        return new TriageListDto(true, page.Count, [.. page.Items.Select(item =>
-        {
-            var customer = refs.GetValueOrDefault(item.CustomerId!.Value);
-            return new TriageItemDto(
-                item.Id, item.CustomerId.Value, DealCardMapper.CustomerName(customer), customer?.IsComplete ?? false, item.LastInboundAt);
-        })]);
-    }
 }
 
 /// <summary>§5.1 y D29: crear (dueño = quien llama, origen = la conversación, sin monto) o descartar con motivo del catálogo.

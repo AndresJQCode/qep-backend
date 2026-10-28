@@ -34,6 +34,41 @@ public sealed class ConversationRunTests
     }
 
     [Fact]
+    public void TheConsentPromptSurvivesApplyAndToState()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+        var prompt = new ConsentPrompt("c", "Texto", Guid.CreateVersion7());
+
+        run.Apply(RunState.Initial(RunVariables.Empty()) with { ConsentPrompt = prompt }, Now);
+
+        Assert.Equal(prompt, run.ToState().ConsentPrompt);
+
+        run.Apply(RunState.Initial(RunVariables.Empty()), Now);
+
+        Assert.Null(run.ConsentPromptJson);
+        Assert.Null(run.ToState().ConsentPrompt);
+    }
+
+    [Fact]
+    public void TheConsentRejectionsSurviveApplyAndToState()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+
+        run.Apply(RunState.Initial(RunVariables.Empty()) with { ConsentRejections = 2 }, Now);
+
+        Assert.Equal(2, run.ConsentRejections);
+        Assert.Equal(2, run.ToState().ConsentRejections);
+    }
+
+    [Fact]
+    public void ANewRunStartsWithoutRejections()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()));
+
+        Assert.Equal(0, run.ToState().ConsentRejections);
+    }
+
+    [Fact]
     public void ApplyATerminalStateSetsEndedAt()
     {
         var run = NewRun(RunState.Initial(RunVariables.Empty()));

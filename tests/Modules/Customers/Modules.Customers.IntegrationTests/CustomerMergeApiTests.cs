@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Npgsql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
@@ -154,6 +155,59 @@ public sealed class CustomerMergeApiTests
         + "|| (SELECT coalesce(string_agg(id || ':' || customer_id || ':' || is_principal, ',' ORDER BY id), '') FROM customers.customer_addresses) || '|' "
         + "|| (SELECT coalesce(string_agg(customer_id || ':' || tag_id, ',' ORDER BY customer_id, tag_id), '') FROM customers.customer_tags) || '|' "
         + "|| (SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = '" + MergedAction + "')";
+
+    // Review Focus 3 (spec 2026-10-26 D-7): la fusión sólo cambia de dueño las filas; el vigente sigue siendo la más nueva por
+    // (occurred_at, sequence), venga de donde venga.
+    [Theory]
+    [InlineData(DataConsentEvent.Accepted, 10, DataConsentEvent.Rejected, 11)]
+    [InlineData(DataConsentEvent.Rejected, 11, DataConsentEvent.Accepted, 10)]
+    public async Task MergingMovesTheConsentsAndTheLatestRowWins(
+        DataConsentEvent survivorEvent, int survivorHour, DataConsentEvent mergedEvent, int mergedHour)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var day = new DateTimeOffset(2026, 10, 26, 0, 0, 0, TimeSpan.Zero);
+        await RecordConsentAsync(factory, arranged.Survivor, survivorEvent, day.AddHours(survivorHour));
+        await RecordConsentAsync(factory, arranged.Merged, mergedEvent, day.AddHours(mergedHour));
+        var expectedCurrent = survivorHour > mergedHour ? survivorEvent : mergedEvent;
+        var expectedOlder = survivorHour > mergedHour ? mergedEvent : survivorEvent;
+
+        await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var survivorConsent = await BodyAsync(
+            await client.GetAsync($"{CustomersUrl()}/{arranged.Survivor}/data-consent", TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        Assert.Equal(expectedCurrent.ToString(), survivorConsent.GetProperty("current").GetProperty("event").GetString());
+        var history = survivorConsent.GetProperty("history");
+        Assert.Equal(2, history.GetArrayLength());
+        Assert.Equal(expectedCurrent.ToString(), history[0].GetProperty("event").GetString());
+        Assert.Equal(expectedOlder.ToString(), history[1].GetProperty("event").GetString());
+
+        var mergedConsent = await BodyAsync(
+            await client.GetAsync($"{CustomersUrl()}/{arranged.Merged}/data-consent", TestContext.Current.CancellationToken),
+            HttpStatusCode.OK);
+        Assert.Equal(0, mergedConsent.GetProperty("history").GetArrayLength());
+    }
+
+    private static async Task RecordConsentAsync(QepApiFactory factory, Guid customerId, DataConsentEvent decision, DateTimeOffset at)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var consents = scope.ServiceProvider.GetRequiredService<ICustomerDataConsents>();
+        var outcome = await consents.RecordFromChatbotAsync(
+            new ChatbotDataConsentRecord(
+                Guid.Parse(TenantId),
+                customerId,
+                decision,
+                at,
+                new DataConsentIdentity(Guid.CreateVersion7(), DataConsentChannel.WhatsApp, "CO.123456789", "573001234567"),
+                new ChatbotConsentEvidence(
+                    "¿Aceptas nuestra política de datos?", Guid.CreateVersion7(), Guid.CreateVersion7(), "wamid.HBgM",
+                    Guid.CreateVersion7(), "Bienvenida", Guid.CreateVersion7(), 3, "n4")),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DataConsentRecordOutcome.Recorded, outcome);
+    }
 
     [Fact]
     public async Task MergingAnswersTheSurvivorWithDroppedTagsAndMarksTheMerged()

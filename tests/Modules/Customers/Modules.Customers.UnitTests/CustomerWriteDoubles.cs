@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.UnitTests;
 
@@ -13,12 +15,38 @@ internal static class CustomerWriteDoubles
     public static readonly Guid Tenant = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
     public static readonly DateTimeOffset Now = new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
     public static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-0000000000c2");
+    public static readonly Guid ValleCityId = Guid.Parse("01900000-0000-7000-8000-0000000000c3");
     public static readonly ClientClassification Classification =
         ClientClassification.Create(ClientClassificationId.New(), Tenant, "Mediano", "CLI", Now);
 
     public sealed class FixedClock : IClock
     {
         public DateTimeOffset UtcNow => Now;
+    }
+
+    /// <summary>El tenant que lee <see cref="CustomerPersonTypeRequirement"/>: sólo <see cref="Regional"/> responde; por
+    /// defecto es colombiano y sin requisito (<c>Never</c>), que es lo que las pruebas anteriores al spec 2026-10-26 suponen.</summary>
+    public sealed class TenantDirectory : ITenantDirectory
+    {
+        public TenantRegionalSettings? Regional { get; init; } = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56");
+
+        public static TenantDirectory With(string country, PersonTypeRequirement requirement) =>
+            new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", country, requirement) };
+
+        public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(Regional);
+
+        public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     public sealed class PlusNormalizer : IPhoneNumberNormalizer
@@ -37,11 +65,16 @@ internal static class CustomerWriteDoubles
 
         public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> ByIntegration { get; } = [];
 
+        public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> BySystem { get; } = [];
+
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Human.Add((tenantId, actorId, action, resourceId, outcome, source));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
+
+        public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
+            BySystem.Add((tenantId, action, resourceId, outcome));
     }
 
     public sealed class UnitOfWork(Exception? failure = null) : ICustomersUnitOfWork
@@ -93,7 +126,11 @@ internal static class CustomerWriteDoubles
         {
             calls.Add("city");
             return Task.FromResult<CustomerCityRef?>(
-                cityId == CityId ? new CustomerCityRef(CityId, "08001", "Barranquilla", Guid.NewGuid(), "08", "Atlántico") : null);
+                cityId == CityId
+                    ? new CustomerCityRef(CityId, "08001", "Barranquilla", Guid.NewGuid(), "08", "Atlántico")
+                    : cityId == ValleCityId
+                        ? new CustomerCityRef(ValleCityId, "76001", "Cali", Guid.NewGuid(), "76", "Valle del Cauca")
+                        : null);
         }
 
         public Task<IReadOnlyDictionary<Guid, CustomerCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>

@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Domain;
 
 namespace Modules.Quotations.UnitTests;
@@ -45,7 +46,7 @@ public sealed class DocumentTotalsTests
     [Fact]
     public void ChargedFreightInCopAddsItsOwnSubtotalAndTax()
     {
-        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP");
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
 
         var totals = DocumentTotals.Compute(OneLine, freight, appliesVatSurplus: false, appliesRetention: false);
 
@@ -59,14 +60,14 @@ public sealed class DocumentTotalsTests
     [Fact]
     public void FreeAndOnDeliveryFreightAddNothing()
     {
-        Assert.Equal(FreightAmounts.Zero, FreightAmounts.For(FreightChargeMode.Free, 0m, 19, "COP"));
-        Assert.Equal(FreightAmounts.Zero, FreightAmounts.For(FreightChargeMode.OnDelivery, 20_000m, 19, "COP"));
+        Assert.Equal(FreightAmounts.Zero, FreightAmounts.For(FreightChargeMode.Free, 0m, 19, "COP", PriceRounding.LegacyFor("COP")));
+        Assert.Equal(FreightAmounts.Zero, FreightAmounts.For(FreightChargeMode.OnDelivery, 20_000m, 19, "COP", PriceRounding.LegacyFor("COP")));
     }
 
     [Fact]
     public void ChargedFreightOutsideCopHasNoTax()
     {
-        var freight = FreightAmounts.For(FreightChargeMode.Charged, 30m, 19, "USD");
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 30m, 19, "USD", PriceRounding.LegacyFor("USD"));
 
         Assert.Equal(new FreightAmounts(30m, 0m), freight);
     }
@@ -74,7 +75,7 @@ public sealed class DocumentTotalsTests
     [Fact]
     public void VatSurplusZeroesTheFreightTaxToo()
     {
-        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP");
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
 
         var totals = DocumentTotals.Compute(OneLine, freight, appliesVatSurplus: true, appliesRetention: false);
 
@@ -85,7 +86,7 @@ public sealed class DocumentTotalsTests
     [Fact]
     public void RetentionIgnoresTheFreight()
     {
-        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP");
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
 
         var totals = DocumentTotals.Compute(OneLine, freight, appliesVatSurplus: false, appliesRetention: true);
 
@@ -95,7 +96,7 @@ public sealed class DocumentTotalsTests
     [Fact]
     public void ProductsTotalLeavesTheFreightOut()
     {
-        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP");
+        var freight = FreightAmounts.For(FreightChargeMode.Charged, 15_000m, 19, "COP", PriceRounding.LegacyFor("COP"));
 
         var totals = DocumentTotals.Compute(OneLine, freight, appliesVatSurplus: false, appliesRetention: false);
 

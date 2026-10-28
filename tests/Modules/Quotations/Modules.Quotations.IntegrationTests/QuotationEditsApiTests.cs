@@ -250,7 +250,7 @@ public sealed class QuotationEditsApiTests
                 paymentMethod: "Efectivo",
                 notes: "Nota de prueba",
                 parties: new QuotationPartiesRequest(
-                    new QuotationPartyRequest("Nombre alterno", "1020304050", null, null, null, null, null),
+                    new QuotationPartyRequest("Nombre alterno", "1020304050", null, null, null, null, null, IdentificationType: "CC"),
                     Shipping: null)));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -282,7 +282,7 @@ public sealed class QuotationEditsApiTests
         var created = await CreateQuotationAsync(client, tenantId, clientId);
         Assert.False(created.IsStorePickup);
 
-        var billing = new QuotationPartyRequest("Sede administrativa", "1020304050", null, null, null, null, null);
+        var billing = new QuotationPartyRequest("Sede administrativa", "1020304050", null, null, null, null, null, IdentificationType: "CC");
         var shipping = new QuotationPartyRequest("Bodega Fontibon", null, null, null, "Zona Franca", null, null);
 
         var withShippingResponse = await PutEditsAsync(

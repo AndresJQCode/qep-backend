@@ -134,7 +134,7 @@ public static class QuotationPdfDocumentMapper
     /// se rearma el total bruto con la misma fórmula y los mismos redondeos que el dominio.
     ///
     /// El unitario con descuento ya no se deriva acá: lo calcula la línea y viaja en el DTO
-    /// (<c>QuotationItem.DiscountedUnitPrice</c>), desde que la pantalla lo muestra en una
+    /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento), desde que la pantalla lo muestra en una
     /// columna propia. Tenerlo en un solo lado es lo que evita que el PDF y la pantalla impriman
     /// números distintos.
     /// </summary>

@@ -39,6 +39,10 @@ public sealed class ConversationRun
 
     public int Attempts { get; private set; }
 
+    /// <summary>Spec 2026-10-26 repetir R-3: cuántas veces dijo «No acepto» en la Política de datos. Es de la corrida y no del
+    /// <see cref="ConsentPromptJson"/>, que se borra al responder: el contador tiene que vivir entre una pregunta y la siguiente.</summary>
+    public int ConsentRejections { get; private set; }
+
     public string VariablesJson { get; private set; }
 
     /// <summary><c>[{at, nodeId, kind, outcome}]</c>, tope <see cref="RunState.TraceMax"/> entradas.</summary>
@@ -56,6 +60,10 @@ public sealed class ConversationRun
     /// se vuelve a reclamar después de confirmada la unidad (el cierre de la fila falló o el lease venció), el procesador la reconoce y no la
     /// toma por una respuesta nueva.</summary>
     public Guid? LastInboundMessageId { get; private set; }
+
+    /// <summary>Spec 2026-10-26 D-6: <c>{nodeId, shownText, promptMessageId}</c> de la pregunta de Política de datos que espera respuesta, o
+    /// <c>null</c>. Guarda el texto que se envió, no la plantilla: una variable puede cambiar entre la pregunta y la respuesta.</summary>
+    public string? ConsentPromptJson { get; private set; }
 
     public bool IsLive => Status is RunStatus.Running or RunStatus.Waiting;
 
@@ -88,8 +96,10 @@ public sealed class ConversationRun
         CurrentNodeId = state.CurrentNodeId;
         StepNumber = state.StepNumber;
         Attempts = state.Attempts;
+        ConsentRejections = state.ConsentRejections;
         VariablesJson = state.Variables.ToJson();
         TraceJson = JsonSerializer.Serialize(state.Trace.Select(entry => new TraceRow(entry.At, entry.NodeId, entry.Kind, entry.Outcome)), TraceOptions);
+        ConsentPromptJson = state.ConsentPrompt is null ? null : JsonSerializer.Serialize(state.ConsentPrompt, TraceOptions);
         UpdatedAt = now;
         EndedAt = IsLive ? null : now;
     }
@@ -146,7 +156,9 @@ public sealed class ConversationRun
         var rows = JsonSerializer.Deserialize<List<TraceRow>>(TraceJson, TraceOptions) ?? [];
         return new RunState(
             Status, CurrentNodeId, StepNumber, Attempts, RunVariables.Parse(VariablesJson),
-            rows.Select(row => new TraceEntry(row.At, row.NodeId, row.Kind, row.Outcome)).ToList());
+            rows.Select(row => new TraceEntry(row.At, row.NodeId, row.Kind, row.Outcome)).ToList(),
+            ConsentPromptJson is null ? null : JsonSerializer.Deserialize<ConsentPrompt>(ConsentPromptJson, TraceOptions),
+            ConsentRejections);
     }
 
     private sealed record TraceRow(DateTimeOffset At, string NodeId, string Kind, string Outcome);

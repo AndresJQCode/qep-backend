@@ -9,6 +9,7 @@ public sealed class ShopifyWebhookOptions
     /// <summary>1 MiB: un pedido de Shopify con cientos de líneas cabe de sobra. Más grande → 413.</summary>
     public int MaxBodyBytes { get; set; } = 1_048_576;
 
-    /// <summary>Cada cuánto busca entregas pendientes el worker (§5.2), como <c>Messaging:Workers:DeliveryPollSeconds</c>.</summary>
-    public int DeliveryPollSeconds { get; set; } = 3;
+    /// <summary>Cada cuánto busca entregas pendientes el worker (§5.2), como <c>Messaging:Workers:DeliveryPollSeconds</c>. El
+    /// sondeo es costo en reposo contra una base compartida y nadie espera una entrega de forma interactiva.</summary>
+    public int DeliveryPollSeconds { get; set; } = 15;
 }

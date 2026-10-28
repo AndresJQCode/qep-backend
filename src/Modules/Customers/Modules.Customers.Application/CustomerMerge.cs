@@ -126,7 +126,8 @@ public sealed class GetCustomerMergePreviewHandler(
         customer.Cuc,
         customer.IsComplete,
         customer.IsActive,
-        customer.Version);
+        customer.Version,
+        customer.PersonType?.ToWireValue());
 
     // §3.4: se compara el número normalizado; si a uno de los dos le falta el número, no cuenta como distinto.
     private static bool DocumentsDiffer(Customer survivor, IReadOnlyList<Customer> merged)

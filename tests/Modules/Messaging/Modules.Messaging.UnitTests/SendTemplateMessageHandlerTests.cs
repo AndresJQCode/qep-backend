@@ -225,6 +225,19 @@ public sealed class SendTemplateMessageHandlerTests
     }
 
     [Fact]
+    public async Task ATemplateToABlockedContactIsRefusedBeforeTheClaim()
+    {
+        var bed = BedWithHello();
+        var conversation = bed.OpenConversation(lastInboundHoursAgo: 90, blocked: true);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => bed.SendTemplateHandler().HandleAsync(Command(bed, conversation), Ct));
+
+        Assert.Equal(MessagingErrorCodes.ContactBlocked, error.Code);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Empty(bed.Meta.TemplateSends);
+    }
+
+    [Fact]
     public async Task AnotherTenantIs403AndNeverReachesTheCatalog()
     {
         var bed = BedWithHello();

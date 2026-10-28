@@ -11,7 +11,9 @@ public interface IProductRepository
     /// `ICustomerRepository.SearchAsync`. `name`/`code` son dos filtros independientes (AND
     /// cuando se llenan los dos); `search` es el criterio OR original sobre los mismos dos
     /// campos, para el combobox de productos de `quotes`. `isActive` es un filtro real de la
-    /// consulta, no un post-filtro en memoria.
+    /// consulta, no un post-filtro en memoria. `categoryIds`: null no filtra; no nulo deja sólo
+    /// los productos de esas categorías (una colección vacía no devuelve filas). Lo usa el POS;
+    /// `GET /catalog/products` no lo expone todavía (spec 2026-10-26 §3.3).
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchAsync(
         Guid tenantId,
@@ -19,6 +21,7 @@ public interface IProductRepository
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
@@ -33,6 +36,7 @@ public interface IProductRepository
         string? name,
         string? code,
         bool? isActive,
+        IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken);
@@ -65,6 +69,7 @@ public interface IProductRepository
     /// </summary>
     Task<IReadOnlyList<Product>> ListForExportAsync(
         Guid tenantId,
+        string? search,
         string? name,
         string? code,
         bool? isActive,
@@ -171,6 +176,13 @@ public interface IProductRepository
         Guid tenantId,
         TaxRateId taxRateId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Cuántos productos activos tiene el tenant, con o sin categoría. Es el «Todas las categorías · N
+    /// productos» de la caja (spec 2026-10-26 §3.4): sumar las categorías raíz perdería los que no tienen
+    /// ninguna. Un <c>COUNT</c> en la base, sin traer filas.
+    /// </summary>
+    Task<int> CountActiveAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Una fila del listado de productos (<see cref="IProductRepository.SearchSummariesAsync"/>).</summary>
@@ -183,6 +195,7 @@ public sealed record ProductSummary(
     bool IsActive,
     string? Description,
     TaxRateId? TaxRateId,
+    ProductCategoryId? CategoryId,
     Guid? ImageFileId,
     int VariantCount,
     string? Code,

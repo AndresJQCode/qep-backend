@@ -999,4 +999,107 @@ public sealed class CustomerWriteApiTests
         // El CUC no se rehace en un Update: conserva el departamento con el que nacio.
         Assert.Equal(created.Cuc, updated.Cuc);
     }
+
+    /// <summary>Spec 2026-10-26: el tipo de persona viaja en el alta, se lee igual en la ficha y un PUT sin el lo borra.</summary>
+    [Fact]
+    public async Task PersonTypeRoundTripsThroughPostGetAndPut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var created = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Verde Esencial S.A.S.",
+                identificationType = "NIT",
+                identificationNumber = "900.123.456-1",
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false,
+                personType = "Juridica"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal("Juridica", body.PersonType);
+        Assert.Equal("Juridica", (await GetAsync(client, body.Id)).PersonType);
+
+        // El PUT reemplaza el recurso entero: sin personType, queda en null.
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{body.Id}",
+            NewCustomerBody(city.CityId, classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        Assert.Null((await GetAsync(client, body.Id)).PersonType);
+    }
+
+    [Fact]
+    public async Task JuridicaWithCcIsA422OnIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Laura Perez",
+                identificationType = "CC",
+                identificationNumber = "1020304050",
+                phone = "310 935 2187",
+                email = "laura@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = city.CityId,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false,
+                personType = "Juridica"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.person_type_requires_nit", text);
+        Assert.Contains("IdentificationType", await ValidationFieldsAsync(response));
+    }
+
+    // Spec 2026-10-26, Tarea 8: el ajuste del tenant (en base) llega hasta el 422 del POST, con el mapa por campo.
+    [Fact]
+    public async Task OnCustomerSaveIsA422OnPersonType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantPersonTypeRequirementAsync(factory, "OnCustomerSave");
+
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("customers.customer.person_type_required", text);
+        Assert.Contains("PersonType", await ValidationFieldsAsync(response));
+    }
 }

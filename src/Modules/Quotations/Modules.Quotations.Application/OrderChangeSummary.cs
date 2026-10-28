@@ -42,6 +42,31 @@ public static class OrderChangeSummary
         return changes.Count == 0 ? null : Trim($"Editó {string.Join(", ", changes)}.");
     }
 
+    /// <summary>A quién se le factura, tal como lo lee una persona: el nombre de la parte propia, «consumidor
+    /// final», o «los datos del cliente» (con su razón social si es el caso).</summary>
+    public static string BillingLabel(Order order)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        if (order.BillsToFinalConsumer)
+        {
+            return "consumidor final";
+        }
+
+        if (order.Billing is { } party)
+        {
+            return string.IsNullOrWhiteSpace(party.Name) ? "otros datos" : party.Name;
+        }
+
+        return order.BillingUsesBusinessName ? "los datos del cliente (razón social)" : "los datos del cliente";
+    }
+
+    /// <summary>El cambio de facturación de un pedido pendiente (spec 2026-10-26). Si a quién se factura no
+    /// cambió y sólo se tocó un dato de la parte, lo dice sin repetir el nombre.</summary>
+    public static string BillingChanged(string before, string after) =>
+        string.Equals(before, after, StringComparison.Ordinal)
+            ? Trim($"Editó los datos de facturación de {after}.")
+            : Trim($"Cambió la facturación de {before} a {after}.");
+
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
     public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
         ? "Enviado por WhatsApp a facturación."

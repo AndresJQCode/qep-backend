@@ -36,6 +36,11 @@ public static class TraceOutcomes
     public const string Restart = "restart";
 }
 
+/// <summary>Spec 2026-10-26 D-6: lo que se le mostró al cliente al pedirle la política de datos. El registro guarda este texto, no la
+/// plantilla interpolada de nuevo al responder: una variable puede cambiar entre la pregunta y la respuesta. <see cref="PromptMessageId"/>
+/// es el mensaje enviado, si el procesador lo conoce.</summary>
+public sealed record ConsentPrompt(string NodeId, string ShownText, Guid? PromptMessageId);
+
 /// <summary>
 /// El estado de una corrida entre dos pasos del motor (spec 2026-10-21 D-M2): lo que <see cref="FlowEngine.Step"/> recibe y devuelve y lo
 /// que el procesador persiste en <c>conversation_runs</c>. <see cref="Attempts"/> son las respuestas inválidas al bloque que espera
@@ -48,7 +53,14 @@ public static class TraceOutcomes
 /// <param name="Attempts">Respuestas inválidas al bloque que espera; vuelve a cero al entrar en otro bloque.</param>
 /// <param name="Variables">Las variables de la corrida (D-M8).</param>
 /// <param name="Trace">Las últimas <see cref="TraceMax"/> entradas, de la más vieja a la más nueva.</param>
-public sealed record RunState(RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, RunVariables Variables, IReadOnlyList<TraceEntry> Trace)
+/// <param name="ConsentPrompt">Spec 2026-10-26 D-6: la pregunta de Política de datos que espera respuesta; <c>null</c> en cualquier otro
+/// momento.</param>
+/// <param name="ConsentRejections">Spec 2026-10-26 repetir R-3: los «No acepto» al bloque Política de datos en que espera la corrida, para
+/// el tope de <c>repeat</c>. Aparte de <see cref="Attempts"/> (R-4). Vuelve a cero al entrar en un bloque, al salir de él y al reiniciar;
+/// no al reenviar la pregunta ni al pasar a la bandeja, que la deja para quien lea por qué.</param>
+public sealed record RunState(
+    RunStatus Status, string? CurrentNodeId, int StepNumber, int Attempts, RunVariables Variables, IReadOnlyList<TraceEntry> Trace,
+    ConsentPrompt? ConsentPrompt = null, int ConsentRejections = 0)
 {
     /// <summary>§4.2: el trace guarda sólo las últimas 200 entradas.</summary>
     public const int TraceMax = 200;

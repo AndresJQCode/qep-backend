@@ -95,6 +95,28 @@ public sealed class ConversationAutomationMappingTests
             dto.Event!.Handoff);
     }
 
+    // Spec 2026-10-25 D-8: el hilo dice a quién asignó el asistente la conversación.
+    [Fact]
+    public void AnAssignedHandoffCarriesTheMemberWithItsName()
+    {
+        var member = Guid.CreateVersion7();
+        MessageRow RowOf(Guid? assigned) => new(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), MessageDirection.System, MessageKind.Event, null, null,
+            ConversationEventJson.Serialize(new ConversationEvent(
+                ConversationEventType.AutomationPaused, PauseReason: AutomationPauseReason.Handoff,
+                Handoff: AutomationHandoff.Create(AutomationHandoffKind.AttemptsExhausted, null, "ask", "Documento", null, null, null, assigned))),
+            MessageStatus.Delivered, null, DateTimeOffset.UnixEpoch, null, null, null, null);
+        MessageDto Map(MessageRow row, Dictionary<Guid, string> names) =>
+            MessageMapping.ToDto(row, Guid.CreateVersion7(), names, new Dictionary<Guid, ReplyTargetRow>());
+
+        var assigned = RowOf(member);
+
+        Assert.Contains(member, MessageMapping.MemberIdsOf([assigned]));
+        Assert.Equal(new MemberRefDto(member, "Ana Ruiz"), Map(assigned, new() { [member] = "Ana Ruiz" }).Event!.Handoff!.AssignedTo);
+        Assert.Equal(new MemberRefDto(member, "Miembro eliminado"), Map(assigned, new()).Event!.Handoff!.AssignedTo);
+        Assert.Null(Map(RowOf(null), new()).Event!.Handoff!.AssignedTo);
+    }
+
     [Fact]
     public void TheSummaryCarriesChatbotNameAndStep()
     {

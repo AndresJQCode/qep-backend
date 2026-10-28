@@ -4,8 +4,9 @@ using Modules.Automations.Domain.Flow;
 namespace Modules.Automations.Application.Http;
 
 /// <summary>Quién llama al bloque: una corrida (<see cref="RunId"/>) o una simulación con «llamar a la API de verdad»
-/// (<see cref="SimulationId"/>, D-S2).</summary>
-public sealed record HttpCallContext(Guid TenantId, Guid? RunId, Guid? SimulationId, string NodeId);
+/// (<see cref="SimulationId"/>, D-S2). <see cref="StepNumber"/> (spec 2026-10-25 D-E3) es la visita al bloque en que sale la llamada, el
+/// <c>StepNumber</c> de la corrida al entrar; una simulación no lo trae.</summary>
+public sealed record HttpCallContext(Guid TenantId, Guid? RunId, Guid? SimulationId, string NodeId, int? StepNumber = null);
 
 /// <summary>
 /// Cómo terminó el bloque (D-H4..D-H8). <see cref="Ok"/> elige la salida <c>ok</c> o <c>error</c>; <see cref="Mapped"/> trae sólo las
@@ -23,10 +24,12 @@ public interface IHttpBlockExecutor
     Task<HttpCallResult> ExecuteAsync(HttpCallContext context, HttpNode node, RunVariables variables, CancellationToken cancellationToken);
 }
 
-/// <summary>D-H6: una fila de <c>automations.http_calls</c>. La ruta va interpolada y sin query; nunca cuerpo, headers ni clave.</summary>
+/// <summary>D-H6: una fila de <c>automations.http_calls</c>. La ruta va interpolada y sin query; nunca cuerpo, headers ni clave.
+/// Spec 2026-10-25 D-E3: <see cref="StepNumber"/> es la visita al bloque y <see cref="ResponseBytes"/> cuántos bytes de respuesta se leyeron
+/// (sólo el número, nunca el cuerpo); <c>null</c> si no se leyó ninguno.</summary>
 public sealed record HttpCallEntry(
     Guid TenantId, Guid? RunId, Guid? SimulationId, string NodeId, Guid ConnectionId, string Method, string Path, int? StatusCode, int DurationMs,
-    string Outcome, string? ErrorCode, DateTimeOffset CalledAt);
+    string Outcome, string? ErrorCode, DateTimeOffset CalledAt, int? StepNumber = null, int? ResponseBytes = null);
 
 /// <summary>D-H6: el registro de llamadas. Se confirma por su cuenta, fuera de la transacción de la unidad del motor: la llamada ya salió
 /// aunque la unidad se deshaga.</summary>

@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -13,11 +14,20 @@ internal static class OrderPricingRecalculation
     public static async Task ApplyAsync(
         IQuotationProductPricingLookup lookup,
         IQuotationSettingsStore settingsStore,
+        ITenantPriceRounding priceRounding,
         Guid tenantId,
         Order order,
         DateTimeOffset occurredAt,
         CancellationToken cancellationToken)
     {
+        // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4). Un pedido de una integración
+        // (Shopify y las que vengan) se precia siempre con el valor por defecto de su moneda, aun editado:
+        // decisión del owner. El manual y el que nació de una cotización toman la regla vigente del tenant.
+        var rounding = order.Source is OrderSource.Quotation or OrderSource.Manual
+            ? await priceRounding.GetAsync(tenantId, order.Currency, cancellationToken)
+            : PriceRoundingDefaults.For(order.Currency);
+        order.UsePriceRounding(rounding, occurredAt);
+
         if (order.Items.Count == 0)
         {
             return;

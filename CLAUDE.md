@@ -1,4 +1,4 @@
-﻿# `qep-backend` — reglas del repositorio
+# `qep-backend` — reglas del repositorio
 
 Monolito modular .NET 10. Este archivo es **prescriptivo**: reglas, precedentes y gotchas
 que **no** se deducen leyendo el código. Lo descriptivo —qué existe, cómo se corre, los
@@ -571,6 +571,69 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`OrdersExportProcessor` no lee el formato del tenant, a propósito** (D-R8): la hoja del pedido la importa el ERP.
   «Unificarlo» con el Excel de cotizaciones compila, pasa sus pruebas unitarias y rompe la importación en silencio. La amarra
   `OrderExportApiTests.TheErpSheetIgnoresTheTenantRegionalFormat`.
+- **`other` de Botones/Lista existe sólo con `fallback = otherOutput`** (spec 2026-10-25 D-3): `FlowNodeKinds.OutputsOf` la omite con
+  `repeat` y `handoff`, el motor no la sigue aunque la versión publicada la tenga, y `FlowNormalizer` la quita al guardar. Al agotar los
+  intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
+  `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
+- **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
+  traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
+  en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
+  guarda es el que salió (`RunState.ConsentPrompt`, columna `conversation_runs.consent_prompt`), no la plantilla del bloque.
+  **Dos relojes:** la fila del bot lleva la hora de Meta (truncada al segundo) y la revocación la del servidor; ordenar por
+  `(occurred_at, sequence)` es lo buscado, nunca por `sequence` sola. **Un toque vale sólo para la pregunta que cita:** los ids
+  `accepted`/`rejected` son fijos y WhatsApp deja tocar los botones viejos, así que un toque cuyo `reply_to_message_id` no es el
+  `ConsentPrompt.PromptMessageId` vigente es una respuesta inválida (`FlowEngine.IsStaleConsentTap`); la fila guarda el citado en
+  `replied_to_message_id`. **Deploy y rollback:** el kind `dataConsent` es sólo hacia adelante —un backend viejo no lee un flujo
+  publicado que lo tenga— y el `Down` de `AddCustomerDataConsents` borra la prueba legal: nunca se corre. El rollback es revertir el
+  código y dejar la tabla.
+- **«Política de datos» tiene tres modos para «No acepto»** (spec 2026-10-26 repetir): `onReject` = `repeat` | `rejectedOutput` (default de todo bloque viejo) | `handoff`. `rejected` existe sólo con `rejectedOutput`: `OutputsOf` la omite y `FlowNormalizer` la quita. En `repeat`, el contador es `RunState.ConsentRejections` (columna `conversation_runs.consent_rejections`), no `Attempts` ni `ConsentPrompt`: vuelve a 0 en `Go`, `Leave` y `Restart`, nunca en `Resend`. En los dos modos sin `rejected`, todo camino que hoy saldría por ella (intentos agotados, cliente sin registrar) traspasa con `onRejectMemberId`, sin leer la regla de agotamiento del chatbot. Los modos son sólo hacia adelante: tras un rollback del backend, el motor viejo sigue la `rejected` ya quitada como `null` y termina con `EndRun(OutputUnconnected)` ante «No acepto» o el agotamiento, así que toda versión publicada en `repeat` o `handoff` hay que republicarla en `rejectedOutput`.
+- **El sinónimo de una ciudad casa después de los dos nombres, y confirmar uno igual a una ciudad real es 422** (spec 2026-10-26).
+  `CityRepository.MatchByNameAsync` compara el nombre, luego el oficial del DANE y sólo si ninguno casa busca el sinónimo vivo:
+  una fila de sinónimo con el texto de una ciudad real —sólo llega por SQL— nunca le gana. `resolve` e `impact` lo rechazan con
+  `geography.synonym.matches_city`. Si inviertes el orden, el sinónimo le quita el pedido a una ciudad legítima sin error. Lo
+  amarran `ARealCityNameWinsOverASynonymWithTheSameText` y `CityOperatorApiTests`.
+- **`CityCorrectionInsights` lee `quotations`, `customers`, `shopify`, `tenancy` e `identity` por nombre.** Es SQL crudo en
+  Bootstrapper que alimenta los impactos y los contadores de la consola de ciudades. Renombrar una columna de cualquiera de esas
+  tablas compila y deja respondiendo 500 (`42703`) a los dos `impact`, a `GET synonyms` y `GET unresolved/{id}`, y a `resolve`,
+  `PUT synonyms/{id}` y `retry` **después** de confirmar su escritura (la respuesta lee los contadores): el cambio queda hecho
+  aunque el cliente vea el 500. El recorrido (`POST backfill`) no lee este adaptador. Lo amarra `CityCorrectionInsightsTests`
+  (en el proyecto de Shopify, que es el que sabe armar pedidos, clientes y huellas reales): una tabla o columna nueva que lea el
+  adaptador entra ahí.
+- **El payload de `geography.city_synonym.*` es contrato con Shopify y vive literal en dos pruebas.** `GeographyEventPublisher`
+  lo escribe y `CitySynonymEventPayloads` lo lee por nombre: renombrar un campo compila, pasa las pruebas de cada lado por
+  separado y deja el mensaje marcado como procesado sin trabajos sembrados. Se cambia en los dos lados y en las dos pruebas con el
+  mismo literal, `GeographyEventPublisherTests` y `CitySynonymEventPayloadsTests`.
+- **Un trabajo de corrección de ciudad aplica la ciudad *actual* del sinónimo, y uno borrado salta lo pendiente.**
+  `ShopifyCityCorrectionProcessor` relee el sinónimo al procesar: si el operador lo corrigió entre el evento y el trabajo manda la
+  ciudad nueva, y si lo borró, el trabajo termina `Skipped` con `synonym_deleted` y el pedido queda como estaba. Por eso borrar
+  no publica nada ni deshace lo ya corregido, y por eso `IShopifyCitySynonymLookup` devuelve también los borrados: filtrarlos
+  haría que el trabajo no supiera por qué saltó. Lo amarran `CitySynonymEndToEndTests.DeletingWhileJobsArePendingSkipsThem` y
+  `ShopifyCityCorrectionProcessorTests`.
+- **`run_units` se escribe en el mismo `SaveChanges` de la unidad y vive 3 días (`RunDetailRetentionDays`); armarla nunca lanza
+  (`RunUnitWriter`).** Un camino nuevo que cierre una corrida fuera del motor llama `WriteClosed`, o la vista no explica por qué
+  terminó.
+- **La regla de redondeo de un documento vive en dos columnas nullable, y `null` es `PriceRounding.LegacyFor`** (spec 2026-10-27).
+  `LegacyFor` tiene el literal `"COP"` porque BuildingBlocks no ve el catálogo; `TheLegacyRuleMatchesTheDefaultForEveryCatalogueCurrency`
+  la amarra a `PriceRoundingDefaults.For`. Una moneda nueva con otros decimales pone roja esa prueba: decide ahí si los documentos viejos
+  de esa moneda se leen con la regla vieja. La regla sólo baja al documento en `QuotationPricingRecalculation`/`OrderPricingRecalculation`
+  (`UsePriceRounding`); un camino nuevo que rehaga líneas sin pasar por ahí calcula con la regla guardada, no con la vigente. Los pedidos
+  externos nunca toman la del tenant.
+- **ImageSharp sigue en 3.1.12 con sus avisos suprimidos, y subirla exige una licencia de Six Labors** (2026-10-07,
+  ampliado el 2026-10-27 con GHSA-v76p-62qx-wwq2). Un `NU1903` nuevo de `SixLabors.ImageSharp` rompe el restore, el build y
+  el `docker build` por `TreatWarningsAsErrors`, y no es culpa de la rama en curso. Las versiones corregidas (3.2.0 y 4.x)
+  traen en `build/SixLabors.ImageSharp.targets` el target `SixLabors_ValidateLicense`, que corre antes de `CoreCompile` y en
+  `Release` —el Docker— falla sin `SixLaborsLicenseKey` ni `sixlabors.lic`; en `Debug` sólo avisa, así que en local no se ve.
+  Mientras no haya clave, cada aviso nuevo se analiza: se suprime en `Directory.Build.props` **sólo** si su vector queda fuera
+  de las `Configuration` restringidas (`ImageSharpConfiguration` de Storage: JPEG, PNG, WebP; `ImageSharpMessagingImageCompressor`:
+  JPEG, PNG) y se documenta ahí el porqué. Un aviso en el decodificador de JPEG, PNG o WebP no se suprime: obliga al upgrade.
+  **Para el upgrade:** pedir la licencia Community (gratis por debajo de USD 1M de facturación anual; la condición la confirma
+  el owner) en https://licensing.sixlabors.com/; guardar la clave como secreto en `Backend-prod` y pasarla al `docker build`
+  como build-arg hacia la propiedad `SixLaborsLicenseKey`, nunca commiteada (un `sixlabors.lic` en el repo es la clave en
+  claro); subir la versión en `Directory.Packages.props` con `dotnet restore --force-evaluate` de los lock files; quitar los
+  `NuGetAuditSuppress` y su comentario; y verificar con un build `Release` local con la clave puesta. La 4.x es salto de mayor:
+  revisar la API en Storage y en `ImageSharpMessagingImageCompressor`.
 
 ## Verificación
 

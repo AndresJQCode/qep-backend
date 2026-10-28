@@ -21,6 +21,7 @@ public sealed class CustomerIdentificationMatchesHandlerTests
         Customer.Create(
             CustomerId.New(), TenantId, "MED-0001", "GYSELYS VIVAS PACHECO", null, null,
             new CustomerIdentification { Type = IdentificationType.Nit, Number = StoredNumber },
+            null,
             new CustomerContactInfo
             {
                 Phone = "310 935 2187",

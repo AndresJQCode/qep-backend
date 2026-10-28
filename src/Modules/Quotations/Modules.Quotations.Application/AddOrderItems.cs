@@ -37,6 +37,7 @@ public sealed class AddOrderItemsHandler(
     IQuotationAuditPublisher auditPublisher,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
@@ -91,7 +92,7 @@ public sealed class AddOrderItemsHandler(
         // Sumar una línea mueve el tramo de las que agrupan con ella y puede cambiar el mínimo de
         // compra: el recálculo va antes de mirar el total.
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, command.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
         // El total cambió: lo cargado en comprobantes no, pero el estado del pago sí puede.
         order.RecalculatePaymentStatus(now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

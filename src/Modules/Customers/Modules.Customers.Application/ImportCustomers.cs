@@ -568,6 +568,19 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
+                // Una jurídica se identifica con NIT: Update lanzaría la excepción de dominio y, como arriba,
+                // no hay try/catch por fila — se adelanta para reportar sólo esa fila (spec 2026-10-26).
+                if (customer.PersonType == PersonType.Juridica && candidate.Type != IdentificationType.Nit)
+                {
+                    errors.Add(new ImportRowError(
+                        candidate.RowNumber,
+                        "customers.import.row.person_type_requires_nit",
+                        "The customer is a legal entity and is identified by its NIT.",
+                        nameof(ExcelCustomerRow.IdentificationType),
+                        ToRowData(candidate.SourceRow)));
+                    continue;
+                }
+
                 // La fila actualiza el domicilio del cliente (address, ciudad) y el resto de la
                 // ficha; la libreta de envio no se toca, mismo criterio que UpdateCustomerHandler
                 // (spec 2026-09-18).
@@ -575,6 +588,8 @@ public sealed class ImportCustomersHandler(
                     candidate.Name,
                     candidate.BusinessName,
                     new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    // La planilla no trae tipo de persona: reimportar no borra el que ya tenía (spec 2026-10-26).
+                    customer.PersonType,
                     // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
                     // Ciudad, resueltas contra DIVIPOLA por FindCityByNameAsync, y la plantilla
                     // valida la ciudad con una lista cerrada que depende del departamento elegido.
@@ -622,6 +637,8 @@ public sealed class ImportCustomersHandler(
                     Phone = candidate.Phone
                 },
                 new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                // La planilla no trae tipo de persona (spec 2026-10-26).
+                null,
                 // Solo colombiana, por lo mismo que la rama de actualizacion de arriba.
                 new CustomerContactInfo
                 {

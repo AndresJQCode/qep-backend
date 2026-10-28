@@ -16,6 +16,9 @@ public abstract record BotSendResult
 
     public sealed record WindowClosed : BotSendResult;
 
+    /// <summary>Spec 2026-10-26 §3.4: el contacto está bloqueado. El bot no le escribe: sin reclamo, sin fila y sin llamada a Meta.</summary>
+    public sealed record Blocked : BotSendResult;
+
     /// <summary>Spec 2026-10-24 D-T11: <paramref name="Reason"/> es un código de spec §3.4 (<c>paused</c>, <c>secret_unreadable</c>,
     /// <c>credentials_rejected</c>, …) y <paramref name="ConnectionName"/> el nombre de la conexión de WhatsApp, para el hilo del traspaso.</summary>
     public sealed record ConnectionUnavailable(string? Reason = null, string? ConnectionName = null) : BotSendResult;
@@ -62,6 +65,12 @@ public sealed class BotOutbound(
         if (await outbound.FindByClientIdAsync(conversation.Id, send.ClientId, cancellationToken) is { Status: not MessageStatus.Failed } sent)
         {
             return new BotSendResult.Sent(sent.Id, AlreadySent: true);
+        }
+
+        // Antes de la guarda de NotAutomated: bloquear no cambia la automatización, y el motor necesita saber que es un bloqueo.
+        if (conversation.BlockedAt is not null)
+        {
+            return new BotSendResult.Blocked();
         }
 
         if (conversation.Status != ConversationStatus.Open

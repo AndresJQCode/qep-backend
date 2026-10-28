@@ -26,6 +26,10 @@ public interface IChatbotRepository
     /// conexión o esté en pausa (D-C1, D-C5); <c>null</c> si el chatbot ya no existe.</summary>
     Task<EngineSettings?> FindEngineSettingsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-26 D-10: el nombre actual del chatbot y el número de una de sus versiones, para el registro de la respuesta a
+    /// Política de datos; <c>null</c> si la versión ya no existe en el tenant (el chatbot se borró).</summary>
+    Task<ChatbotVersionLabel?> FindVersionLabelAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken);
+
     /// <summary>Lo que la lista pinta, proyectado y sin seguimiento: sin los jsonb del borrador ni de las versiones. Ordenados por
     /// nombre (y por id para desempatar); <paramref name="search"/> filtra por nombre sin mayúsculas, con los comodines como literales.</summary>
     Task<IReadOnlyList<ChatbotSummaryRow>> ListSummariesAsync(Guid tenantId, string? search, CancellationToken cancellationToken);
@@ -41,6 +45,9 @@ public interface IChatbotRepository
     /// <summary>Misma regla que el índice único: <c>lower(name)</c> dentro del tenant.</summary>
     Task<bool> NameExistsAsync(Guid tenantId, string name, Guid? exceptId, CancellationToken cancellationToken);
 }
+
+/// <summary>Spec 2026-10-26 D-10: con qué chatbot y qué versión se hizo la pregunta de Política de datos.</summary>
+public sealed record ChatbotVersionLabel(string ChatbotName, int Number);
 
 /// <summary>Una fila de la lista de chatbots (§4.4). <see cref="PublishedNumber"/> y <see cref="PublishedAt"/> son los de la versión
 /// publicada, <c>null</c> mientras es borrador.</summary>
@@ -63,7 +70,12 @@ public sealed record ChatbotSummaryRow(
 /// normalizadas por el agregado.</summary>
 public sealed record ServingChatbot(
     Guid ChatbotId, string Name, ChatbotStatus Status, ChatbotTrigger Trigger, IReadOnlyList<string> Keywords, string RestartKeyword,
-    int MaxAttempts, Guid PublishedVersionId);
+    int MaxAttempts, Guid PublishedVersionId, AttemptsExhaustedAction ExhaustedAction = AttemptsExhaustedAction.Restart,
+    Guid? ExhaustedMemberId = null)
+{
+    /// <summary>Spec 2026-10-25 D-4: lo que el motor lee del chatbot, igual que <see cref="Chatbot.EngineSettings"/>.</summary>
+    public EngineSettings EngineSettings => new(RestartKeyword, MaxAttempts, ExhaustedAction, ExhaustedMemberId);
+}
 
 /// <summary>La conexión <see cref="ConnectionId"/> la atiende el chatbot publicado <see cref="ChatbotId"/>.</summary>
 public sealed record ChatbotServingConnection(Guid ConnectionId, Guid ChatbotId, string Name);
@@ -114,6 +126,52 @@ public sealed record AutomationConnectionRef(Guid Id, string Name, string Channe
 public interface IAutomationConnections
 {
     Task<IReadOnlyList<AutomationConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Un miembro que puede responder conversaciones (spec 2026-10-25 D-5).</summary>
+public sealed record AutomationMemberRef(Guid Id, string Name);
+
+/// <summary>Los miembros activos con <c>messaging.conversation.manage</c>, los mismos que ofrece «Transferir» y en el mismo orden (adaptador en
+/// Bootstrapper sobre <c>IMessagingAssignees</c>): Automations no referencia Messaging.</summary>
+public interface IAutomationMembers
+{
+    Task<IReadOnlyList<AutomationMemberRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-26 D-2 y D-7: qué sabe Customers de la autorización de datos del cliente de una conversación.
+/// <see cref="Unavailable"/>: no hay cliente al que registrarle una respuesta (la conversación no tiene cliente ni identidad).</summary>
+public enum DataConsentCheck
+{
+    NotAccepted,
+    Accepted,
+    Unavailable,
+}
+
+/// <summary>Spec 2026-10-26 D-5 y D-10: una respuesta al bloque Política de datos. <see cref="ShownText"/> es el texto que se le mostró
+/// al cliente; <see cref="PromptMessageId"/>, el mensaje de la pregunta (<c>null</c> si no se supo); <see cref="ReplyMessageId"/>, el
+/// entrante que la respondió; la versión es la de la corrida.</summary>
+public sealed record DataConsentRecord(
+    Guid TenantId,
+    Guid ConversationId,
+    DataConsentDecision Decision,
+    string ShownText,
+    Guid? PromptMessageId,
+    Guid ReplyMessageId,
+    Guid ChatbotId,
+    string ChatbotName,
+    Guid ChatbotVersionId,
+    int ChatbotVersionNumber,
+    string NodeId);
+
+/// <summary>La autorización de datos del cliente (adaptador en Bootstrapper sobre Customers): Automations no referencia Customers.</summary>
+public interface IAutomationDataConsents
+{
+    Task<DataConsentCheck> CheckAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary><c>false</c> = no se pudo registrar: la conversación no tiene cliente o identidad, su canal no se puede registrar, o el
+    /// entrante de la respuesta no existe o es de otra conversación. Un fallo transitorio (un conflicto de concurrencia) lanza, como
+    /// cualquier puerto.</summary>
+    Task<bool> RecordAsync(DataConsentRecord record, CancellationToken cancellationToken);
 }
 
 /// <summary>Una conexión «API externa» del tenant (D-H4); <see cref="Status"/> es el nombre del estado de Integrations.</summary>
@@ -181,7 +239,8 @@ public sealed record InboundAttachment(string MimeType, string? FileName, bool S
 /// <summary>Lo que el motor lee de un entrante. <see cref="Kind"/> es el nombre del <c>MessageKind</c> de Mensajería
 /// (<c>CustomerMessageKinds</c>); <see cref="Text"/> es el texto o, si no tiene, la leyenda del adjunto (P2-R4: una palabra clave
 /// también se dispara con la leyenda de una foto).</summary>
-public sealed record InboundMessage(Guid MessageId, string Kind, string? Text, string? ReplyId, InboundAttachment? Attachment, DateTimeOffset OccurredAt);
+public sealed record InboundMessage(
+    Guid MessageId, string Kind, string? Text, string? ReplyId, InboundAttachment? Attachment, DateTimeOffset OccurredAt, Guid? ReplyToMessageId = null);
 
 /// <summary>Spec 2026-10-21 §5.1 y §5.3: la cola del motor (adaptador en Bootstrapper sobre <c>IAutomationInbox</c> de Mensajería).
 /// <c>Complete</c> y <c>RetryLater</c> llevan el <c>Attempts</c> del reclamo como testigo (P2-R3): <c>false</c> = otra réplica volvió a
@@ -236,9 +295,10 @@ public interface IAutomationConversations
     /// no mueve su versión; sin asistente activo no escribe nada.</summary>
     Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken);
 
-    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, sin asesor, con evento en el hilo, auditoría de sistema y aviso a todo el
-    /// tenant como un entrante sin asignar.</summary>
-    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, CancellationToken cancellationToken);
+    /// <summary>D-M5: <c>Paused</c> con motivo <c>Handoff</c>, con evento en el hilo y auditoría de sistema. Spec 2026-10-25 D-1, D-5:
+    /// con <paramref name="assignToMemberId"/> la asigna a ese miembro en el mismo cambio y avisa sólo a él, si todavía puede responder;
+    /// si no puede (o es <c>null</c>) queda sin asesor y el aviso suena a todo el tenant como un entrante sin asignar.</summary>
+    Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken);
 
     /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
     Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);
@@ -258,6 +318,9 @@ public abstract record BotSendOutcome
     public sealed record NotAutomated : BotSendOutcome;
 
     public sealed record WindowClosed : BotSendOutcome;
+
+    /// <summary>Spec 2026-10-26 §3.4: el contacto está bloqueado. La corrida termina <c>Interrupted</c> en silencio.</summary>
+    public sealed record Blocked : BotSendOutcome;
 
     public sealed record Rejected(string Code, string? ConnectionReason = null, string? ConnectionName = null) : BotSendOutcome;
 }
@@ -388,6 +451,60 @@ public static class AutomationsAuditActions
     public const string RunCompleted = "automations.run.completed";
     public const string RunFailed = "automations.run.failed";
 
+    /// <summary>Spec 2026-10-26 D-4: Política de datos agotó los intentos y siguió por «No acepto» sin registrar nada.</summary>
+    public const string DataConsentUnanswered = "automations.run.data_consent_unanswered";
+
+    /// <summary>Spec 2026-10-26 D-7: Política de datos no tenía un cliente al que registrarle la respuesta y siguió por «No acepto» sin
+    /// preguntar.</summary>
+    public const string DataConsentUnavailable = "automations.run.data_consent_unavailable";
+
     /// <summary>No está en la lista de §4.6: el barrido de D-M13 termina corridas sin una persona y la auditoría es la única huella.</summary>
     public const string RunAbandoned = "automations.run.abandoned";
+}
+
+/// <summary>Spec 2026-10-25 D-E5: el registro de una unidad del procesador. <c>StepsJson</c> es el arreglo de pasos ya serializado
+/// (D-E8 acota su tamaño antes de llegar acá). <c>ClosedStatus</c> y <c>ClosedReason</c> sólo van en las unidades <c>Closed</c> (D-E14).</summary>
+public sealed record RunUnitEntry(
+    Guid TenantId,
+    Guid RunId,
+    int BaseStep,
+    string Trigger,
+    Guid? InboundMessageId,
+    string Outcome,
+    DateTimeOffset StartedAt,
+    DateTimeOffset EndedAt,
+    string StepsJson,
+    string? ClosedStatus,
+    string? ClosedReason);
+
+public interface IRunUnitRepository
+{
+    /// <summary>Sólo agrega al contexto del scope: la fila viaja en el <c>SaveChanges</c> de la unidad, así que si la unidad se deshace
+    /// la fila se va con ella (D-E5).</summary>
+    void Add(RunUnitEntry entry);
+
+    /// <summary>Las unidades de una corrida por <c>(base_step, started_at, id)</c>.</summary>
+    Task<IReadOnlyList<RunUnitEntry>> ListAsync(Guid tenantId, Guid runId, CancellationToken cancellationToken);
+
+    /// <summary>D-E7: borra hasta <paramref name="batch"/> unidades iniciadas antes de <paramref name="cutoff"/>, de todos los tenants, y
+    /// devuelve cuántas. El barrido la llama lote por lote hasta que uno sale incompleto.</summary>
+    Task<int> PurgeBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-10-25 D-P4: qué disparó la unidad.</summary>
+public static class RunUnitTriggers
+{
+    public const string Start = "Start";
+    public const string CustomerMessage = "CustomerMessage";
+    public const string Resume = "Resume";
+    public const string Closed = "Closed";
+}
+
+/// <summary>Spec 2026-10-25 D-E14: por qué una corrida terminó sin que el motor la cerrara.</summary>
+public static class RunCloseReasons
+{
+    public const string HumanTookOver = "human_took_over";
+    public const string ModuleDisabled = "module_disabled";
+    public const string Abandoned = "abandoned";
+    public const string RestartedWithNewVersion = "restarted_new_version";
 }

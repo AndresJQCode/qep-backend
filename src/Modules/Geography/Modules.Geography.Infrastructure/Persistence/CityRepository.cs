@@ -41,6 +41,13 @@ internal sealed class CityRepository(GeographyDbContext dbContext) : ICityReposi
     // puede escribir "Cali" o "Santiago de Cali", y los dos son la misma ciudad. Sin nombre común
     // los dos son iguales, así que la ciudad sigue apareciendo una sola vez.
     public async Task<City?> FindByNameAsync(
+        DepartmentId departmentId, string name, CancellationToken cancellationToken) =>
+        (await MatchByNameAsync(departmentId, name, cancellationToken))?.City;
+
+    // Spec 2026-10-26 §4.1. Las ciudades primero, y en memoria por las razones de arriba; el sinónimo sólo si ninguna casa,
+    // así que una fila de sinónimo con el nombre de una ciudad real (sólo puede llegar por SQL) nunca le gana. El sinónimo
+    // sí va por SQL: normalized_text ya está normalizado al guardarse y el índice parcial lo encuentra.
+    public async Task<CityNameMatch?> MatchByNameAsync(
         DepartmentId departmentId, string name, CancellationToken cancellationToken)
     {
         var target = NameMatching.Normalize(name);
@@ -48,8 +55,26 @@ internal sealed class CityRepository(GeographyDbContext dbContext) : ICityReposi
             .AsNoTracking()
             .Where(city => city.DepartmentId == departmentId)
             .ToArrayAsync(cancellationToken);
-        return cities.SingleOrDefault(city =>
-            NameMatching.Normalize(city.Name) == target ||
-            NameMatching.Normalize(city.DivipolaName) == target);
+        var city = cities.SingleOrDefault(city => NameMatching.Normalize(city.Name) == target)
+            ?? cities.SingleOrDefault(city => NameMatching.Normalize(city.DivipolaName) == target);
+        if (city is not null)
+        {
+            return new CityNameMatch(city, SynonymId: null);
+        }
+
+        // A lo sumo una fila: IX_city_synonyms_department_text_active es único entre los no borrados.
+        var match = await dbContext.CitySynonyms
+            .AsNoTracking()
+            .Where(synonym =>
+                synonym.DepartmentId == departmentId &&
+                synonym.NormalizedText == target &&
+                synonym.DeletedAt == null)
+            .Join(
+                dbContext.Cities.AsNoTracking(),
+                synonym => synonym.CityId,
+                synonymCity => synonymCity.Id,
+                (synonym, synonymCity) => new { synonym.Id, City = synonymCity })
+            .SingleOrDefaultAsync(cancellationToken);
+        return match is null ? null : new CityNameMatch(match.City, match.Id);
     }
 }
