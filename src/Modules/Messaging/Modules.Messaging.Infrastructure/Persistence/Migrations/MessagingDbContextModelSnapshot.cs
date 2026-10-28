@@ -508,6 +508,8 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "Channel", "Status", "LastActivityAt", "Id" }, "IX_conversations_tenant_channel_status_activity")
                         .IsDescending(false, false, false, true, true);
 
+                    b.HasIndex(new[] { "TenantId", "CreatedAt" }, "IX_conversations_tenant_created");
+
                     b.HasIndex(new[] { "TenantId", "CustomerId", "LastActivityAt" }, "IX_conversations_tenant_customer_activity")
                         .IsDescending(false, false, true)
                         .HasFilter("customer_id IS NOT NULL");
@@ -1135,6 +1137,13 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex("ConversationId", "OccurredAt", "Id")
                         .IsDescending(false, true, true)
                         .HasDatabaseName("IX_messages_thread");
+
+                    b.HasIndex(new[] { "TenantId", "CreatedAt" }, "IX_messages_events_reopened")
+                        .HasFilter("direction = 3 AND kind = 13");
+
+                    b.HasIndex(new[] { "TenantId", "CreatedAt" }, "IX_messages_tenant_created");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex(new[] { "TenantId", "CreatedAt" }, "IX_messages_tenant_created"), new[] { "ConversationId", "Direction" });
 
                     b.ToTable("messages", "messaging", t =>
                         {

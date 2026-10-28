@@ -243,6 +243,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             .IsUnique().HasFilter("user_id IS NOT NULL");
         conversation.HasIndex(value => new { value.ConnectionId, value.WaId }, "IX_conversations_connection_wa_legacy")
             .IsUnique().HasFilter("user_id IS NULL");
+        conversation.HasIndex(value => new { value.TenantId, value.CreatedAt }, "IX_conversations_tenant_created");
         conversation.HasIndex(value => new { value.TenantId, value.Status, value.LastActivityAt, value.Id }, "IX_conversations_tenant_status_activity")
             .IsDescending(false, false, true, true);
         // Pestaña «Mías» y counts.mine; pestaña «Sin asignar» y counts.unassigned.
@@ -320,6 +321,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
         message.HasIndex(value => new { value.ConversationId, value.OccurredAt, value.Id })
             .IsDescending(false, true, true).HasDatabaseName("IX_messages_thread");
+        // Spec 2026-10-28: el reporte barre por tenant y fecha de llegada (created_at), no por conversación.
+        message.HasIndex(value => new { value.TenantId, value.CreatedAt }, "IX_messages_tenant_created").IncludeProperties(value => new { value.ConversationId, value.Direction });
+        message.HasIndex(value => new { value.TenantId, value.CreatedAt }, "IX_messages_events_reopened")
+            .HasFilter("direction = 3 AND kind = 13");
         message.HasIndex(value => new { value.ConnectionId, value.Wamid }).IsUnique()
             .HasDatabaseName("IX_messages_connection_wamid").HasFilter("wamid IS NOT NULL");
         message.HasIndex(value => new { value.ConversationId, value.ClientId }).IsUnique()
