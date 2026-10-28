@@ -56,14 +56,10 @@ public static class OrdersExportColumnCatalog
         }),
         new("unit_price_without_tax", "Valor Unit sin IVA", 18),
         // Ajuste 2026-09-25, las dos que pide la hoja de importación del ERP (MIGRACION 1): el día
-        // en que nació el pedido y a nombre de quién sale la factura. Al final, como toda columna
-        // nueva, para no mover lo que el ERP ya importa sin layout guardado.
+        // en que nació el pedido y el cliente. Al final, como toda columna nueva, para no mover lo
+        // que el ERP ya importa sin layout guardado. «Cliente» y «Documento de identidad» (ajuste
+        // 2026-09-26) se mudaron el 2026-10-28 al grupo customer_*, al final del catálogo.
         new("order_date", "Fecha Pedido", 14),
-        new("customer_name", "Cliente", 30),
-        // Ajuste 2026-09-26: el número de documento de identidad de quien nombra "Cliente", que es
-        // lo que el ERP del tenant importa en "Documento (P5)". No reemplaza a "document", que
-        // sigue siendo el CUC: otro tenant puede estar leyéndolo de ahí.
-        new("customer_identification", "Documento de identidad", 18),
         // Ajuste 2026-09-26: el banco y el número de cuenta en una sola celda, que es lo que el ERP
         // del tenant importa como forma de pago, y la suma de todos los comprobantes del pedido, que
         // importa como valor consignado. No reemplazan a "bank", "account" ni "proof_amount_N":
@@ -125,25 +121,33 @@ public static class OrdersExportColumnCatalog
         // criterio que «coordinadora_city»: ningún Excel que ya existe —tampoco la hoja «MIGRACION 1» del ERP,
         // que importa por encabezado— gana una columna que nadie pidió; el tenant la prende si la quiere.
         new("variant", "Variante", 36, DefaultVisible: false),
-        // Spec 2026-10-26 tipo de persona: la del mismo sujeto que describe «Documento de identidad»
-        // (consumidor final, parte de facturación o cliente; ver BilledPersonTypeFor). Oculta por defecto y
-        // al final, mismo criterio que «variant»: el layout sembrado de origen-botanico la prende.
-        new("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
-        // Ajuste 2026-10-28: la razón social de la ficha del cliente (`Customer.BusinessName`), repetida en
-        // cada línea. No es la de quien se factura: «Cliente» ya resuelve ese nombre, y esta sale igual
-        // aunque el pedido facture a una parte propia o al consumidor final. Vacía si la ficha no la tiene.
-        // Oculta por defecto y al final, mismo criterio que «customer_person_type».
-        new("business_name", "Razon social", 30, DefaultVisible: false),
-        // Ajuste 2026-10-28: la ficha del cliente y los datos de facturación lado a lado, porque un pedido
-        // puede facturarse a otra persona. «Nombre cliente» e «Identificación cliente» salen siempre de la
-        // ficha (el número, no el CUC), aunque el pedido facture a una parte propia o al consumidor final.
-        // Las de facturación describen a la misma persona que «Documento de identidad»
-        // (OrderBilledParty.SourceFor): consumidor final, la parte de facturación —lo que no trae queda
-        // vacío, nunca con lo del cliente— o la ficha. Ocultas por defecto y al final, mismo criterio que
-        // «business_name».
-        new("customer_own_name", "Nombre cliente", 30, DefaultVisible: false),
-        new("customer_own_identification", "Identificación cliente", 18, DefaultVisible: false),
+        // Reorganización 2026-10-28: la ficha del cliente y los datos para la factura en dos grupos limpios, al
+        // final del catálogo, porque un pedido puede facturarse a otra persona.
+        //  - customer_* = la ficha del cliente. Salen siempre de ella, aunque el pedido facture a una parte
+        //    propia o al consumidor final; lo que la ficha no trae queda vacío. «Cliente» y «Documento de
+        //    identidad» (el número, no el CUC; «document» sigue siendo el CUC) siguen visibles por defecto, el
+        //    resto nace oculto.
+        //  - billing_* = a quién se factura, con la precedencia de OrderBilledParty.SourceFor: consumidor
+        //    final, la parte de facturación —lo que no trae queda vacío, nunca con lo del cliente— o la ficha.
+        //    El consumidor final sólo lleva su número genérico (222222222222) y su nombre; el resto vacío.
+        //    Todas nacen ocultas.
+        // OJO: cambió el significado de «customer_identification» (antes el documento de quien se factura; hoy
+        // el de la ficha) y de «customer_person_type» (idem, hoy la ficha); lo de antes es «billing_identification_number»
+        // y «billing_person_type». Se retiraron «customer_own_name» y «customer_own_identification»: un layout
+        // guardado que las nombre las pierde (Effective descarta las llaves desconocidas).
+        new("customer_name", "Cliente", 30),
+        new("customer_identification_type", "Tipo de identificación cliente", 16, DefaultVisible: false),
+        new("customer_identification", "Documento de identidad", 18),
+        new("customer_person_type", "Tipo de persona cliente", 16, DefaultVisible: false),
+        new("customer_address", "Dirección cliente", 40, DefaultVisible: false),
+        new("customer_city", "Ciudad cliente", 20, DefaultVisible: false),
+        new("customer_department", "Departamento cliente", 20, DefaultVisible: false),
+        new("customer_phone", "Teléfono cliente", 16, DefaultVisible: false),
+        new("customer_email", "Email cliente", 30, DefaultVisible: false),
+        new("billing_name", "Nombre facturación", 30, DefaultVisible: false),
         new("billing_identification_type", "Tipo de identificación facturación", 16, DefaultVisible: false),
+        new("billing_identification_number", "Identificación facturación", 18, DefaultVisible: false),
+        new("billing_person_type", "Tipo de persona facturación", 16, DefaultVisible: false),
         new("billing_address", "Dirección facturación", 40, DefaultVisible: false),
         new("billing_city", "Ciudad facturación", 20, DefaultVisible: false),
         new("billing_department", "Departamento facturación", 20, DefaultVisible: false),

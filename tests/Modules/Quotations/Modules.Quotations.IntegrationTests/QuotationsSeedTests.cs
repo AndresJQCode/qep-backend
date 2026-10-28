@@ -83,7 +83,7 @@ public sealed class QuotationsSeedTests
     /// con este layout de punta a punta.</summary>
     internal static readonly string[] SeededLayoutHeaders =
     [
-        "EMPRESA", "DOC.", "PREFIJO", "No. Doc.", "FECHA", "Tercero Externo", "Nota Encab.",
+        "EMPRESA", "DOC.", "PREFIJO", "No. Doc.", "FECHA", "Tercero Externo", "Cliente",
         "Tercero Interno", "Doc. Externo", "Bloq/act", "Forma de pago 1", "V. Consignacion 1",
         "Forma de pago 2", "V. Consignacion 2", "Verificado", "Anulado", "Cod. Producto", "Bodega",
         "U.Medida", "Cantidad", "Valor Unit", "IVA", "Descuento", "Lote", "Centro costos",
@@ -99,10 +99,9 @@ public sealed class QuotationsSeedTests
         // Ajuste 2026-10-06: visible como "Total facturado", detrás de ella y con su nombre por
         // defecto.
         "Retencion",
-        // Ajuste 2026-10-28: los datos propios del cliente y los de facturación, visibles al final y con
-        // su nombre por defecto. Ninguno choca con un encabezado de la hoja.
-        "Nombre cliente",
-        "Identificación cliente",
+        // Ajuste 2026-10-28: el documento de la ficha del cliente y los datos de facturación, visibles al
+        // final y con su nombre por defecto. Ninguno choca con un encabezado de la hoja.
+        "Documento de identidad",
         "Tipo de identificación facturación",
         "Dirección facturación",
         "Ciudad facturación",
@@ -127,17 +126,33 @@ public sealed class QuotationsSeedTests
             header => string.Equals(header, variant.DefaultHeader, StringComparison.OrdinalIgnoreCase));
     }
 
-    // Spec 2026-10-26 tipo de persona: la columna nueva del catálogo nace oculta, pero la hoja sembrada la
-    // muestra, y su encabezado no puede chocar con ningún otro visible. No necesita base de datos.
+    // Spec 2026-10-26 tipo de persona, reubicada el 2026-10-28: la hoja sembrada muestra «billing_person_type» como
+    // «Tipo de persona» (el de quien se factura) y ese encabezado no puede chocar con ningún otro visible. Las del
+    // catálogo nacen ocultas y sus encabezados por defecto no chocan con la hoja. No necesita base de datos.
     [Fact]
-    public void OrdersExportPersonTypeColumnDoesNotCollideWithSeededHeaders()
+    public void OrdersExportPersonTypeColumnsDoNotCollideWithSeededHeaders()
     {
-        var personType = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "customer_person_type");
+        var billing = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "billing_person_type");
+        var customer = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "customer_person_type");
 
-        Assert.False(personType.DefaultVisible);
+        Assert.False(billing.DefaultVisible);
+        Assert.False(customer.DefaultVisible);
+        Assert.Equal(1, SeededLayoutHeaders.Count(header => header == "Tipo de persona"));
+        Assert.DoesNotContain(SeededLayoutHeaders, header => string.Equals(header, customer.DefaultHeader, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(SeededLayoutHeaders, header => string.Equals(header, billing.DefaultHeader, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Ajuste 2026-10-28: «customer_name» sale con su encabezado por defecto («Cliente», el nombre de la
+    // ficha) y ese encabezado no puede repetirse en otra visible de la hoja. No necesita base de datos.
+    [Fact]
+    public void OrdersExportCustomerNameHeaderIsUniqueAmongSeededHeaders()
+    {
+        var customerName = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "customer_name");
+
+        Assert.Equal("Cliente", customerName.DefaultHeader);
         Assert.Equal(
             1,
-            SeededLayoutHeaders.Count(header => string.Equals(header, personType.DefaultHeader, StringComparison.OrdinalIgnoreCase)));
+            SeededLayoutHeaders.Count(header => string.Equals(header, customerName.DefaultHeader, StringComparison.OrdinalIgnoreCase)));
     }
 
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por
@@ -175,7 +190,7 @@ public sealed class QuotationsSeedTests
         // Spec 2026-10-26 tipo de persona: visible y justo detrás de "Nit".
         var visibleColumns = layout.Columns.Where(column => column.Visible).ToList();
         var personType = Assert.Single(layout.Columns, column => column.Header == "Tipo de persona");
-        Assert.Equal("customer_person_type", personType.Key);
+        Assert.Equal("billing_person_type", personType.Key);
         Assert.True(personType.Visible);
         Assert.Equal(
             visibleColumns.IndexOf(Assert.Single(visibleColumns, column => column.Header == "Nit")) + 1,
@@ -225,12 +240,12 @@ public sealed class QuotationsSeedTests
             ["FECHA", "Bloq/act", "Vencimiento"],
             layout.Columns.Where(column => column.Key == "order_date").Select(column => column.Header));
         Assert.Equal(
-            "Nota Encab.",
+            "Cliente",
             Assert.Single(layout.Columns, column => column.Key == "customer_name").Header);
         // Ajuste 2026-09-26: el ERP importa en "Documento (P5)" el documento de identidad, no el
         // CUC. "document" sigue en la lista, oculta y con su nombre por defecto.
         Assert.Equal(
-            "customer_identification",
+            "billing_identification_number",
             Assert.Single(layout.Columns, column => column.Header == "Documento (P5)").Key);
         var document = Assert.Single(layout.Columns, column => column.Key == "document");
         Assert.False(document.Visible);

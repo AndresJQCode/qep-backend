@@ -227,63 +227,65 @@ public sealed class OrdersExportProcessor(
         var billingCompany = context.Companies.TryGetValue(order.BillingAccount!.CompanyId, out var company)
             ? company
             : null;
-        var empresa = billingCompany?.Name ?? string.Empty;
-        var nitEmpresa = OrdersExportLayoutProjection.FixedCellFor(ErpTaxId(billingCompany?.TaxId));
+        var companyName = billingCompany?.Name ?? string.Empty;
+        var companyTaxId = OrdersExportLayoutProjection.FixedCellFor(ErpTaxId(billingCompany?.TaxId));
         context.Customers.TryGetValue(order.ClientId, out var customer);
-        var documento = customer?.Cuc ?? string.Empty;
+        var cuc = customer?.Cuc ?? string.Empty;
         var parties = context.PartiesByOrder.TryGetValue(order.Id, out var foundParties)
             ? foundParties
             : [];
         var shipping = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
         var billingParty = parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Billing);
-        var (ciudad, direccion, telefono, email) = ContactFor(shipping, customer, context.CityNames);
-        var ciudadCoordinadora = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
-        var cliente = BilledNameFor(order, billingParty, customer);
-        var documentoIdentidad = BilledIdentificationFor(order, billingParty, customer);
-        var tipoPersona = BilledPersonTypeFor(order, billingParty, customer);
-        var facturacion = BilledContactFor(order, billingParty, customer, context.CityNames, context.DepartmentNames);
+        var (city, address, phone, email) = ContactFor(shipping, customer, context.CityNames);
+        var coordinadoraCity = CoordinadoraCityFor(shipping, customer, context.CoordinadoraCityNames);
+        // «Cliente» es el nombre de la ficha; a nombre de quién sale la factura lo dice «Nombre facturación».
+        var customerName = customer?.Name ?? string.Empty;
+        var billingName = BilledNameFor(order, billingParty, customer);
+        var identification = BilledIdentificationFor(order, billingParty, customer);
+        var billingPersonType = BilledPersonTypeFor(order, billingParty, customer);
+        var billingContact = BilledContactFor(order, billingParty, customer, context.CityNames, context.DepartmentNames);
         // D-R8 (spec 2026-10-23): ISO fijo a propósito. Esta hoja es el contrato con el importador del
         // ERP, no un documento para una persona: no sigue el formato de fecha del tenant. No lo «arregles».
-        var fechaPedido = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var orderDate = calendar.ToLocal(order.CreatedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Spec 2026-10-15 §6.4 (y el hotfix del mismo día): las observaciones son las del pedido, que
         // al convertir heredó las de la cotización.
-        var observaciones = order.Notes ?? string.Empty;
-        var codAsesor = AdvisorCodeCell(order, context.Advisors);
+        var notes = order.Notes ?? string.Empty;
+        var advisorCode = AdvisorCodeCell(order, context.Advisors);
         // "Transportadora" (spec 2026-10-05): sólo depende de la recogida. Las demás columnas de
         // entrega no cambian con ella (decisión del owner): sin parte de envío caen al cliente.
         // Spec 2026-10-17 flete (D-F8): la transportadora real del pedido; sin ella, "Coordinadora".
-        var transportadora = order.IsStorePickup
+        var carrier = order.IsStorePickup
             ? StorePickupCarrier
             : string.IsNullOrWhiteSpace(order.CarrierName) ? DefaultCarrier : order.CarrierName;
         // Flete: con recogida o sin modo no hay valor ni modo. Al cobro deja vacío "Valor Flete" porque
         // el monto se paga a la transportadora y no es del documento; los desgloses salen en 0.
         var freightMode = order.IsStorePickup ? null : order.FreightChargeMode;
-        var fleteValor = freightMode switch
+        var freightAmount = freightMode switch
         {
             FreightChargeMode.Charged => ExportCell.OfNumber(order.FreightAmount),
             FreightChargeMode.Free => ExportCell.OfNumber(0m),
             _ => ExportCell.OfText(string.Empty),
         };
-        var fleteSinIva = ExportCell.OfNumber(order.FreightSubtotal);
-        var fleteIva = ExportCell.OfNumber(order.FreightTaxAmount);
-        var fleteModo = ExportCell.OfText(freightMode switch
+        var freightWithoutTax = ExportCell.OfNumber(order.FreightSubtotal);
+        var freightTax = ExportCell.OfNumber(order.FreightTaxAmount);
+        var freightChargeMode = ExportCell.OfText(freightMode switch
         {
             FreightChargeMode.Charged => "Cobrado",
             FreightChargeMode.Free => "Gratis",
             FreightChargeMode.OnDelivery => "Al cobro",
             _ => string.Empty,
         });
-        var contraentrega = ExportCell.OfText(order.CashOnDelivery ? "Sí" : "No");
-        var banco = order.BillingAccount.BankName;
-        var cuenta = order.BillingAccount.AccountNumber;
-        var bancoYCuenta = BankAndAccount(banco, cuenta);
+        var cashOnDelivery = ExportCell.OfText(order.CashOnDelivery ? "Sí" : "No");
+        var bank = order.BillingAccount.BankName;
+        var account = order.BillingAccount.AccountNumber;
+        var bankAndAccount = BankAndAccount(bank, account);
         var proofCells = Enumerable.Range(0, PaymentDateColumns)
             .SelectMany(index => ProofCells(proofs, index, publisher))
             .ToArray();
-        var totalConsignado = ProofTotalCell(proofs);
-        var formasDePago = Enumerable.Range(0, PaymentDateColumns)
-            .Select(index => PaymentMethodCell(proofs, index, bancoYCuenta))
+        var proofAmountTotal = ProofTotalCell(proofs);
+        var paymentMethods = Enumerable.Range(0, PaymentDateColumns)
+            .Select(index => PaymentMethodCell(proofs, index, bankAndAccount))
             .ToArray();
 
         foreach (var item in items)
@@ -293,10 +295,10 @@ public sealed class OrdersExportProcessor(
             // su `Code` y su nombre visible); el catálogo de hoy sólo responde por una línea sin foto. La
             // línea no distingue la variante por defecto sin consultar Catalog —que Quotations no referencia—,
             // así que ahí «Variante» repite el nombre del producto, que es su nombre visible.
-            var variante = ExportCell.OfText(QuotationItemProductLabel.NameOf(item.ProductName, product));
+            var variant = ExportCell.OfText(QuotationItemProductLabel.NameOf(item.ProductName, product));
             yield return
             [
-                ExportCell.OfText(empresa),
+                ExportCell.OfText(companyName),
                 ExportCell.OfText(QuotationItemProductLabel.CodeOf(item.ProductCode, product)),
                 ExportCell.OfNumber(item.Quantity),
                 ExportCell.OfNumber(item.DiscountedUnitPriceWithoutTax),
@@ -304,46 +306,54 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfNumber(item.DiscountAmount),
                 ExportCell.OfText(string.Empty), // Nota Detalle: no existe nota por línea.
                 .. Enumerable.Range(0, PaymentDateColumns).Select(index => PaymentDateCell(proofs, index, calendar)),
-                ExportCell.OfText(ciudad),
-                ExportCell.OfText(documento),
+                ExportCell.OfText(city),
+                ExportCell.OfText(cuc),
                 ExportCell.OfText(order.OrderNumber),
-                ExportCell.OfText(direccion),
-                ExportCell.OfText(observaciones),
-                ExportCell.OfText(telefono),
+                ExportCell.OfText(address),
+                ExportCell.OfText(notes),
+                ExportCell.OfText(phone),
                 ExportCell.OfText(email),
-                codAsesor,
-                ExportCell.OfText(banco),
-                ExportCell.OfText(cuenta),
+                advisorCode,
+                ExportCell.OfText(bank),
+                ExportCell.OfText(account),
                 .. proofCells,
                 ExportCell.OfNumber(item.UnitPriceWithoutTax),
-                ExportCell.OfText(fechaPedido),
-                ExportCell.OfText(cliente),
-                ExportCell.OfText(documentoIdentidad),
-                ExportCell.OfText(bancoYCuenta),
-                totalConsignado,
+                ExportCell.OfText(orderDate),
+                ExportCell.OfText(bankAndAccount),
+                proofAmountTotal,
                 ExportCell.OfNumber(item.TaxPercentage / 100m),
-                nitEmpresa,
-                ExportCell.OfText(ciudadCoordinadora),
-                .. formasDePago,
-                ExportCell.OfText(transportadora),
+                companyTaxId,
+                ExportCell.OfText(coordinadoraCity),
+                .. paymentMethods,
+                ExportCell.OfText(carrier),
                 ExportCell.OfNumber(order.Total),
                 ExportCell.OfNumber(order.RetentionAmount),
-                fleteValor,
-                fleteSinIva,
-                fleteIva,
-                fleteModo,
-                contraentrega,
-                variante,
-                ExportCell.OfText(tipoPersona),
-                ExportCell.OfText(customer?.BusinessName ?? string.Empty),
-                ExportCell.OfText(customer?.Name ?? string.Empty),
+                freightAmount,
+                freightWithoutTax,
+                freightTax,
+                freightChargeMode,
+                cashOnDelivery,
+                variant,
+                // Grupo customer_*: la ficha del cliente, nunca la parte de facturación ni el consumidor final.
+                ExportCell.OfText(customerName),
+                ExportCell.OfText(customer?.IdentificationType ?? string.Empty),
                 ExportCell.OfText(customer?.IdentificationNumber ?? string.Empty),
-                ExportCell.OfText(facturacion.IdentificationType),
-                ExportCell.OfText(facturacion.Address),
-                ExportCell.OfText(facturacion.City),
-                ExportCell.OfText(facturacion.Department),
-                ExportCell.OfText(facturacion.Phone),
-                ExportCell.OfText(facturacion.Email),
+                ExportCell.OfText(customer?.PersonType ?? string.Empty),
+                ExportCell.OfText(customer?.Address ?? string.Empty),
+                ExportCell.OfText(customer?.CityName ?? string.Empty),
+                ExportCell.OfText(customer?.DepartmentName ?? string.Empty),
+                ExportCell.OfText(customer?.Phone ?? string.Empty),
+                ExportCell.OfText(customer?.Email ?? string.Empty),
+                // Grupo billing_*: a quién se factura (OrderBilledParty.SourceFor).
+                ExportCell.OfText(billingName),
+                ExportCell.OfText(billingContact.IdentificationType),
+                ExportCell.OfText(identification),
+                ExportCell.OfText(billingPersonType),
+                ExportCell.OfText(billingContact.Address),
+                ExportCell.OfText(billingContact.City),
+                ExportCell.OfText(billingContact.Department),
+                ExportCell.OfText(billingContact.Phone),
+                ExportCell.OfText(billingContact.Email),
             ];
         }
     }
@@ -394,13 +404,15 @@ public sealed class OrdersExportProcessor(
             _ => customer?.IdentificationNumber ?? string.Empty
         };
 
-    // Spec 2026-10-26 tipo de persona: la misma fuente que «Documento de identidad» (SourceFor), para que las
-    // dos celdas describan siempre a la misma persona. Sin filtro de país: el Excel muestra lo guardado.
+    // Spec 2026-10-26 tipo de persona (reubicada el 2026-10-28 en «billing_person_type»): la misma fuente que
+    // «Identificación facturación» (SourceFor), para que las dos celdas describan siempre a la misma persona. Sin filtro
+    // de país: el Excel muestra lo guardado.
     private static string BilledPersonTypeFor(
         Order order, OrderParty? billing, QuotationCustomerRef? customer) =>
         OrderBilledParty.SourceFor(order.BillsToFinalConsumer, billing) switch
         {
-            BilledPartySource.FinalConsumer => PartyPersonType.Natural.ToWireValue(),
+            // El consumidor final sólo lleva su número genérico: el tipo de persona queda vacío (2026-10-28).
+            BilledPartySource.FinalConsumer => string.Empty,
             // Una parte sin tipo lo deja vacío, nunca con el del cliente, que es otra persona.
             BilledPartySource.BillingParty => billing!.PersonType?.ToWireValue() ?? string.Empty,
             _ => customer?.PersonType ?? string.Empty
