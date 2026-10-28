@@ -12,11 +12,24 @@ public sealed class TenantRegistrationService(
     ITenancyUnitOfWork unitOfWork,
     IAuditRecorder auditRecorder,
     IOutboxWriter outboxWriter,
-    IClock clock)
+    IClock clock,
+    ITenantSlugAvailability slugAvailability)
     : ITenantRegistration
 {
     private static readonly string[] AdminRoles = [Membership.AdminRole];
     private const string Origin = Membership.RegistrationOrigin;
+
+    public async Task EnsureRegistrableAsync(TenantRegistrationData data, CancellationToken cancellationToken)
+    {
+        // Mismas reglas y códigos que Tenant.Create: el formato falla antes de tocar la base.
+        var slug = Tenant.EnsureValidRegistration(
+            data.Slug, data.DisplayName, data.DefaultCulture, data.TimeZone, data.DateFormat);
+
+        if (await slugAvailability.IsTakenAsync(slug, cancellationToken))
+        {
+            throw new TenantDomainException("tenancy.slug.taken", "Tenant slug is already in use.");
+        }
+    }
 
     public async Task<Guid> RegisterOwnerTenantAsync(
         Guid ownerUserId,

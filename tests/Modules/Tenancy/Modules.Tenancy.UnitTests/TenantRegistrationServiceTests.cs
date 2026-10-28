@@ -64,8 +64,41 @@ public sealed class TenantRegistrationServiceTests
         Assert.Single(steps, step => step == "commit");
     }
 
+    [Fact]
+    public async Task EnsureRegistrableThrowsSlugTakenWhenTheSlugExists()
+    {
+        var (service, availability) = NewSlugService("acme");
+        var error = await Assert.ThrowsAsync<TenantDomainException>(
+            () => service.EnsureRegistrableAsync(DataWithSlug("  ACME "), TestContext.Current.CancellationToken));
+        Assert.Equal("tenancy.slug.taken", error.Code);
+        Assert.Equal(["acme"], availability.Asked);
+    }
+
+    [Fact]
+    public async Task EnsureRegistrableValidatesBeforeAskingForTheSlug()
+    {
+        var (service, availability) = NewSlugService();
+        var error = await Assert.ThrowsAsync<TenantDomainException>(
+            () => service.EnsureRegistrableAsync(DataWithSlug("a"), TestContext.Current.CancellationToken));
+        Assert.Equal("tenancy.slug.invalid", error.Code);
+        Assert.Empty(availability.Asked);
+    }
+
+    private static TenantRegistrationData DataWithSlug(string slug) => Data with { Slug = slug };
+
+    private static (TenantRegistrationService Service, RecordingSlugAvailability Availability) NewSlugService(
+        params string[] takenSlugs)
+    {
+        var availability = new RecordingSlugAvailability(takenSlugs);
+        return (NewService([], new RecordingTenantModuleRepository([]), new FixedDefaults([]), availability),
+            availability);
+    }
+
     private static TenantRegistrationService NewService(
-        List<string> steps, RecordingTenantModuleRepository modules, ITenantModuleDefaults defaults) =>
+        List<string> steps,
+        RecordingTenantModuleRepository modules,
+        ITenantModuleDefaults defaults,
+        ITenantSlugAvailability? slugAvailability = null) =>
         new(
             new RecordingTenantRepository(steps),
             new InMemoryMembershipRepository(),
@@ -74,7 +107,19 @@ public sealed class TenantRegistrationServiceTests
             new RecordingTenancyUnitOfWork(steps),
             new RecordingAuditRecorder(),
             new RecordingOutboxWriter(),
-            new FixedClock(Now));
+            new FixedClock(Now),
+            slugAvailability ?? new RecordingSlugAvailability());
+
+    private sealed class RecordingSlugAvailability(params string[] takenSlugs) : ITenantSlugAvailability
+    {
+        public List<string> Asked { get; } = [];
+
+        public Task<bool> IsTakenAsync(string normalizedSlug, CancellationToken cancellationToken)
+        {
+            Asked.Add(normalizedSlug);
+            return Task.FromResult(takenSlugs.Contains(normalizedSlug));
+        }
+    }
 
     private sealed class RecordingTenantRepository(List<string> steps) : ITenantRepository
     {

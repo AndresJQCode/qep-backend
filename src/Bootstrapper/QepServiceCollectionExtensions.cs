@@ -30,6 +30,7 @@ using Modules.Customers.Application;
 using Modules.Customers.Infrastructure;
 using Modules.Geography.Application;
 using Modules.Geography.Infrastructure;
+using Modules.Identity.Application;
 using Modules.Identity.Infrastructure;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
@@ -884,6 +885,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateConnectionValidator>();
         services.AddValidatorsFromAssemblyContaining<ListUnresolvedCitiesValidator>();
+        services.AddValidatorsFromAssemblyContaining<NewPasswordValidator>();
         services.AddAuditInfrastructure(configuration);
         services.AddTenancyInfrastructure(configuration);
         services.AddIdentityInfrastructure(configuration);

@@ -5,7 +5,7 @@ using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness
 namespace Modules.Notifications.IntegrationTests;
 
 /// <summary>El interruptor del harness: sin él, cada prueba que llama a DrainAsync competiría con los
-/// cinco workers del host.</summary>
+/// nueve workers del host.</summary>
 public sealed class DeliveryWorkersHarnessTests
 {
     [Fact]
@@ -20,12 +20,12 @@ public sealed class DeliveryWorkersHarnessTests
     }
 
     [Fact]
-    public async Task TheSwitchPutsTheSixWorkersBack()
+    public async Task TheSwitchPutsTheNineWorkersBack()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new NotificationsApiFactory(database.GetConnectionString(), runDeliveryWorkers: true);
 
-        Assert.Equal(6, factory.Services.GetServices<IHostedService>()
+        Assert.Equal(9, factory.Services.GetServices<IHostedService>()
             .Count(service => IsDeliveryWorker(service.GetType())));
     }
 }

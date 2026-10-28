@@ -131,6 +131,25 @@ public sealed class Tenant
         new(id, slug, displayName, defaultCulture, timeZone, dateFormat, ownerMembershipId,
             createdAt);
 
+    /// <summary>
+    /// Aplica las mismas reglas y los mismos códigos que <see cref="Create"/> a los datos de un
+    /// registro, sin construir el tenant. Devuelve el slug normalizado.
+    /// </summary>
+    public static string EnsureValidRegistration(
+        string slug,
+        string displayName,
+        string defaultCulture,
+        string timeZone,
+        string dateFormat)
+    {
+        var normalizedSlug = ValidateSlug(slug);
+        ValidateDisplayName(displayName);
+        ValidateCulture(defaultCulture);
+        ValidateTimeZone(timeZone);
+        ValidateDateFormat(dateFormat);
+        return normalizedSlug;
+    }
+
     /// <summary>Si esa membresía es la autoridad de este tenant.</summary>
     public bool IsOwner(MembershipId membershipId) => OwnerMembershipId == membershipId;
 

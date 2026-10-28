@@ -39,6 +39,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Identity.Domain": "[1.0.0, )"
         }

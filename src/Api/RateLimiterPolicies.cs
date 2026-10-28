@@ -9,4 +9,8 @@ public static class RateLimiterPolicies
     /// <summary>Spec 2026-10-09 §6.7: concurrencia global con cola para el webhook de Meta, no una
     /// ventana por IP (§8.2).</summary>
     public const string Webhook = "webhook";
+
+    /// <summary>Endpoints de credenciales (login, registro, reset, aceptar invitación): 10 por minuto
+    /// por IP y por endpoint, cada uno con su contador.</summary>
+    public const string Credentials = "credentials";
 }

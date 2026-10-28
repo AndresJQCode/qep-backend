@@ -196,6 +196,25 @@ internal static class NotificationsDeliveryHarness
         return rows;
     }
 
+    /// <summary>El <c>tenant_id</c> de la notificación de ese destinatario y plantilla; null si se
+    /// guardó sin tenant (los correos de cuenta).</summary>
+    public static async Task<Guid?> TenantIdOfAsync(string connectionString, Guid recipientId, string templateRef)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT tenant_id FROM notifications.notifications
+            WHERE recipient_id = @recipientId AND template_ref = @templateRef
+            ORDER BY created_at LIMIT 1
+            """,
+            connection);
+        command.Parameters.AddWithValue("recipientId", recipientId);
+        command.Parameters.AddWithValue("templateRef", templateRef);
+        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return value is null or DBNull ? null : (Guid)value;
+    }
+
     // Sondeo con plazo, igual que InvitationNotificationTests: el tick es del worker, no de la prueba.
     public static async Task<NotificationRow?> WaitForNotificationAsync(
         string connectionString, Guid recipientId, string templateRef)

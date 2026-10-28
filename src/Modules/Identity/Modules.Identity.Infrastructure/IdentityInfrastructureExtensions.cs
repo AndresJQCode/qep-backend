@@ -25,10 +25,23 @@ public static class IdentityInfrastructureExtensions
                     "__ef_migrations_history",
                     "identity")));
         services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IPasswordCredentialRepository, PasswordCredentialRepository>();
+        services.AddScoped<IEmailTokenRepository, EmailTokenRepository>();
+        services.AddScoped<IEmailTokenIssuer, EmailTokenIssuer>();
+        // Sin estado por request: el hash ficticio se calcula una vez por proceso.
+        services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
         services.AddScoped<IIdentityUnitOfWork, IdentityUnitOfWork>();
+        services.AddScoped<IIdentityOutbox, IdentityOutboxWriter>();
         services.AddScoped<IIdentityProvisioning, IdentityProvisioningService>();
+        services.AddScoped<IVerifiedProviderLinker, VerifiedProviderLinker>();
         services.AddScoped<IProviderLinking, ProviderLinkingService>();
         services.AddScoped<IOwnerProvisioning, OwnerProvisioningService>();
+        services.AddScoped<IPasswordRegistration, PasswordRegistrationService>();
+        services.AddScoped<IEmailVerification, EmailVerificationService>();
+        services.AddScoped<IPasswordReset, PasswordResetService>();
+        services.AddScoped<PasswordCredentialVerifier>();
+        services.AddScoped<IPasswordLogin, PasswordLoginService>();
+        services.AddScoped<IPasswordCredentials, PasswordCredentialsService>();
         services.AddScoped<IProviderIdentityResolver, ProviderIdentityResolver>();
         services.AddScoped<IUserDirectory, UserDirectory>();
         services.AddScoped<IUserPreferenceService, UserPreferenceService>();
