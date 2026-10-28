@@ -99,6 +99,16 @@ public sealed class QuotationsSeedTests
         // Ajuste 2026-10-06: visible como "Total facturado", detrás de ella y con su nombre por
         // defecto.
         "Retencion",
+        // Ajuste 2026-10-28: los datos propios del cliente y los de facturación, visibles al final y con
+        // su nombre por defecto. Ninguno choca con un encabezado de la hoja.
+        "Nombre cliente",
+        "Identificación cliente",
+        "Tipo de identificación facturación",
+        "Dirección facturación",
+        "Ciudad facturación",
+        "Departamento facturación",
+        "Teléfono facturación",
+        "Email facturación",
     ];
 
     // Spec 2026-10-20 variantes §7: la columna nueva «Variante» del catálogo no pisa ningún encabezado de

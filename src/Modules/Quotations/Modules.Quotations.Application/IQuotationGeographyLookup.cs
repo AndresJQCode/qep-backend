@@ -23,4 +23,12 @@ public interface IQuotationGeographyLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El nombre de cada departamento, para la columna «Departamento facturación» del Excel de pedidos
+    /// (ajuste 2026-10-28) cuando se factura a una parte con datos propios. Un id que no existe no
+    /// aparece en el diccionario, mismo criterio que <see cref="FindCityNamesAsync"/>.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
+        IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken);
 }
