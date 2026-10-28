@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Pricing;
 using Microsoft.EntityFrameworkCore;
 using Modules.Quotations.Domain;
 
@@ -120,6 +121,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("is_store_pickup");
         quotation.Property(value => value.IsRetail)
             .HasColumnName("is_retail");
+        // La regla de redondeo con que se preció el documento (spec 2026-10-27 §4): dos columnas nulas, que
+        // EF lee y escribe por el campo. Nulas = documento anterior a la regla. El modo viaja por nombre.
+        quotation.Ignore(value => value.PriceRounding);
+        quotation.Property<int?>("_priceRoundingDecimals")
+            .HasColumnName("price_rounding_decimals")
+            .HasColumnType("smallint");
+        quotation.Property<PriceRoundingMode?>("_priceRoundingMode")
+            .HasColumnName("price_rounding_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         quotation.Property(value => value.BillsToFinalConsumer)
             .HasColumnName("bills_to_final_consumer");
         quotation.Property(value => value.CustomerWithRetention)
@@ -519,6 +530,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("payment_method")
             .HasMaxLength(Order.PaymentMethodMaxLength);
         order.Property(value => value.IsRetail).HasColumnName("is_retail");
+        // La regla de redondeo con que se preció el documento (spec 2026-10-27 §4): dos columnas nulas, que
+        // EF lee y escribe por el campo. Nulas = documento anterior a la regla. El modo viaja por nombre.
+        order.Ignore(value => value.PriceRounding);
+        order.Property<int?>("_priceRoundingDecimals")
+            .HasColumnName("price_rounding_decimals")
+            .HasColumnType("smallint");
+        order.Property<PriceRoundingMode?>("_priceRoundingMode")
+            .HasColumnName("price_rounding_mode")
+            .HasConversion<string>()
+            .HasMaxLength(16);
         order.Property(value => value.GlobalScaleFloor).HasColumnName("global_scale_floor");
         order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
         order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");

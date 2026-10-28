@@ -774,6 +774,66 @@ Los cuerpos van a archivo y se mandan con `-f`: PowerShell rompe las comillas al
   queda un hueco en la serie. Diez de prefijo, más el año con separador, más diez dígitos no caben:
   haz la cuenta antes de configurar.
 
+## Redondeo de precios
+
+Cada tenant decide cómo se redondea su lista de precios, moneda por moneda (spec 2026-10-27). La
+fórmula de la línea es **una sola** para todas las monedas y todos los tenants, el unitario primero:
+
+```
+lista     = R(precio de lista)
+unitario  = R(lista × (1 − descuento/100))
+línea     = Round2(cantidad × unitario)               // lo que se cobra, IVA adentro
+descuento = Round2(cantidad × lista) − línea
+IVA       = Round2(línea × tasa / (100 + tasa))       // sólo COP discrimina IVA
+base      = línea − IVA
+```
+
+`R` es la regla de la moneda: `(decimales, modo)`. El modo es `Nearest` (al más cercano, la mitad se
+aleja de cero), `Up` (hacia arriba) o `Down` (hacia abajo). Los decimales van de `0` a los del
+catálogo de monedas (COP 0, USD 2, EUR 2). **Por defecto**, una moneda sin configurar usa
+`(decimales del catálogo, Nearest)`: para COP es exactamente lo de antes. Ejemplo de aceptación: USD
+`(2, Up)`, 13,19 con 15 % da unitario 11,22; con 10 unidades, línea 112,20 y descuento 19,70.
+
+La regla aplica sólo al precio con IVA incluido. Los valores sin IVA (los que lee el Excel del ERP),
+los totales del encabezado y los del POS siguen a 2 decimales, al más cercano.
+
+### Configurarla
+
+`GET` y `PUT /api/v1/tenants/{tenantId}/settings/price-rounding`, con `SettingsRead` y
+`SettingsUpdate`. La respuesta trae **todas** las monedas del catálogo, en su orden, también las que
+usan el valor por defecto (`isDefault`), con `maxDecimals` ya resuelto. La sesión
+(`ActiveTenantResponse.PriceRoundings`) la lleva igual. Sólo se guarda una fila por moneda no
+predeterminada (`tenancy.tenant_price_roundings`); el cambio se audita como
+`tenancy.price_rounding.updated`.
+
+```json
+{
+  "currencies": [
+    { "currency": "COP", "decimals": 0, "mode": "Nearest" },
+    { "currency": "USD", "decimals": 2, "mode": "Up" }
+  ]
+}
+```
+
+### Qué documentos se recalculan y cuándo
+
+- **Editables:** cotización `Draft`/`Sent` y pedido `Pending` se recalculan con la regla vigente la
+  próxima vez que alguien los edita. Abrirlos no los recalcula: ningún `GET` escribe, y no hay
+  recálculo masivo al guardar la regla.
+- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`, pedido `Approved`,
+  `Cancelled` o `Invoiced`, venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
+  columnas nullable; `null` cuenta como el valor por defecto de su moneda).
+- **Conversión:** el pedido hereda la regla guardada de la cotización.
+- **Pedidos externos (Shopify):** usan siempre el valor por defecto de su moneda, aun editados.
+- **POS:** lee la regla en cada vista previa y en cada venta. Si cambia entre la vista previa y la
+  venta, la venta responde `pos.sale.payment_insufficient` y el carrito se refresca.
+
+### Riesgo con Siigo
+
+La facturación masiva de Ritual manda a Siigo `round("Valor Unit" × (1 + IVA)) × cantidad`. Con COP en
+`(0, Nearest)` QEP y Siigo cuadran. Si un admin pone COP en `Up` o `Down`, pueden diferir en un peso
+por unidad.
+
 ## Módulos por tenant
 
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la

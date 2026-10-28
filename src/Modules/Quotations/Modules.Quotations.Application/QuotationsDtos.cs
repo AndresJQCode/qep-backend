@@ -11,7 +11,7 @@ public sealed record QuotationItemDto(
     decimal DiscountAmount,
     /// <summary>Lo que cuesta cada unidad ya con el descuento aplicado, IVA adentro — misma
     /// unidad que <c>UnitPrice</c>, no la de <c>Subtotal</c>. Lo calcula la línea
-    /// (<c>QuotationItem.DiscountedUnitPrice</c>) y no quien lo muestra: la pantalla y el PDF lo
+    /// (<c>QuotationItem.DiscountedUnitPriceUnder</c>, con la regla de redondeo del documento) y no quien lo muestra: la pantalla y el PDF lo
     /// derivaban cada uno por su cuenta.</summary>
     decimal DiscountedUnitPrice,
     decimal Subtotal,

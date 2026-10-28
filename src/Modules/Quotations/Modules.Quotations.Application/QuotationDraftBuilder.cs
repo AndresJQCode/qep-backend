@@ -37,6 +37,7 @@ public sealed class QuotationDraftBuilder(
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
     ITenantDefaultCurrency tenantDefaultCurrency)
 {
@@ -88,7 +89,7 @@ public sealed class QuotationDraftBuilder(
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, new ResolvedEdits(edits, validUntil), input.TenantId, customerLookup, companyLookup,
-            pricingLookup, settingsStore, shippingResolver, input.AdvisorId, input.Now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, shippingResolver, input.AdvisorId, input.Now, cancellationToken);
 
         // El resumen del encabezado se ignora a propósito: el encabezado es parte de la creación (§7.4).
         return new QuotationDraft(quotation, customer.Name) { ItemEdits = outcome.ItemEdits };

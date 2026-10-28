@@ -476,4 +476,60 @@ public sealed class PosSaleApiTests
         var sale = await sold.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
         Assert.Equal(("EUR", 19m), (sale!.Currency, sale.Total));
     }
+
+    // Spec 2026-10-27: la venta en dólares se cobra con la regla del tenant y la conserva: cambiar la regla
+    // después no mueve lo que ya se cobró.
+    [Fact]
+    public async Task ADollarSaleUsesTheTenantRuleAndKeepsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        await ExecuteSqlAsync(
+            database, "UPDATE tenancy.tenants SET default_currency = 'USD' WHERE id = @id", ("id", world.Tenant.TenantId));
+        var kit = await CreateProductAsync(
+            world.Tenant.Seeder, world.Tenant.TenantId, "KIT-1", "Kit USD", 0m, null,
+            new Dictionary<string, decimal> { ["USD"] = 13.19m });
+        using var settings = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.Tenant.TenantId, "tenancy.settings.update");
+        var session = await world.OpenSessionAsync(world.Admin);
+        Assert.Equal("USD", session.Currency);
+        (await PutRuleAsync(settings, world.Tenant.TenantId, "Up")).EnsureSuccessStatusCode();
+        var id = Guid.CreateVersion7();
+
+        var sold = await world.Admin.PostAsJsonAsync($"{world.Url}/sales",
+            PosWorld.SaleBody(id, session.Id,
+                [new { variantId = kit, quantity = 10m, discountPercentage = 15m, expectedUnitPrice = 13.19m, expectedTaxPercentage = 0 }],
+                PosWorld.CashPayment(150m)),
+            TestContext.Current.CancellationToken);
+        (await PutRuleAsync(settings, world.Tenant.TenantId, "Nearest")).EnsureSuccessStatusCode();
+        var read = await world.Admin.GetFromJsonAsync<PosSaleResponse>($"{world.Url}/sales/{id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, sold.StatusCode);
+        var sale = await sold.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal(112.20m, sale!.Total);
+        Assert.Equal(112.20m, read!.Total);
+        Assert.Equal(19.70m, read.DiscountAmount);
+        // La venta guarda la regla que usó: lo prueban las columnas, no la respuesta.
+        Assert.Equal(
+            1,
+            await CountAsync(
+                database,
+                "SELECT count(*) FROM pos.sales WHERE id = @id AND price_rounding_decimals = 2 AND price_rounding_mode = 'Up'",
+                ("id", id)));
+    }
+
+    private static Task<HttpResponseMessage> PutRuleAsync(HttpClient client, Guid tenantId, string usdMode) =>
+        client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/settings/price-rounding",
+            new
+            {
+                currencies = new object[]
+                {
+                    new { currency = "COP", decimals = 0, mode = "Nearest" },
+                    new { currency = "USD", decimals = 2, mode = usdMode },
+                    new { currency = "EUR", decimals = 2, mode = "Nearest" },
+                },
+            },
+            TestContext.Current.CancellationToken);
 }

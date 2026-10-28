@@ -46,6 +46,7 @@ public sealed class OrderDraftBuilderPersonTypeTests
                 new Dictionary<string, decimal> { ["COP"] = 10_000m }, [], 19)),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             settings,
+            new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
             new FixedTenantDefaultCurrency(),
             new StubTenantDirectory

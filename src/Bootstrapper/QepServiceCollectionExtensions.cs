@@ -79,6 +79,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateTenantSettingsCommand, TenantSettingsDto>,
             UpdateTenantSettingsHandler>();
         services.AddScoped<
+            IQueryHandler<GetPriceRoundingQuery, PriceRoundingSettingsDto>,
+            GetPriceRoundingHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdatePriceRoundingCommand, PriceRoundingSettingsDto>,
+            UpdatePriceRoundingHandler>();
+        services.AddScoped<
             ICommandHandler<SetTenantLogoCommand, TenantSettingsDto>,
             SetTenantLogoHandler>();
         services.AddScoped<

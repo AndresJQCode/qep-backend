@@ -186,6 +186,10 @@ public sealed class ExternalOrderService(
                 OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
                 draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
                 draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle);
+            // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
+            // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation
+            // lo mantiene así cuando el pedido se edita.
+            order.UsePriceRounding(PriceRoundingDefaults.For(order.Currency), draft.OccurredAt);
 
             orderRepository.Add(order);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(

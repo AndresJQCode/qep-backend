@@ -62,9 +62,35 @@ public sealed class QuotationsDbContextMappingTests
 
         var item = model.FindEntityType(typeof(QuotationItem))!;
 
-        Assert.Null(item.FindProperty(nameof(QuotationItem.DiscountedUnitPrice)));
+        Assert.Null(item.FindProperty("DiscountedUnitPrice"));
+        Assert.Null(item.FindProperty("DiscountedUnitPriceUnder"));
         Assert.Null(item.FindProperty(nameof(QuotationItem.DiscountedUnitPriceWithoutTax)));
         Assert.NotNull(item.FindProperty(nameof(QuotationItem.DiscountAmount)));
+    }
+
+    /// <summary>
+    /// La regla de redondeo con que se preció el documento son dos columnas nulas, en cotizaciones y
+    /// en pedidos: nulas porque un documento anterior no la guardó y se lee con la de siempre. El
+    /// modo viaja por nombre, no por número.
+    /// </summary>
+    [Fact]
+    public void ThePriceRoundingIsTwoNullableColumns()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var model = context.GetService<IDesignTimeModel>().Model;
+
+        foreach (var entity in new[] { typeof(Quotation), typeof(Order) })
+        {
+            var type = model.FindEntityType(entity)!;
+            var decimals = type.FindProperty("_priceRoundingDecimals")!;
+            var mode = type.FindProperty("_priceRoundingMode")!;
+
+            Assert.Equal("price_rounding_decimals", decimals.GetColumnName());
+            Assert.True(decimals.IsNullable);
+            Assert.Equal("price_rounding_mode", mode.GetColumnName());
+            Assert.True(mode.IsNullable);
+            Assert.Equal(16, mode.GetMaxLength());
+        }
     }
 
     /// <summary>

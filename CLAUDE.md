@@ -614,6 +614,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **`run_units` se escribe en el mismo `SaveChanges` de la unidad y vive 3 días (`RunDetailRetentionDays`); armarla nunca lanza
   (`RunUnitWriter`).** Un camino nuevo que cierre una corrida fuera del motor llama `WriteClosed`, o la vista no explica por qué
   terminó.
+- **La regla de redondeo de un documento vive en dos columnas nullable, y `null` es `PriceRounding.LegacyFor`** (spec 2026-10-27).
+  `LegacyFor` tiene el literal `"COP"` porque BuildingBlocks no ve el catálogo; `TheLegacyRuleMatchesTheDefaultForEveryCatalogueCurrency`
+  la amarra a `PriceRoundingDefaults.For`. Una moneda nueva con otros decimales pone roja esa prueba: decide ahí si los documentos viejos
+  de esa moneda se leen con la regla vieja. La regla sólo baja al documento en `QuotationPricingRecalculation`/`OrderPricingRecalculation`
+  (`UsePriceRounding`); un camino nuevo que rehaga líneas sin pasar por ahí calcula con la regla guardada, no con la vigente. Los pedidos
+  externos nunca toman la del tenant.
 - **ImageSharp sigue en 3.1.12 con sus avisos suprimidos, y subirla exige una licencia de Six Labors** (2026-10-07,
   ampliado el 2026-10-27 con GHSA-v76p-62qx-wwq2). Un `NU1903` nuevo de `SixLabors.ImageSharp` rompe el restore, el build y
   el `docker build` por `TreatWarningsAsErrors`, y no es culpa de la rama en curso. Las versiones corregidas (3.2.0 y 4.x)

@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Pricing;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -1354,4 +1355,27 @@ internal sealed class StubTenantDirectory : ITenantDirectory
 
     public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<TenantStatus?>(null);
+}
+
+/// <summary>La regla de redondeo del tenant, fija por prueba: la moneda que no se configura usa el valor por defecto
+/// de su catálogo, como el lector real (spec 2026-10-27).</summary>
+public sealed class FixedTenantPriceRounding(params (string Currency, PriceRounding Rule)[] rules) : ITenantPriceRounding
+{
+    public Task<PriceRounding> GetAsync(Guid tenantId, string currency, CancellationToken cancellationToken) =>
+        Task.FromResult(
+            rules.Any(rule => rule.Currency == currency)
+                ? rules.First(rule => rule.Currency == currency).Rule
+                : PriceRoundingDefaults.For(currency));
+
+    public async Task<IReadOnlyDictionary<string, PriceRounding>> GetAllAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        var all = new Dictionary<string, PriceRounding>();
+        foreach (var currency in Currencies.All)
+        {
+            all[currency.Code] = await GetAsync(tenantId, currency.Code, cancellationToken);
+        }
+
+        return all;
+    }
 }

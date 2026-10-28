@@ -15,7 +15,8 @@ public sealed class QuotationUsdTaxNotItemizedTests
     private static readonly MemberId AdvisorId = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 10, 14, 12, 0, 0, TimeSpan.Zero);
 
-    // 100 × 24,63 con 5% son 2.339,85: se cobran enteros, sin IVA aparte y sin base recortada.
+    // Unitario primero (spec 2026-10-27, (2, Nearest)): 24,63 × 0,95 = 23,3985 → 23,40; 100 × 23,40 =
+    // 2.340,00 (antes 2.339,85); descuento 2.463,00 − 2.340,00 = 123,00 (antes 123,15). Se cobran enteros, sin IVA aparte y sin base recortada.
     [Fact]
     public void InUsdTheLineKeepsThePriceAndItemizesNoTax()
     {
@@ -26,9 +27,9 @@ public sealed class QuotationUsdTaxNotItemizedTests
 
         Assert.Equal(0, item.TaxPercentage);
         Assert.Equal(0m, item.TaxAmount);
-        Assert.Equal(2_339.85m, item.Subtotal);
-        Assert.Equal(123.15m, item.DiscountAmount);
-        Assert.Equal(23.40m, item.DiscountedUnitPrice);
+        Assert.Equal(2_340.00m, item.Subtotal);
+        Assert.Equal(123.00m, item.DiscountAmount);
+        Assert.Equal(23.40m, item.DiscountedUnitPriceUnder(quotation.PriceRounding));
         Assert.Equal(23.40m, item.DiscountedUnitPriceWithoutTax);
         Assert.Equal(24.63m, item.UnitPriceWithoutTax);
     }
@@ -40,10 +41,11 @@ public sealed class QuotationUsdTaxNotItemizedTests
         AddItem(quotation, quantity: 100m, unitPrice: 24.63m, discountPercentage: 5m, taxPercentage: 19);
         AddItem(quotation, quantity: 2m, unitPrice: 10m, discountPercentage: 0m, taxPercentage: 5);
 
-        Assert.Equal(2_359.85m, quotation.Subtotal);
+        // 2.340,00 + 2 × 10 = 2.360,00 (antes 2.359,85, con el unitario sin redondear).
+        Assert.Equal(2_360.00m, quotation.Subtotal);
         Assert.Equal(0m, quotation.TaxAmount);
         Assert.Equal(0m, quotation.TaxPercentage);
-        Assert.Equal(2_359.85m, quotation.Total);
+        Assert.Equal(2_360.00m, quotation.Total);
     }
 
     // En COP nada cambia: el IVA se sigue extrayendo del precio.
@@ -76,7 +78,8 @@ public sealed class QuotationUsdTaxNotItemizedTests
         Assert.Equal("USD", quotation.Currency);
         Assert.Equal(0m, quotation.TaxAmount);
         Assert.Equal(0, quotation.Items.Single().TaxPercentage);
-        Assert.Equal(2_339.85m, quotation.Total);
+        // 100 × 23,40 = 2.340,00 (antes 2.339,85).
+        Assert.Equal(2_340.00m, quotation.Total);
     }
 
     // Y volver a COP lo discrimina otra vez con la tasa del catálogo, no con el cero guardado.
@@ -106,7 +109,8 @@ public sealed class QuotationUsdTaxNotItemizedTests
         AddItem(quotation, quantity: 100m, unitPrice: 24.63m, discountPercentage: 5m, taxPercentage: 19);
 
         Assert.Equal(0m, quotation.RetentionAmount);
-        Assert.Equal(2_339.85m, quotation.NetTotal);
+        // 100 × 23,40 = 2.340,00 (antes 2.339,85).
+        Assert.Equal(2_340.00m, quotation.NetTotal);
         Assert.Equal(quotation.Total, quotation.NetTotal);
     }
 

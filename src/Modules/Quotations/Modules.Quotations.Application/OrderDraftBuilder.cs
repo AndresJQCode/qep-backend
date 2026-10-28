@@ -35,6 +35,7 @@ public sealed class OrderDraftBuilder(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationProductLookup productLookup,
     IQuotationSettingsStore settingsStore,
+    ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
     ITenantDefaultCurrency tenantDefaultCurrency,
     ITenantDirectory tenantDirectory)
@@ -62,7 +63,7 @@ public sealed class OrderDraftBuilder(
         await BillingPersonTypeRequirement.EnsureForOrderAsync(
             tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
         return order;
     }
 
@@ -84,7 +85,7 @@ public sealed class OrderDraftBuilder(
             shipping, lines,
             input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
-            pricingLookup, settingsStore, input.TenantId, order, now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
         return order;
     }
 

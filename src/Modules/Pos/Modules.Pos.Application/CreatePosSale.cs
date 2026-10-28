@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Pricing;
 using FluentValidation;
 using Modules.Pos.Domain;
 using Modules.Tenancy.Application;
@@ -86,6 +87,7 @@ public sealed class CreatePosSaleHandler(
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
     IPosCustomerLookup customers,
+    ITenantPriceRounding priceRounding,
     IExecutionContext executionContext,
     IClock clock,
     ITenantClock tenantClock,
@@ -171,9 +173,12 @@ public sealed class CreatePosSaleHandler(
 
             // 6. Venta (valida líneas y pagos). Un total en cero sin descuento sólo sale de
             // productos con precio 0, y regalar también es un descuento.
+            // La regla se lee al cobrar y la venta la guarda; el chequeo price_changed del paso 4 no la mira
+            // (spec 2026-10-27 D8): si cambió desde la vista previa, el desajuste sale como pago insuficiente.
             var now = clock.UtcNow;
+            var rounding = await priceRounding.GetAsync(command.TenantId, session.Currency, cancellationToken);
             sale = PosSale.Create(
-                saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now, customer);
+                saleId, fingerprint, session, lines, command.Payments.Select(ToInput).ToArray(), now, customer, rounding);
             if (sale.Total == 0 && !canDiscount)
             {
                 throw DiscountNotAllowed();

@@ -158,7 +158,7 @@ public sealed class QuotationApiTests
         using var body = System.Text.Json.JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Equal("quotations.party.person_type_requires_nit", body.RootElement.GetProperty("code").GetString());
-        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.IdentificationType", out _));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.IdentificationType", out var field));
     }
 
     // Spec 2026-10-26: con OnCustomerSave una fila de facturación sin tipo de persona no se envía. La cotización se
@@ -197,7 +197,7 @@ public sealed class QuotationApiTests
         using var body = System.Text.Json.JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Equal("quotation.billing.person_type_required", body.RootElement.GetProperty("code").GetString());
-        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.PersonType", out _));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Parties.Billing.PersonType", out var field));
     }
 
     [Fact]
@@ -486,5 +486,13 @@ public sealed class QuotationApiTests
             $"{QuotationsUrl(tenantId)}/{Guid.NewGuid()}", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    private static async Task<QuotationResponse> GetQuotationAsync(HttpClient client, Guid tenantId, Guid quotationId)
+    {
+        var quotation = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotationId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(quotation);
+        return quotation;
     }
 }

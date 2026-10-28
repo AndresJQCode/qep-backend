@@ -1,4 +1,5 @@
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -24,11 +25,18 @@ internal static class QuotationPricingRecalculation
     public static async Task ApplyAsync(
         IQuotationProductPricingLookup lookup,
         IQuotationSettingsStore settingsStore,
+        ITenantPriceRounding priceRounding,
         Guid tenantId,
         Quotation quotation,
         DateTimeOffset occurredAt,
         CancellationToken cancellationToken)
     {
+        // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4): la regla es la de la moneda del
+        // documento **después** de la mutación, así que cambiar de cuenta y de moneda toma la de la nueva. Si es la
+        // que ya tiene, no hace nada; si cambió, rehace las líneas desde el precio guardado.
+        quotation.UsePriceRounding(
+            await priceRounding.GetAsync(tenantId, quotation.Currency, cancellationToken), occurredAt);
+
         if (quotation.Items.Count == 0)
         {
             return;

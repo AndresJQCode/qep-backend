@@ -61,6 +61,7 @@ public static class AuthSessionEndpoints
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
         ICurrenciesInUse currenciesInUse,
+        ITenantPriceRounding priceRounding,
         ISessionService sessionService,
         IOptions<QepSessionOptions> sessionOptions,
         IHostEnvironment environment,
@@ -118,6 +119,7 @@ public static class AuthSessionEndpoints
             roleCatalog,
             tenantDirectory,
             currenciesInUse,
+            priceRounding,
             cancellationToken);
 
         var issued = await sessionService.IssueAsync(
@@ -136,6 +138,7 @@ public static class AuthSessionEndpoints
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
         ICurrenciesInUse currenciesInUse,
+        ITenantPriceRounding priceRounding,
         IUserDirectory userDirectory,
         CancellationToken cancellationToken)
     {
@@ -155,6 +158,7 @@ public static class AuthSessionEndpoints
             roleCatalog,
             tenantDirectory,
             currenciesInUse,
+            priceRounding,
             cancellationToken);
         return Results.Ok(new SessionResponse(userId.Value, email, activeTenantIds, tenants, Currencies.All));
     }
@@ -179,6 +183,7 @@ public static class AuthSessionEndpoints
         ITenantRoleCatalog roleCatalog,
         ITenantDirectory tenantDirectory,
         ICurrenciesInUse currenciesInUse,
+        ITenantPriceRounding priceRounding,
         CancellationToken cancellationToken)
     {
         var responses = new List<ActiveTenantResponse>(activeTenants.Count);
@@ -195,6 +200,15 @@ public static class AuthSessionEndpoints
             // Through the port and not through a catalog permission: like the regional format, it is how
             // this tenant's money is shown, and every member needs it before the first paint.
             var inUse = await currenciesInUse.GetAsync(tenant.TenantId, cancellationToken);
+            // Catalogue order, not dictionary order: the SPA reads the list as it comes.
+            var rules = await priceRounding.GetAllAsync(tenant.TenantId, cancellationToken);
+            var roundings = Currencies.All
+                .Select(currency =>
+                {
+                    var rule = rules[currency.Code];
+                    return new SessionPriceRoundingResponse(currency.Code, rule.Decimals, rule.Mode.ToString());
+                })
+                .ToArray();
 
             responses.Add(new ActiveTenantResponse(
                 tenant.TenantId,
@@ -210,7 +224,8 @@ public static class AuthSessionEndpoints
                 regional?.NumberFormat,
                 inUse,
                 regional?.Country,
-                regional?.EffectivePersonTypeRequirement.ToString()));
+                regional?.EffectivePersonTypeRequirement.ToString(),
+                roundings));
         }
 
         return responses;
@@ -274,7 +289,10 @@ public sealed record SessionResponse(
 /// <c>CurrenciesInUse</c>: currencies with at least one product price in the tenant, catalogue
 /// order (spec D10). <c>Country</c> and <c>PersonTypeRequirement</c> (spec 2026-10-26): the
 /// requirement is the **effective** one (<c>Never</c> outside Colombia), so the SPA does not repeat
-/// the country rule.
+/// the country rule. <c>PriceRoundings</c> (price rounding spec, D9): the effective rule of every
+/// catalogue currency, in catalogue order, here and not only in <c>GET /settings/price-rounding</c>
+/// because that one needs <c>tenancy.settings.read</c>, which <c>cashier</c> lacks, and the POS cart
+/// estimate needs the rule before the first paint.
 /// </remarks>
 public sealed record ActiveTenantResponse(
     Guid TenantId,
@@ -286,7 +304,11 @@ public sealed record ActiveTenantResponse(
     string? NumberFormat,
     IReadOnlyList<string> CurrenciesInUse,
     string? Country,
-    string? PersonTypeRequirement);
+    string? PersonTypeRequirement,
+    IReadOnlyList<SessionPriceRoundingResponse> PriceRoundings);
+
+/// <summary>One currency's effective price rounding. <c>Mode</c> is <c>Nearest</c>, <c>Up</c> or <c>Down</c>.</summary>
+public sealed record SessionPriceRoundingResponse(string Currency, int Decimals, string Mode);
 
 /// <summary>
 /// <c>Role</c> es la clave que guarda la membresía; <c>DisplayName</c>, el nombre que ve la
