@@ -173,9 +173,10 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfText("2026-09-11"), cell);
     }
 
-    // Ajuste 2026-09-25: "Cliente" es a nombre de quién sale la factura, con la misma precedencia
-    // que el PDF: consumidor final, la parte de facturación propia, la razón social si la
-    // cotización factura a ella, y si no el nombre de contacto de la ficha.
+    // Ajuste 2026-10-28: "Cliente" es el nombre de la ficha del cliente, sin importar a nombre de quién
+    // salga la factura; ese nombre lo dice "Nombre facturación" (billing_name), con la precedencia del PDF:
+    // consumidor final, la parte de facturación propia, la razón social si el pedido factura a ella, y si
+    // no el nombre de la ficha.
     [Fact]
     public async Task ClienteIsTheCustomersNameWithoutABillingParty()
     {
@@ -189,7 +190,7 @@ public sealed class OrdersExportProcessorTests
     }
 
     [Fact]
-    public async Task ClienteIsTheBillingPartysNameWhenTheQuotationHasOne()
+    public async Task ClienteStaysTheCustomersNameWhenTheQuotationHasABillingParty()
     {
         var writer = new RecordingExportWorkbookWriter();
         var parties = new QuotationParties(
@@ -201,11 +202,11 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Distribuciones Andinas S.A.S.", Assert.Single(writer.Rows)[ClienteIndex].Text);
+        Assert.Equal("Ferretería El Tornillo", Assert.Single(writer.Rows)[ClienteIndex].Text);
     }
 
     [Fact]
-    public async Task ClienteIsTheBusinessNameWhenTheQuotationBillsToIt()
+    public async Task ClienteStaysTheCustomersNameWhenTheQuotationBillsToTheBusinessName()
     {
         var writer = new RecordingExportWorkbookWriter();
         var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Tornillos del Valle S.A.S." });
@@ -217,24 +218,11 @@ public sealed class OrdersExportProcessorTests
                 customers: customers)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("Tornillos del Valle S.A.S.", Assert.Single(writer.Rows)[ClienteIndex].Text);
-    }
-
-    // Una razón social pedida pero vacía en la ficha no deja la celda en blanco: cae al contacto.
-    [Fact]
-    public async Task ClienteFallsBackToTheContactNameWhenTheBusinessNameIsMissing()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var parties = QuotationParties.Empty with { BillingUsesBusinessName = true };
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
         Assert.Equal("Ferretería El Tornillo", Assert.Single(writer.Rows)[ClienteIndex].Text);
     }
 
     [Fact]
-    public async Task ClienteIsFinalConsumerWhenTheQuotationBillsToIt()
+    public async Task ClienteStaysTheCustomersNameWhenTheQuotationBillsToTheFinalConsumer()
     {
         var writer = new RecordingExportWorkbookWriter();
         var parties = QuotationParties.Empty with { BillsToFinalConsumer = true };
@@ -242,7 +230,94 @@ public sealed class OrdersExportProcessorTests
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
-        Assert.Equal(FinalConsumer.Name, Assert.Single(writer.Rows)[ClienteIndex].Text);
+        Assert.Equal("Ferretería El Tornillo", Assert.Single(writer.Rows)[ClienteIndex].Text);
+    }
+
+    // «Nombre facturación» (billing_name): a nombre de quién sale la factura. Va oculta por defecto.
+    private static InMemoryOrdersExportLayoutRepository BillingNameVisibleFirst() =>
+        StoredLayout(OrdersExportColumnSetting.Catalog("billing_name", "Nombre facturación", visible: true));
+
+    private static async Task<string> BillingNameAsync(QuotationParties parties, QuotationCustomerRef? customer)
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var customers = new StubQuotationCustomerLookup(customer ?? DefaultCustomer);
+        if (customer is null)
+        {
+            customers.Refs.Clear();
+        }
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)),
+                writer,
+                customers: customers,
+                layouts: BillingNameVisibleFirst())
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExportColumn("Nombre facturación", 30), writer.Columns[0]);
+        return Assert.Single(writer.Rows)[0].Text ?? string.Empty;
+    }
+
+    [Fact]
+    public async Task BillingNameIsFinalConsumerWhenTheQuotationBillsToIt()
+    {
+        var name = await BillingNameAsync(QuotationParties.Empty with { BillsToFinalConsumer = true }, DefaultCustomer);
+
+        Assert.Equal(FinalConsumer.Name, name);
+    }
+
+    [Fact]
+    public async Task BillingNameIsTheBillingPartysNameWhenTheQuotationHasOne()
+    {
+        var parties = new QuotationParties(
+            Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
+            Shipping: null,
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        Assert.Equal("Distribuciones Andinas S.A.S.", await BillingNameAsync(parties, DefaultCustomer));
+    }
+
+    [Fact]
+    public async Task BillingNameIsTheCustomersBusinessNameWhenTheQuotationBillsToIt()
+    {
+        var customer = DefaultCustomer with { BusinessName = "Tornillos del Valle S.A.S." };
+
+        Assert.Equal(
+            "Tornillos del Valle S.A.S.",
+            await BillingNameAsync(QuotationParties.Empty with { BillingUsesBusinessName = true }, customer));
+    }
+
+    // Una razón social pedida pero vacía en la ficha no deja la celda en blanco: cae al contacto.
+    [Fact]
+    public async Task BillingNameFallsBackToTheContactNameWhenTheBusinessNameIsMissing()
+    {
+        Assert.Equal(
+            "Ferretería El Tornillo",
+            await BillingNameAsync(QuotationParties.Empty with { BillingUsesBusinessName = true }, DefaultCustomer));
+    }
+
+    [Fact]
+    public async Task BillingNameIsTheCustomersNameWithoutABillingParty()
+    {
+        Assert.Equal("Ferretería El Tornillo", await BillingNameAsync(QuotationParties.Empty, DefaultCustomer));
+    }
+
+    [Fact]
+    public async Task BillingNameIsEmptyWhenTheCustomerDoesNotResolve()
+    {
+        Assert.Equal(string.Empty, await BillingNameAsync(QuotationParties.Empty, customer: null));
+    }
+
+    [Fact]
+    public async Task WithoutALayoutThatShowsItBillingNameIsNotWritten()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(writer.Columns, column => column.Header == "Nombre facturación");
+        Assert.Equal(writer.Columns.Count, Assert.Single(writer.Rows).Count);
     }
 
     // Un cliente que el lookup no devuelve deja la celda vacía, sin correr las columnas.
@@ -749,64 +824,6 @@ public sealed class OrdersExportProcessorTests
 
         Assert.Equal(2, writer.Rows.Count);
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Natural"), cells[0]));
-    }
-
-    // «Razon social» es la de la ficha del cliente, no la de quien se factura: no depende de la parte de
-    // facturación ni de BillingUsesBusinessName. Sin razón social sale vacía.
-    private static InMemoryOrdersExportLayoutRepository BusinessNameVisibleFirst() =>
-        StoredLayout(OrdersExportColumnSetting.Catalog("business_name", "Razon social", visible: true));
-
-    [Fact]
-    public async Task BusinessNameIsTheCustomersAndIsRepeatedOnEveryLine()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = "Distribuciones Andinas S.A.S." });
-        var row = NewRow(
-            "PED-2026-0001",
-            parties: QuotationParties.Empty,
-            items:
-            [
-                (ProductId, 2m, 1000m, 0m, 19),
-                (OtherProductId, 5m, 500m, 0m, 19),
-            ]);
-
-        await NewProcessor(
-                new StubOrderListRepository(row),
-                writer,
-                customers: customers,
-                layouts: BusinessNameVisibleFirst())
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal("Razon social", writer.Columns[0].Header);
-        Assert.Equal(2, writer.Rows.Count);
-        Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfText("Distribuciones Andinas S.A.S."), cells[0]));
-    }
-
-    [Fact]
-    public async Task BusinessNameIsEmptyWhenTheCustomerHasNone()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-        var customers = new StubQuotationCustomerLookup(DefaultCustomer with { BusinessName = null });
-
-        await NewProcessor(
-                new StubOrderListRepository(NewRow("PED-2026-0001", parties: QuotationParties.Empty)),
-                writer,
-                customers: customers,
-                layouts: BusinessNameVisibleFirst())
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.Equal(ExportCell.OfText(string.Empty), Assert.Single(writer.Rows)[0]);
-    }
-
-    [Fact]
-    public async Task WithoutALayoutThatShowsItBusinessNameIsNotWritten()
-    {
-        var writer = new RecordingExportWorkbookWriter();
-
-        await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001")), writer)
-            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
-
-        Assert.DoesNotContain(writer.Columns, column => column.Header == "Razon social");
     }
 
     // Oculta por defecto: el Excel de un tenant que no la prende no cambia.

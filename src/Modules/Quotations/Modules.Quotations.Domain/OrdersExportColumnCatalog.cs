@@ -56,8 +56,9 @@ public static class OrdersExportColumnCatalog
         }),
         new("unit_price_without_tax", "Valor Unit sin IVA", 18),
         // Ajuste 2026-09-25, las dos que pide la hoja de importación del ERP (MIGRACION 1): el día
-        // en que nació el pedido y a nombre de quién sale la factura. Al final, como toda columna
-        // nueva, para no mover lo que el ERP ya importa sin layout guardado.
+        // en que nació el pedido y el cliente. Al final, como toda columna nueva, para no mover lo
+        // que el ERP ya importa sin layout guardado. Desde el ajuste 2026-10-28 «Cliente» es el nombre
+        // de la ficha del cliente; a nombre de quién sale la factura es «billing_name».
         new("order_date", "Fecha Pedido", 14),
         new("customer_name", "Cliente", 30),
         // Ajuste 2026-09-26: el número de documento de identidad de quien nombra "Cliente", que es
@@ -129,18 +130,15 @@ public static class OrdersExportColumnCatalog
         // (consumidor final, parte de facturación o cliente; ver BilledPersonTypeFor). Oculta por defecto y
         // al final, mismo criterio que «variant»: el layout sembrado de origen-botanico la prende.
         new("customer_person_type", "Tipo de persona", 16, DefaultVisible: false),
-        // Ajuste 2026-10-28: la razón social de la ficha del cliente (`Customer.BusinessName`), repetida en
-        // cada línea. No es la de quien se factura: «Cliente» ya resuelve ese nombre, y esta sale igual
-        // aunque el pedido facture a una parte propia o al consumidor final. Vacía si la ficha no la tiene.
-        // Oculta por defecto y al final, mismo criterio que «customer_person_type».
-        new("business_name", "Razon social", 30, DefaultVisible: false),
         // Ajuste 2026-10-28: la ficha del cliente y los datos de facturación lado a lado, porque un pedido
         // puede facturarse a otra persona. «Nombre cliente» e «Identificación cliente» salen siempre de la
         // ficha (el número, no el CUC), aunque el pedido facture a una parte propia o al consumidor final.
         // Las de facturación describen a la misma persona que «Documento de identidad»
         // (OrderBilledParty.SourceFor): consumidor final, la parte de facturación —lo que no trae queda
-        // vacío, nunca con lo del cliente— o la ficha. Ocultas por defecto y al final, mismo criterio que
-        // «business_name».
+        // vacío, nunca con lo del cliente— o la ficha. «Nombre facturación» cierra la lista: a nombre de
+        // quién sale la factura (consumidor final, parte de facturación, razón social o nombre de la
+        // ficha), que antes decía «Cliente». Ocultas por defecto y al final, mismo criterio que
+        // «customer_person_type».
         new("customer_own_name", "Nombre cliente", 30, DefaultVisible: false),
         new("customer_own_identification", "Identificación cliente", 18, DefaultVisible: false),
         new("billing_identification_type", "Tipo de identificación facturación", 16, DefaultVisible: false),
@@ -149,6 +147,7 @@ public static class OrdersExportColumnCatalog
         new("billing_department", "Departamento facturación", 20, DefaultVisible: false),
         new("billing_phone", "Teléfono facturación", 16, DefaultVisible: false),
         new("billing_email", "Email facturación", 30, DefaultVisible: false),
+        new("billing_name", "Nombre facturación", 30, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

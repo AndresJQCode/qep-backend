@@ -88,7 +88,7 @@ public static class QuotationsSeeder
         OrdersExportColumnSetting.Fixed("No. Doc.", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "FECHA", visible: true),
         OrdersExportColumnSetting.Fixed("Tercero Externo", "9999", visible: true),
-        OrdersExportColumnSetting.Catalog("customer_name", "Nota Encab.", visible: true),
+        OrdersExportColumnSetting.Catalog("customer_name", "Cliente", visible: true),
         OrdersExportColumnSetting.Catalog("advisor_code", "Tercero Interno", visible: true),
         OrdersExportColumnSetting.Fixed("Doc. Externo", string.Empty, visible: true),
         OrdersExportColumnSetting.Catalog("order_date", "Bloq/act", visible: true),

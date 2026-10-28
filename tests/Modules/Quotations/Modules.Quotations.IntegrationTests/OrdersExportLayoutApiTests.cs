@@ -454,15 +454,15 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
         Assert.Equal(
             ["coordinadora_city", "payment_method_1", "payment_method_2", "payment_method_3", "payment_method_4", "payment_method_5", "carrier", "order_total", "retention_amount",
-                "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant", "customer_person_type", "business_name",
+                "freight_amount", "freight_without_tax", "freight_tax", "freight_charge_mode", "cash_on_delivery", "variant", "customer_person_type",
                 "customer_own_name", "customer_own_identification", "billing_identification_type", "billing_address",
-                "billing_city", "billing_department", "billing_phone", "billing_email"],
+                "billing_city", "billing_department", "billing_phone", "billing_email", "billing_name"],
             layout.Columns.TakeLast(25).Select(column => column.Key));
         // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05), "retention_amount"
         // (ajuste 2026-10-06) y "freight_amount" (2026-10-17) nacen visibles.
         Assert.All(layout.Columns.TakeLast(25).Take(7), column => Assert.False(column.Visible));
         // Y "freight_amount" (flete, 2026-10-17) nace visible; el resto del flete, "variant"
-        // (variantes, 2026-10-21), "customer_person_type" (2026-10-26), "business_name" y las de cliente y
+        // (variantes, 2026-10-21), "customer_person_type" (2026-10-26) y las de cliente y
         // facturación (2026-10-28), ocultos.
         Assert.All(layout.Columns.TakeLast(18).Take(3), column => Assert.True(column.Visible));
         Assert.All(layout.Columns.TakeLast(15), column => Assert.False(column.Visible));

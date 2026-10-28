@@ -83,7 +83,7 @@ public sealed class QuotationsSeedTests
     /// con este layout de punta a punta.</summary>
     internal static readonly string[] SeededLayoutHeaders =
     [
-        "EMPRESA", "DOC.", "PREFIJO", "No. Doc.", "FECHA", "Tercero Externo", "Nota Encab.",
+        "EMPRESA", "DOC.", "PREFIJO", "No. Doc.", "FECHA", "Tercero Externo", "Cliente",
         "Tercero Interno", "Doc. Externo", "Bloq/act", "Forma de pago 1", "V. Consignacion 1",
         "Forma de pago 2", "V. Consignacion 2", "Verificado", "Anulado", "Cod. Producto", "Bodega",
         "U.Medida", "Cantidad", "Valor Unit", "IVA", "Descuento", "Lote", "Centro costos",
@@ -138,6 +138,19 @@ public sealed class QuotationsSeedTests
         Assert.Equal(
             1,
             SeededLayoutHeaders.Count(header => string.Equals(header, personType.DefaultHeader, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    // Ajuste 2026-10-28: «customer_name» sale con su encabezado por defecto («Cliente», el nombre de la
+    // ficha) y ese encabezado no puede repetirse en otra visible de la hoja. No necesita base de datos.
+    [Fact]
+    public void OrdersExportCustomerNameHeaderIsUniqueAmongSeededHeaders()
+    {
+        var customerName = Assert.Single(OrdersExportColumnCatalog.Columns, column => column.Key == "customer_name");
+
+        Assert.Equal("Cliente", customerName.DefaultHeader);
+        Assert.Equal(
+            1,
+            SeededLayoutHeaders.Count(header => string.Equals(header, customerName.DefaultHeader, StringComparison.OrdinalIgnoreCase)));
     }
 
     // Ajuste 2026-09-25: el tenant sembrado exporta pedidos con la hoja de su ERP. La fila nace por
@@ -225,7 +238,7 @@ public sealed class QuotationsSeedTests
             ["FECHA", "Bloq/act", "Vencimiento"],
             layout.Columns.Where(column => column.Key == "order_date").Select(column => column.Header));
         Assert.Equal(
-            "Nota Encab.",
+            "Cliente",
             Assert.Single(layout.Columns, column => column.Key == "customer_name").Header);
         // Ajuste 2026-09-26: el ERP importa en "Documento (P5)" el documento de identidad, no el
         // CUC. "document" sigue en la lista, oculta y con su nombre por defecto.
