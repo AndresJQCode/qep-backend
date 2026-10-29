@@ -784,6 +784,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ArchiveResolutionReasonCommand, bool>, ArchiveResolutionReasonHandler>();
         // Spec 2026-10-21: el catálogo de horarios de atención. Sin registrar el handler, la ruta responde 500.
         services.AddScoped<IQueryHandler<ListBusinessHoursQuery, BusinessHoursListDto>, ListBusinessHoursHandler>();
+        // Spec 2026-10-28: reporte de mensajería; el validador entra con AddValidatorsFromAssemblyContaining de arriba.
+        services.AddScoped<IQueryHandler<GetMessagingReportSummaryQuery, MessagingReportSummaryDto>, GetMessagingReportSummaryHandler>();
         services.AddScoped<ICommandHandler<CreateBusinessHoursCommand, BusinessHoursDto>, CreateBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<UpdateBusinessHoursCommand, BusinessHoursDto>, UpdateBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<DeleteBusinessHoursCommand, bool>, DeleteBusinessHoursHandler>();

@@ -179,6 +179,9 @@ public sealed class BusinessHoursSchedule
         return (trimmed.Length <= room ? trimmed : trimmed[..room].TrimEnd()) + suffix;
     }
 
+    /// <summary>Las franjas que rigen en una fecha local (excepción, festivo, día de la semana); lo usa <see cref="BusinessHoursClock"/>.</summary>
+    public IReadOnlyList<TimeRange> RangesFor(DateOnly date) => EffectiveRanges(date);
+
     private IReadOnlyList<TimeRange> EffectiveRanges(DateOnly date)
     {
         var exception = Exceptions.FirstOrDefault(e => e.Date == date);
@@ -200,7 +203,7 @@ public sealed class BusinessHoursSchedule
     /// Minuto local → instante. En un hueco de horario de verano (hora inexistente) se toma el primer instante válido posterior al
     /// hueco; en una hora ambigua (se repite al retroceder el reloj) se toma la primera aparición, la del offset mayor.
     /// </summary>
-    private static DateTimeOffset LocalToUtc(DateOnly date, int minute, TimeZoneInfo timeZone)
+    internal static DateTimeOffset LocalToUtc(DateOnly date, int minute, TimeZoneInfo timeZone)
     {
         var local = DateTime.SpecifyKind(date.ToDateTime(TimeOnly.MinValue).AddMinutes(minute), DateTimeKind.Unspecified);
         while (timeZone.IsInvalidTime(local))
