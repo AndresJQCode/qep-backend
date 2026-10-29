@@ -36,7 +36,6 @@ public static class BillingEndpoints
             .Produces<AssigneesDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
-
         // Servicios recurrentes (spec §4). preview-charges va antes de /{serviceId:guid}: son rutas literales distintas, pero
         // así el orden de lectura es el del contrato.
         group.MapGet("/services", ListServicesAsync)

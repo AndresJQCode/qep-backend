@@ -67,7 +67,7 @@ public sealed class BillingService
             TenantId = tenantId,
             CustomerId = customerId,
             Name = cleanName,
-            Price = price,
+            Price = ToMoney(price),
             Currency = cleanCurrency,
             Cycle = cycle,
             FirstDueDate = firstDueDate,
@@ -88,7 +88,7 @@ public sealed class BillingService
 
         var (cleanName, cleanCurrency) = Validate(name, price, currency);
         Name = cleanName;
-        Price = price;
+        Price = ToMoney(price);
         Currency = cleanCurrency;
         Touch(now);
     }
@@ -145,6 +145,13 @@ public sealed class BillingService
     }
 
     public void MarkGenerated(DateOnly dueDate) => LastGeneratedDueDate = dueDate;
+
+    /// <summary>
+    /// El precio con la escala de <c>numeric(18,2)</c> (siempre dos decimales): lo que se responde al crear es lo que la base
+    /// devuelve después, y los cobros que copian el precio heredan la misma escala. El validador del borde ya rechaza más de dos
+    /// decimales; acá nunca se pierde un dígito significativo.
+    /// </summary>
+    private static decimal ToMoney(decimal value) => decimal.Round(value, 2) + 0.00m;
 
     private static (string Name, string Currency) Validate(string name, decimal price, string currency)
     {

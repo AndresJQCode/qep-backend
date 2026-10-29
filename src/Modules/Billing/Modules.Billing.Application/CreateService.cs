@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Billing.Domain;
 using Modules.Tenancy.Application;
 
@@ -153,7 +154,15 @@ public sealed class CreateServiceHandler(
             ?? throw new BillingDomainException(
                 BillingErrorCodes.ProfileMissing,
                 "The customer has no billing profile; send one with the service.");
-        await profileValidator.ValidateAndThrowAsync(input, cancellationToken);
+        // El spec §4 nombra los campos del perfil con el prefijo del cuerpo (Profile.Channel, Profile.AssigneeMemberId), que es
+        // donde el formulario del servicio los pinta; el validador del perfil suelto los devolvería sin él.
+        var profileResult = await profileValidator.ValidateAsync(input, cancellationToken);
+        if (!profileResult.IsValid)
+        {
+            throw new ValidationException(profileResult.Errors.Select(
+                error => new ValidationFailure($"Profile.{error.PropertyName}", error.ErrorMessage)));
+        }
+
         if (!ProfileRules.TryParseChannel(input.Channel, out var channel))
         {
             throw new InvalidOperationException($"Channel '{input.Channel}' passed validation but is not a billing channel.");

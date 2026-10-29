@@ -26,6 +26,20 @@ public sealed class BillingServiceApiTests
     // Los tenants de las pruebas viven en America/Bogota (UTC-5, sin horario de verano): la «hoy» del tenant.
     private static DateOnly TenantToday => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-5));
 
+    /// <summary>
+    /// <c>monthsBack</c> meses antes de hoy con el día recortado a 28. <c>TenantToday.AddMonths(-3)</c> recorta al último día del
+    /// mes más corto (el 31 de mayo da el 28 de febrero) y entonces el último período ya no cae hoy: la prueba dependería de la
+    /// fecha en que corre. Con el día &lt;= 28 los períodos son siempre <c>monthsBack + 1</c> y el siguiente queda a 28 días o más.
+    /// </summary>
+    private static DateOnly PastAnchor(int monthsBack) =>
+        new DateOnly(TenantToday.Year, TenantToday.Month, Math.Min(TenantToday.Day, 28)).AddMonths(-monthsBack);
+
+    /// <summary>
+    /// Cuántos de los <c>monthsBack + 1</c> períodos de <see cref="PastAnchor"/> están vencidos: el último vence hoy salvo que hoy
+    /// sea día 29 a 31, que el ancla de día 28 ya pasó.
+    /// </summary>
+    private static int OverdueOf(int monthsBack) => TenantToday.Day <= 28 ? monthsBack : monthsBack + 1;
+
     private static string ServicesUrl(string tenantId = BillingApiHarness.TenantId) => $"{BillingUrl(tenantId)}/services";
 
     private static string ServiceUrl(Guid serviceId, string tenantId = BillingApiHarness.TenantId) =>
@@ -33,9 +47,8 @@ public sealed class BillingServiceApiTests
 
     private static string Iso(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-    // Sin las listas (comparan por referencia) ni los instantes: la base los guarda al microsegundo y el alta responde con el tick.
-    private static ServiceDto Normalized(ServiceDto service) =>
-        service with { OpenAmountByCurrency = [], NextCharge = null, CreatedAt = default, UpdatedAt = default };
+    private static string Snapshot(ServiceDetailDto detail) =>
+        JsonSerializer.Serialize(detail with { Service = detail.Service with { CreatedAt = default, UpdatedAt = default } });
 
     private static bool Has(JsonElement errors, string field) => errors.TryGetProperty(field, out _);
 
@@ -158,19 +171,21 @@ public sealed class BillingServiceApiTests
         using var manager = CreateManager(factory);
 
         var detail = await CreateAsync(
-            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: TenantToday.AddMonths(-3)));
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: PastAnchor(3)));
 
+        // Cuatro períodos; tres vencidos (cuatro si hoy es 29 a 31, ver PastAnchor).
         Assert.Equal(4, detail.Charges.Count);
         var overdue = detail.Charges.Where(charge => charge.Status == "Overdue").ToList();
-        Assert.Equal(3, overdue.Count);
-        Assert.All(overdue, charge => Assert.True(charge.DaysOverdue > 0));
-        var dueToday = Assert.Single(detail.Charges, charge => charge.Status == "Pending");
-        Assert.Equal(TenantToday, dueToday.DueDate);
+        Assert.Equal(OverdueOf(3), overdue.Count);
+        Assert.All(overdue, charge => Assert.True(charge.DaysOverdue > 0 && charge.DueDate < TenantToday));
+        Assert.All(
+            detail.Charges.Except(overdue),
+            charge => Assert.True(charge.Status == "Pending" && charge.DaysOverdue == 0 && charge.DueDate >= TenantToday));
         // Por vencimiento descendente, como el detalle.
         Assert.Equal(detail.Charges.OrderByDescending(charge => charge.DueDate).Select(charge => charge.Id), detail.Charges.Select(charge => charge.Id));
         Assert.Equal(4, detail.Service.OpenCount);
         Assert.Equal([new CurrencyAmountDto("COP", 4 * Price)], detail.Service.OpenAmountByCurrency);
-        Assert.Equal(TenantToday.AddMonths(-3), detail.Service.NextCharge!.DueDate);
+        Assert.Equal(PastAnchor(3), detail.Service.NextCharge!.DueDate);
     }
 
     // Task 2 diferido (a): NextDueDateToGenerate ignora la reactivación cuando nunca generó; es inalcanzable porque crear siempre
@@ -229,6 +244,13 @@ public sealed class BillingServiceApiTests
         Assert.Equal("billing.profile.whatsapp_requires_phone", await CodeOfAsync(noPhone));
         Assert.Equal("billing.profile.assignee_invalid", await CodeOfAsync(badAssignee));
         Assert.Equal("validation.failed", await CodeOfAsync(badChannel));
+        // Spec §4: los campos del perfil llevan el prefijo del cuerpo.
+        var channelErrors = await ErrorsOfAsync(badChannel);
+        Assert.True(Has(channelErrors, "Profile.Channel"));
+        Assert.False(Has(channelErrors, "Channel"));
+        var noAssignee = await manager.PostAsJsonAsync(ServicesUrl(), ServiceBody(customerId, new { channel = "Email" }), Ct);
+        Assert.Equal("validation.failed", await CodeOfAsync(noAssignee));
+        Assert.True(Has(await ErrorsOfAsync(noAssignee), "Profile.AssigneeMemberId"));
         // Nada de lo anterior dejó un servicio a medias.
         var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
         Assert.Equal(0, list!.Total);
@@ -517,7 +539,7 @@ public sealed class BillingServiceApiTests
         var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
         using var manager = CreateManager(factory);
         var created = await CreateAsync(
-            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: TenantToday.AddMonths(-2)));
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: PastAnchor(2)));
         Assert.Equal(3, created.Service.OpenCount);
 
         var cancelled = await ReadDetailAsync(await TransitionAsync(manager, created.Service.Id, "cancel", 1));
@@ -538,7 +560,7 @@ public sealed class BillingServiceApiTests
         var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
         using var manager = CreateManager(factory);
         var created = await CreateAsync(
-            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: TenantToday.AddMonths(-2)));
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), firstDueDate: PastAnchor(2)));
 
         var paused = await ReadDetailAsync(await TransitionAsync(manager, created.Service.Id, "pause", 1));
 
@@ -561,14 +583,10 @@ public sealed class BillingServiceApiTests
         var get = await reader.GetAsync(ServiceUrl(created.Service.Id), Ct);
         var missing = await reader.GetAsync(ServiceUrl(Guid.CreateVersion7()), Ct);
 
-        // Los DTO llevan listas (comparación por referencia en un record) y el alta responde con el decimal del request mientras
-        // la lectura lo trae de numeric(18,2): se comparan los campos, no el texto del JSON.
+        // Los DTO llevan listas (un record las compara por referencia): se comparan por su JSON, entero. Lo único que se pone en
+        // cero son los dos instantes del servicio: la base los guarda al microsegundo y el alta responde con el tick.
         var read = await ReadDetailAsync(get);
-        Assert.Equal(Normalized(created.Service), Normalized(read.Service));
-        Assert.Equal(created.Service.OpenAmountByCurrency, read.Service.OpenAmountByCurrency);
-        Assert.Equal(created.Service.NextCharge!.Id, read.Service.NextCharge!.Id);
-        Assert.Equal(created.Profile, read.Profile);
-        Assert.Equal(created.Charges.Select(charge => (charge.Id, charge.Status, charge.Amount)), read.Charges.Select(charge => (charge.Id, charge.Status, charge.Amount)));
+        Assert.Equal(Snapshot(created), Snapshot(read));
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
         Assert.Equal("billing.service.not_found", await CodeOfAsync(missing));
     }
@@ -786,11 +804,11 @@ public sealed class BillingServiceApiTests
         using var reader = CreateReader(factory);
 
         var past = await reader.GetFromJsonAsync<ChargesPreviewDto>(
-            $"{ServicesUrl()}/preview-charges?cycle=Monthly&firstDueDate={Iso(TenantToday.AddMonths(-3))}", Ct);
+            $"{ServicesUrl()}/preview-charges?cycle=Monthly&firstDueDate={Iso(PastAnchor(3))}", Ct);
         var future = await reader.GetFromJsonAsync<ChargesPreviewDto>(
             $"{ServicesUrl()}/preview-charges?cycle=Annual&firstDueDate={Iso(TenantToday.AddMonths(2))}", Ct);
 
-        Assert.Equal(new ChargesPreviewDto(4, 3), past);
+        Assert.Equal(new ChargesPreviewDto(4, OverdueOf(3)), past);
         Assert.Equal(new ChargesPreviewDto(1, 0), future);
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();

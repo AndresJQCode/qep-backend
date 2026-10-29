@@ -34,6 +34,22 @@ public sealed class BillingServiceTests
         Assert.Equal(Now.AddDays(3), service.StatusChangedAt);
     }
 
+    // El alta responde con el precio del request y las lecturas lo traen de numeric(18,2): sin una escala fija, 150000 y 150000.00.
+    [Fact]
+    public void ThePriceAlwaysCarriesTwoDecimalsOnCreateAndUpdate()
+    {
+        var service = BillingService.Create(
+            BillingServiceId.New(), Guid.NewGuid(), Guid.NewGuid(), "Hosting", 150000m, "COP",
+            BillingCycle.Monthly, new DateOnly(2026, 1, 10), Now);
+        Assert.Equal("150000.00", service.Price.ToString(CultureInfo.InvariantCulture));
+
+        service.Update("Hosting", 20.5m, "USD", Now);
+        Assert.Equal("20.50", service.Price.ToString(CultureInfo.InvariantCulture));
+
+        var charge = Charge.Generate(service, new DateOnly(2026, 2, 10), Now);
+        Assert.Equal("20.50", charge.Amount.ToString(CultureInfo.InvariantCulture));
+    }
+
     [Fact]
     public void CreateRequiresANameAndAPositivePrice()
     {

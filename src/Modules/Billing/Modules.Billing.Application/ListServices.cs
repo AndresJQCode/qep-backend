@@ -85,7 +85,6 @@ public sealed class ListServicesHandler(
             throw new InvalidOperationException($"Status '{query.Status}' passed validation but is not a service status.");
         }
 
-
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
         var customerIdsBySearch = search is null
             ? null
