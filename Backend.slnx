@@ -143,6 +143,12 @@
   <Folder Name="/tests/Modules/Authorization/">
     <Project Path="tests/Modules/Authorization/Modules.Authorization.UnitTests/Modules.Authorization.UnitTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Billing/">
+    <Project Path="src/Modules/Billing/Modules.Billing.Domain/Modules.Billing.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Billing/">
+    <Project Path="tests/Modules/Billing/Modules.Billing.UnitTests/Modules.Billing.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Suppliers/">
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Api/Modules.Suppliers.Api.csproj" />
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Application/Modules.Suppliers.Application.csproj" />
