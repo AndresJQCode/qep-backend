@@ -37,6 +37,14 @@ Response time only means something against the schedule the business promises, s
 - D-11 The route needs module `messaging` only; the `reporting` module key is **not** required
   (§Module gating, decided).
 - D-12 Campaign sends and system/event messages never count as responses.
+- D-13 `channelsWithData` (owner, 2026-10-29): the frontend hides Instagram when the tenant has no Instagram
+  integration, unless there is Instagram data in the period (connected, then disconnected). The backend says
+  which channels had activity; the browser never infers it. It is a top-level array of `"WhatsApp"` /
+  `"Instagram"`, in that fixed order, only those present: channels with at least one **session** (same
+  definition as `totals.conversations`: conversation created or `Reopened`, by `created_at`) in the current
+  **or** the previous period. It **ignores the `channel` filter**, so the options stay stable when the user
+  filters by one channel. `[]` when there is no data. One extra tenant/`created_at`-bounded query over the
+  contiguous previous+current range (`IMessagingReportSource.ChannelsWithDataAsync`), served by the report indexes.
 
 ## Findings that shape the design (verified in code)
 
@@ -248,7 +256,8 @@ range within D-9, `groupBy` and `channel` known. Codes: `messaging.report.range_
       "medianAdvisorResponseSeconds": 420, "answeredUnder15mRatio": 0.82, "unansweredAssigned": 2 },
     { "memberId": null, "displayName": "Sin asignar", "sessionsAttended": 0,
       "medianAdvisorResponseSeconds": null, "answeredUnder15mRatio": null, "unansweredAssigned": 7 }
-  ]
+  ],
+  "channelsWithData": ["WhatsApp", "Instagram"]
 }
 ```
 

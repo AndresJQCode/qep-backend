@@ -27,7 +27,8 @@ public static class MessagingReportAggregator
         ReportGrouping groupBy,
         TimeZoneInfo timeZone,
         Func<Guid, BusinessHoursSchedule?> scheduleOf,
-        IReadOnlyDictionary<Guid, string> memberNames)
+        IReadOnlyDictionary<Guid, string> memberNames,
+        IReadOnlyCollection<ConversationChannel>? channelsWithData = null)
     {
         var now = Measure(currentData, current, timeZone, scheduleOf);
         var before = Measure(previousData, previous, timeZone, scheduleOf);
@@ -40,8 +41,15 @@ public static class MessagingReportAggregator
             Series(currentData, current, groupBy, timeZone),
             ResponseTime(now.First, before.First),
             ResponseTime(now.Advisor, before.Advisor),
-            Advisors(now, memberNames));
+            Advisors(now, memberNames),
+            ChannelNames(channelsWithData));
     }
+
+    /// <summary>Spec 2026-10-28 D-13: orden fijo WhatsApp, Instagram; sólo los presentes.</summary>
+    private static string[] ChannelNames(IReadOnlyCollection<ConversationChannel>? channels) =>
+        channels is null
+            ? []
+            : [.. new[] { ConversationChannel.WhatsApp, ConversationChannel.Instagram }.Where(channels.Contains).Select(c => c.ToString())];
 
     public static IReadOnlyList<DateOnly> BucketStarts(DateOnly from, DateOnly to, ReportGrouping groupBy)
     {

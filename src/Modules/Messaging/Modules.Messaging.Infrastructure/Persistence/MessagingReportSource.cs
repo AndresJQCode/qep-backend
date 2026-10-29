@@ -100,6 +100,23 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
             [.. newContacts.Select(row => new NewContactRow(row.ConversationId, Enum.Parse<ConversationChannel>(row.Channel), row.FirstInboundAt))]);
     }
 
+    public async Task<IReadOnlyList<ConversationChannel>> ChannelsWithDataAsync(
+        Guid tenantId, DateTimeOffset startUtc, DateTimeOffset endExclusiveUtc, CancellationToken cancellationToken)
+    {
+        // Mismas dos fuentes de sesión que LoadAsync (conversación creada o Reopened) y el mismo created_at, sin el filtro de canal.
+        var names = await dbContext.Database.SqlQuery<string>(
+            $"""
+            SELECT c.channel AS "Value" FROM messaging.conversations c
+            WHERE c.tenant_id = {tenantId} AND c.created_at >= {startUtc} AND c.created_at < {endExclusiveUtc}
+            UNION
+            SELECT c.channel AS "Value" FROM messaging.messages m
+            JOIN messaging.conversations c ON c.id = m.conversation_id
+            WHERE m.tenant_id = {tenantId} AND m.direction = 3 AND m.kind = 13 AND m.details->>'type' = 'Reopened'
+              AND m.created_at >= {startUtc} AND m.created_at < {endExclusiveUtc}
+            """).ToListAsync(cancellationToken);
+        return [.. names.Select(Enum.Parse<ConversationChannel>)];
+    }
+
     // EF materializa estos tipos por nombre de columna (alias entre comillas).
     private sealed class SessionRow
     {
