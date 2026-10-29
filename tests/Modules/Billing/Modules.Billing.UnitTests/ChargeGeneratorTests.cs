@@ -79,4 +79,24 @@ public sealed class ChargeGeneratorTests
         Assert.Equal(345.5m, charge.Amount);
         Assert.Equal("USD", charge.Currency);
     }
+
+    // Task 2 diferido: NextDueDateToGenerate ignora ReactivatedOn mientras LastGeneratedDueDate sea null. Es inalcanzable porque
+    // el alta genera de inmediato; esta prueba fija que Generate deja siempre una marca, caiga donde caiga el primer vencimiento.
+    [Theory]
+    [InlineData(-400)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(400)]
+    public void GeneratingRightAfterCreationAlwaysLeavesTheServiceWithAGeneratedMark(int daysFromToday)
+    {
+        var service = NewService(Today.AddDays(daysFromToday).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+        var charges = ChargeGenerator.Generate(service, Today, Now);
+
+        Assert.NotEmpty(charges);
+        Assert.NotNull(service.LastGeneratedDueDate);
+        Assert.Equal(charges[^1].DueDate, service.LastGeneratedDueDate);
+    }
 }

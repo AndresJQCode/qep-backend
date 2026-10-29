@@ -262,6 +262,38 @@ public sealed class BillingRepositoryTests
         Assert.Equal(Now.AddDays(1), loaded!.StatusChangedAt);
     }
 
+    [Fact]
+    public async Task ProfilesAreListedByCustomerWithinTheTenantOnly()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var first = CustomerBillingProfile.Create(Tenant, Guid.CreateVersion7(), BillingChannel.Email, Guid.CreateVersion7(), Now);
+        var second = CustomerBillingProfile.Create(Tenant, Guid.CreateVersion7(), BillingChannel.WhatsApp, Guid.CreateVersion7(), Now);
+        var unrequested = CustomerBillingProfile.Create(Tenant, Guid.CreateVersion7(), BillingChannel.Email, Guid.CreateVersion7(), Now);
+        // El mismo cliente bajo otro tenant no se lee, aunque el id coincida con uno pedido.
+        var foreign = CustomerBillingProfile.Create(Guid.CreateVersion7(), first.CustomerId, BillingChannel.Email, Guid.CreateVersion7(), Now);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
+            db.Profiles.AddRange(first, second, unrequested, foreign);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var repository = new CustomerBillingProfileRepository(read.ServiceProvider.GetRequiredService<BillingDbContext>());
+        var found = await repository.ListByCustomersAsync(
+            Tenant, [first.CustomerId, second.CustomerId], TestContext.Current.CancellationToken);
+        var none = await repository.ListByCustomersAsync(Tenant, [], TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new[] { first.CustomerId, second.CustomerId }.Order(),
+            found.Select(profile => profile.CustomerId).Order());
+        Assert.All(found, profile => Assert.Equal(Tenant, profile.TenantId));
+        Assert.Empty(none);
+    }
+
     private static BillingService Service(Guid customerId, string currency, decimal price) =>
         BillingService.Create(
             BillingServiceId.New(), Tenant, customerId, "Hosting", price, currency, BillingCycle.Monthly, Today.AddMonths(-1), Now);

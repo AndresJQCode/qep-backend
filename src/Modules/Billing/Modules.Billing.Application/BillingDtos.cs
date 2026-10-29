@@ -74,6 +74,9 @@ public sealed record ChargePageDto(
 
 public sealed record ServicePageDto(IReadOnlyList<ServiceDto> Items, int Total, int Page, int PageSize);
 
+/// <summary>Lo que <c>POST /services</c> crearía hoy con esos datos, sin escribir: el aviso «Se van a crear N cobros vencidos» del formulario.</summary>
+public sealed record ChargesPreviewDto(int ChargesToGenerate, int OverdueCharges);
+
 public sealed record AssigneesDto(IReadOnlyList<MemberRefDto> Items);
 
 /// <summary><c>NotReadyReason</c>: <c>template_not_approved</c> | <c>connection_unavailable</c> | null.</summary>

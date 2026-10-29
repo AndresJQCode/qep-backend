@@ -20,5 +20,20 @@ internal sealed class CustomerBillingProfileRepository(BillingDbContext dbContex
             .Where(profile => profile.TenantId == tenantId)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<CustomerBillingProfile>> ListByCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = customerIds.ToArray();
+        return await dbContext.Profiles
+            .AsNoTracking()
+            .Where(profile => profile.TenantId == tenantId && ids.Contains(profile.CustomerId))
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(CustomerBillingProfile profile) => dbContext.Profiles.Add(profile);
 }

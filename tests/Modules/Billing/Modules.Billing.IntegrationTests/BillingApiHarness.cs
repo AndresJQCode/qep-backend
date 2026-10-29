@@ -117,6 +117,20 @@ internal static class BillingApiHarness
         return id;
     }
 
+    /// <summary>Deja al cliente inactivo: Billing no le crea servicios nuevos (<c>billing.customer.inactive</c>).</summary>
+    public static async Task DeactivateCustomerAsync(QepApiFactory factory, Guid customerId)
+    {
+        var connectionString = factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var update = new NpgsqlCommand(
+            "UPDATE customers.customers SET is_active = false WHERE id = @id", connection);
+        update.Parameters.AddWithValue("id", customerId);
+        await update.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>
     /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>billing</c> conceden
     /// <c>billing.service.manage</c>, <c>advisor</c> no. <paramref name="removed"/> la deja quitada.

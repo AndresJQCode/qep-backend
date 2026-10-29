@@ -300,6 +300,27 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Billing.Application.ListAssigneesQuery, Modules.Billing.Application.AssigneesDto>,
             Modules.Billing.Application.ListAssigneesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListServicesQuery, Modules.Billing.Application.ServicePageDto>,
+            Modules.Billing.Application.ListServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetServiceQuery, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.GetServiceHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.PreviewServiceChargesQuery, Modules.Billing.Application.ChargesPreviewDto>,
+            Modules.Billing.Application.PreviewServiceChargesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.CreateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.CreateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.UpdateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.ChangeServiceStatusCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.ChangeServiceStatusHandler>();
+        // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
+        services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
+        services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
