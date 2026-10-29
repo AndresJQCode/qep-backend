@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Billing.Application;
+using Modules.Identity.Domain;
+using Modules.Identity.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
@@ -56,7 +58,8 @@ internal static class BillingApiHarness
         {
             tenancy.Tenants.Add(Tenant.Create(
                 id,
-                "billing-api-tests",
+                // El slug es único en la base: un segundo tenant necesita el suyo.
+                tenantId == TenantId ? "billing-api-tests" : $"billing-api-{tenantId[^2..]}",
                 "Billing API Tests",
                 "es-CO",
                 "America/Bogota",
@@ -112,6 +115,61 @@ internal static class BillingApiHarness
         insert.Parameters.AddWithValue("email", (object?)email ?? DBNull.Value);
         await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         return id;
+    }
+
+    /// <summary>
+    /// Siembra una membresía del tenant (con su usuario) con un rol de sistema: <c>admin</c> y <c>billing</c> conceden
+    /// <c>billing.service.manage</c>, <c>advisor</c> no. <paramref name="removed"/> la deja quitada.
+    /// </summary>
+    public static async Task<Guid> SeedMemberAsync(
+        QepApiFactory factory,
+        string email,
+        string? displayName,
+        string role,
+        bool removed = false,
+        string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var ct = TestContext.Current.CancellationToken;
+        var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId))], ct);
+        var now = DateTimeOffset.UtcNow;
+
+        var user = User.CreateInvited(UserId.New(), email, now);
+        identity.Users.Add(user);
+        var membership = Membership.CreateActive(
+            MembershipId.New(), user.Id.Value, tenant!.Id, [role], "test", now);
+        if (displayName is not null)
+        {
+            membership.UpdateProfile(displayName, null, now);
+        }
+
+        if (removed)
+        {
+            membership.Remove(tenant, now);
+        }
+
+        tenancy.Memberships.Add(membership);
+        await identity.SaveChangesAsync(ct);
+        await tenancy.SaveChangesAsync(ct);
+        return membership.Id.Value;
+    }
+
+    /// <summary>La cantidad de filas de <c>audit.entries</c> de una acción sobre un recurso: la auditoría atómica no tiene API de lectura acá.</summary>
+    public static async Task<int> CountAuditEntriesAsync(QepApiFactory factory, string action, string resourceId)
+    {
+        var connectionString = factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var count = new NpgsqlCommand(
+            "SELECT count(*) FROM audit.entries WHERE action = @action AND resource_id = @resourceId",
+            connection);
+        count.Parameters.AddWithValue("action", action);
+        count.Parameters.AddWithValue("resourceId", resourceId);
+        return (int)(long)(await count.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
     // El stub concede sólo los defaults de tenancy cuando X-Permissions no está, así que el permiso

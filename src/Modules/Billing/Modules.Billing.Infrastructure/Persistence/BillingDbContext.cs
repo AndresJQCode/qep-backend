@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Modules.Audit.Domain;
+using Modules.Audit.Infrastructure.Persistence;
 using Modules.Billing.Domain;
 
 namespace Modules.Billing.Infrastructure.Persistence;
@@ -24,8 +26,12 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
 
     internal DbSet<TenantRun> TenantRuns => Set<TenantRun>();
 
+    // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
+    internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureProfile(modelBuilder);
         ConfigureService(modelBuilder);
         ConfigureCharge(modelBuilder);

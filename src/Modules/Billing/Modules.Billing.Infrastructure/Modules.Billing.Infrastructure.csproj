@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Modules.Billing.Application\Modules.Billing.Application.csproj" />
     <ProjectReference Include="..\Modules.Billing.Domain\Modules.Billing.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
   <ItemGroup>

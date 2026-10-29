@@ -28,6 +28,7 @@ public static class BillingInfrastructureExtensions
         services.AddScoped<ICustomerBillingProfileRepository, CustomerBillingProfileRepository>();
         services.AddScoped<IBillingSettingsRepository, BillingSettingsRepository>();
         services.AddScoped<IBillingUnitOfWork, BillingUnitOfWork>();
+        services.AddScoped<IBillingAuditPublisher, BillingAuditPublisher>();
 
         return services;
     }

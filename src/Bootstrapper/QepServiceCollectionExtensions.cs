@@ -289,6 +289,17 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
+        // Billing, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
+        // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetCustomerProfileQuery, Modules.Billing.Application.ProfileDto>,
+            Modules.Billing.Application.GetCustomerProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpsertCustomerProfileCommand, Modules.Billing.Application.ProfileDto>,
+            Modules.Billing.Application.UpsertCustomerProfileHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListAssigneesQuery, Modules.Billing.Application.AssigneesDto>,
+            Modules.Billing.Application.ListAssigneesHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -884,6 +895,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Billing.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -1972,21 +1984,23 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
-        // Spec cobros-recurrentes (owner, 2026-10-29): cobros exige el módulo billing.
+        // Spec cobros-recurrentes (owner, 2026-10-29): de núcleo (RequiredModules vacío), como Pipeline y Messaging. Con
+        // [billing], la máscara de entitlements quitaría el permiso al apagar el módulo y el 403 saldría sin código,
+        // sin el tenancy.module_not_enabled que el contrato pide; el módulo lo revisa cada handler (BillingAuthorization).
         services.AddSingleton(new PermissionDefinition(
             BillingPermissions.Read,
             "Ver cobros recurrentes",
             "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
             "Billing",
             "low",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: []));
         services.AddSingleton(new PermissionDefinition(
             BillingPermissions.Manage,
             "Gestionar cobros recurrentes",
             "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
             "Billing",
             "medium",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: []));
     }
 
     private static void AddAuthentication(

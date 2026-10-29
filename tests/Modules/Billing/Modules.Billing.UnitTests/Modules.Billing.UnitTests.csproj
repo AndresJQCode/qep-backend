@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Billing\Modules.Billing.Domain\Modules.Billing.Domain.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Billing\Modules.Billing.Application\Modules.Billing.Application.csproj" />
   </ItemGroup>
 </Project>

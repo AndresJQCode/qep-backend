@@ -538,11 +538,12 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Spec cobros-recurrentes (owner, 2026-10-29): los dos permisos de cobros exigen sólo el módulo <c>billing</c> y van a
+    /// Spec cobros-recurrentes (owner, 2026-10-29): los dos permisos de cobros son de núcleo (el módulo <c>billing</c> lo revisa
+    /// cada handler, para que apagado responda <c>tenancy.module_not_enabled</c> y no un 403 sin código, como Pipeline) y van a
     /// admin y a facturación (que cobra los servicios recurrentes); no a asesor ni cajero.
     /// </summary>
     [Fact]
-    public void TheBillingPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
+    public void TheBillingPermissionsAreCoreAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
         var catalog = provider.GetRequiredService<IRoleCatalog>();
@@ -552,7 +553,7 @@ public sealed class CompositionRootTests
         foreach (var permission in new[] { BillingPermissions.Read, BillingPermissions.Manage })
         {
             Assert.Equal("Billing", definitions[permission].Category);
-            Assert.Equal([ModuleKeys.Billing], definitions[permission].RequiredModules!.ToArray());
+            Assert.Empty(definitions[permission].RequiredModules!);
             Assert.Contains(permission, catalog.PermissionsFor("admin"));
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));

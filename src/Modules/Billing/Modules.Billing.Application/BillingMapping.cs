@@ -54,6 +54,15 @@ public static class BillingMapping
             service.CreatedAt,
             service.UpdatedAt);
 
+    /// <summary>
+    /// Una membresía del equipo como la ve el cliente de la API. Un id que el directorio ya no resuelve (la fila se purgó) se
+    /// muestra inactivo y sin nombre, como el directorio llama a un miembro sin nombre, en vez de perder la referencia.
+    /// </summary>
+    public static MemberRefDto ToMemberRefDto(Guid memberId, BillingMemberRef? member) =>
+        member is null
+            ? new MemberRefDto(memberId, "Sin nombre", false)
+            : new MemberRefDto(member.MemberId, member.DisplayName, member.IsActive);
+
     public static ProfileDto ToProfileDto(CustomerBillingProfile profile, MemberRefDto assignee) => new(
         profile.CustomerId,
         profile.Channel.ToString(),
