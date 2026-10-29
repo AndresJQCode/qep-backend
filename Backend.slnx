@@ -151,6 +151,7 @@
   </Folder>
   <Folder Name="/tests/Modules/Billing/">
     <Project Path="tests/Modules/Billing/Modules.Billing.UnitTests/Modules.Billing.UnitTests.csproj" />
+    <Project Path="tests/Modules/Billing/Modules.Billing.IntegrationTests/Modules.Billing.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Suppliers/">
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Api/Modules.Suppliers.Api.csproj" />
