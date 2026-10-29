@@ -46,6 +46,9 @@ public sealed class BillingService
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>Cuándo cambió <see cref="Status"/> por última vez; al crear vale lo mismo que <see cref="CreatedAt"/> (spec §2).</summary>
+    public DateTimeOffset StatusChangedAt { get; private set; }
+
     public static BillingService Create(
         BillingServiceId id,
         Guid tenantId,
@@ -72,6 +75,7 @@ public sealed class BillingService
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now,
+            StatusChangedAt = now,
         };
     }
 
@@ -93,6 +97,7 @@ public sealed class BillingService
     {
         RequireStatus(BillingServiceStatus.Active);
         Status = BillingServiceStatus.Paused;
+        StatusChangedAt = now;
         Touch(now);
     }
 
@@ -101,6 +106,7 @@ public sealed class BillingService
         RequireStatus(BillingServiceStatus.Paused);
         Status = BillingServiceStatus.Active;
         ReactivatedOn = today;
+        StatusChangedAt = now;
         Touch(now);
     }
 
@@ -112,6 +118,7 @@ public sealed class BillingService
         }
 
         Status = BillingServiceStatus.Cancelled;
+        StatusChangedAt = now;
         Touch(now);
     }
 

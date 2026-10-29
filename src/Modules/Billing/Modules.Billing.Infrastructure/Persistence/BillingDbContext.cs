@@ -96,6 +96,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             .IsConcurrencyToken();
         service.Property(value => value.CreatedAt).HasColumnName("created_at");
         service.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        service.Property(value => value.StatusChangedAt).HasColumnName("status_changed_at");
         service.HasIndex(value => new { value.TenantId, value.CustomerId })
             .HasDatabaseName("IX_services_tenant_customer");
     }

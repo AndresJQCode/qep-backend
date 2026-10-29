@@ -202,6 +202,66 @@ public sealed class BillingRepositoryTests
             () => new BillingUnitOfWork(secondDb).SaveChangesAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task ListAllReturnsEveryFilteredServiceOfTheTenantWithoutPaging()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var customerId = Guid.CreateVersion7();
+        var otherCustomer = Guid.CreateVersion7();
+        var services = Enumerable.Range(0, 3).Select(_ => Service(customerId, "COP", 10m)).ToList();
+        var paused = Service(customerId, "COP", 10m);
+        paused.Pause(Now);
+        var foreign = Service(otherCustomer, "COP", 10m);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
+            db.Services.AddRange(services);
+            db.Services.AddRange(paused, foreign);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var repository = new BillingServiceRepository(read.ServiceProvider.GetRequiredService<BillingDbContext>());
+        var active = await repository.ListAllAsync(
+            new BillingServiceQuery(Tenant, customerId, BillingServiceStatus.Active, null, null, 1, 1),
+            TestContext.Current.CancellationToken);
+        var byCustomerName = await repository.ListAllAsync(
+            new BillingServiceQuery(Tenant, null, null, "zzz", [otherCustomer], 1, 1),
+            TestContext.Current.CancellationToken);
+        var otherTenant = await repository.ListAllAsync(
+            new BillingServiceQuery(Guid.CreateVersion7(), null, null, null, null, 1, 25),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, active.Count);
+        Assert.Equal(foreign.Id, Assert.Single(byCustomerName).Id);
+        Assert.Empty(otherTenant);
+    }
+
+    [Fact]
+    public async Task AServiceRoundTripsItsStatusChangedAt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var service = Service(Guid.CreateVersion7(), "COP", 10m);
+        service.Pause(Now.AddDays(1));
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<BillingDbContext>();
+            db.Services.Add(service);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var loaded = await new BillingServiceRepository(read.ServiceProvider.GetRequiredService<BillingDbContext>())
+            .FindAsync(Tenant, service.Id, TestContext.Current.CancellationToken);
+        Assert.Equal(Now.AddDays(1), loaded!.StatusChangedAt);
+    }
+
     private static BillingService Service(Guid customerId, string currency, decimal price) =>
         BillingService.Create(
             BillingServiceId.New(), Tenant, customerId, "Hosting", price, currency, BillingCycle.Monthly, Today.AddMonths(-1), Now);

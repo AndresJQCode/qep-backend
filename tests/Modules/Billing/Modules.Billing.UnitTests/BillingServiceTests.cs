@@ -16,6 +16,25 @@ public sealed class BillingServiceTests
         Assert.Equal(code, Assert.Throws<BillingDomainException>(act).Code);
 
     [Fact]
+    public void StatusChangedAtStartsAtCreationAndMovesOnlyWithStatusTransitions()
+    {
+        var service = NewService();
+        Assert.Equal(Now, service.StatusChangedAt);
+
+        service.Update("Hosting 2", 120m, "COP", Now.AddHours(1));
+        Assert.Equal(Now, service.StatusChangedAt);
+
+        service.Pause(Now.AddDays(1));
+        Assert.Equal(Now.AddDays(1), service.StatusChangedAt);
+
+        service.Resume(new DateOnly(2026, 3, 12), Now.AddDays(2));
+        Assert.Equal(Now.AddDays(2), service.StatusChangedAt);
+
+        service.Cancel(Now.AddDays(3));
+        Assert.Equal(Now.AddDays(3), service.StatusChangedAt);
+    }
+
+    [Fact]
     public void CreateRequiresANameAndAPositivePrice()
     {
         foreach (var name in new[] { "", "   ", new string('a', 151) })

@@ -13,8 +13,8 @@ internal sealed class BillingServiceRepository(BillingDbContext dbContext) : IBi
         dbContext.Services.FirstOrDefaultAsync(
             service => service.TenantId == tenantId && service.Id == id, cancellationToken);
 
-    public async Task<(IReadOnlyList<BillingService> Items, int Total)> ListAsync(
-        BillingServiceQuery query, CancellationToken cancellationToken)
+    // Los filtros del listado, compartidos por la página y por ListAllAsync.
+    private IQueryable<BillingService> Filtered(BillingServiceQuery query)
     {
         var services = dbContext.Services
             .AsNoTracking()
@@ -41,9 +41,25 @@ internal sealed class BillingServiceRepository(BillingDbContext dbContext) : IBi
                 customerIds.Contains(service.CustomerId));
         }
 
+        return services;
+    }
+
+    public async Task<IReadOnlyList<BillingService>> ListAllAsync(
+        BillingServiceQuery query, CancellationToken cancellationToken) =>
+        await Filtered(query)
+            .OrderBy(service => service.Name)
+            .ThenBy(service => service.Id)
+            .ToListAsync(cancellationToken);
+
+    public async Task<(IReadOnlyList<BillingService> Items, int Total)> ListAsync(
+        BillingServiceQuery query, CancellationToken cancellationToken)
+    {
+        var services = Filtered(query);
+
         var total = await services.CountAsync(cancellationToken);
-        // El spec ordena por cliente y luego nombre, pero el nombre del cliente no está en este
-        // esquema; se ordena por el nombre del servicio (con Id de desempate para paginar estable).
+        // El spec §4 ordena por cliente y luego nombre, pero el nombre del cliente no está en este
+        // esquema (ruling del controller, fix round 1): el handler de Task 7 usa ListAllAsync, ordena
+        // por cliente con IBillingCustomerLookup y pagina en memoria. Acá se ordena por el nombre del servicio (con Id de desempate para paginar estable).
         var items = await services
             .OrderBy(service => service.Name)
             .ThenBy(service => service.Id)

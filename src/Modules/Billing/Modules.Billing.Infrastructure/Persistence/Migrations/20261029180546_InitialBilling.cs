@@ -120,6 +120,7 @@ namespace Modules.Billing.Infrastructure.Persistence.Migrations
                     last_generated_due_date = table.Column<DateOnly>(type: "date", nullable: true),
                     version = table.Column<long>(type: "bigint", nullable: false),
                     created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    status_changed_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
