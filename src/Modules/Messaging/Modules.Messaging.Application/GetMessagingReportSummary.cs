@@ -64,6 +64,12 @@ public static class MessagingReportRange
 public interface IMessagingReportSource
 {
     Task<ReportData> LoadAsync(Guid tenantId, ReportWindow window, ConversationChannel? channel, DateTimeOffset nowUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// D-13: los canales con al menos una sesión entre <paramref name="startUtc"/> y <paramref name="endExclusiveUtc"/> (el periodo anterior
+    /// y el actual son contiguos), sin filtro de canal.
+    /// </summary>
+    Task<IReadOnlyList<ConversationChannel>> ChannelsWithDataAsync(Guid tenantId, DateTimeOffset startUtc, DateTimeOffset endExclusiveUtc, CancellationToken cancellationToken);
 }
 
 public sealed class GetMessagingReportSummaryHandler(
@@ -116,6 +122,8 @@ public sealed class GetMessagingReportSummaryHandler(
             LargeRange(logger, query.TenantId, currentData.Sessions.Count, SessionWarningThreshold, from, to, null);
         }
 
+        var channelsWithData = await source.ChannelsWithDataAsync(query.TenantId, previous.StartUtc, current.EndExclusiveUtc, cancellationToken);
+
         var schedules = await ScheduleResolverAsync(query.TenantId, cancellationToken);
         var memberIds = currentData.Sessions
             .SelectMany(s => new[] { s.FirstMemberId, s.AssignedMemberId })
@@ -126,7 +134,7 @@ public sealed class GetMessagingReportSummaryHandler(
             ? new Dictionary<Guid, string>()
             : (await memberNames.FindAsync(query.TenantId, memberIds, cancellationToken)).ToDictionary(pair => pair.Key, pair => pair.Value);
 
-        return MessagingReportAggregator.Build(current, currentData, previous, previousData, groupBy, calendar.TimeZone, schedules, names);
+        return MessagingReportAggregator.Build(current, currentData, previous, previousData, groupBy, calendar.TimeZone, schedules, names, channelsWithData);
     }
 
     private static ReportWindow Window(TenantCalendar calendar, DateOnly from, DateOnly to) =>

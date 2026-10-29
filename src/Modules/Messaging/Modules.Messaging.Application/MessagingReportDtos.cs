@@ -78,4 +78,5 @@ public sealed record MessagingReportSummaryDto(
     IReadOnlyList<MessagingReportPointDto> Series,
     ResponseTimeDto FirstResponse,
     ResponseTimeDto AdvisorResponse,
-    IReadOnlyList<MessagingReportAdvisorDto> Advisors);
+    IReadOnlyList<MessagingReportAdvisorDto> Advisors,
+    IReadOnlyList<string> ChannelsWithData);

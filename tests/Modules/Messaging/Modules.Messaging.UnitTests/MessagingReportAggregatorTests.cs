@@ -47,7 +47,8 @@ public sealed class MessagingReportAggregatorTests
         ReportGrouping groupBy = ReportGrouping.Day,
         ReportData? previous = null,
         Func<Guid, BusinessHoursSchedule?>? scheduleOf = null,
-        IReadOnlyDictionary<Guid, string>? names = null)
+        IReadOnlyDictionary<Guid, string>? names = null,
+        IReadOnlyCollection<ConversationChannel>? channelsWithData = null)
     {
         var f = from ?? new DateOnly(2026, 10, 5);
         var t = to ?? new DateOnly(2026, 10, 11);
@@ -55,7 +56,28 @@ public sealed class MessagingReportAggregatorTests
         var prevWindow = Window(f.AddDays(-days), f.AddDays(-1));
         return MessagingReportAggregator.Build(
             Window(f, t), current, prevWindow, previous ?? Data(), groupBy, Bogota,
-            scheduleOf ?? (_ => null), names ?? new Dictionary<Guid, string>());
+            scheduleOf ?? (_ => null), names ?? new Dictionary<Guid, string>(), channelsWithData);
+    }
+
+    [Fact]
+    public void ChannelsWithDataListsTheChannelsInFixedOrderWithoutDuplicates()
+    {
+        var report = Build(Data(), channelsWithData: [ConversationChannel.Instagram, ConversationChannel.WhatsApp, ConversationChannel.Instagram]);
+
+        Assert.Equal(["WhatsApp", "Instagram"], report.ChannelsWithData);
+    }
+
+    [Fact]
+    public void ChannelsWithDataIsEmptyWhenThereIsNoData()
+    {
+        Assert.Empty(Build(Data()).ChannelsWithData);
+        Assert.Empty(Build(Data(), channelsWithData: []).ChannelsWithData);
+    }
+
+    [Fact]
+    public void ChannelsWithDataOnlyHasTheChannelsGiven()
+    {
+        Assert.Equal(["Instagram"], Build(Data(), channelsWithData: [ConversationChannel.Instagram]).ChannelsWithData);
     }
 
     [Fact]

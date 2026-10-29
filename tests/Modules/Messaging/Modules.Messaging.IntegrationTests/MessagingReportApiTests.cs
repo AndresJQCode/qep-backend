@@ -35,7 +35,7 @@ public sealed class MessagingReportApiTests
         }
     }
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enableMessaging = true, string[]? permissions = null)
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enableMessaging = true, string[]? permissions = null, int line = 1)
     {
         var connectionString = database.GetConnectionString();
         var baseFactory = new QepApiFactory(connectionString);
@@ -46,8 +46,8 @@ public sealed class MessagingReportApiTests
             await EnableMessagingAsync(connectionString, tenant.TenantId);
         }
 
-        var whatsApp = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
-        var instagram = await SeedInstagramConnectionAsync(factory, tenant.TenantId, "Instagram", "17841400000000001");
+        var whatsApp = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", $"111{line}", $"222{line}");
+        var instagram = await SeedInstagramConnectionAsync(factory, tenant.TenantId, "Instagram", $"1784140000000000{line}");
         var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, permissions ?? ReadPermissions);
         return new Fixture(baseFactory, factory, connectionString, tenant, whatsApp, instagram, client);
     }
@@ -235,6 +235,78 @@ public sealed class MessagingReportApiTests
         var weekly = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=week");
         Assert.Equal(1, weekly.GetProperty("series").GetArrayLength());
         Assert.Equal(7, weekly.GetProperty("series")[0].GetProperty("conversations").GetInt32());
+    }
+
+    private static string[] Channels(JsonElement report) =>
+        [.. report.GetProperty("channelsWithData").EnumerateArray().Select(e => e.GetString()!)];
+
+    [Fact]
+    public async Task ChannelsWithDataHasOnlyWhatsAppWhenThatIsAllThereIs()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ConversationAsync(f, "573000000021", Bog(10, 5, 9));
+
+        Assert.Equal(["WhatsApp"], Channels(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+    }
+
+    [Fact]
+    public async Task ChannelsWithDataCountsInstagramFoundOnlyInThePreviousPeriod()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ConversationAsync(f, "573000000022", Bog(10, 6, 9));
+        await ConversationAsync(f, "ig-prev", Bog(9, 30, 9), instagram: true);
+
+        Assert.Equal(["WhatsApp", "Instagram"], Channels(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+    }
+
+    [Fact]
+    public async Task ChannelsWithDataIgnoresTheChannelFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ConversationAsync(f, "573000000023", Bog(10, 6, 9));
+        await ConversationAsync(f, "ig-now", Bog(10, 7, 9), instagram: true);
+
+        var report = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day&channel=WhatsApp");
+
+        Assert.Equal(["WhatsApp", "Instagram"], Channels(report));
+        Assert.Equal(1, report.GetProperty("totals").GetProperty("current").GetProperty("conversations").GetInt32());
+    }
+
+    [Fact]
+    public async Task ChannelsWithDataCountsAReopenedSessionOfAnOlderConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var old = await ConversationAsync(f, "ig-old", Bog(8, 1, 9), instagram: true);
+        await ReopenedAsync(f, old, Bog(10, 8, 9));
+
+        Assert.Equal(["Instagram"], Channels(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+    }
+
+    [Fact]
+    public async Task ChannelsWithDataIsEmptyWithoutData()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ConversationAsync(f, "573000000024", Bog(8, 1, 9));
+
+        Assert.Empty(Channels(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+    }
+
+    [Fact]
+    public async Task ChannelsWithDataDoesNotLeakAcrossTenants()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var mine = await ArrangeAsync(database);
+        using var other = await ArrangeAsync(database, line: 2);
+        await ConversationAsync(other, "ig-other", Bog(10, 6, 9), instagram: true);
+        await ConversationAsync(mine, "573000000025", Bog(10, 6, 9));
+
+        Assert.Equal(["WhatsApp"], Channels(await GetOkAsync(mine, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+        Assert.Equal(["Instagram"], Channels(await GetOkAsync(other, "from=2026-10-05&to=2026-10-11&groupBy=day")));
     }
 
     [Fact]
