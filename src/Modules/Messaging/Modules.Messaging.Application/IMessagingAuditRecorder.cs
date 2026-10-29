@@ -19,6 +19,9 @@ public interface IMessagingAuditRecorder
     /// <summary>Spec 2026-10-12 §3.3: crear, editar y borrar una respuesta rápida, en la misma transacción que el cambio.</summary>
     void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt);
 
+    /// <summary>Spec 2026-10-29: el guardado del orden personal de las respuestas rápidas. El recurso es la membresía cuyo orden cambió.</summary>
+    void RecordQuickReplyOrder(Guid tenantId, Guid actorId, Guid memberId, DateTimeOffset occurredAt);
+
     /// <summary>Spec 2026-10-15 §3.8: crear (sólo cuando el resolver lo crea), renombrar y archivar un motivo de resolución, en la misma
     /// transacción que el cambio.</summary>
     void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt);
@@ -82,6 +85,8 @@ public static class MessagingAuditActions
     public const string QuickReplyCreated = "messaging.quick_reply.created";
     public const string QuickReplyUpdated = "messaging.quick_reply.updated";
     public const string QuickReplyDeleted = "messaging.quick_reply.deleted";
+    public const string QuickReplyOrderResourceType = "quick_reply_order";
+    public const string QuickReplyOrderSaved = "messaging.quick_reply.order_saved";
     public const string ResolutionReasonResourceType = "resolution_reason";
     public const string ResolutionReasonCreated = "messaging.resolution_reason.created";
     public const string ResolutionReasonRenamed = "messaging.resolution_reason.renamed";

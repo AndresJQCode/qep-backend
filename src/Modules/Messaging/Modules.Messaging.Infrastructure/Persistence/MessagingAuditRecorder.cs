@@ -70,6 +70,20 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             Source,
             occurredAt));
 
+    // Spec 2026-10-29: el orden personal; el recurso es la membresía cuyo orden cambió. Siempre una persona, changed_fields vacío.
+    public void RecordQuickReplyOrder(Guid tenantId, Guid actorId, Guid memberId, DateTimeOffset occurredAt) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            MessagingAuditActions.QuickReplyOrderSaved,
+            MessagingAuditActions.QuickReplyOrderResourceType,
+            memberId.ToString(),
+            Outcome,
+            NoChangedFields,
+            Source,
+            occurredAt));
+
     // Spec 2026-10-15 §3.8: siempre una persona (quien resuelve o quien gestiona en Settings). changed_fields vacío, como el resto.
     public void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt) =>
         dbContext.AuditEntries.Add(AuditEntry.Create(

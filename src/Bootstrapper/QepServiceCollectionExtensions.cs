@@ -778,6 +778,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<UpdateQuickReplyCommand, QuickReplyDto>, UpdateQuickReplyHandler>();
         services.AddScoped<ICommandHandler<DeleteQuickReplyCommand, bool>, DeleteQuickReplyHandler>();
+        // Spec 2026-10-29: el orden personal; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<SaveQuickReplyOrderCommand, QuickReplyListDto>, SaveQuickReplyOrderHandler>();
         // Spec 2026-10-15 §3.4: el catálogo de motivos de resolución. Sin estos registros, 500.
         services.AddScoped<IQueryHandler<ListResolutionReasonsQuery, IReadOnlyList<ResolutionReasonDto>>, ListResolutionReasonsHandler>();
         services.AddScoped<ICommandHandler<RenameResolutionReasonCommand, ResolutionReasonDto>, RenameResolutionReasonHandler>();

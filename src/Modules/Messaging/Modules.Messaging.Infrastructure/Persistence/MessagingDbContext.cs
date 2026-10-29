@@ -72,6 +72,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.4: <c>MessagingUnitOfWork</c> discrimina por este nombre para responder <c>shortcut_taken</c>.</summary>
     public const string QuickReplyShortcutIndex = "IX_quick_replies_tenant_shortcut";
 
+    /// <summary>Spec 2026-10-29: el mismo tope que <c>QuickReplyOrder.MaxItems</c> (500).</summary>
+    public const string QuickReplyOrderCapCheck = "cardinality(quick_reply_ids) <= 500";
+
     /// <summary>Spec 2026-10-15 §3.1: único por <c>(tenant_id, lower(name)) WHERE deleted_at IS NULL</c>. Va en la migración con SQL —EF
     /// no modela índices por expresión— y <c>MessagingUnitOfWork</c> lo traduce por este nombre a 409 <c>name_taken</c>.</summary>
     public const string ResolutionReasonNameIndex = "IX_resolution_reasons_tenant_name";
@@ -125,6 +128,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-12 §3.1: el agregado de la respuesta rápida.</summary>
     public DbSet<QuickReply> QuickReplies => Set<QuickReply>();
 
+    /// <summary>Spec 2026-10-29: el orden personal de las respuestas rápidas.</summary>
+    internal DbSet<QuickReplyOrderRecord> QuickReplyOrders => Set<QuickReplyOrderRecord>();
+
     /// <summary>Spec 2026-10-15 §3.1: el catálogo de motivos de resolución.</summary>
     public DbSet<ResolutionReason> ResolutionReasons => Set<ResolutionReason>();
 
@@ -154,6 +160,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
         ConfigureQuickReply(modelBuilder);
+        ConfigureQuickReplyOrder(modelBuilder);
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
         ConfigureAutomationInbox(modelBuilder);
@@ -454,6 +461,19 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         quickReply.Property(value => value.UpdatedAt).HasColumnName("updated_at");
         quickReply.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
         quickReply.HasIndex(value => new { value.TenantId, value.Shortcut }, QuickReplyShortcutIndex).IsUnique();
+    }
+
+    /// <summary>Spec 2026-10-29: el orden personal, una fila por miembro. El CHECK es la red del tope del validador.</summary>
+    private static void ConfigureQuickReplyOrder(ModelBuilder modelBuilder)
+    {
+        var order = modelBuilder.Entity<QuickReplyOrderRecord>();
+        order.ToTable("quick_reply_orders", Schema, table =>
+            table.HasCheckConstraint("CK_quick_reply_orders_cap", QuickReplyOrderCapCheck));
+        order.HasKey(value => new { value.TenantId, value.MemberId });
+        order.Property(value => value.TenantId).HasColumnName("tenant_id");
+        order.Property(value => value.MemberId).HasColumnName("member_id");
+        order.Property(value => value.QuickReplyIds).HasColumnName("quick_reply_ids").HasColumnType("uuid[]");
+        order.Property(value => value.UpdatedAt).HasColumnName("updated_at");
     }
 
     /// <summary>Spec 2026-10-15 §3.1. El único por nombre (<see cref="ResolutionReasonNameIndex"/>) va por SQL en la migración.</summary>
