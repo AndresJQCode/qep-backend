@@ -20,4 +20,30 @@ internal sealed class QuickReplyRepository(MessagingDbContext dbContext) : IQuic
     public void Add(QuickReply quickReply) => dbContext.QuickReplies.Add(quickReply);
 
     public void Remove(QuickReply quickReply) => dbContext.QuickReplies.Remove(quickReply);
+
+    public async Task<IReadOnlyList<Guid>> FindOrderAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken) =>
+        await dbContext.QuickReplyOrders.AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.MemberId == memberId)
+            .Select(order => order.QuickReplyIds)
+            .SingleOrDefaultAsync(cancellationToken) ?? [];
+
+    // Spec 2026-10-29: upsert por SQL y no Add/Update con tracking. Dos primeros guardados del mismo miembro a la vez (dos pestañas)
+    // chocarían con la PK, y el contrato es «gana la última escritura», no un 412. La transacción explícita (como SwapDefaultAsync) lleva
+    // en el mismo commit la auditoría que el handler dejó pendiente.
+    public async Task SaveOrderAsync(
+        Guid tenantId, Guid memberId, IReadOnlyList<Guid> quickReplyIds, DateTimeOffset savedAt, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(quickReplyIds);
+        var ids = quickReplyIds.ToArray();
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+             INSERT INTO messaging.quick_reply_orders (tenant_id, member_id, quick_reply_ids, updated_at)
+             VALUES ({tenantId}, {memberId}, {ids}, {savedAt})
+             ON CONFLICT (tenant_id, member_id) DO UPDATE SET quick_reply_ids = EXCLUDED.quick_reply_ids, updated_at = EXCLUDED.updated_at
+             """,
+            cancellationToken);
+        await MessagingSaveChanges.SaveAsync(dbContext, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
 }
