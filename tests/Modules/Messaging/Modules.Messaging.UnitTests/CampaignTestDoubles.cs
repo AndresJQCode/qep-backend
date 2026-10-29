@@ -117,6 +117,9 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     public void RecordQuickReply(Guid tenantId, Guid actorId, string action, Guid quickReplyId, DateTimeOffset occurredAt) =>
         throw new NotSupportedException();
 
+    public void RecordQuickReplyOrder(Guid tenantId, Guid actorId, Guid memberId, DateTimeOffset occurredAt) =>
+        throw new NotSupportedException();
+
     public void RecordResolutionReason(Guid tenantId, Guid actorId, string action, Guid reasonId, DateTimeOffset occurredAt)
     {
     }

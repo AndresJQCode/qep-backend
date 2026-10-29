@@ -39,6 +39,14 @@ internal static class QuickReplyEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-10-29: el orden personal. Con el permiso de leer, no el de gestionar: cada asesor ordena lo que él ve.
+        group.MapPut("/order", SaveOrderAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationRead)
+            .Accepts<SaveQuickReplyOrderRequest>("application/json")
+            .Produces<QuickReplyListDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapDelete("/{quickReplyId:guid}", DeleteAsync)
             .RequireAuthorization(MessagingPermissions.QuickReplyManage)
             .Produces(StatusCodes.Status204NoContent)
@@ -63,6 +71,11 @@ internal static class QuickReplyEndpoints
         Results.Ok(await dispatcher.SendAsync(
             new UpdateQuickReplyCommand(tenantId, quickReplyId, request.Shortcut, request.Body, request.Version), cancellationToken));
 
+    // El cuerpo es opcional (nullable): sin cuerpo también sale 422 en quickReplyIds, no 400 del binder.
+    private static async Task<IResult> SaveOrderAsync(
+        Guid tenantId, SaveQuickReplyOrderRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new SaveQuickReplyOrderCommand(tenantId, request?.QuickReplyIds), cancellationToken));
+
     private static async Task<IResult> DeleteAsync(
         Guid tenantId, Guid quickReplyId, long? version, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
@@ -74,3 +87,6 @@ internal static class QuickReplyEndpoints
 /// <summary>§3.6: el cuerpo de crear y editar. <c>shortcut</c> sin <c>/</c>. El <c>POST</c> ignora <c>version</c>; el <c>PUT</c> la
 /// exige. Todo opcional para que lo que falte salga 422 con su clave en <c>errors</c>, no 400 del binder.</summary>
 public sealed record SaveQuickReplyRequest(string? Shortcut, string? Body, long? Version);
+
+/// <summary>Spec 2026-10-29: el orden personal completo, primero lo de arriba. Opcional para que lo que falte salga 422.</summary>
+public sealed record SaveQuickReplyOrderRequest(IReadOnlyList<Guid>? QuickReplyIds);

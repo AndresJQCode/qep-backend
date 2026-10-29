@@ -18,4 +18,12 @@ public interface IQuickReplyRepository
     void Add(QuickReply quickReply);
 
     void Remove(QuickReply quickReply);
+
+    /// <summary>Spec 2026-10-29: el orden personal guardado de un miembro; vacío si nunca guardó uno. Puede traer ids ya borrados: quien
+    /// lo usa los salta (<see cref="QuickReplyOrder.Arrange"/>).</summary>
+    Task<IReadOnlyList<Guid>> FindOrderAsync(Guid tenantId, Guid memberId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-29: reemplaza el orden personal del miembro (upsert: gana la última escritura) y confirma en la misma
+    /// transacción lo pendiente de la unidad de trabajo, que es la auditoría que el handler ya registró.</summary>
+    Task SaveOrderAsync(Guid tenantId, Guid memberId, IReadOnlyList<Guid> quickReplyIds, DateTimeOffset savedAt, CancellationToken cancellationToken);
 }

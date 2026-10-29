@@ -146,6 +146,9 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está atendiendo la conversación.</summary>
     public const string AutomationAlreadyActive = "messaging.automation.already_active";
 
+    /// <summary>Spec 2026-10-28 D-9: el rango del reporte supera el tope de su agrupación (92 días, 53 semanas o 24 meses).</summary>
+    public const string ReportRangeTooLarge = "messaging.report.range_too_large";
+
     /// <summary>Spec 2026-10-21 §5: el horario no existe en el tenant (404).</summary>
     public const string BusinessHoursNotFound = "messaging.business_hours.not_found";
 
