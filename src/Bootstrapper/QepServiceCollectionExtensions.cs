@@ -1118,6 +1118,14 @@ public static class QepServiceCollectionExtensions
         // los repositorios de Geography.
         services.AddScoped<ISupplierGeographyLookup, SupplierGeographyLookup>();
 
+        // Mismo patrón para `billing` (spec cobros-recurrentes §3.3): guarda clientes y encargados como ids sueltos y el
+        // composition root cablea sus puertos contra Customers, Tenancy, Identity y Authorization. Con ruta completa porque
+        // importar el namespace choca con Messaging (AssigneesDto, entre otros).
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerLookup, BillingCustomerLookup>();
+        services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
+        services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
+        services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara
