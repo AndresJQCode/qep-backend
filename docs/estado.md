@@ -212,6 +212,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-29 — Mergeado a `develop` (`--no-ff`, sin push) **el índice del outbox para el polling de los consumidores**
+  (`perf/outbox-event-name-index`, merge `0c3a233d`): `IX_outbox_messages_event_name_occurred_at` en
+  `platform.outbox_messages`, migración `AddOutboxEventNameIndex` (Tenancy). Motivo: en producción la tabla tenía
+  7.8 k filas con 672 M tuplas leídas por seq scan y más de 2.6 M llamadas; cada consumidor (Audit, Notifications,
+  Pipeline, Shopify, Storage, Identity) consulta cada 10–15 s por `event_name` y no había índice que empezara por esa
+  columna. **No es parcial por `processed_at`, y no se purga por `processed_at`:** los consumidores llevan lo pendiente en
+  su inbox, no en `processed_at` (que sólo marca el despachador de Tenancy), así que borrar por ahí perdería mensajes sin
+  consumir. La purga segura o un cursor por consumidor quedan para un spec aparte. Pruebas: `OutboxPollingIndexTests`
+  (RED con `Seq Scan`, GREEN con el índice) y `OutboxIdempotencyTests`, 2/2; suite completa sin correr.
 - 2026-10-26 — Mergeado a `develop` (`--no-ff`, sin push) el **resto del backend de sinónimos de ciudades**
   (`feature/sinonimos-de-ciudades-2`, merge `e2a8f9a7`, SC-12..SC-14 más arreglos a SC-11 y SC-13 de la revisión): lista,
   corrección, borrado y reintento de sinónimos con su impacto, recorrido `POST …/backfill`, prueba de punta a punta,
