@@ -535,6 +535,8 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("EventName", "OccurredAt");
+
                     b.HasIndex("ProcessedAt", "OccurredAt");
 
                     b.ToTable("outbox_messages", "platform");

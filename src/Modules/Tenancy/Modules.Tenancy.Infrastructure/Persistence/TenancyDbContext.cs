@@ -358,6 +358,9 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
         message.Property(value => value.Attempts).HasColumnName("attempts");
         message.Property(value => value.LastError).HasColumnName("last_error");
         message.HasIndex(value => new { value.ProcessedAt, value.OccurredAt });
+        // Lo usan los consumidores de cada módulo: filtran por event_name y ordenan por occurred_at; su "pendiente" es el
+        // anti-join contra su inbox, no processed_at, así que el índice no puede ser parcial por processed_at.
+        message.HasIndex(value => new { value.EventName, value.OccurredAt });
     }
 
     private static void ConfigureInbox(ModelBuilder modelBuilder)
