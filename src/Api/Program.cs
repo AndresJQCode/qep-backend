@@ -42,6 +42,7 @@ using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Billing.Api;
 using Modules.Suppliers.Api;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -222,6 +223,7 @@ app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
 app.MapSupplierEndpoints();
+app.MapBillingEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

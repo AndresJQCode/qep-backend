@@ -7,6 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
+using Modules.Billing.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
 using Modules.Integrations.Application;
@@ -176,9 +177,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtySevenConstants()
+    public void PermissionDiscoveryFindsTheSixtyNineConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -187,8 +188,9 @@ public sealed class CompositionRootTests
         // + el del cliente de la venta de POS (spec 2026-10-14, decisión 4)
         // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1)
         // + el de revocar la autorización de datos (spec 2026-10-26 D-9)
-        // + los dos de ciudades del operador (spec 2026-10-26 §6).
-        Assert.Equal(67, PermissionConstants().Length);
+        // + los dos de ciudades del operador (spec 2026-10-26 §6)
+        // + los dos de cobros recurrentes (billing, spec 2026-10-29).
+        Assert.Equal(69, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -528,6 +530,29 @@ public sealed class CompositionRootTests
         {
             Assert.Equal("Suppliers", definitions[permission].Category);
             Assert.Equal([ModuleKeys.Suppliers], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.Contains(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>
+    /// Spec cobros-recurrentes (owner, 2026-10-29): los dos permisos de cobros exigen sólo el módulo <c>billing</c> y van a
+    /// admin y a facturación (que cobra los servicios recurrentes); no a asesor ni cajero.
+    /// </summary>
+    [Fact]
+    public void TheBillingPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        foreach (var permission in new[] { BillingPermissions.Read, BillingPermissions.Manage })
+        {
+            Assert.Equal("Billing", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Billing], definitions[permission].RequiredModules!.ToArray());
             Assert.Contains(permission, catalog.PermissionsFor("admin"));
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));

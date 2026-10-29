@@ -53,10 +53,12 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
+using Modules.Billing.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using BillingPermissions = Modules.Billing.Application.BillingPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
@@ -896,6 +898,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
+        services.AddBillingInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1342,7 +1345,10 @@ public static class QepServiceCollectionExtensions
                 AutomationsPermissions.ChatbotManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
-                SuppliersPermissions.Manage
+                SuppliersPermissions.Manage,
+                // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
+                BillingPermissions.Read,
+                BillingPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1431,7 +1437,10 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileRead,
                 // Spec 2026-10-23 D-14: facturación paga a los proveedores, así que ve y gestiona el directorio.
                 SuppliersPermissions.Read,
-                SuppliersPermissions.Manage
+                SuppliersPermissions.Manage,
+                // Facturación cobra los servicios recurrentes: ve «Por cobrar» y marca los pagos (owner, 2026-10-29).
+                BillingPermissions.Read,
+                BillingPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -1955,6 +1964,21 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
+        // Spec cobros-recurrentes (owner, 2026-10-29): cobros exige el módulo billing.
+        services.AddSingleton(new PermissionDefinition(
+            BillingPermissions.Read,
+            "Ver cobros recurrentes",
+            "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
+            "Billing",
+            "low",
+            RequiredModules: [ModuleKeys.Billing]));
+        services.AddSingleton(new PermissionDefinition(
+            BillingPermissions.Manage,
+            "Gestionar cobros recurrentes",
+            "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
+            "Billing",
+            "medium",
+            RequiredModules: [ModuleKeys.Billing]));
     }
 
     private static void AddAuthentication(
@@ -2318,7 +2342,14 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, SuppliersPermissions.Read))
             .AddPolicy(
                 SuppliersPermissions.Manage,
-                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage));
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage))
+            // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                BillingPermissions.Read,
+                policy => AddPermissionRequirement(policy, BillingPermissions.Read))
+            .AddPolicy(
+                BillingPermissions.Manage,
+                policy => AddPermissionRequirement(policy, BillingPermissions.Manage));
     }
 
     private static void AddPermissionRequirement(

@@ -169,6 +169,8 @@
           "Modules.Authorization.Infrastructure": "[1.0.0, )",
           "Modules.Automations.Application": "[1.0.0, )",
           "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Billing.Application": "[1.0.0, )",
+          "Modules.Billing.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Application": "[1.0.0, )",
@@ -311,6 +313,39 @@
           "Modules.Automations.Application": "[1.0.0, )",
           "Modules.Automations.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.billing.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Billing.Application": "[1.0.0, )",
+          "Modules.Billing.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.billing.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.Billing.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.billing.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.billing.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Billing.Application": "[1.0.0, )",
+          "Modules.Billing.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
