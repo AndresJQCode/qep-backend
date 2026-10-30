@@ -2017,23 +2017,23 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
-        // Spec cobros-recurrentes (owner, 2026-10-29): de núcleo (RequiredModules vacío), como Pipeline y Messaging. Con
-        // [billing], la máscara de entitlements quitaría el permiso al apagar el módulo y el 403 saldría sin código,
-        // sin el tenancy.module_not_enabled que el contrato pide; el módulo lo revisa cada handler (BillingAuthorization).
+        // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
+        // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
+        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de BillingAuthorization queda de respaldo).
         services.AddSingleton(new PermissionDefinition(
             BillingPermissions.Read,
             "Ver cobros recurrentes",
             "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
             "Billing",
             "low",
-            RequiredModules: []));
+            RequiredModules: [ModuleKeys.Billing]));
         services.AddSingleton(new PermissionDefinition(
             BillingPermissions.Manage,
             "Gestionar cobros recurrentes",
             "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
             "Billing",
             "medium",
-            RequiredModules: []));
+            RequiredModules: [ModuleKeys.Billing]));
     }
 
     private static void AddAuthentication(

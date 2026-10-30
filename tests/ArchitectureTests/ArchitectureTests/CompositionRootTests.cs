@@ -538,12 +538,12 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
-    /// Spec cobros-recurrentes (owner, 2026-10-29): los dos permisos de cobros son de núcleo (el módulo <c>billing</c> lo revisa
-    /// cada handler, para que apagado responda <c>tenancy.module_not_enabled</c> y no un 403 sin código, como Pipeline) y van a
-    /// admin y a facturación (que cobra los servicios recurrentes); no a asesor ni cajero.
+    /// Spec cobros-recurrentes (owner, 2026-10-29): los dos permisos de cobros exigen el módulo <c>billing</c> (nunca se muestran
+    /// permisos que el tenant no tiene: apagado, el editor de roles los oculta y la API responde un 403 pelado) y van a admin y
+    /// a facturación (que cobra los servicios recurrentes); no a asesor ni cajero.
     /// </summary>
     [Fact]
-    public void TheBillingPermissionsAreCoreAndGoToAdminAndBilling()
+    public void TheBillingPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
         var catalog = provider.GetRequiredService<IRoleCatalog>();
@@ -553,7 +553,7 @@ public sealed class CompositionRootTests
         foreach (var permission in new[] { BillingPermissions.Read, BillingPermissions.Manage })
         {
             Assert.Equal("Billing", definitions[permission].Category);
-            Assert.Empty(definitions[permission].RequiredModules!);
+            Assert.Equal([ModuleKeys.Billing], definitions[permission].RequiredModules!.ToArray());
             Assert.Contains(permission, catalog.PermissionsFor("admin"));
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));

@@ -644,7 +644,7 @@ public sealed class BillingChargeApiTests
     }
 
     [Fact]
-    public async Task WithTheModuleOffAnswers403ModuleNotEnabled()
+    public async Task WithTheModuleOffAnswersABare403()
     {
         var (database, factory) = await OpenAsync(TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Billing));
         await using var _ = database;
@@ -656,8 +656,9 @@ public sealed class BillingChargeApiTests
 
         foreach (var response in new[] { list, pay })
         {
+            // ModuleEntitlementMask quita el permiso antes del handler (owner, 2026-10-29): 403 pelado, sin código de módulo.
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            Assert.Equal("tenancy.module_not_enabled", await CodeOfAsync(response));
+            Assert.DoesNotContain("tenancy.module_not_enabled", await BodyAsync(response));
         }
     }
 }
