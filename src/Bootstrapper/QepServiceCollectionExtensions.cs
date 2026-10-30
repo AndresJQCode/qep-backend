@@ -1170,6 +1170,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
         services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
         services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
+        services.AddScoped<BillingEmailSender>();
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
+        services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
+        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingWhatsAppOutboundUnavailable>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
