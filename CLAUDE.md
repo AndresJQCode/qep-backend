@@ -297,7 +297,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (la arranca su primer entrante en vivo, salvo que ya la haya arrancado un `Reopened`), y un mensaje importado nunca es entrante
   de arranque ni respuesta, porque su `created_at` es la hora de la importación y una parte tardía cae *después* del entrante en
   vivo. Para «primer entrante» sí cuenta, con `occurred_at`. Un camino nuevo que escriba historial en `messaging.messages` tiene
-  que poner `imported = true`, o infla el reporte del día en que llega. Lo amarra `CoexistenceReportTests`.
+  que poner `imported = true`, o infla el reporte del día en que llega. Lo amarra `CoexistenceReportTests`. El `fromHistory` del
+  resumen sale de `imported` y `last_inbound_at`, no de `history_managed`: tomarla, transferirla o marcarla leída apaga esa bandera
+  sin abrir la ventana, y el aviso del compositor tiene que seguir mientras responder exija plantilla.
 - **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
   de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
   y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de

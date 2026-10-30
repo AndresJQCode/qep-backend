@@ -155,7 +155,8 @@ public sealed class ConversationSummaryBuilder(
             AutomationFrom(row, memberNames, chatbotNames),
             row.BlockedAt is { } blockedAt
                 ? new ConversationBlockDto(blockedAt, row.BlockedByMemberId is { } blocker ? memberNames.GetValueOrDefault(blocker) ?? MessageMapping.DeletedMemberName : null)
-                : null);
+                : null,
+            row.Imported && row.LastInboundAt is null);
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;

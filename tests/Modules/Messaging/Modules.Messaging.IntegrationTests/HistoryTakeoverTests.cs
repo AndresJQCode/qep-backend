@@ -269,6 +269,51 @@ public sealed class HistoryTakeoverTests
         Assert.Equal("Resolved|1|False", await RowAsync(f));
     }
 
+    private static async Task<System.Text.Json.JsonElement> GetJsonAsync(Fixture f, string url)
+    {
+        var response = await f.Advisor.GetAsync(url, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, body);
+        return System.Text.Json.JsonDocument.Parse(body).RootElement.Clone();
+    }
+
+    private static async Task<bool> FromHistoryInListAsync(Fixture f) =>
+        (await GetJsonAsync(f, $"{ConversationsUrl(f.Tenant.TenantId)}?status=Open")).GetProperty("items")[0].GetProperty("fromHistory").GetBoolean();
+
+    // Decisión del owner del 2026-10-30: el compositor avisa «viene del historial; usa una plantilla» mientras el contacto no haya
+    // escrito en vivo. No depende de history_managed: marcarla leída la apaga y no abre la ventana, así que el aviso sigue siendo cierto.
+    [Fact]
+    public async Task TheSummaryCarriesFromHistoryUntilTheContactWritesLive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ImportOpenAsync(f);
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+        var url = ConversationUrl(f.Tenant.TenantId, await ConversationIdAsync(f));
+
+        Assert.True((await GetJsonAsync(f, url)).GetProperty("fromHistory").GetBoolean());
+        Assert.True(await FromHistoryInListAsync(f));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Advisor, HttpMethod.Post, $"{url}/read")).StatusCode);
+        Assert.Equal("Open|0|False", await RowAsync(f));
+        Assert.True((await GetJsonAsync(f, url)).GetProperty("fromHistory").GetBoolean());
+
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.1", WaId, "wamid.live", f.ConnectedAt + 60, "¿Me respondes?"));
+
+        Assert.False((await GetJsonAsync(f, url)).GetProperty("fromHistory").GetBoolean());
+        Assert.False(await FromHistoryInListAsync(f));
+    }
+
+    [Fact]
+    public async Task AConversationBornLiveIsNotFromHistory()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.1", WaId, "wamid.live", f.ConnectedAt + 60, "Hola"));
+
+        Assert.False((await GetJsonAsync(f, ConversationUrl(f.Tenant.TenantId, await ConversationIdAsync(f)))).GetProperty("fromHistory").GetBoolean());
+    }
+
     // Hallazgo F5 de la revisión final (regla R4): una parte que sólo trae mensajes más viejos no cambia la conversación, así que no
     // le sube la versión: un resolver en vuelo del asesor no tiene por qué perder con un 412.
     [Fact]
