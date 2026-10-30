@@ -71,7 +71,7 @@ public sealed partial class CompleteWhatsAppSignupValidator : AbstractValidator<
             .OverridePropertyName("wabaId")
             .WithMessage(DigitsMessage);
         RuleFor(command => command.PhoneNumberId)
-            .Must((command, value) => command.IsCoexistence ? value is null : value is not null && Digits().IsMatch(value))
+            .Must((command, value) => command.IsCoexistence ? value is null || Digits().IsMatch(value) : value is not null && Digits().IsMatch(value))
             .OverridePropertyName("phoneNumberId")
             .WithMessage(DigitsMessage);
         RuleFor(command => command.BusinessId)
@@ -177,7 +177,7 @@ public sealed class CompleteWhatsAppSignupHandler(
         if (command.IsCoexistence)
         {
             // Paso 6: el número ya está registrado en la app del teléfono; no se llama /register.
-            phoneNumberId = await ResolveCoexistenceNumberAsync(provider, command.WabaId!, token, cancellationToken);
+            phoneNumberId = await ResolveCoexistenceNumberAsync(provider, command.WabaId!, command.PhoneNumberId, token, cancellationToken);
         }
         else if (await IsConnectedOnCloudApiAsync(command.PhoneNumberId!, token, cancellationToken))
         {
@@ -253,12 +253,21 @@ public sealed class CompleteWhatsAppSignupHandler(
         return read is { Succeeded: true, Value: { Status: GraphStatusConnected, PlatformType: GraphPlatformCloudApi } };
     }
 
-    private async Task<string> ResolveCoexistenceNumberAsync(IntegrationProvider provider, string wabaId, string token, CancellationToken cancellationToken)
+    private async Task<string> ResolveCoexistenceNumberAsync(IntegrationProvider provider, string wabaId, string? suppliedPhoneNumberId, string token, CancellationToken cancellationToken)
     {
         var numbers = await gateway.ListPhoneNumbersAsync(wabaId, token, cancellationToken);
         if (!numbers.Succeeded || numbers.Value is null || numbers.Value.Count == 0)
         {
             throw RegistrationFailed("numbers");
+        }
+
+        // Meta también manda phone_number_id en la coexistencia. Se usa sólo si pertenece a esta WABA, lo que además
+        // resuelve D-M15 sin adivinar. La ruta ya se comprobó arriba.
+        if (suppliedPhoneNumberId is not null)
+        {
+            return numbers.Value.Any(number => string.Equals(number.Id, suppliedPhoneNumberId, StringComparison.Ordinal))
+                ? suppliedPhoneNumberId
+                : throw RegistrationFailed("numbers");
         }
 
         if (numbers.Value.Count == 1)
