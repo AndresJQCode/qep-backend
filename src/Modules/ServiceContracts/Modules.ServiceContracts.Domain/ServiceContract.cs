@@ -79,7 +79,18 @@ public sealed class ServiceContract
         };
     }
 
-    public void Update(string name, decimal price, string currency, DateTimeOffset now)
+    /// <summary>
+    /// Cambia nombre, precio y moneda. Si el precio o la moneda cambian de verdad (100 y 100.00 son el mismo precio) el cambio
+    /// exige <paramref name="priceChangeReason"/> y devuelve la fila del historial, que quien llama persiste en la misma
+    /// transacción; si no, el motivo se ignora y devuelve null. Un cambio rechazado no toca nada: ni el nombre ni la versión.
+    /// </summary>
+    public ServicePriceChange? Update(
+        string name,
+        decimal price,
+        string currency,
+        string? priceChangeReason,
+        Guid? changedByMemberId,
+        DateTimeOffset now)
     {
         if (Status == ServiceContractStatus.Cancelled)
         {
@@ -87,10 +98,20 @@ public sealed class ServiceContract
         }
 
         var (cleanName, cleanCurrency) = Validate(name, price, currency);
+        var cleanPrice = ToMoney(price);
+        var priceChanged = cleanPrice != Price || !string.Equals(cleanCurrency, Currency, StringComparison.Ordinal);
+        var reason = priceChanged ? ValidateReason(priceChangeReason) : null;
+
+        var previousPrice = Price;
+        var previousCurrency = Currency;
         Name = cleanName;
-        Price = ToMoney(price);
+        Price = cleanPrice;
         Currency = cleanCurrency;
         Touch(now);
+
+        return reason is null
+            ? null
+            : ServicePriceChange.Record(this, previousPrice, previousCurrency, reason, changedByMemberId, now);
     }
 
     public void Pause(DateTimeOffset now)
@@ -182,6 +203,24 @@ public sealed class ServiceContract
         }
 
         return (cleanName, cleanCurrency);
+    }
+
+    private static string ValidateReason(string? reason)
+    {
+        var clean = reason?.Trim() ?? string.Empty;
+        if (clean.Length == 0)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.PriceChangeReasonRequired, "A reason is required to change the price or the currency.");
+        }
+
+        if (clean.Length > ServicePriceChange.ReasonMaxLength)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.ServiceInvalid, $"The price change reason must have at most {ServicePriceChange.ReasonMaxLength} characters.");
+        }
+
+        return clean;
     }
 
     private void RequireStatus(ServiceContractStatus expected)

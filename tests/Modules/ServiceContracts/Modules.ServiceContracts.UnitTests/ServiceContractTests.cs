@@ -21,7 +21,7 @@ public sealed class ServiceContractTests
         var service = NewService();
         Assert.Equal(Now, service.StatusChangedAt);
 
-        service.Update("Hosting 2", 120m, "COP", Now.AddHours(1));
+        service.Update("Hosting 2", 120m, "COP", "Ajuste anual", null, Now.AddHours(1));
         Assert.Equal(Now, service.StatusChangedAt);
 
         service.Pause(Now.AddDays(1));
@@ -43,7 +43,7 @@ public sealed class ServiceContractTests
             BillingCycle.Monthly, new DateOnly(2026, 1, 10), Now);
         Assert.Equal("150000.00", service.Price.ToString(CultureInfo.InvariantCulture));
 
-        service.Update("Hosting", 20.5m, "USD", Now);
+        service.Update("Hosting", 20.5m, "USD", "Pasa a dólares", null, Now);
         Assert.Equal("20.50", service.Price.ToString(CultureInfo.InvariantCulture));
 
         var charge = Charge.Generate(service, new DateOnly(2026, 2, 10), Now);
@@ -118,7 +118,7 @@ public sealed class ServiceContractTests
         var service = NewService();
         service.Cancel(Now);
 
-        AssertCode(ServiceContractsErrorCodes.ServiceCancelled, () => service.Update("Other", 5m, "COP", Now));
+        AssertCode(ServiceContractsErrorCodes.ServiceCancelled, () => service.Update("Other", 5m, "COP", "x", null, Now));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class ServiceContractTests
         var service = NewService();
         var version = service.Version;
 
-        service.Update(" Dominio ", 250m, "USD", Now.AddDays(1));
+        service.Update(" Dominio ", 250m, "USD", "Renovación", null, Now.AddDays(1));
 
         Assert.Equal("Dominio", service.Name);
         Assert.Equal(250m, service.Price);
@@ -138,7 +138,7 @@ public sealed class ServiceContractTests
 
     [Fact]
     public void UpdateValidatesLikeCreate() =>
-        AssertCode(ServiceContractsErrorCodes.ServiceInvalid, () => NewService().Update("", 5m, "COP", Now));
+        AssertCode(ServiceContractsErrorCodes.ServiceInvalid, () => NewService().Update("", 5m, "COP", "x", null, Now));
 
     [Fact]
     public void ResumeRecordsTheReactivationDate()
@@ -203,5 +203,81 @@ public sealed class ServiceContractTests
         var cancelled = NewService();
         cancelled.Cancel(Now);
         Assert.Null(cancelled.NextDueDateToGenerate());
+    }
+
+    // El historial de precios: cada cambio de precio o moneda deja una fila con el antes, el después, el motivo y quién lo hizo.
+    [Fact]
+    public void UpdateRecordsAPriceChangeWithItsReasonAndAuthor()
+    {
+        var service = NewService();
+        var author = Guid.NewGuid();
+
+        var change = service.Update("Hosting", 120m, "COP", "  Incremento del IPC 2026  ", author, Now.AddDays(1));
+
+        Assert.NotNull(change);
+        Assert.Equal(service.Id, change.ServiceId);
+        Assert.Equal(service.TenantId, change.TenantId);
+        Assert.Equal(100m, change.PreviousPrice);
+        Assert.Equal("COP", change.PreviousCurrency);
+        Assert.Equal(120m, change.NewPrice);
+        Assert.Equal("COP", change.NewCurrency);
+        Assert.Equal("Incremento del IPC 2026", change.Reason);
+        Assert.Equal(author, change.ChangedByMemberId);
+        Assert.Equal(Now.AddDays(1), change.OccurredAt);
+        Assert.NotEqual(Guid.Empty, change.Id);
+    }
+
+    [Fact]
+    public void ChangingOnlyTheCurrencyIsAPriceChange()
+    {
+        var change = NewService().Update("Hosting", 100m, "USD", "El cliente paga en dólares", null, Now);
+
+        Assert.NotNull(change);
+        Assert.Equal("COP", change.PreviousCurrency);
+        Assert.Equal("USD", change.NewCurrency);
+        Assert.Null(change.ChangedByMemberId);
+    }
+
+    // 100 y 100.00 son el mismo precio: renombrar el servicio no escribe historial ni exige motivo.
+    [Fact]
+    public void UpdateWithTheSamePriceRecordsNothingAndNeedsNoReason()
+    {
+        var service = NewService();
+
+        Assert.Null(service.Update("Hosting Pro", 100.00m, "COP", null, null, Now));
+        Assert.Null(service.Update("Hosting Pro", 100m, "COP", "   ", null, Now));
+        Assert.Equal("Hosting Pro", service.Name);
+    }
+
+    [Fact]
+    public void UpdateRequiresAReasonWhenThePriceOrTheCurrencyChanges()
+    {
+        AssertCode(ServiceContractsErrorCodes.PriceChangeReasonRequired, () => NewService().Update("Hosting", 120m, "COP", null, null, Now));
+        AssertCode(ServiceContractsErrorCodes.PriceChangeReasonRequired, () => NewService().Update("Hosting", 120m, "COP", "   ", null, Now));
+        AssertCode(ServiceContractsErrorCodes.PriceChangeReasonRequired, () => NewService().Update("Hosting", 100m, "USD", "", null, Now));
+    }
+
+    [Fact]
+    public void UpdateRejectsAReasonLongerThanTheLimit()
+    {
+        var service = NewService();
+        var tooLong = new string('a', ServicePriceChange.ReasonMaxLength + 1);
+
+        AssertCode(ServiceContractsErrorCodes.ServiceInvalid, () => service.Update("Hosting", 120m, "COP", tooLong, null, Now));
+        Assert.Equal(100m, service.Price);
+    }
+
+    // Un cambio rechazado no deja el agregado a medias: ni el nombre ni la versión se mueven.
+    [Fact]
+    public void ARefusedPriceChangeLeavesTheServiceUntouched()
+    {
+        var service = NewService();
+
+        AssertCode(ServiceContractsErrorCodes.PriceChangeReasonRequired, () => service.Update("Otro", 120m, "COP", null, null, Now.AddDays(1)));
+
+        Assert.Equal("Hosting", service.Name);
+        Assert.Equal(100m, service.Price);
+        Assert.Equal(1, service.Version);
+        Assert.Equal(Now, service.UpdatedAt);
     }
 }

@@ -24,6 +24,9 @@ public static class ServiceContractsErrorCodes
 
     public const string ServiceInvalid = "billing.service.invalid";
 
+    /// <summary>El precio o la moneda cambian y el cuerpo no trae <c>priceChangeReason</c>: el historial exige la justificación.</summary>
+    public const string PriceChangeReasonRequired = "billing.service.price_reason_required";
+
     public const string ProfileMissing = "billing.profile.missing";
 
     public const string ProfileNotFound = "billing.profile.not_found";

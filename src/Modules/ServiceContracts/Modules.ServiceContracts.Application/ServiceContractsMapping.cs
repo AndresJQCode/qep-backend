@@ -64,6 +64,16 @@ public static class ServiceContractsMapping
             ? new MemberRefDto(memberId, "Sin nombre", false)
             : new MemberRefDto(member.MemberId, member.DisplayName, member.IsActive);
 
+    public static ServicePriceChangeDto ToPriceChangeDto(ServicePriceChange change, MemberRefDto? changedBy) => new(
+        change.Id,
+        change.PreviousPrice,
+        change.PreviousCurrency,
+        change.NewPrice,
+        change.NewCurrency,
+        change.Reason,
+        changedBy,
+        change.OccurredAt);
+
     public static ProfileDto ToProfileDto(CustomerBillingProfile profile, MemberRefDto assignee) => new(
         profile.CustomerId,
         profile.Channel.ToString(),

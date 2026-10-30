@@ -55,7 +55,28 @@ public sealed record ServiceDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
-public sealed record ServiceDetailDto(ServiceDto Service, ProfileDto Profile, IReadOnlyList<ChargeDto> Charges);
+/// <summary>
+/// Una fila del historial de precios del contrato: de qué precio y moneda a cuáles, el motivo obligatorio y quién lo cambió
+/// (<c>null</c> si quien editó no tenía membresía activa, como <c>PaymentDto.PaidBy</c>). Viaja dentro del detalle y no en un
+/// endpoint propio: la ficha lo pinta debajo del encabezado y son pocas filas (un precio cambia unas veces al año), así que una
+/// segunda llamada sólo le costaría una carga más a la pantalla.
+/// </summary>
+public sealed record ServicePriceChangeDto(
+    Guid Id,
+    decimal PreviousPrice,
+    string PreviousCurrency,
+    decimal NewPrice,
+    string NewCurrency,
+    string Reason,
+    MemberRefDto? ChangedBy,
+    DateTimeOffset OccurredAt);
+
+/// <param name="PriceChanges">Del más reciente al más viejo; vacío si el precio nunca cambió.</param>
+public sealed record ServiceDetailDto(
+    ServiceDto Service,
+    ProfileDto Profile,
+    IReadOnlyList<ChargeDto> Charges,
+    IReadOnlyList<ServicePriceChangeDto> PriceChanges);
 
 /// <summary>Deuda acumulada del tenant entero (status=open, sin los demás filtros), un total por moneda sin convertir.</summary>
 public sealed record ChargeSummaryDto(

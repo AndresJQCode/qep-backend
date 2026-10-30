@@ -322,6 +322,64 @@ b.Property<Guid>("TenantId")
                         });
                 });
 
+            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServicePriceChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ChangedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by_member_id");
+
+                    b.Property<string>("NewCurrency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("new_currency");
+
+                    b.Property<decimal>("NewPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("new_price");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PreviousCurrency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("previous_currency");
+
+                    b.Property<decimal>("PreviousPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("previous_price");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("ServiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("service_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceId", "OccurredAt")
+                        .HasDatabaseName("IX_service_price_changes_service_occurred");
+
+                    b.ToTable("service_price_changes", "billing");
+                });
+
             modelBuilder.Entity("Modules.ServiceContracts.Infrastructure.Persistence.CustomerMessage", b =>
                 {
                     b.Property<Guid>("Id")

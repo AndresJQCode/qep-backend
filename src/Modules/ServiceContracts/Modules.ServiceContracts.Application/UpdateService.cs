@@ -5,8 +5,11 @@ using Modules.Tenancy.Application;
 
 namespace Modules.ServiceContracts.Application;
 
-/// <summary>El cuerpo de <c>PUT /services/{id}</c>; anulable por el mismo motivo que <see cref="CreateServiceRequest"/>.</summary>
-public sealed record UpdateServiceRequest(string? Name, decimal? Price, string? Currency);
+/// <summary>
+/// El cuerpo de <c>PUT /services/{id}</c>; anulable por el mismo motivo que <see cref="CreateServiceRequest"/>.
+/// <paramref name="PriceChangeReason"/> es obligatorio sólo cuando el precio o la moneda cambian; si no, se ignora.
+/// </summary>
+public sealed record UpdateServiceRequest(string? Name, decimal? Price, string? Currency, string? PriceChangeReason);
 
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
 public sealed record UpdateServiceCommand(
@@ -15,6 +18,7 @@ public sealed record UpdateServiceCommand(
     string Name,
     decimal Price,
     string Currency,
+    string? PriceChangeReason,
     long ExpectedVersion)
     : ICommand<ServiceDetailDto>
 {
@@ -24,6 +28,7 @@ public sealed record UpdateServiceCommand(
         request.Name ?? string.Empty,
         request.Price ?? 0m,
         request.Currency ?? string.Empty,
+        request.PriceChangeReason,
         expectedVersion);
 }
 
@@ -34,18 +39,24 @@ public sealed class UpdateServiceValidator : AbstractValidator<UpdateServiceComm
         RuleFor(command => command.Name).MustBeAServiceName();
         RuleFor(command => command.Price).MustBeAServicePrice();
         RuleFor(command => command.Currency).NotEmpty();
+        // Si es obligatorio lo decide el dominio, que sabe si el precio cambió (billing.service.price_reason_required); acá
+        // sólo el largo, para que el 422 nombre el campo.
+        RuleFor(command => command.PriceChangeReason).MaximumLength(ServicePriceChange.ReasonMaxLength);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
     }
 }
 
 /// <summary>
 /// Cambia nombre, precio y moneda (spec §3.2). Los cobros ya generados conservan su monto: el cambio sólo toca a los que se
-/// generen después, porque cada <c>Charge</c> copió el precio al nacer.
+/// generen después, porque cada <c>Charge</c> copió el precio al nacer. Un cambio de precio o de moneda exige un motivo y deja
+/// una fila en el historial del contrato, en la misma transacción; quien lo hizo es su membresía activa, si la tiene.
 /// </summary>
 public sealed class UpdateServiceHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
+    IMembershipDirectory membershipDirectory,
     IServiceContractRepository services,
+    IServicePriceChangeRepository priceChanges,
     IServiceContractsUnitOfWork unitOfWork,
     IServiceContractsAuditPublisher auditPublisher,
     IClock clock,
@@ -82,8 +93,19 @@ public sealed class UpdateServiceHandler(
             changedFields.Add("currency");
         }
 
+        // La membresía sólo hace falta para firmar el historial: una edición del nombre no la consulta.
+        var priceChanged = changedFields.Contains("price") || changedFields.Contains("currency");
+        var changedBy = priceChanged
+            ? await membershipDirectory.FindActiveMembershipIdAsync(executionContext.SubjectId, command.TenantId, cancellationToken)
+            : null;
+
         var now = clock.UtcNow;
-        service.Update(name, command.Price, currency, now);
+        var priceChange = service.Update(name, command.Price, currency, command.PriceChangeReason, changedBy, now);
+        if (priceChange is not null)
+        {
+            priceChanges.Add(priceChange);
+        }
+
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
