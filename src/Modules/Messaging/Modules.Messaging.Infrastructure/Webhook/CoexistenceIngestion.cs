@@ -81,6 +81,12 @@ internal static class CoexistenceIngestion
         if (newest is not null)
         {
             await UpdateSummaryAsync(dbContext, conversationId, newest, newestId, customerId, now, cancellationToken);
+            if (source == CoexistenceSource.Echo)
+            {
+                // Regla R11: el negocio respondiendo desde la app es actividad en vivo, y desde ahí una parte del historial que llegue
+                // después no le cambia el estado ni los no leídos. Si nació con este eco ya no lleva la marca, así que no escribe.
+                await ClearHistoryManagedAsync(dbContext, conversationId, now, cancellationToken);
+            }
         }
 
         if (changed)
@@ -159,6 +165,14 @@ internal static class CoexistenceIngestion
             ?? throw new InvalidOperationException("The conversation that blocked the insert could not be found.");
         return (raced, false);
     }
+
+    private static Task<int> ClearHistoryManagedAsync(
+        MessagingDbContext dbContext, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE messaging.conversations SET history_managed = false, updated_at = {now}, version = version + 1
+            WHERE id = {conversationId} AND history_managed
+            """, cancellationToken);
 
     /// <summary>La foto de la lista, como <c>IngestEchoAsync</c>: avanza por <c>occurred_at</c> y se queda el más reciente. Nunca toca
     /// <c>last_inbound_*</c>, el asignado ni el asistente.</summary>
