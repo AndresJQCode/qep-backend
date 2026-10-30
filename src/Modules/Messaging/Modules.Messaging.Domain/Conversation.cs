@@ -129,6 +129,12 @@ public sealed partial class Conversation
     /// no lo pisa un bloque que llega después. Por SQL lo apagan también el entrante en vivo, el saliente enviado y la autoasignación.</summary>
     public bool HistoryManaged { get; private set; }
 
+    /// <summary>Decisión del owner del 2026-10-30: la conversación nació de la importación del historial por coexistencia. A diferencia
+    /// de <see cref="HistoryManaged"/>, nunca se apaga: el reporte de mensajería no cuenta su creación como sesión (la hora de creación es
+    /// la de la importación, no la de una conversación), y la bandeja avisa que viene del historial mientras el contacto no escriba en
+    /// vivo. La escribe la ingesta por SQL; el agregado no la cambia.</summary>
+    public bool Imported { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }

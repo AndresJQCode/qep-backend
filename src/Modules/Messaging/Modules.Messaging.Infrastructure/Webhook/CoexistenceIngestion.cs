@@ -43,6 +43,8 @@ internal static class CoexistenceIngestion
             dbContext, tenantId, connectionId, waId, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
 
         var changed = created;
+        // La marca durable de lo importado (decisión del owner del 2026-10-30): un eco es tráfico en vivo y no la lleva.
+        var imported = source == CoexistenceSource.History;
         CoexistenceMessage? newest = null;
         var newestId = Guid.Empty;
         foreach (var message in ordered)
@@ -54,8 +56,8 @@ internal static class CoexistenceIngestion
             var status = MessageColumnCodes.ToCode(message.Direction == MessageDirection.Outbound ? MessageStatus.Sent : MessageStatus.Delivered);
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
-                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, details, wamid, reply_to_wamid, reply_to_message_id, created_at)
-                VALUES ({messageId}, {conversationId}, {tenantId}, {connectionId}, {message.OccurredAt}, {direction}, {kind}, {status}, {message.Text}, {message.Caption}, {message.DetailsJson}::jsonb, {message.Wamid}, NULL, NULL, {now})
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, details, wamid, reply_to_wamid, reply_to_message_id, created_at, imported)
+                VALUES ({messageId}, {conversationId}, {tenantId}, {connectionId}, {message.OccurredAt}, {direction}, {kind}, {status}, {message.Text}, {message.Caption}, {message.DetailsJson}::jsonb, {message.Wamid}, NULL, NULL, {now}, {imported})
                 ON CONFLICT (connection_id, wamid) WHERE wamid IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -153,8 +155,8 @@ internal static class CoexistenceIngestion
         var inserted = await dbContext.Database.SqlQuery<Guid>(
             $"""
             INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
-                                                 last_activity_at, history_managed, created_at, updated_at, version)
-            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {now}, {now}, 1)
+                                                 last_activity_at, history_managed, imported, created_at, updated_at, version)
+            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {now}, {now}, 1)
             ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
             RETURNING id AS "Value"
             """).ToListAsync(cancellationToken);

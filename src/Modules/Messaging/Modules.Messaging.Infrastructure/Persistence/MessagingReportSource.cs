@@ -13,7 +13,14 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// <item>El entrante de arranque es el primer <c>direction = 1</c> de la sesión; sin él no hay reloj (S3).</item>
 /// <item>Cuenta como respuesta un saliente (<c>direction = 2</c>) que no falló (<c>status &lt;&gt; 4</c>, D-6) y que no es de campaña
 /// (<c>campaign_recipients.message_id</c>, D-12). La del asesor exige <c>sent_by_kind = 1</c> y autor: el eco de Instagram queda fuera (S6).</item>
+/// <item>El historial importado por coexistencia (<c>imported</c>, decisión del owner del 2026-10-30) no es actividad del periodo: su
+/// <c>created_at</c> es la hora de la importación. Una conversación importada no arranca sesión al crearse: la arranca su primer entrante
+/// en vivo, salvo que ya la haya arrancado un <c>Reopened</c>. Un mensaje importado nunca es el entrante de arranque ni una respuesta.
+/// Para «primer entrante» (contacto nuevo o que vuelve) sí cuenta, con su <c>occurred_at</c>, que es la única hora real que tiene: un
+/// contacto con historial no es nuevo por escribir en vivo después de la conexión.</item>
 /// </list>
+/// Las tres consultas leen <c>imported</c> por nombre: renombrarla compila y deja el reporte en 500; lo amarra
+/// <c>CoexistenceReportTests</c>, que corre contra el esquema migrado.
 /// </summary>
 internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMessagingReportSource
 {
@@ -30,13 +37,25 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
             WITH starts AS (
                 SELECT c.id AS conversation_id, c.connection_id, c.channel, c.assigned_member_id, c.created_at AS session_start
                 FROM messaging.conversations c
-                WHERE c.tenant_id = {tenantId} AND c.created_at >= {start} AND c.created_at < {end}
+                WHERE c.tenant_id = {tenantId} AND c.created_at >= {start} AND c.created_at < {end} AND NOT c.imported
                 UNION ALL
                 SELECT m.conversation_id, c.connection_id, c.channel, c.assigned_member_id, m.created_at
                 FROM messaging.messages m
                 JOIN messaging.conversations c ON c.id = m.conversation_id
                 WHERE m.tenant_id = {tenantId} AND m.direction = 3 AND m.kind = 13 AND m.details->>'type' = 'Reopened'
                   AND m.created_at >= {start} AND m.created_at < {end}
+                UNION ALL
+                SELECT c.id, c.connection_id, c.channel, c.assigned_member_id, fl.at
+                FROM messaging.conversations c
+                JOIN LATERAL (
+                    SELECT min(l.created_at) AS at FROM messaging.messages l
+                    WHERE l.conversation_id = c.id AND l.direction = 1 AND NOT l.imported
+                ) fl ON true
+                WHERE c.tenant_id = {tenantId} AND c.imported AND fl.at >= {start} AND fl.at < {end}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messaging.messages r
+                      WHERE r.conversation_id = c.id AND r.direction = 3 AND r.kind = 13 AND r.details->>'type' = 'Reopened'
+                        AND r.created_at <= fl.at)
             ),
             sessions AS (
                 SELECT s.*, e.at AS session_end
@@ -55,39 +74,41 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
             FROM sessions s
             LEFT JOIN LATERAL (
                 SELECT min(i.created_at) AS at FROM messaging.messages i
-                WHERE i.conversation_id = s.conversation_id AND i.direction = 1 AND i.created_at >= s.session_start
+                WHERE i.conversation_id = s.conversation_id AND i.direction = 1 AND NOT i.imported AND i.created_at >= s.session_start
                   AND (s.session_end IS NULL OR i.created_at < s.session_end)
             ) si ON true
             LEFT JOIN LATERAL (
                 SELECT min(o.created_at) AS at FROM messaging.messages o
-                WHERE si.at IS NOT NULL AND o.conversation_id = s.conversation_id AND o.direction = 2 AND o.status <> 4
+                WHERE si.at IS NOT NULL AND o.conversation_id = s.conversation_id AND o.direction = 2 AND o.status <> 4 AND NOT o.imported
                   AND o.created_at > si.at AND (s.session_end IS NULL OR o.created_at < s.session_end)
                   AND NOT EXISTS (SELECT 1 FROM messaging.campaign_recipients cr WHERE cr.message_id = o.id)
             ) fo ON true
             LEFT JOIN LATERAL (
                 SELECT o.created_at AS at, o.sent_by_member_id AS member_id FROM messaging.messages o
-                WHERE si.at IS NOT NULL AND o.conversation_id = s.conversation_id AND o.direction = 2 AND o.status <> 4
+                WHERE si.at IS NOT NULL AND o.conversation_id = s.conversation_id AND o.direction = 2 AND o.status <> 4 AND NOT o.imported
                   AND o.sent_by_kind = 1 AND o.sent_by_member_id IS NOT NULL
                   AND o.created_at > si.at AND (s.session_end IS NULL OR o.created_at < s.session_end)
                   AND NOT EXISTS (SELECT 1 FROM messaging.campaign_recipients cr WHERE cr.message_id = o.id)
                 ORDER BY o.created_at, o.id LIMIT 1
             ) fm ON true
             LEFT JOIN LATERAL (
-                SELECT min(i.created_at) AS at FROM messaging.messages i
+                SELECT min(CASE WHEN i.imported THEN i.occurred_at ELSE i.created_at END) AS at FROM messaging.messages i
                 WHERE i.conversation_id = s.conversation_id AND i.direction = 1
             ) fe ON true
             """).ToListAsync(cancellationToken);
 
+        // Un contacto nuevo necesita un entrante en vivo en el periodo; su primer entrante cuenta también el importado, con su occurred_at.
         var newContacts = await dbContext.Database.SqlQuery<NewContactSql>(
             $"""
             SELECT c.id AS "ConversationId", c.channel AS "Channel", f.at AS "FirstInboundAt"
             FROM (
                 SELECT DISTINCT m.conversation_id FROM messaging.messages m
-                WHERE m.tenant_id = {tenantId} AND m.direction = 1 AND m.created_at >= {start} AND m.created_at < {end}
+                WHERE m.tenant_id = {tenantId} AND m.direction = 1 AND NOT m.imported AND m.created_at >= {start} AND m.created_at < {end}
             ) w
             JOIN messaging.conversations c ON c.id = w.conversation_id
             JOIN LATERAL (
-                SELECT min(i.created_at) AS at FROM messaging.messages i WHERE i.conversation_id = c.id AND i.direction = 1
+                SELECT min(CASE WHEN i.imported THEN i.occurred_at ELSE i.created_at END) AS at
+                FROM messaging.messages i WHERE i.conversation_id = c.id AND i.direction = 1
             ) f ON true
             WHERE f.at >= {start} AND f.at < {end}
               AND ({channelName}::text IS NULL OR c.channel = {channelName}::text)
@@ -103,16 +124,28 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
     public async Task<IReadOnlyList<ConversationChannel>> ChannelsWithDataAsync(
         Guid tenantId, DateTimeOffset startUtc, DateTimeOffset endExclusiveUtc, CancellationToken cancellationToken)
     {
-        // Mismas dos fuentes de sesión que LoadAsync (conversación creada o Reopened) y el mismo created_at, sin el filtro de canal.
+        // Mismas fuentes de sesión que LoadAsync (conversación creada en vivo, Reopened, o el primer entrante en vivo de una importada) y
+        // el mismo created_at, sin el filtro de canal.
         var names = await dbContext.Database.SqlQuery<string>(
             $"""
             SELECT c.channel AS "Value" FROM messaging.conversations c
-            WHERE c.tenant_id = {tenantId} AND c.created_at >= {startUtc} AND c.created_at < {endExclusiveUtc}
+            WHERE c.tenant_id = {tenantId} AND c.created_at >= {startUtc} AND c.created_at < {endExclusiveUtc} AND NOT c.imported
             UNION
             SELECT c.channel AS "Value" FROM messaging.messages m
             JOIN messaging.conversations c ON c.id = m.conversation_id
             WHERE m.tenant_id = {tenantId} AND m.direction = 3 AND m.kind = 13 AND m.details->>'type' = 'Reopened'
               AND m.created_at >= {startUtc} AND m.created_at < {endExclusiveUtc}
+            UNION
+            SELECT c.channel AS "Value" FROM messaging.conversations c
+            JOIN LATERAL (
+                SELECT min(l.created_at) AS at FROM messaging.messages l
+                WHERE l.conversation_id = c.id AND l.direction = 1 AND NOT l.imported
+            ) fl ON true
+            WHERE c.tenant_id = {tenantId} AND c.imported AND fl.at >= {startUtc} AND fl.at < {endExclusiveUtc}
+              AND NOT EXISTS (
+                  SELECT 1 FROM messaging.messages r
+                  WHERE r.conversation_id = c.id AND r.direction = 3 AND r.kind = 13 AND r.details->>'type' = 'Reopened'
+                    AND r.created_at <= fl.at)
             """).ToListAsync(cancellationToken);
         return [.. names.Select(Enum.Parse<ConversationChannel>)];
     }

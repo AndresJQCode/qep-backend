@@ -291,6 +291,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
   reabre el entrante en vivo con su `Reopened`. No la «arregles» a `Open` para que se vea el eco: el hilo está en
   «Resueltas».
+- **Lo importado se marca con `imported` (conversación y mensaje), y esa marca no se apaga nunca** (owner 2026-10-30). No es
+  `history_managed`, que se apaga con cualquier acción del asesor: el reporte no puede depender de una bandera que un «marcar
+  leída» borra. `MessagingReportSource` la lee por nombre en SQL crudo: una conversación importada no arranca sesión al crearse
+  (la arranca su primer entrante en vivo, salvo que ya la haya arrancado un `Reopened`), y un mensaje importado nunca es entrante
+  de arranque ni respuesta, porque su `created_at` es la hora de la importación y una parte tardía cae *después* del entrante en
+  vivo. Para «primer entrante» sí cuenta, con `occurred_at`. Un camino nuevo que escriba historial en `messaging.messages` tiene
+  que poner `imported = true`, o infla el reporte del día en que llega. Lo amarra `CoexistenceReportTests`.
 - **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
   de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
   y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de

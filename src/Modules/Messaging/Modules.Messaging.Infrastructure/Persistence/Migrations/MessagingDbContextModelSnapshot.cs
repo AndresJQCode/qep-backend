@@ -396,6 +396,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("history_managed");
 
+                    b.Property<bool>("Imported")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("imported");
+
                     b.Property<DateTimeOffset>("LastActivityAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_activity_at");
@@ -1182,6 +1188,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<string>("FailureTitle")
                         .HasColumnType("text")
                         .HasColumnName("failure_title");
+
+                    b.Property<bool>("Imported")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("imported");
 
                     b.Property<short>("Kind")
                         .HasColumnType("smallint")

@@ -2908,6 +2908,16 @@ desde la app.
   la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
   reabre por el camino de siempre, con su evento `Reopened`. Un eco a una conversación que ya existe no le
   cambia el estado.
+- **El historial importado no cuenta en el reporte de mensajería** (decisión del owner del 2026-10-30). Lo
+  importado lleva la marca `imported`, en `messaging.conversations` y en `messaging.messages`, y esa marca
+  no se apaga nunca, a diferencia de `history_managed`. Su `created_at` es la hora de la importación, así que
+  `MessagingReportSource` lo deja fuera de las sesiones, de los entrantes de arranque y de las respuestas: el
+  día de la conexión no se infla con contactos nuevos ni con sesiones sin responder. Lo que pasa en vivo
+  después cuenta como siempre: una conversación importada arranca sesión con su primer entrante en vivo, o
+  con su `Reopened` si se reabrió. Para saber si un contacto es nuevo o vuelve, un entrante importado sí
+  cuenta, con su `occurred_at`: un contacto que ya escribía por la app no es nuevo por escribir en vivo. Los
+  ecos no llevan la marca, porque son tráfico en vivo. La migración `AddImportedMarker` agrega las dos
+  columnas.
 - **Regla de Meta: 24 h y una sola vez por tipo.** Meta acepta el pedido de cada tipo una sola vez y sólo
   dentro de las 24 h siguientes a la conexión. Pasado el plazo no hay segunda oportunidad: el estado queda
   `Expired` y la pantalla dice que hay que desconectar y volver a conectar. Un pedido rechazado por Graph
@@ -2920,7 +2930,8 @@ desde la app.
   `Failed`; sin cuerpo.
 - **Orden de la puesta en marcha (spec §6).** (1) Conexiones de Clasic y Transportes CI creadas en QEP;
   (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado, con la migración
-  `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización);
+  `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización) y
+  `AddImportedMarker` (la marca `imported` de conversaciones y mensajes);
   (4) recién entonces,
   el número de QCode por coexistencia. **Despliégalo antes de conectar cualquier número por coexistencia:**
   una conexión hecha antes pide el historial, QEP lo descarta como `UnknownChange` y no hay segunda
@@ -2942,11 +2953,6 @@ desde la app.
   app, y marcarla leída o no leída (también «no leído desde este mensaje»). **Un envío de campaña no la apaga.**
   Si agregas una acción del asesor sobre una conversación, decide qué hace con la bandera: si no la apaga, la
   siguiente parte del historial le pisa el estado o el contador.
-- **El reporte de mensajería cuenta lo importado el día de la conexión.** Las conversaciones y los mensajes
-  importados se guardan con `created_at` = la hora de la importación, y `MessagingReportSource` arma las
-  sesiones y los contactos nuevos con `created_at`. Así que ese día cada hilo importado con un entrante aparece
-  como contacto nuevo y como sesión (sin responder, porque su saliente tiene la misma hora). No se corrigió a
-  propósito: tocaría la semántica del reporte en otro módulo, y lo decide el owner.
 - **Ventana residual de doble envío con varias réplicas.** El pedido a Graph se reclama con un lease; con más
   de una réplica queda una ventana pequeña en la que dos pods pueden enviar el mismo pedido.
 - **Un archivo que nunca llega queda `Pending`.** Si Meta no entrega el medio de un `media_placeholder`, el
