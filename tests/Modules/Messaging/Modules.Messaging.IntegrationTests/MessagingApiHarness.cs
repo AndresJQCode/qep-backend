@@ -663,11 +663,16 @@ internal static class MessagingApiHarness
     }
 
     /// <summary>Spec 2026-10-29: una pasada del worker que le pide a Meta los contactos y el historial (<c>smb_app_data</c>).</summary>
-    public static async Task DrainHistorySyncRequestsAsync(WebApplicationFactory<Program> host)
+    public static Task DrainHistorySyncRequestsAsync(WebApplicationFactory<Program> host) =>
+        DrainHistorySyncRequestsWithTokenAsync(host, TestContext.Current.CancellationToken);
+
+    /// <summary>La misma pasada con el token que la prueba controla (p. ej., el apagado del host a mitad de una fila). Otro nombre y no
+    /// una sobrecarga: con la sobrecarga, xUnit1051 marca cada llamada de un solo argumento.</summary>
+    public static async Task DrainHistorySyncRequestsWithTokenAsync(WebApplicationFactory<Program> host, CancellationToken cancellationToken)
     {
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestWorker>().Single();
-        await worker.DrainAsync(TestContext.Current.CancellationToken);
+        await worker.DrainAsync(cancellationToken);
     }
 
     /// <summary>Corre una pasada de la copia de medios (§8.6, P10): reclama y copia lo pendiente.</summary>
