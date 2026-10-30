@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Media;
 using Modules.Messaging.Infrastructure.Options;
 
@@ -463,6 +464,66 @@ internal sealed partial class WhatsAppCloudClient(
             }
 
             return new BlockUsersResult(applied, code, subcode);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Spec 2026-10-29: el valor de <c>sync_type</c> que espera Graph para cada tipo.</summary>
+    internal static string SyncTypeOf(HistorySyncType type) => type switch
+    {
+        HistorySyncType.SmbAppStateSync => "smb_app_state_sync",
+        HistorySyncType.History => "history",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
+    };
+
+    public async Task<MessagingGraphResult<string>> RequestSmbAppDataAsync(
+        MessagingSender sender, HistorySyncType type, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
+        var syncType = SyncTypeOf(type);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/smb_app_data")
+        {
+            Content = JsonContent.Create(new { messaging_product = "whatsapp", sync_type = syncType }),
+        };
+        // El log sólo lleva la operación, el status y los códigos: ni el token ni el request_id.
+        var answer = await SendAsync($"smb-app-data-{syncType}", request, sender.AccessToken, null, cancellationToken);
+        using var response = answer.Response;
+        if (response is null)
+        {
+            // P-3: sin respuesta no se sabe si Meta lo recibió.
+            return new MessagingGraphResult<string>(null, new MessagingGraphFailure(0, null, MessagingGraphFailure.UnconfirmedReason));
+        }
+
+        var status = (int)response.StatusCode;
+        if (status >= 500)
+        {
+            return new MessagingGraphResult<string>(null, FailureOf(status, answer) with { Reason = MessagingGraphFailure.UnconfirmedReason });
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return new MessagingGraphResult<string>(null, FailureOf(status, answer));
+        }
+
+        var requestId = ReadRequestId(answer.Body);
+        return string.IsNullOrWhiteSpace(requestId)
+            ? new MessagingGraphResult<string>(null, new MessagingGraphFailure(status, null, MessagingGraphFailure.UnconfirmedReason))
+            : new MessagingGraphResult<string>(requestId, null);
+    }
+
+    private static string? ReadRequestId(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("request_id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                ? id.GetString()
+                : null;
         }
         catch (JsonException)
         {
