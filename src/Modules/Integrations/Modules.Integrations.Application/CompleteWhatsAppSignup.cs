@@ -98,6 +98,7 @@ public sealed class CompleteWhatsAppSignupHandler(
     IConnectionRouteRepository routes,
     IIntegrationsUnitOfWork unitOfWork,
     IIntegrationsAuditRecorder auditRecorder,
+    IConnectionEventPublisher eventPublisher,
     ISecretProtector protector,
     IWhatsAppSignupGateway gateway,
     IMetaAppSettings metaApp,
@@ -229,6 +230,12 @@ public sealed class CompleteWhatsAppSignupHandler(
             ? [.. ConnectionAudit.KeysOf(connection), $"path:{command.Path}", $"event:{command.Event}", RegisterSkippedAuditField]
             : [.. ConnectionAudit.KeysOf(connection), $"path:{command.Path}", $"event:{command.Event}"];
         ConnectionAudit.ByMember(auditRecorder, executionContext, connection, ConnectionAuditActions.Created, audited, now);
+        if (command.IsCoexistence)
+        {
+            // Misma transacción que la conexión: Messaging importa el historial de la app al consumirlo.
+            eventPublisher.Publish(ConnectionEvents.WhatsAppCoexistenceConnected, connection, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         // Este proveedor no exige habilitación por tenant (plan 2026-10-21), así que no se consulta: si algún día la

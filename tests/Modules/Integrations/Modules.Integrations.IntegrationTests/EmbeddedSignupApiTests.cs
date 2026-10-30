@@ -180,4 +180,28 @@ public sealed class EmbeddedSignupApiTests
         Assert.Equal("777", connection!.Fields["phoneNumberId"]);
         Assert.DoesNotContain(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/register", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public async Task ACoexistenceSignupLeavesTheEventInTheOutbox()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        factory.MetaHandler.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}"}""");
+        factory.MetaHandler.Respond("/222/phone_numbers", HttpStatusCode.OK, """{"data":[{"id":"777","display_phone_number":"+57 7","verified_name":"Coex","quality_rating":"YELLOW"}]}""");
+        factory.MetaHandler.Respond("/222/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        factory.MetaHandler.Respond("/777\\?fields=", HttpStatusCode.OK, """{"display_phone_number":"+57 7","verified_name":"Coex","quality_rating":"YELLOW","id":"777"}""");
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(@event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", phoneNumberId: null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.whatsapp-coexistence-connected.v1' AND payload->>'connectionId' = @id",
+            ("id", connection!.Id.ToString())));
+    }
 }

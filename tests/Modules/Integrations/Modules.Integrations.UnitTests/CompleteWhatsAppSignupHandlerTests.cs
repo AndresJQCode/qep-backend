@@ -125,6 +125,32 @@ public sealed class CompleteWhatsAppSignupHandlerTests
         Assert.False(response.Secrets["registrationPin"].Configured);
     }
 
+    [Fact]
+    public async Task ACoexistenceSignupPublishesTheConnectedEventOnce()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.WabaNumbers["222"] = [new WabaPhoneNumber("111", "+57 1", "Origen", "GREEN")];
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", "+57 1", "Origen", "GREEN");
+
+        var response = await bed.SignupHandler().HandleAsync(Coexistence(bed.TenantId), Ct);
+
+        var published = Assert.Single(bed.Events.Published);
+        Assert.Equal(ConnectionEvents.WhatsAppCoexistenceConnected, published.EventName);
+        Assert.Equal(response.Id, published.ConnectionId);
+        Assert.Equal(bed.Clock.UtcNow, published.OccurredAt);
+    }
+
+    [Fact]
+    public async Task ARegularSignupPublishesNoEvent()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", null, null, null, "CONNECTED", "CLOUD_API");
+
+        await bed.SignupHandler().HandleAsync(Finish(bed.TenantId), Ct);
+
+        Assert.Empty(bed.Events.Published);
+    }
+
     // D-M15: con varios sin ruta no se elige ninguno; el que ya tiene ruta se descarta.
     [Fact]
     public async Task CoexistenceWithSeveralFreeNumbersIsRegistrationFailed()
