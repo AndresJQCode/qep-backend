@@ -15,6 +15,9 @@ internal static partial class WebhookPayloadParser
 {
     public const string CallbackPrefix = "qep:";
 
+    /// <summary>Spec 2026-10-29: el código de error con el que Meta avisa que el dueño no aceptó compartir el historial.</summary>
+    public const int HistoryDeclinedCode = 2593109;
+
     // Rango que acepta DateTimeOffset.FromUnixTimeSeconds; fuera de él lanzaría ArgumentOutOfRangeException.
     private const long MinUnixSeconds = -62_135_596_800;
     private const long MaxUnixSeconds = 253_402_300_799;
@@ -57,6 +60,9 @@ internal static partial class WebhookPayloadParser
                         "message_template_status_update" => ParseTemplateStatus(wabaId ?? string.Empty, value),
                         "account_update" => ParseAccountUpdate(wabaId ?? string.Empty, value),
                         "user_id_update" => ParseUserIdUpdate(wabaId ?? string.Empty, value),
+                        "history" => ParseHistory(value),
+                        "smb_message_echoes" => ParseEchoes(value),
+                        "smb_app_state_sync" => ParseContactsSync(value),
                         _ => new UnknownChange(field),
                     });
                 }
@@ -149,6 +155,23 @@ internal static partial class WebhookPayloadParser
         var waId = ValidWaId(ReadString(item, "from")) ?? contact?.WaId;
         var quotedWamid = TryObject(item, "context", out var context) ? ReadString(context, "id") : null;
         var type = ReadString(item, "type");
+        var content = ParseContent(item, type);
+        var kind = content.Kind;
+        var text = content.Text;
+        var caption = content.Caption;
+        var details = content.Details;
+        var media = content.Media;
+        var quickReply = content.QuickReply;
+
+        // El ! va detrás de IsValidUserId, que descarta el null.
+        return new InboundMessage(
+            wamid, userId!, waId, contact?.Name, contact?.Username, contact?.ParentUserId, occurredAt, kind, text, caption, details, media, quotedWamid, quickReply);
+    }
+
+    /// <summary>Cómo se lee el cuerpo de un mensaje de Meta. Lo comparten el mensaje en vivo, el historial y los ecos
+    /// (spec 2026-10-29): los tres llegan con la misma forma y no pueden leerse distinto.</summary>
+    private static ParsedContent ParseContent(JsonElement item, string? type)
+    {
         var kind = MessageKindMap.FromMetaType(type);
         string? text = null;
         string? caption = null;
@@ -213,10 +236,11 @@ internal static partial class WebhookPayloadParser
             }
         }
 
-        // El ! va detrás de IsValidUserId, que descarta el null.
-        return new InboundMessage(
-            wamid, userId!, waId, contact?.Name, contact?.Username, contact?.ParentUserId, occurredAt, kind, text, caption, details, media, quotedWamid, quickReply);
+        return new ParsedContent(kind, text, caption, details, media, quickReply);
     }
+
+    private sealed record ParsedContent(
+        MessageKind Kind, string? Text, string? Caption, string? Details, InboundMedia? Media, QuickReplyButton? QuickReply);
 
     private static string? ValidWaId(string? value) =>
         value is { Length: > 0 and <= Conversation.WaIdMaxLength } && value.All(char.IsAsciiDigit) ? value : null;
@@ -323,6 +347,181 @@ internal static partial class WebhookPayloadParser
         var @event = ReadString(value, "event") ?? string.Empty;
         var banState = TryObject(value, "ban_info", out var ban) ? ReadString(ban, "waba_ban_state") : null;
         return new AccountUpdateChange(wabaId, @event, banState);
+    }
+
+    // ---- Coexistencia (spec 2026-10-29): history, smb_message_echoes, smb_app_state_sync ----
+
+    private static string PhoneNumberIdOf(JsonElement value) =>
+        TryObject(value, "metadata", out var metadata) ? ReadString(metadata, "phone_number_id") ?? string.Empty : string.Empty;
+
+    /// <summary>Sólo dígitos, de 1 a 20: Meta a veces manda «+57 300…». Lo que no quede con esa forma es null.</summary>
+    private static string? DigitsOnly(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var digits = new string(value.Where(char.IsAsciiDigit).ToArray());
+        return digits.Length is >= 1 and <= Conversation.WaIdMaxLength ? digits : null;
+    }
+
+    private static int? ReadInt(JsonElement element, string property)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(property, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var number) => number,
+            JsonValueKind.String when int.TryParse(value.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null,
+        };
+    }
+
+    /// <summary>Los metadatos fuera de rango se descartan (null) y los mensajes del trozo se conservan: el dominio guarda la
+    /// fase como smallint y no debe ver un valor que no le cabe.</summary>
+    private static int? InRange(int? value, int min, int max) => value is { } v && v >= min && v <= max ? v : null;
+
+    private static void CollectErrorCodes(JsonElement owner, List<int> codes)
+    {
+        if (!TryArray(owner, "errors", out var errors))
+        {
+            return;
+        }
+
+        foreach (var error in errors.EnumerateArray())
+        {
+            if (error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var code)
+                && code.ValueKind == JsonValueKind.Number && code.TryGetInt32(out var parsed))
+            {
+                codes.Add(parsed);
+            }
+        }
+    }
+
+    private static HistoryChange ParseHistory(JsonElement value)
+    {
+        var chunks = new List<HistoryChunk>();
+        var errorCodes = new List<int>();
+        CollectErrorCodes(value, errorCodes);
+        if (TryArray(value, "history", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                CollectErrorCodes(item, errorCodes);
+                var hasMetadata = TryObject(item, "metadata", out var metadata);
+                var threads = new List<HistoryThread>();
+                var skipped = 0;
+                if (TryArray(item, "threads", out var threadItems))
+                {
+                    foreach (var thread in threadItems.EnumerateArray())
+                    {
+                        if (DigitsOnly(ReadString(thread, "id")) is not { } waId)
+                        {
+                            continue;
+                        }
+
+                        var messages = new List<CoexistenceMessage>();
+                        if (TryArray(thread, "messages", out var messageItems))
+                        {
+                            foreach (var message in messageItems.EnumerateArray())
+                            {
+                                var direction = message.ValueKind == JsonValueKind.Object && message.TryGetProperty("to", out _)
+                                    ? MessageDirection.Outbound
+                                    : MessageDirection.Inbound;
+                                if (ParseCoexistenceMessage(message, direction) is { } parsed)
+                                {
+                                    messages.Add(parsed);
+                                }
+                                else
+                                {
+                                    skipped++;
+                                }
+                            }
+                        }
+
+                        threads.Add(new HistoryThread(waId, messages));
+                    }
+                }
+
+                chunks.Add(new HistoryChunk(
+                    hasMetadata ? InRange(ReadInt(metadata, "phase"), 0, 2) : null,
+                    hasMetadata ? InRange(ReadInt(metadata, "chunk_order"), 0, int.MaxValue) : null,
+                    hasMetadata ? InRange(ReadInt(metadata, "progress"), 0, 100) : null,
+                    threads,
+                    skipped));
+            }
+        }
+
+        return new HistoryChange(PhoneNumberIdOf(value), chunks, errorCodes);
+    }
+
+    private static CoexistenceMessage? ParseCoexistenceMessage(JsonElement item, MessageDirection direction)
+    {
+        if (ReadString(item, "id") is not { Length: > 0 } wamid || ReadTimestamp(item) is not { } occurredAt)
+        {
+            return null;
+        }
+
+        var type = ReadString(item, "type");
+        if (type == "media_placeholder")
+        {
+            // V-1: el medio no viaja en el historial; llega después por su propio webhook.
+            return new CoexistenceMessage(
+                wamid, occurredAt, direction, MessageKind.Unsupported, null, null, "{\"historyMedia\":\"placeholder\"}", null, true);
+        }
+
+        var content = ParseContent(item, type);
+        return new CoexistenceMessage(wamid, occurredAt, direction, content.Kind, content.Text, content.Caption, content.Details, content.Media, false);
+    }
+
+    private static SmbEchoesChange ParseEchoes(JsonElement value)
+    {
+        var echoes = new List<(string WaId, CoexistenceMessage Message)>();
+        if (TryArray(value, "message_echoes", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                if (DigitsOnly(ReadString(item, "to")) is { } waId && ParseCoexistenceMessage(item, MessageDirection.Outbound) is { } message)
+                {
+                    echoes.Add((waId, message));
+                }
+            }
+        }
+
+        return new SmbEchoesChange(PhoneNumberIdOf(value), echoes);
+    }
+
+    private static ContactsSyncChange ParseContactsSync(JsonElement value)
+    {
+        var contacts = new List<SyncedContact>();
+        if (TryArray(value, "state_sync", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                if (ReadString(item, "type") != "contact" || !TryObject(item, "contact", out var contact)
+                    || DigitsOnly(ReadString(contact, "phone_number")) is not { } waId)
+                {
+                    continue;
+                }
+
+                contacts.Add(new SyncedContact(
+                    waId,
+                    Truncate(ReadString(contact, "full_name"), Conversation.ProfileNameMaxLength),
+                    Truncate(ReadString(contact, "first_name"), Conversation.ProfileNameMaxLength),
+                    ReadString(item, "action") == "remove"));
+            }
+        }
+
+        return new ContactsSyncChange(PhoneNumberIdOf(value), contacts);
     }
 
     private static DateTimeOffset? ReadTimestamp(JsonElement item)
