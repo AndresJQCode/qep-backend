@@ -175,7 +175,8 @@ internal static class CoexistenceIngestion
             """, cancellationToken);
 
     /// <summary>La foto de la lista, como <c>IngestEchoAsync</c>: avanza por <c>occurred_at</c> y se queda el más reciente. Nunca toca
-    /// <c>last_inbound_*</c>, el asignado ni el asistente.</summary>
+    /// <c>last_inbound_*</c>, el asignado ni el asistente. Si la parte sólo trae mensajes más viejos no escribe (regla R4, hallazgo F5):
+    /// subir la versión sin cambio visible le daría un 412 al asesor que resuelve o edita en paralelo.</summary>
     private static Task<int> UpdateSummaryAsync(
         MessagingDbContext dbContext, Guid conversationId, CoexistenceMessage newest, Guid newestId, Guid? customerId, DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -198,6 +199,10 @@ internal static class CoexistenceIngestion
                 updated_at             = {now},
                 version                = version + 1
             WHERE id = {conversationId}
+              AND (last_message_at IS NULL
+                   OR {newest.OccurredAt} >= last_message_at
+                   OR last_activity_at IS NULL OR {newest.OccurredAt} > last_activity_at
+                   OR (customer_id IS NULL AND {customerId}::uuid IS NOT NULL))
             """, cancellationToken);
     }
 

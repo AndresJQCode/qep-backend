@@ -268,4 +268,21 @@ public sealed class HistoryTakeoverTests
 
         Assert.Equal("Resolved|1|False", await RowAsync(f));
     }
+
+    // Hallazgo F5 de la revisión final (regla R4): una parte que sólo trae mensajes más viejos no cambia la conversación, así que no
+    // le sube la versión: un resolver en vuelo del asesor no tiene por qué perder con un 412.
+    [Fact]
+    public async Task AChunkWithOnlyOlderMessagesLeavesTheVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, History(50, ("wamid.h", "Hola", HoursBefore(f, 30), false)));
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.1", WaId, "wamid.live", f.ConnectedAt + 60, "¿Siguen abiertos?"));
+        var before = await VersionAsync(f);
+
+        await PostAsync(f, MetaPayloads.History(PhoneNumberId, 0, 2, 60, (WaId, [("wamid.old", "Buenas", HoursBefore(f, 50), false)])));
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE wamid = 'wamid.old'"));
+        Assert.Equal(before, await VersionAsync(f));
+    }
 }
