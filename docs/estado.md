@@ -75,7 +75,7 @@ plan 3, ya mergeado en `develop` del frontend (`a2d28c17`).
 
 | Spec | Estado | Notas |
 | --- | --- | --- |
-| 2026-10-29 WhatsApp: historial por coexistencia | Construido (backend `ab353bdb`, frontend `18627637`) | Rulings R1-R16 en el ledger de la sesión; el reporte de Mensajería cuenta los hilos importados como contactos nuevos el día de la conexión (límite documentado en el README) |
+| 2026-10-29 WhatsApp: historial por coexistencia | Construido (backend `ab353bdb`, frontend `18627637`) | Rulings R1-R16 en el ledger de la sesión; decisiones del owner del 2026-10-30: aviso propio en el compositor, eco a número desconocido nace resuelto, el reporte de Mensajería excluye lo importado |
 | 2026-10-07 módulo POS | Construido (módulo Pos) | El spec aún dice «borrador» |
 | 2026-10-07 módulos por tenant | Construido (`TenantModuleKey`, `TenantModulesEndpoints`) | El spec aún dice «borrador» |
 | 2026-10-07 WhatsApp por tenant | Construido (`CompleteWhatsAppSignup`, `MessagingConnectionDirectory`) | El spec aún dice «borrador» |
@@ -152,7 +152,6 @@ historial de `git` los conserva.
 
 ## Decisiones del owner pendientes
 
-- Historial por coexistencia: el aviso «Pasaron más de 24 h…» en conversaciones importadas abiertas; si un eco a un número desconocido debe abrir conversación sin asignar (P-5); si el reporte de Mensajería debe excluir los hilos importados.
 - Gestor de plantillas: qué errores de Meta pausan la conexión.
 - Flete: P1 (retención sin el envío) y P2 (giro del recaudo), con valor por defecto en el spec.
 - Shopify: si se saca `shopify` de `DefaultForNewTenants` hasta que exista el frontend (alternativa a esperar).
@@ -215,6 +214,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-30 — Mergeados a `develop` de los dos repos (`--no-ff`, sin push) **los ajustes del historial por coexistencia** (decisiones del owner):
+  conversación de un eco a número desconocido nace resuelta (`started_by_echo`), el reporte de Mensajería excluye lo importado (`imported`,
+  migración `AddImportedMarker`), `fromHistory` en la conversación y aviso propio en el compositor. Suite completa no recorrida tras los ajustes.
 - 2026-10-30 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **el historial por coexistencia de WhatsApp**: backend
   `ab353bdb`, frontend `18627637`. Incluye `a67ba40d`, que arregla el CS0229 de `CustomerWriteHandlersTests` que ya estaba en `develop`.
 - 2026-10-29 — Mergeado a `develop` (`--no-ff`, sin push) **el índice del outbox para el polling de los consumidores**
