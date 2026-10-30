@@ -165,4 +165,20 @@ public sealed class BillingImportPlannerTests
         Assert.Equal(1, plan.Summary.CustomersToCreate);
         Assert.Equal(2, plan.Summary.ServicesToCreate);
     }
+
+    /// <summary>
+    /// La segunda fila dice «kept», pero lleva el canal y el encargado del perfil que planeó la primera: si la escritura de esa
+    /// fila falla, la importación vuelve a mirar y crea el perfil con ellos en vez de dejar el servicio sin perfil.
+    /// </summary>
+    [Fact]
+    public void EveryRowOfAProfilelessCustomerCarriesTheProfileToCreate()
+    {
+        var plan = BillingImportPlanner.Plan(
+            [ImportRow(rowNumber: 2, serviceName: "Hosting", channel: BillingChannel.Email), ImportRow(rowNumber: 3, serviceName: "Dominio")],
+            Context());
+
+        Assert.Equal(
+            new (BillingChannel?, Guid?)[] { (BillingChannel.Email, Ana.MemberId), (BillingChannel.Email, Ana.MemberId) },
+            plan.Rows.Select(row => (row.Channel, row.AssigneeMemberId)).ToArray());
+    }
 }

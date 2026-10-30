@@ -141,11 +141,12 @@ public sealed class ImportBillingServicesHandler(
         try
         {
             var now = clock.UtcNow;
-            // Se vuelve a mirar: otra fila de este archivo pudo haber creado el perfil del mismo cliente.
-            if (planned.CreatesProfile && await profiles.FindAsync(tenantId, customerId, cancellationToken) is null)
+            // Se vuelve a mirar: otra fila de este archivo pudo haber creado el perfil del mismo cliente, o haber fallado al
+            // crearlo. Por eso toda fila de un cliente sin perfil trae el canal y el encargado, no sólo la que lo planeó.
+            if (planned is { Channel: { } channel, AssigneeMemberId: { } assignee }
+                && await profiles.FindAsync(tenantId, customerId, cancellationToken) is null)
             {
-                profiles.Add(CustomerBillingProfile.Create(
-                    tenantId, customerId, planned.Channel!.Value, planned.AssigneeMemberId!.Value, now));
+                profiles.Add(CustomerBillingProfile.Create(tenantId, customerId, channel, assignee, now));
             }
 
             var service = BillingService.Create(

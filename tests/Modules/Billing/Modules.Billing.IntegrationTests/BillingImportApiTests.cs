@@ -345,6 +345,32 @@ public sealed class BillingImportApiTests
         Assert.DoesNotContain("3001111111", logged.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Dos servicios de un cliente sin perfil: la primera fila crea el perfil y la segunda lo conserva. Si la escritura de la
+    /// primera falla (y con ella su perfil), la segunda lo crea con el canal y el encargado del plan en vez de dejar su servicio
+    /// sin perfil.
+    /// </summary>
+    [Fact]
+    public async Task WhenTheRowThatCreatesTheProfileFailsTheNextRowOfThatCustomerCreatesIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var ana = await SeedAnaAsync(factory);
+        await FailInsertsNamedFallaAsync(factory, "billing.services");
+        var file = Workbook(Row(service: "Falla", channel: "Email"), Row(service: "Hosting"));
+
+        var result = await ReadAsync<ImportResultDto>(
+            await CreateManager(factory).PostAsync(ImportUrl, Upload(file), Ct));
+
+        Assert.Equal((2, "billing.import.row.failed"), (Assert.Single(result.Errors).RowNumber, result.Errors[0].Code));
+        var imported = Assert.Single(result.Imported);
+        Assert.Equal(1, await CountAsync(
+            factory,
+            $"SELECT count(*) FROM billing.customer_profiles WHERE customer_id = '{imported.CustomerId}' "
+            + $"AND channel = 'Email' AND assignee_member_id = '{ana}'"));
+    }
+
     [Fact]
     public async Task AServiceCreatedBetweenPreviewAndConfirmBecomesARowError()
     {

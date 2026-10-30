@@ -21,7 +21,8 @@ public sealed record BillingImportContext(
 
 /// <summary>
 /// Una fila que se va a importar. <c>MatchedCustomerId</c> null es «se crea»; <c>NewCustomerKey</c> agrupa las filas del mismo
-/// cliente nuevo para darlo de alta una sola vez. <c>Channel</c> y <c>AssigneeMemberId</c> sólo vienen si la fila crea el perfil.
+/// cliente nuevo para darlo de alta una sola vez. <c>Channel</c> y <c>AssigneeMemberId</c> vienen si la fila crea el perfil o si
+/// lo crea una fila anterior del mismo cliente (para crearlo igual si esa fila falla); con un perfil que ya existe, no.
 /// </summary>
 public sealed record PlannedBillingRow(
     BillingImportRow Row,
@@ -62,8 +63,9 @@ public static class BillingImportPlanner
         ArgumentNullException.ThrowIfNull(context);
         var planned = new List<PlannedBillingRow>(rows.Count);
         var errors = new List<ImportRowErrorDto>();
-        // Clientes que ya van a tener perfil por una fila anterior de este archivo: la segunda fila lo conserva.
-        var profilesPlanned = new HashSet<string>(StringComparer.Ordinal);
+        // Clientes que ya van a tener perfil por una fila anterior de este archivo: la segunda fila lo conserva, pero lleva el
+        // canal y el encargado de ese perfil por si la escritura de la primera falla.
+        var profilesPlanned = new Dictionary<string, (BillingChannel Channel, Guid Assignee)>(StringComparer.Ordinal);
         // Clientes nuevos que ya da de alta una fila anterior planeada: la que se suma no necesita traer teléfono propio.
         var customersPlanned = new HashSet<string>(StringComparer.Ordinal);
 
@@ -90,7 +92,10 @@ public static class BillingImportPlanner
     }
 
     private static (PlannedBillingRow? Row, ImportRowErrorDto? Error) PlanRow(
-        BillingImportRow row, BillingImportContext context, HashSet<string> profilesPlanned, HashSet<string> customersPlanned)
+        BillingImportRow row,
+        BillingImportContext context,
+        Dictionary<string, (BillingChannel Channel, Guid Assignee)> profilesPlanned,
+        HashSet<string> customersPlanned)
     {
         var matches = context.MatchesByRow.TryGetValue(row.RowNumber, out var found) ? found : [];
         if (matches.Count > 1)
@@ -127,11 +132,11 @@ public static class BillingImportPlanner
                 nameof(ExcelBillingRow.ServiceName));
         }
 
-        var hasProfile = (matched is not null && context.CustomersWithProfile.Contains(matched.Id))
-            || profilesPlanned.Contains(customerKey);
+        var plannedProfile = profilesPlanned.TryGetValue(customerKey, out var earlier) ? earlier : ((BillingChannel, Guid)?)null;
+        var hasProfile = (matched is not null && context.CustomersWithProfile.Contains(matched.Id)) || plannedProfile is not null;
 
-        BillingChannel? channel = null;
-        Guid? assignee = null;
+        BillingChannel? channel = plannedProfile?.Item1;
+        Guid? assignee = plannedProfile?.Item2;
         if (!hasProfile)
         {
             // Lo que el perfil valida al guardarse (§3.1), contra el contacto que el cliente va a tener: el de la fila si se
@@ -160,7 +165,7 @@ public static class BillingImportPlanner
 
             channel = resolved;
             assignee = member.MemberId;
-            profilesPlanned.Add(customerKey);
+            profilesPlanned[customerKey] = (resolved, member.MemberId);
         }
 
         var currency = row.Currency ?? context.DefaultCurrency;
