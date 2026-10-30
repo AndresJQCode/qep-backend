@@ -506,11 +506,6 @@ public sealed class Customer
 
     /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
     /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
-    /// <summary>
-    /// Historial de coexistencia: la persona que aparece sólo con su teléfono (la app de WhatsApp Business no da BSUID) y
-    /// todavía no tiene ficha. Igual que <see cref="CreateIncomplete"/> pero sin BSUID: el primer mensaje en vivo lo vincula
-    /// después (D-A6). Lo crea el sistema, nunca una persona por HTTP.
-    /// </summary>
     /// <summary>El <c>phone_e164</c> que <see cref="CreateIncompleteFromPhone"/> guarda para ese teléfono y país: <c>null</c> si la
     /// librería lo rechaza (los <c>521…</c> de México que manda WhatsApp, rangos más nuevos que su metadata). Quien busca antes de
     /// crear busca por este valor, no por el texto que recibió, o no encuentra lo que él mismo guardó (hallazgo F2, spec 2026-10-29).</summary>
@@ -521,6 +516,11 @@ public sealed class Customer
         return phoneNormalizer.ToE164(phone?.Trim(), normalizedCountry ?? UnknownRegion);
     }
 
+    /// <summary>
+    /// Historial de coexistencia: la persona que aparece sólo con su teléfono (la app de WhatsApp Business no da BSUID) y
+    /// todavía no tiene ficha. Igual que <see cref="CreateIncomplete"/> pero sin BSUID: el primer mensaje en vivo lo vincula
+    /// después (D-A6). Lo crea el sistema, nunca una persona por HTTP.
+    /// </summary>
     public static Customer CreateIncompleteFromPhone(
         CustomerId id,
         Guid tenantId,
