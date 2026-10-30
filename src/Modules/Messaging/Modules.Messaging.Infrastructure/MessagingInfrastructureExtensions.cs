@@ -95,6 +95,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
         services.AddScoped<IResolutionReasonRepository, ResolutionReasonRepository>();
         services.AddScoped<IResolutionReasonNames, ResolutionReasonRepository>();
+        // Spec 2026-10-29 §5: la importación del historial de una conexión, con tracking.
+        services.AddScoped<IHistorySyncRepository, HistorySyncRepository>();
         // Spec 2026-10-21 §5: los horarios de atención; el repositorio es también el puerto IBusinessHours (misma instancia por scope).
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
         // Spec 2026-10-28: la extracción SQL del reporte de mensajería.

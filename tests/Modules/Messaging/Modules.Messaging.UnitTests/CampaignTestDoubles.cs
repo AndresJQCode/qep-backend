@@ -131,6 +131,10 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     public void RecordTemplate(
         Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null) =>
         Templates.Add(new TemplateAuditCall(tenantId, actorId, action, templateId, changedFields));
+
+    public void RecordHistorySync(
+        Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
