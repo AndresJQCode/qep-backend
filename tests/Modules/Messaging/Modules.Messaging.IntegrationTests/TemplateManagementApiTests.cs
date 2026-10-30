@@ -110,6 +110,73 @@ public sealed class TemplateManagementApiTests
         Assert.Equal(0, Listings(f.Factory.MetaHandler));
     }
 
+    private static Task<int> SetBillingModuleAsync(Fixture f, string status) =>
+        ExecuteAsync(
+            f.ConnectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, status)
+            VALUES (@tenantId, 'billing', now(), 'manual', @status)
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = @status, status_changed_at = now()
+            """,
+            ("tenantId", f.Tenant.TenantId), ("status", status));
+
+    private static int Creations(FakeMetaGraphHandler meta) =>
+        meta.Requests.Count(request => request.Method == HttpMethod.Post && request.Uri!.AbsolutePath.EndsWith("/222/message_templates", StringComparison.Ordinal));
+
+    /// <summary>Cobros recurrentes §5: el producto no ofrece lo que el tenant no tiene; sin el módulo de cobros no se crea nada en Meta.</summary>
+    [Fact]
+    public async Task ProvisioningBillingTemplatesWithTheBillingModuleOffIs403AndNeverReachesMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await SetBillingModuleAsync(f, "inactive");
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/billing");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(response)).Code);
+        Assert.Equal(0, Creations(f.Factory.MetaHandler));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId)));
+    }
+
+    [Fact]
+    public async Task ProvisioningBillingTemplatesWithoutThePermissionIs403AndNeverReachesMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await SetBillingModuleAsync(f, "active");
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(manager, HttpMethod.Post, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/billing");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(0, Creations(f.Factory.MetaHandler));
+    }
+
+    [Fact]
+    public async Task ProvisioningBillingTemplatesWithTheModuleOnCreatesBothInMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await SetBillingModuleAsync(f, "active");
+        var next = 0;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.RespondWith("/222/message_templates", request =>
+            request.Method == HttpMethod.Get
+                ? FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"data":[]}""")
+                : FakeMetaGraphHandler.Json(HttpStatusCode.OK, $$"""{"id":"90{{++next}}","status":"PENDING","category":"UTILITY"}"""));
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/billing");
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(2, Creations(f.Factory.MetaHandler));
+        Assert.Equal(2L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t AND kind IN ('BillingReminder', 'BillingOverdue')", ("t", f.Tenant.TenantId)));
+    }
+
     [Fact]
     public async Task AConnectionOfAnotherTenantIs422ConnectionUnavailableNot404()
     {

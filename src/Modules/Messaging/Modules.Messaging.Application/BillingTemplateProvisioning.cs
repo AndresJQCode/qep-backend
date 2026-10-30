@@ -4,6 +4,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Messaging.Application;
 
@@ -162,6 +163,8 @@ public sealed partial class ProvisionBillingTemplatesHandler(
     {
         ArgumentNullException.ThrowIfNull(command);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, command.TenantId, MessagingPermissions.TemplateManage, cancellationToken);
+        // El permiso y Mensajería son de núcleo; las plantillas de cobro son de Billing: sin su módulo no se crea nada en Meta.
+        await TenantModuleGuard.EnsureEnabledAsync(tenantModules, command.TenantId, TenantModuleKeys.Billing, cancellationToken);
         var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
         var now = clock.UtcNow;
