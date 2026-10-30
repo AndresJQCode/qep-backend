@@ -257,6 +257,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Decisión del owner del 2026-10-30: la marca durable de lo importado (history_managed se apaga; ésta no). Mismo criterio de
         // centinela que history_managed.
         conversation.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
+        conversation.Property(value => value.StartedByEcho).HasColumnName("started_by_echo").HasDefaultValue(false).HasSentinel(false);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
@@ -278,6 +279,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.HasIndex(value => new { value.TenantId, value.CustomerId, value.LastActivityAt }, "IX_conversations_tenant_customer_activity")
             .IsDescending(false, false, true).HasFilter("customer_id IS NOT NULL");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_open").HasFilter("status = 'Open'");
+        // MessagingReportSource: la sesión de una importada sale de su primer entrante en vivo; parcial porque la mayoría no es importada.
+        conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_imported").HasFilter("imported");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_unread")
             .HasFilter("unread_count > 0").IncludeProperties(value => value.UnreadCount);
         conversation.HasIndex(value => value.ProfileName, "IX_conversations_profile_name_trgm")

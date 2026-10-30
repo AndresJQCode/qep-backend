@@ -14,7 +14,7 @@ using NpgsqlTypes;
 namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(MessagingDbContext))]
-    [Migration("20261030105953_AddImportedMarker")]
+    [Migration("20261030111819_AddImportedMarker")]
     partial class AddImportedMarker
     {
         /// <inheritdoc />
@@ -456,6 +456,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("resolution_reason_id");
 
+                    b.Property<bool>("StartedByEcho")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("started_by_echo");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -529,6 +535,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "CustomerId", "LastActivityAt" }, "IX_conversations_tenant_customer_activity")
                         .IsDescending(false, false, true)
                         .HasFilter("customer_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_imported")
+                        .HasFilter("imported");
 
                     b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_open")
                         .HasFilter("status = 'Open'");

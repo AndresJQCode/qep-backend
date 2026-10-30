@@ -150,13 +150,14 @@ internal static class CoexistenceIngestion
         var id = Guid.CreateVersion7();
         var fromHistory = source == CoexistenceSource.History;
         var status = nameof(ConversationStatus.Resolved);
+        var fromEcho = source == CoexistenceSource.Echo;
         var channel = nameof(ConversationChannel.WhatsApp);
         // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
         var inserted = await dbContext.Database.SqlQuery<Guid>(
             $"""
             INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
-                                                 last_activity_at, history_managed, imported, created_at, updated_at, version)
-            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {now}, {now}, 1)
+                                                 last_activity_at, history_managed, imported, started_by_echo, created_at, updated_at, version)
+            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {fromEcho}, {now}, {now}, 1)
             ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
             RETURNING id AS "Value"
             """).ToListAsync(cancellationToken);

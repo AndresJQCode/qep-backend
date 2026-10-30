@@ -135,6 +135,11 @@ public sealed partial class Conversation
     /// vivo. La escribe la ingesta por SQL; el agregado no la cambia.</summary>
     public bool Imported { get; private set; }
 
+    /// <summary>Revisión de los ajustes del 2026-10-30: la conversación nació de un eco de la app (<c>smb_message_echoes</c>) a un número
+    /// desconocido. Nace cerrada, así que su primera sesión la arranca el <c>Reopened</c> del contacto: el reporte no cuenta su creación,
+    /// o la misma conversación daría dos sesiones. Nunca se apaga. La escribe la ingesta por SQL; el agregado no la cambia.</summary>
+    public bool StartedByEcho { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }

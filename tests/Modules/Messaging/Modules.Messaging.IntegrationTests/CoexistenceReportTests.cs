@@ -14,12 +14,21 @@ namespace Modules.Messaging.IntegrationTests;
 public sealed class CoexistenceReportTests
 {
     private const string PhoneNumberId = "111";
+    private const string EchoWaId = "573001110005";
+
+    private const string Catalog = """
+        {"data":[{"id":"1","name":"seguimiento","language":"es","status":"APPROVED","category":"MARKETING","parameter_format":"NAMED",
+                  "components":[{"type":"BODY","text":"Hola {{first_name}}, ¿sigues interesado?"}]}]}
+        """;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private sealed record Fixture(QepApiFactory Factory, string ConnectionString, Guid TenantId, HttpClient Webhook, HttpClient Reader, long ConnectedAt)
+    private sealed record Fixture(
+        QepApiFactory Factory, string ConnectionString, RegisteredTenant Tenant, Guid ConnectionId, HttpClient Webhook, HttpClient Reader, long ConnectedAt)
         : IDisposable
     {
+        public Guid TenantId => Tenant.TenantId;
+
         public void Dispose()
         {
             Webhook.Dispose();
@@ -45,7 +54,7 @@ public sealed class CoexistenceReportTests
             """,
             ("connectionId", connectionId), ("tenantId", tenant.TenantId), ("connectedAt", connectedAt)));
         var reader = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
-        return new Fixture(factory, connectionString, tenant.TenantId, factory.CreateClient(), reader, connectedAt);
+        return new Fixture(factory, connectionString, tenant, connectionId, factory.CreateClient(), reader, connectedAt);
     }
 
     private static async Task PostAsync(Fixture f, string json)
@@ -126,5 +135,73 @@ public sealed class CoexistenceReportTests
         Assert.Equal(0, first.GetProperty("answeredSessions").GetInt32());
         Assert.Equal(3, first.GetProperty("unansweredSessions").GetInt32());
         Assert.Equal(["WhatsApp"], Channels(report));
+    }
+
+    // Revisión de los ajustes: una conversación que nació de un eco nace cerrada, así que el contacto la reabre. La creación no arranca
+    // sesión: si arrancara, la misma conversación contaría dos veces.
+    [Fact]
+    public async Task AnEchoThenALiveInboundInThePeriodIsOneSession()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.SmbEchoes(PhoneNumberId, EchoWaId, "wamid.echo", "Te escribo desde el celular", f.ConnectedAt + 60));
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.E", EchoWaId, "wamid.live", f.ConnectedAt + 120, "Hola"));
+        await PostAsync(f, MetaPayloads.SmbEchoes(PhoneNumberId, EchoWaId, "wamid.echo2", "Claro que sí", f.ConnectedAt + 180));
+
+        var report = await ReportAsync(f);
+
+        var current = report.GetProperty("totals").GetProperty("current");
+        Assert.Equal(1, current.GetProperty("conversations").GetInt32());
+        Assert.Equal(1, current.GetProperty("newContacts").GetInt32());
+        // El eco posterior al entrante sigue siendo una respuesta: es tráfico en vivo.
+        Assert.Equal(1, report.GetProperty("firstResponse").GetProperty("answeredSessions").GetInt32());
+        Assert.Equal(0, report.GetProperty("firstResponse").GetProperty("unansweredSessions").GetInt32());
+        Assert.Equal(["WhatsApp"], Channels(report));
+    }
+
+    [Fact]
+    public async Task APeriodWithOnlyTheEchoHasNoSessions()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.SmbEchoes(PhoneNumberId, EchoWaId, "wamid.echo", "Te escribo desde el celular", f.ConnectedAt + 60));
+
+        var report = await ReportAsync(f);
+
+        Assert.Equal(0, report.GetProperty("totals").GetProperty("current").GetProperty("conversations").GetInt32());
+        Assert.Empty(Channels(report));
+    }
+
+    // Guarda: la conversación que abre un asesor con una plantilla sí cuenta desde su creación, aunque no tenga entrante (caso D del
+    // reporte, S3). Un filtro por «nació con entrante» la perdería.
+    [Fact]
+    public async Task AConversationAnAdvisorStartsCountsFromItsCreation()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        f.Factory.MetaHandler.RespondWith("/111/messages", _ => FakeMetaGraphHandler.Json(
+            HttpStatusCode.OK, """{"messaging_product":"whatsapp","messages":[{"id":"wamid.start"}]}"""));
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, "Droguería Central", "300 123 4567");
+        using var advisor = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.TenantId, ManagePermissions);
+
+        var started = await SendAsync(advisor, HttpMethod.Post, ConversationsUrl(f.TenantId), new
+        {
+            clientId = Guid.CreateVersion7(),
+            connectionId = f.ConnectionId,
+            customerId,
+            template = new { name = "seguimiento", language = "es", parameters = new Dictionary<string, string> { ["first_name"] = "Ana" } },
+        });
+        Assert.Equal(HttpStatusCode.Created, started.StatusCode);
+
+        var report = await ReportAsync(f);
+        Assert.Equal(1, report.GetProperty("totals").GetProperty("current").GetProperty("conversations").GetInt32());
+        Assert.Equal(["WhatsApp"], Channels(report));
+
+        // El contacto contesta: la conversación estaba abierta, así que sigue siendo una sola sesión.
+        await PostAsync(f, MetaPayloads.InboundText(PhoneNumberId, "573001234567", "wamid.reply", f.ConnectedAt + 60, "Sí, cuéntame"));
+
+        var afterReply = await ReportAsync(f);
+        Assert.Equal(1, afterReply.GetProperty("totals").GetProperty("current").GetProperty("conversations").GetInt32());
     }
 }

@@ -18,8 +18,11 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// en vivo, salvo que ya la haya arrancado un <c>Reopened</c>. Un mensaje importado nunca es el entrante de arranque ni una respuesta.
 /// Para «primer entrante» (contacto nuevo o que vuelve) sí cuenta, con su <c>occurred_at</c>, que es la única hora real que tiene: un
 /// contacto con historial no es nuevo por escribir en vivo después de la conexión.</item>
+/// <item>Una conversación que nació de un eco (<c>started_by_echo</c>) tampoco arranca sesión al crearse: nace cerrada, y la arranca el
+/// <c>Reopened</c> del contacto. Una que abre un asesor desde QEP sí cuenta desde su creación, aunque no tenga entrante (S3): nace
+/// abierta y nadie la reabre. Por eso el filtro es por origen y no por «tiene entrante».</item>
 /// </list>
-/// Las tres consultas leen <c>imported</c> por nombre: renombrarla compila y deja el reporte en 500; lo amarra
+/// Las tres consultas leen <c>imported</c> y <c>started_by_echo</c> por nombre: renombrarlas compila y deja el reporte en 500; lo amarra
 /// <c>CoexistenceReportTests</c>, que corre contra el esquema migrado.
 /// </summary>
 internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMessagingReportSource
@@ -37,7 +40,7 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
             WITH starts AS (
                 SELECT c.id AS conversation_id, c.connection_id, c.channel, c.assigned_member_id, c.created_at AS session_start
                 FROM messaging.conversations c
-                WHERE c.tenant_id = {tenantId} AND c.created_at >= {start} AND c.created_at < {end} AND NOT c.imported
+                WHERE c.tenant_id = {tenantId} AND c.created_at >= {start} AND c.created_at < {end} AND NOT c.imported AND NOT c.started_by_echo
                 UNION ALL
                 SELECT m.conversation_id, c.connection_id, c.channel, c.assigned_member_id, m.created_at
                 FROM messaging.messages m
@@ -129,7 +132,7 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
         var names = await dbContext.Database.SqlQuery<string>(
             $"""
             SELECT c.channel AS "Value" FROM messaging.conversations c
-            WHERE c.tenant_id = {tenantId} AND c.created_at >= {startUtc} AND c.created_at < {endExclusiveUtc} AND NOT c.imported
+            WHERE c.tenant_id = {tenantId} AND c.created_at >= {startUtc} AND c.created_at < {endExclusiveUtc} AND NOT c.imported AND NOT c.started_by_echo
             UNION
             SELECT c.channel AS "Value" FROM messaging.messages m
             JOIN messaging.conversations c ON c.id = m.conversation_id

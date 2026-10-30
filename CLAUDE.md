@@ -290,7 +290,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
   abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
   reabre el entrante en vivo con su `Reopened`. No la «arregles» a `Open` para que se vea el eco: el hilo está en
-  «Resueltas».
+  «Resueltas». Lleva `started_by_echo`, que saca su creación de las sesiones del reporte (`MessagingReportSource`): sin eso, el
+  eco más el `Reopened` contarían dos sesiones por una conversación. No lo cambies por «tiene entrante»: una conversación que
+  abre un asesor con plantilla no tiene entrante y sí cuenta desde su creación (S3).
 - **Lo importado se marca con `imported` (conversación y mensaje), y esa marca no se apaga nunca** (owner 2026-10-30). No es
   `history_managed`, que se apaga con cualquier acción del asesor: el reporte no puede depender de una bandera que un «marcar
   leída» borra. `MessagingReportSource` la lee por nombre en SQL crudo: una conversación importada no arranca sesión al crearse

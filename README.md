@@ -2907,7 +2907,10 @@ desde la app.
   2026-10-30). Que el negocio escriba desde la app no le deja nada pendiente a un asesor, así que no aparece en
   la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
   reabre por el camino de siempre, con su evento `Reopened`. Un eco a una conversación que ya existe no le
-  cambia el estado.
+  cambia el estado. En el reporte, esa conversación (marca `started_by_echo`) no cuenta como sesión al crearse:
+  su sesión la arranca el `Reopened`, así que el eco más el entrante dan una sola, y un periodo con sólo el eco
+  da cero. Una conversación que abre un asesor desde QEP sí cuenta desde su creación, aunque el contacto no
+  conteste.
 - **El historial importado no cuenta en el reporte de mensajería** (decisión del owner del 2026-10-30). Lo
   importado lleva la marca `imported`, en `messaging.conversations` y en `messaging.messages`, y esa marca
   no se apaga nunca, a diferencia de `history_managed`. Su `created_at` es la hora de la importación, así que
@@ -2916,8 +2919,8 @@ desde la app.
   después cuenta como siempre: una conversación importada arranca sesión con su primer entrante en vivo, o
   con su `Reopened` si se reabrió. Para saber si un contacto es nuevo o vuelve, un entrante importado sí
   cuenta, con su `occurred_at`: un contacto que ya escribía por la app no es nuevo por escribir en vivo. Los
-  ecos no llevan la marca, porque son tráfico en vivo. La migración `AddImportedMarker` agrega las dos
-  columnas.
+  ecos no llevan la marca, porque son tráfico en vivo. La migración `AddImportedMarker` agrega las columnas
+  `imported` y `started_by_echo`, y el índice parcial `IX_conversations_tenant_imported`.
 - **`fromHistory` en el resumen de la conversación.** `ConversationSummary` lleva `fromHistory`: `true` si la
   conversación nació de la importación y el contacto todavía no ha escrito en vivo (`imported` y sin
   `last_inbound_at`). Con eso el compositor muestra «Esta conversación viene del historial; para responder usa
