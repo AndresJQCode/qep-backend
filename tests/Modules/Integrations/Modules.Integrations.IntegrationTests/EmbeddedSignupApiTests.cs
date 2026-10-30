@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Integrations.Application;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 
@@ -203,5 +204,78 @@ public sealed class EmbeddedSignupApiTests
             connectionString,
             "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.whatsapp-coexistence-connected.v1' AND payload->>'connectionId' = @id",
             ("id", connection!.Id.ToString())));
+    }
+
+    // Addendum 2026-10-30 del spec 2026-10-29, de punta a punta: el override viaja en el mismo subscribed_apps del signup.
+    [Fact]
+    public async Task TheConfiguredOverrideTravelsOnTheSubscribeOfACoexistenceSignup()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var host = factory.WithWebhookOverride(WebhookOverrideUrl);
+        ScriptCoexistenceSignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(@event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", phoneNumberId: null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var subscribe = Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/222/subscribed_apps", StringComparison.Ordinal));
+        using var body = JsonDocument.Parse(subscribe.Body!);
+        Assert.Equal(WebhookOverrideUrl, body.RootElement.GetProperty("override_callback_uri").GetString());
+        Assert.Equal(SentinelMetaVerifyToken, body.RootElement.GetProperty("verify_token").GetString());
+        Assert.Equal(string.Empty, subscribe.Uri!.Query);
+    }
+
+    // Sin la configuración, la suscripción sigue sin cuerpo. Es lo que Meta lee como «quita el override»: no mandes nada de más.
+    [Fact]
+    public async Task WithoutTheSettingTheSubscribeHasNoBody()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptCoexistenceSignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(@event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", phoneNumberId: null));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Null(Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/222/subscribed_apps", StringComparison.Ordinal)).Body);
+    }
+
+    // Requisito del owner: ningún respaldo sin override. El historial se pide una vez, y sin el override le llegaría a lulo.
+    [Fact]
+    public async Task ARejectedOverrideFailsTheSignupWithoutFallingBackNorLeavingTheEvent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var host = factory.WithWebhookOverride(WebhookOverrideUrl);
+        factory.MetaHandler.Respond("/222/subscribed_apps", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(2200));
+        ScriptCoexistenceSignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(@event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", phoneNumberId: null));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.whatsapp.registration_failed", (await ProblemAsync(response)).Code);
+        Assert.Equal(0L, await CountConnectionsAsync(connectionString, tenant.TenantId));
+        Assert.Single(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/222/subscribed_apps", StringComparison.Ordinal));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString, "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.whatsapp-coexistence-connected.v1'"));
+    }
+
+    private static void ScriptCoexistenceSignup(FakeMetaGraphHandler meta)
+    {
+        meta.Respond("/oauth/access_token", HttpStatusCode.OK, $$"""{"access_token":"{{SentinelMetaAccessToken}}"}""");
+        meta.Respond("/222/phone_numbers", HttpStatusCode.OK, """{"data":[{"id":"777","display_phone_number":"+57 7","verified_name":"Coex","quality_rating":"YELLOW"}]}""");
+        meta.Respond("/222/subscribed_apps", HttpStatusCode.OK, """{"success":true}""");
+        meta.Respond("/777\\?fields=", HttpStatusCode.OK, """{"display_phone_number":"+57 7","verified_name":"Coex","quality_rating":"YELLOW","id":"777"}""");
     }
 }

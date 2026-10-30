@@ -42,6 +42,8 @@ internal static class IntegrationsApiHarness
 
     public const string SentinelMetaVerifyToken = "meta-verify-token-SENTINEL-6b5a4f-0123456789";
 
+    public const string WebhookOverrideUrl = "https://qep-api.qcode.co/api/webhooks/whatsapp";
+
     public const string FromNumber = "573001234567";
     public const string TemplateId = "d0e79149-ed61-4784-9883-d86807f46ce5";
 
@@ -245,6 +247,7 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Meta:App:GraphApiVersion", "v24.0");
             builder.UseSetting("Meta:App:AppSecret", SentinelMetaAppSecret);
             builder.UseSetting("Meta:App:WebhookVerifyToken", SentinelMetaVerifyToken);
+            builder.UseSetting("Meta:App:WebhookOverrideCallbackUrl", string.Empty);
             // Spec 2026-10-14 §9: el caso de uso Instagram, fijado y nunca heredado; con las dos claves, instagram es
             // visible. Las pruebas del caso contrario lo vacían con WithoutMetaInstagram.
             builder.UseSetting("Meta:Instagram:AppId", InstagramAppId);
@@ -597,6 +600,11 @@ internal static class IntegrationsApiHarness
             builder.UseSetting("Authentication:UseDevelopmentStub", "false");
             builder.UseSetting("Authentication:Audience", "qep-integrations-tests");
         });
+
+    /// <summary>Addendum 2026-10-30 del spec 2026-10-29: el override de la WABA. Se aplica después del ConfigureWebHost del
+    /// harness, así que gana.</summary>
+    public static WebApplicationFactory<Program> WithWebhookOverride(this WebApplicationFactory<Program> factory, string callbackUrl) =>
+        factory.WithWebHostBuilder(builder => builder.UseSetting("Meta:App:WebhookOverrideCallbackUrl", callbackUrl));
 
     public static WebApplicationFactory<Program> WithoutMetaApp(this WebApplicationFactory<Program> factory) =>
         factory.WithWebHostBuilder(builder =>
