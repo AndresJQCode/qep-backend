@@ -277,6 +277,83 @@ public sealed class HistorySyncRequestTests
         Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT attempts::bigint FROM messaging.history_syncs"));
     }
 
+    // Revisión 2: Meta acepta los contactos cuando el reclamo ya venció y otra pasada tomó la fila. Lo aceptado se guarda igual (si no,
+    // la otra pasada los volvería a pedir); el historial no lo manda la pasada vieja sino la nueva, cuando le toca.
+    [Fact]
+    public async Task AnAnswerThatArrivesAfterAnotherPassClaimedTheRowIsStillSaved()
+    {
+        await using var database = await StartDatabaseAsync();
+        var clock = new TestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var f = await ArrangeAsync(database, clock);
+        await InsertSyncAsync(f, clock.UtcNow.AddHours(-1));
+        var calls = 0;
+        f.Factory.MetaHandler.RespondWith(SmbAppDataPath, _ =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                // Meta tarda más que el reclamo, y en el medio otra pasada lo vuelve a tomar.
+                clock.UtcNow = clock.UtcNow.AddMinutes(3);
+                ExecuteNow(
+                    f.ConnectionString,
+                    "UPDATE messaging.history_syncs SET claimed_until = @until, attempts = attempts + 1",
+                    ("until", clock.UtcNow.AddMinutes(2)));
+                return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R-C"}""");
+            }
+
+            return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R-H"}""");
+        });
+
+        await DrainHistorySyncRequestsAsync(f.Host);
+
+        Assert.Single(SmbAppDataRequests(f));
+        Assert.Equal("Requested|R-C|-|Pending|-|-", await RowAsync(f));
+
+        // Vence el reclamo de la otra pasada: el siguiente pide sólo el historial.
+        clock.UtcNow = clock.UtcNow.AddMinutes(3);
+        await DrainHistorySyncRequestsAsync(f.Host);
+
+        var requests = SmbAppDataRequests(f);
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("\"history\"", requests[1].Body, StringComparison.Ordinal);
+        Assert.Equal("Requested|R-C|-|Requested|R-H|-", await RowAsync(f));
+    }
+
+    // Revisión 2: el estado de cada tipo se vuelve a leer justo antes de pedirlo. Otra pasada ya pidió el historial después de que esta
+    // leyó la fila: no se pide de nuevo ni se pisa lo suyo.
+    [Fact]
+    public async Task ATypeRequestedByAnotherPassAfterTheRowWasReadIsNotSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InsertSyncAsync(f, DateTimeOffset.UtcNow.AddHours(-1));
+        f.Factory.MetaHandler.RespondWith(SmbAppDataPath, _ =>
+        {
+            ExecuteNow(
+                f.ConnectionString,
+                "UPDATE messaging.history_syncs SET history_state = 'Requested', history_request_id = 'OTHER', history_requested_at = now()");
+            return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R-C"}""");
+        });
+
+        await DrainHistorySyncRequestsAsync(f.Host);
+
+        Assert.Contains("smb_app_state_sync", Assert.Single(SmbAppDataRequests(f)).Body, StringComparison.Ordinal);
+        Assert.Equal("Requested|R-C|-|Requested|OTHER|-", await RowAsync(f));
+    }
+
+    /// <summary>El handler de Graph de mentira es sincrónico: lo que otra pasada haría en el medio se escribe sin <c>await</c>.</summary>
+    private static void ExecuteNow(string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new Npgsql.NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        command.ExecuteNonQuery();
+    }
+
     // Revisión, R7: el reclamo toma una fila por sentencia, así cada una arranca con su reclamo entero; una pasada atiende varias.
     [Fact]
     public async Task OneDrainServesSeveralRowsEachWithItsOwnClaim()

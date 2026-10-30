@@ -18,8 +18,9 @@ namespace Modules.Messaging.Infrastructure.Coexistence;
 /// <para><b>Reclamo.</b> Una fila por sentencia, que se commitea sola (R7, como P2-R24 de Automations): suma el intento y la deja
 /// reclamada 2 minutos, así otra réplica no la toma y un pedido sin confirmar se repite cuando el reclamo vence. Cada fila arranca con
 /// el reclamo entero; una pasada atiende hasta <see cref="BatchSize"/>. Una importación vencida, rechazada por la persona o ya pedida
-/// no entra. Antes de cada pedido se comprueba que el reclamo siga siendo de esta pasada y no haya vencido, y cada guardado exige el
-/// mismo <c>claimed_until</c>: un reclamo viejo no pide ni pisa lo que hizo el nuevo. Meta acepta un solo pedido por tipo.</para>
+/// no entra. Antes de cada pedido se comprueba que el reclamo siga siendo de esta pasada, que no haya vencido y que el tipo siga
+/// <c>Pending</c>: un reclamo viejo no pide. Una respuesta confirmada de Meta se guarda aunque el reclamo ya no sea propio (si no, se
+/// volvería a pedir); lo que no confirma nada sólo con el reclamo propio. Meta acepta un solo pedido por tipo.</para>
 /// <para><b>Orden (P-2).</b> Primero <c>smb_app_state_sync</c>, después <c>history</c>; cada tipo tiene su estado y uno que falla no
 /// frena al otro. Cada resultado se guarda apenas llega, sin el token del apagado (lo que Meta ya contestó no se pierde por un
 /// apagado) y con un reintento ante una falla transitoria de la base: una caída entre los dos pedidos no repite el primero.</para>
@@ -126,7 +127,7 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
             LogConnectionUnavailable(logger, sync.ConnectionId);
             foreach (var type in pending)
             {
-                await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Pending, null, ConnectionUnavailable, clock.UtcNow);
+                await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Pending, null, ConnectionUnavailable, clock.UtcNow, requireClaim: true);
             }
 
             return;
@@ -135,74 +136,123 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
         var client = services.GetRequiredService<IWhatsAppCloudClient>();
         foreach (var type in pending)
         {
-            if (!await StillClaimedAsync(dbContext, sync, clock.UtcNow, cancellationToken))
+            var check = await CheckBeforeSendAsync(dbContext, sync, type, clock.UtcNow, cancellationToken);
+            if (check == SendCheck.ClaimLost)
             {
                 LogClaimLost(logger, sync.ConnectionId);
                 return;
             }
 
+            if (check == SendCheck.NoLongerPending)
+            {
+                // Otra pasada ya lo pidió (o lo resolvió) después de que esta leyó la fila: Meta acepta un pedido por tipo.
+                continue;
+            }
+
             var result = await client.RequestSmbAppDataAsync(sender, type, cancellationToken);
             // Desde acá Meta ya contestó: se guarda sin el token del apagado.
             var now = clock.UtcNow;
-            int saved;
             if (result.Succeeded && result.Value is { } requestId)
             {
                 LogRequested(logger, sync.ConnectionId, type);
                 // El id sólo se guarda, no se usa para correlacionar: uno más largo que la columna no puede dejar el tipo Pending (se
                 // volvería a pedir, y Meta acepta un pedido por tipo).
                 var stored = requestId.Length <= HistorySync.RequestIdMaxLength ? requestId : null;
-                saved = await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Requested, stored, null, now);
+                await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Requested, stored, null, now, requireClaim: false);
             }
             else if (result.Failure is { Reason: MessagingGraphFailure.UnconfirmedReason } unconfirmed)
             {
                 LogUnconfirmed(logger, sync.ConnectionId, type, unconfirmed.HttpStatus);
-                saved = await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Pending, null, MessagingGraphFailure.UnconfirmedReason, now);
+                if (!await SaveAsync(
+                        dbContext, sync, type, HistorySyncRequestState.Pending, null, MessagingGraphFailure.UnconfirmedReason, now, requireClaim: true))
+                {
+                    LogClaimLost(logger, sync.ConnectionId);
+                    return;
+                }
             }
             else
             {
                 var failure = result.Failure ?? new MessagingGraphFailure(0, null, "unknown");
                 LogRejected(logger, sync.ConnectionId, type, failure.HttpStatus, failure.Code, failure.Subcode);
                 var code = string.Create(CultureInfo.InvariantCulture, $"graph:{failure.Code ?? failure.HttpStatus}");
-                saved = await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Failed, null, code, now);
-            }
-
-            if (saved == 0)
-            {
-                LogClaimLost(logger, sync.ConnectionId);
-                return;
+                await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Failed, null, code, now, requireClaim: false);
             }
         }
     }
 
-    /// <summary>El reclamo sigue siendo el de esta pasada y no venció: si no, otra pasada puede estar pidiendo lo mismo.</summary>
-    private static Task<bool> StillClaimedAsync(MessagingDbContext dbContext, ClaimedSync sync, DateTimeOffset now, CancellationToken cancellationToken) =>
-        dbContext.HistorySyncs.AsNoTracking().AnyAsync(
-            value => value.ConnectionId == sync.ConnectionId
-                && EF.Property<DateTimeOffset?>(value, "ClaimedUntil") == sync.ClaimedUntil
-                && EF.Property<DateTimeOffset?>(value, "ClaimedUntil") > now,
-            cancellationToken);
+    private enum SendCheck
+    {
+        Send,
+        ClaimLost,
+        NoLongerPending,
+    }
 
-    /// <summary>Un tipo, en su propia sentencia (se commitea sola), sin token de cancelación: lo que Meta contestó se guarda aunque el
-    /// host se esté apagando. Sólo toca un tipo que sigue <c>Pending</c> y una fila que sigue reclamada por esta pasada (mismo
-    /// <c>claimed_until</c>): si en el medio la persona, Meta u otra pasada cambiaron algo, lo de ellos gana. <c>version</c> sube para que
-    /// un reintento concurrente desde la API vea el cambio. Una falla transitoria de la base se reintenta una vez.</summary>
-    private static async Task<int> SaveAsync(
+    /// <summary>Justo antes de pedir un tipo: el reclamo sigue siendo el de esta pasada y no venció (si no, otra pasada puede estar
+    /// pidiendo lo mismo), y el tipo sigue <c>Pending</c> (la lista se armó al leer la fila, y otra pasada pudo pedirlo después).</summary>
+    private static async Task<SendCheck> CheckBeforeSendAsync(
+        MessagingDbContext dbContext, ClaimedSync sync, HistorySyncType type, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var current = await dbContext.HistorySyncs.AsNoTracking()
+            .Where(value => value.ConnectionId == sync.ConnectionId)
+            .Select(value => new
+            {
+                ClaimedUntil = EF.Property<DateTimeOffset?>(value, "ClaimedUntil"),
+                value.ContactsState,
+                value.HistoryState,
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (current is null || current.ClaimedUntil != sync.ClaimedUntil || current.ClaimedUntil <= now)
+        {
+            return SendCheck.ClaimLost;
+        }
+
+        var state = type == HistorySyncType.SmbAppStateSync ? current.ContactsState : current.HistoryState;
+        return state == HistorySyncRequestState.Pending ? SendCheck.Send : SendCheck.NoLongerPending;
+    }
+
+    /// <summary>
+    /// Un tipo, en su propia sentencia (se commitea sola), sin token de cancelación: lo que Meta contestó se guarda aunque el host se
+    /// esté apagando. Siempre exige que el tipo siga <c>Pending</c> (si la persona, Meta u otra pasada lo resolvieron, lo de ellos gana).
+    /// <paramref name="requireClaim"/> separa los dos casos:
+    /// <list type="bullet">
+    /// <item>Una respuesta confirmada de Meta (aceptado o rechazado) se guarda aunque el reclamo haya vencido o lo tenga otra pasada:
+    /// si no, el tipo quedaría <c>Pending</c> y la otra pasada lo pediría otra vez, gastando el único pedido.</item>
+    /// <item>Lo que no confirma nada (<c>unconfirmed</c>, <c>connection_unavailable</c>) sólo se guarda con el reclamo propio: una
+    /// pasada vieja no pisa el código del reclamo nuevo.</item>
+    /// </list>
+    /// <c>version</c> sube para que un reintento concurrente desde la API vea el cambio. Una falla transitoria de la base se reintenta
+    /// una vez; si ese reintento no toca filas porque el primero sí llegó a commitear, el estado ya escrito cuenta como guardado.
+    /// Devuelve si el estado quedó escrito.
+    /// </summary>
+    private static async Task<bool> SaveAsync(
         MessagingDbContext dbContext, ClaimedSync sync, HistorySyncType type, HistorySyncRequestState state, string? requestId, string? errorCode,
-        DateTimeOffset now)
+        DateTimeOffset now, bool requireClaim)
     {
         try
         {
-            return await UpdateAsync(dbContext, sync, type, state, requestId, errorCode, now);
+            return await UpdateAsync(dbContext, sync, type, state, requestId, errorCode, now, requireClaim) > 0;
         }
         catch (DbException exception) when (exception.IsTransient)
         {
-            return await UpdateAsync(dbContext, sync, type, state, requestId, errorCode, now);
+            if (await UpdateAsync(dbContext, sync, type, state, requestId, errorCode, now, requireClaim) > 0)
+            {
+                return true;
+            }
+
+            var written = await dbContext.HistorySyncs.AsNoTracking()
+                .Where(value => value.ConnectionId == sync.ConnectionId)
+                .Select(value => new { value.ContactsState, value.HistoryState, value.ContactsErrorCode, value.HistoryErrorCode })
+                .SingleOrDefaultAsync(CancellationToken.None);
+            return written is not null
+                && (type == HistorySyncType.SmbAppStateSync
+                    ? written.ContactsState == state && written.ContactsErrorCode == errorCode
+                    : written.HistoryState == state && written.HistoryErrorCode == errorCode);
         }
     }
 
     private static Task<int> UpdateAsync(
         MessagingDbContext dbContext, ClaimedSync sync, HistorySyncType type, HistorySyncRequestState state, string? requestId, string? errorCode,
-        DateTimeOffset now)
+        DateTimeOffset now, bool requireClaim)
     {
         var stateName = state.ToString();
         var requestedAt = state == HistorySyncRequestState.Requested ? now : (DateTimeOffset?)null;
@@ -212,7 +262,8 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
                 UPDATE messaging.history_syncs
                    SET contacts_state = {stateName}, contacts_request_id = {requestId}, contacts_requested_at = {requestedAt},
                        contacts_error_code = {errorCode}, updated_at = {now}, version = version + 1
-                 WHERE connection_id = {sync.ConnectionId} AND contacts_state = 'Pending' AND claimed_until = {sync.ClaimedUntil}
+                 WHERE connection_id = {sync.ConnectionId} AND contacts_state = 'Pending'
+                   AND ({requireClaim} = false OR claimed_until = {sync.ClaimedUntil})
                 """,
                 CancellationToken.None)
             : dbContext.Database.ExecuteSqlInterpolatedAsync(
@@ -220,7 +271,8 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
                 UPDATE messaging.history_syncs
                    SET history_state = {stateName}, history_request_id = {requestId}, history_requested_at = {requestedAt},
                        history_error_code = {errorCode}, updated_at = {now}, version = version + 1
-                 WHERE connection_id = {sync.ConnectionId} AND history_state = 'Pending' AND claimed_until = {sync.ClaimedUntil}
+                 WHERE connection_id = {sync.ConnectionId} AND history_state = 'Pending'
+                   AND ({requireClaim} = false OR claimed_until = {sync.ClaimedUntil})
                 """,
                 CancellationToken.None);
     }
