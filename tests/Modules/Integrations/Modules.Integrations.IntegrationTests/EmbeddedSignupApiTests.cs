@@ -183,6 +183,25 @@ public sealed class EmbeddedSignupApiTests
     }
 
     [Fact]
+    public async Task CoexistenceAcceptsThePhoneNumberIdMetaNowSends()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptCoexistenceSignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var response = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody(@event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", phoneNumberId: "777"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        Assert.Equal("777", connection!.Fields["phoneNumberId"]);
+        Assert.DoesNotContain(factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/register", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ACoexistenceSignupLeavesTheEventInTheOutbox()
     {
         await using var database = await StartDatabaseAsync();
