@@ -658,6 +658,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   claro); subir la versión en `Directory.Packages.props` con `dotnet restore --force-evaluate` de los lock files; quitar los
   `NuGetAuditSuppress` y su comentario; y verificar con un build `Release` local con la clave puesta. La 4.x es salto de mayor:
   revisar la API en Storage y en `ImageSharpMessagingImageCompressor`.
+- **El override del webhook vive en la WABA, no en la configuración** (addendum 2026-10-30 del spec 2026-10-29). Quitar
+  `Meta:App:WebhookOverrideCallbackUrl` no le dice nada a Meta: la WABA sigue mandando a esa URL hasta que alguien repita
+  `POST /{wabaId}/subscribed_apps` sin cuerpo. Y al revés: **cualquier** suscripción sin cuerpo lo borra, según la documentación
+  de Meta, también un signup de QEP con la clave vacía o una re-suscripción desde lulo chat, y el síntoma es que los webhooks
+  vuelven a la URL de la app sin ningún error. Lo único que dice el estado real es `GET /{wabaId}/subscribed_apps`; el procedimiento
+  está en [README § Historial de coexistencia](README.md#historial-de-coexistencia).
 
 ## Verificación
 

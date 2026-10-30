@@ -4,6 +4,7 @@
 **Módulos:** Integrations (pedido de sincronización tras la conexión), Messaging (recepción de `history`, `smb_message_echoes` y
 `smb_app_state_sync`, estado de la sincronización), Customers (cliente incompleto por teléfono), Bootstrapper (adaptadores).
 **Repos:** `qep-backend`. Lo que ve el usuario en `qep-frontend` es un slice aparte (§10).
+**Addendum 2026-10-30 (§12):** se repone como temporal el override por WABA y cambia el orden de la puesta en marcha.
 **Estado:** borrador para revisión. Las reglas de §2 son del owner (conversación del 2026-10-29). Las que toma el spec están en
 §9 (D-1…), a ratificar. Lo que no se pudo decidir con el código ni con la documentación está en §11 como `DECISIÓN-PENDIENTE`.
 
@@ -138,9 +139,10 @@ conexión; reintentar, el de editarla.
 
 ## 6. Configuración y despliegue
 
-- **Sin configuración nueva en QEP.** `Meta:App:*` ya es el de la app de lulochat (regla 7).
+- **Sin configuración nueva en QEP.** `Meta:App:*` ya es el de la app de lulochat (regla 7). *Superado por §12: hay una clave nueva, temporal.*
 - **Panel de la app de Meta:** suscribir `history`, `smb_message_echoes` y `smb_app_state_sync`.
-- **Orden de la puesta en marcha:** (1) conexiones de Clasic y Transportes CI creadas en QEP; (2) URL de la app → QEP; (3) este
+- **Orden de la puesta en marcha:** *reemplazado por §12: el número de QCode se conecta con la clave desplegada, sin mover la URL de
+  la app.* Queda como el plan original: (1) conexiones de Clasic y Transportes CI creadas en QEP; (2) URL de la app → QEP; (3) este
   spec desplegado; (4) recién entonces, el número de QCode por coexistencia.
 - **Límite de tamaño:** revisar `Messaging:Webhook:MaxBodyBytes` contra el tamaño real de una parte de historial (V-3).
 - **Orden:** este backend se despliega **antes** de que cualquier tenant conecte por coexistencia. Una conexión hecha antes pide el
@@ -149,7 +151,7 @@ conexión; reintentar, el de editarla.
 ## 7. Qué no cambia
 
 - El flujo de `messages` en vivo, la adopción de conversaciones legadas, la ventana y el bot.
-- La suscripción de la conexión (`SubscribeAppAsync` sin cuerpo): no hay redirección por WABA.
+- La suscripción de la conexión (`SubscribeAppAsync` sin cuerpo): no hay redirección por WABA. *Superado por §12.*
 
 ## 8. Pruebas
 
@@ -174,7 +176,7 @@ TDD, RED antes que GREEN. Como mínimo:
 ## 9. Decisiones del spec (a ratificar)
 
 - **D-1, D-2.** *Retiradas el 2026-10-29* (redirección por WABA y su URL de configuración): decisión del owner, QEP recibe por el
-  URL de la app, que pasa a QEP (regla 7).
+  URL de la app, que pasa a QEP (regla 7). *Repuestas como temporales el 2026-10-30: §12.*
 - **D-3.** El pedido a `smb_app_data` tiene que sobrevivir a una caída después del commit. El mecanismo (un evento de outbox que
   consume Messaging, o una fila `Pending` que un worker reclama) lo elige el constructor.
 - **D-4.** El estado vive en Messaging, que es quien recibe los webhooks. Para pedir, Messaging obtiene el token por su puerto hacia
@@ -212,3 +214,29 @@ TDD, RED antes que GREEN. Como mínimo:
 - **Fuera de alcance:** volver a sincronizar después del plazo, los grupos, Instagram, y la migración de Clasic y Transportes CI
   desde lulochat: no pasa por el Embedded Signup sino por la migración de datos desde Mongo (token y datos de la conexión;
   `qep/lulo-migrator`), así que esas conexiones no tocan nada de este spec.
+
+## 12. Addendum 2026-10-30: override temporal por WABA
+
+**Decisión del owner (2026-10-30).** Se repone la redirección por WABA que §2.7 y D-1/D-2 habían retirado, **como medida temporal**.
+QEP y lulo chat comparten la app de Meta y la URL de la app sigue en lulo. El owner quiere conectar el número de QCode por coexistencia
+con Embedded Signup en producción y recibir sus webhooks en QEP, mientras los demás números de la app siguen yendo a lulo, hasta que
+quede satisfecho y mueva la URL de la app.
+
+- **Mecanismo.** `Meta:App:WebhookOverrideCallbackUrl` (variable `META_WEBHOOK_OVERRIDE_CALLBACK_URL`, ConfigMap). Con valor, el
+  `POST /{waba_id}/subscribed_apps` de `SubscribeAppAsync` lleva `override_callback_uri` y `verify_token` en un cuerpo JSON. Vacía, o con
+  el token del pipeline sin resolver en `Production`, la llamada sale sin cuerpo, como antes. Es por WABA, no por número. Reemplaza lo
+  que dice §7 sobre la suscripción.
+- **Rechazo.** Si Meta rechaza la suscripción, el signup falla con `integrations.whatsapp.registration_failed`, sin conexión y sin
+  evento. No hay respaldo sin override: el historial se pide una vez, y le llegaría a lulo.
+- **Orden garantizado por el código.** `subscribed_apps` corre antes del commit y un fallo lanza. El evento que crea la fila de
+  `history_syncs` se publica en la transacción de después, así que `smb_app_data` no puede salir sin la suscripción ya aceptada.
+- **Orden de la puesta en marcha (reemplaza el de §6 para el número de QCode).** (1) Este spec desplegado, con la clave y la variable
+  en `Backend-prod`; (2) campos `history`, `smb_message_echoes` y `smb_app_state_sync` suscritos en el panel de la app; (3) el número de
+  QCode por coexistencia. **No hace falta mover la URL de la app.** Las conexiones de Clasic y Transportes CI dejan de ser
+  prerrequisito de este número, y siguen el camino de §1 cuando el owner mueva la URL.
+- **Límite de Meta (documentación revisada el 2026-10-30).** El override cubre `messages`, `history`, `smb_message_echoes` y
+  `smb_app_state_sync`, pero los webhooks de plantillas y de cuenta (`message_template_status_update`, `account_update`…) van siempre a
+  la URL de la app: mientras dure, le llegan a lulo.
+- **Retiro.** Se mueve la URL de la app, se repite la suscripción sin cuerpo en la WABA (Meta lo documenta como la forma de borrar el
+  override) y se quita la clave. Quitar la clave no limpia la WABA. Una conexión creada por `lulo-migrator` no se suscribe: un número
+  migrado así necesita la llamada manual del README, § Historial de coexistencia.

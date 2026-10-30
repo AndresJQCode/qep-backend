@@ -103,6 +103,11 @@ data:
   Meta__App__AppId: "#{META_APP_ID}#"
   Meta__App__ConfigId: "#{META_CONFIG_ID}#"
   Meta__App__GraphApiVersion: "v24.0"
+  # Temporal (addendum 2026-10-30 del spec 2026-10-29): mientras la URL del webhook de la app siga en lulo chat, la WABA que
+  # se conecta desde QEP le pide a Meta sus webhooks en esta URL. Sin la variable en Backend-prod el token queda literal y
+  # MetaAppOptionsValidator lo trata como ausente: no hay override y el pod arranca igual. Se quita cuando la app pase a QEP;
+  # quitarla no limpia la WABA (README, Historial de coexistencia).
+  Meta__App__WebhookOverrideCallbackUrl: "#{META_WEBHOOK_OVERRIDE_CALLBACK_URL}#"
   # Spec 2026-10-14 (Instagram): el caso de uso Instagram de la misma app tiene su propio App ID (público: viaja en la
   # URL de autorización) y su App Secret (prod-secret.yaml). El origen permitido del redirect_uri es el del SPA.
   Meta__Instagram__AppId: "#{META_INSTAGRAM_APP_ID}#"

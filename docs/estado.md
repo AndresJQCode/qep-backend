@@ -214,6 +214,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-30 — Mergeado a `develop` (`--no-ff`, sin push) **el override temporal del webhook por WABA**: con
+  `Meta:App:WebhookOverrideCallbackUrl` puesto, el Embedded Signup suscribe la WABA con `override_callback_uri`, para probar el número de QCode en
+  QEP con la URL de la app todavía en lulo. Sin la variable `META_WEBHOOK_OVERRIDE_CALLBACK_URL` no cambia nada. Sin probar contra Meta real;
+  los estados de plantillas de esa WABA siguen llegando a la URL de la app. Quitar el ajuste no limpia la WABA.
 - 2026-10-30 — Mergeados a `develop` de los dos repos (`--no-ff`, sin push) **los ajustes del historial por coexistencia** (decisiones del owner):
   conversación de un eco a número desconocido nace resuelta (`started_by_echo`), el reporte de Mensajería excluye lo importado (`imported`,
   migración `AddImportedMarker`), `fromHistory` en la conversación y aviso propio en el compositor. Suite completa no recorrida tras los ajustes.
