@@ -226,11 +226,11 @@ public sealed class WebhookPayloadParserTests
     public void AccountUpdateAndUnknownFieldsAreTyped()
     {
         var account = Envelope("account_update", new { @event = "DISABLED_UPDATE", ban_info = new { waba_ban_state = "DISABLE" } });
-        var unknown = Envelope("smb_message_echoes", new { anything = 1 });
+        var unknown = Envelope("calls", new { anything = 1 });
 
         var update = Assert.IsType<AccountUpdateChange>(Assert.Single(WebhookPayloadParser.Parse(account)));
         Assert.Equal(("222", "DISABLED_UPDATE", "DISABLE"), (update.WabaId, update.Event, update.BanState));
-        Assert.Equal("smb_message_echoes", Assert.IsType<UnknownChange>(Assert.Single(WebhookPayloadParser.Parse(unknown))).Field);
+        Assert.Equal("calls", Assert.IsType<UnknownChange>(Assert.Single(WebhookPayloadParser.Parse(unknown))).Field);
     }
 
     // Review Focus 1: lo roto no tumba al worker.

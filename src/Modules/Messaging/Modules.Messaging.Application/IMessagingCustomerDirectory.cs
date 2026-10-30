@@ -59,6 +59,11 @@ public interface IMessagingCustomerDirectory
     /// y fuera de la transacción de la ingesta; es idempotente por BSUID.</summary>
     Task<MessagingEnsuredCustomer> EnsureAsync(Guid tenantId, MessagingContact contact, CancellationToken cancellationToken);
 
+    /// <summary>Historial de coexistencia: el cliente de QEP de quien sólo se conoce el teléfono (<paramref name="waId"/> son los
+    /// dígitos; el adaptador agrega el «+»), creándolo incompleto y sin BSUID si no existe. <paramref name="name"/> es el
+    /// nombre del contacto si el historial lo trae.</summary>
+    Task<MessagingEnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, string waId, string? name, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-10 §8.3: el cliente con el BSUID anterior pasa al nuevo. Si el nuevo ya es de otro cliente no
     /// se toca (lo registra el adaptador). El teléfono del cliente no cambia: es dato maestro.</summary>
     Task ReplaceUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken);

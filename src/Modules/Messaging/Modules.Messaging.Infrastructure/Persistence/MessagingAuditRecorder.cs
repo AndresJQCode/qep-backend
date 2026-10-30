@@ -127,4 +127,20 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             changedFields is { Count: > 0 } ? JsonSerializer.Serialize(changedFields) : NoChangedFields,
             Source,
             occurredAt));
+
+    // Spec 2026-10-29 §5: siempre una persona (quien edita la conexión). El recurso es la conexión, cuya importación es una sola fila;
+    // changed_fields lleva los tipos que vuelven a pedirse.
+    public void RecordHistorySync(
+        Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            AuditActorType.Human,
+            action,
+            MessagingAuditActions.HistorySyncResourceType,
+            connectionId.ToString(),
+            Outcome,
+            retriedTypes is { Count: > 0 } ? JsonSerializer.Serialize(retriedTypes) : NoChangedFields,
+            Source,
+            occurredAt));
 }

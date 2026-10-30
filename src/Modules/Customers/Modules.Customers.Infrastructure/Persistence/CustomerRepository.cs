@@ -506,6 +506,13 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .OrderBy(customer => customer.MergedIntoId != null).ThenBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
+    public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == null && customer.Phone == phone)
+            .OrderBy(customer => customer.MergedIntoId != null).ThenBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
     // Un UPDATE condicional y no el agregado + SaveChanges: el BSUID no sube la versión (P4), así que el chequeo de
     // concurrencia de EF no protege nada y dos vinculaciones simultáneas terminarían en «gana la última» (D-A6).
     public async Task<bool> TryAttachWhatsAppUserIdAsync(

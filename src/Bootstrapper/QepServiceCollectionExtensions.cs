@@ -793,6 +793,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteBusinessHoursCommand, bool>, DeleteBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<DuplicateBusinessHoursCommand, BusinessHoursDto>, DuplicateBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<SetDefaultBusinessHoursCommand, BusinessHoursDto>, SetDefaultBusinessHoursHandler>();
+        // Spec 2026-10-29 §5: estado y reintento de la importación del historial por coexistencia. Sin estos registros, 500.
+        services.AddScoped<IQueryHandler<GetHistorySyncQuery, HistorySyncDto>, GetHistorySyncHandler>();
+        services.AddScoped<ICommandHandler<RetryHistorySyncCommand, HistorySyncDto>, RetryHistorySyncHandler>();
         // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
         services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();

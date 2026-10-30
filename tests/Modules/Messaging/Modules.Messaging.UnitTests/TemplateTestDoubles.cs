@@ -85,6 +85,8 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
 
     public Task<MessagingEnsuredCustomer> EnsureAsync(Guid tenantId, MessagingContact contact, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+    public Task<MessagingEnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, string waId, string? name, CancellationToken cancellationToken) => throw new NotSupportedException();
+
     public Task ReplaceUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     /// <summary>Spec 2026-10-11 §4.4: la audiencia que devuelve <see cref="ListAudienceAsync"/>, ya sin duplicados y en el orden del puerto.</summary>

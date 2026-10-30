@@ -343,6 +343,138 @@ internal static class MetaPayloads
         return Change("account_update", value.ToJsonString(), wabaId);
     }
 
+    /// <summary>Spec 2026-10-29: un <c>history</c> con un trozo y un hilo por teléfono. Cada mensaje es
+    /// (<c>Wamid</c>, <c>Body</c>, <c>Timestamp</c>, <c>FromBusiness</c>): con <c>FromBusiness</c> lleva <c>to</c> y es saliente.</summary>
+    public static string History(
+        string phoneNumberId,
+        int phase,
+        int chunkOrder,
+        int progress,
+        params (string WaId, (string Wamid, string Body, long Timestamp, bool FromBusiness)[] Messages)[] threads)
+    {
+        var threadNodes = new JsonArray();
+        foreach (var (waId, messages) in threads)
+        {
+            var messageNodes = new JsonArray();
+            foreach (var message in messages)
+            {
+                var node = new JsonObject
+                {
+                    ["from"] = message.FromBusiness ? "15550001111" : waId,
+                    ["id"] = message.Wamid,
+                    ["timestamp"] = Seconds(message.Timestamp),
+                    ["type"] = "text",
+                    ["text"] = new JsonObject { ["body"] = message.Body },
+                    ["history_context"] = new JsonObject { ["status"] = "READ" }, // V-1: unverified (valores de history_context.status)
+                };
+                if (message.FromBusiness)
+                {
+                    node["to"] = waId;
+                }
+
+                messageNodes.Add(node);
+            }
+
+            threadNodes.Add(new JsonObject { ["id"] = waId, ["messages"] = messageNodes });
+        }
+
+        var chunk = new JsonObject
+        {
+            // V-1: unverified (dónde van phase, chunk_order y progress)
+            ["metadata"] = new JsonObject { ["phase"] = phase, ["chunk_order"] = chunkOrder, ["progress"] = progress },
+            ["threads"] = threadNodes,
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["history"] = new JsonArray(chunk),
+        };
+        return Change("history", value.ToJsonString());
+    }
+
+    /// <summary>Spec 2026-10-29 §1: un <c>history</c> con un solo mensaje del contacto que es un <c>media_placeholder</c>
+    /// (<paramref name="mediaId"/> <c>null</c>) o, si trae <paramref name="mediaId"/>, una imagen con ese id (el medio que llega
+    /// después con el mismo wamid, P-6).</summary>
+    public static string HistoryMedia(string phoneNumberId, int chunkOrder, string waId, string wamid, long timestamp, string? mediaId)
+    {
+        var message = new JsonObject { ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp) };
+        if (mediaId is null)
+        {
+            message["type"] = "media_placeholder"; // V-1: unverified (campos del media_placeholder)
+        }
+        else
+        {
+            message["type"] = "image";
+            message["image"] = new JsonObject { ["id"] = mediaId, ["mime_type"] = "image/jpeg", ["sha256"] = "c2hhMjU2" };
+        }
+
+        var chunk = new JsonObject
+        {
+            ["metadata"] = new JsonObject { ["phase"] = 0, ["chunk_order"] = chunkOrder, ["progress"] = 50 },
+            ["threads"] = new JsonArray(new JsonObject { ["id"] = waId, ["messages"] = new JsonArray(message) }),
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["history"] = new JsonArray(chunk),
+        };
+        return Change("history", value.ToJsonString());
+    }
+
+    /// <summary>Spec 2026-10-29: el dueño no aceptó compartir el historial.</summary>
+    public static string HistoryDeclined(string phoneNumberId, int code = 2593109)
+    {
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            // V-1: unverified (value.errors vs value.history[].errors; el parser acepta los dos)
+            ["errors"] = new JsonArray(new JsonObject { ["code"] = code, ["title"] = "History sharing declined" }),
+        };
+        return Change("history", value.ToJsonString());
+    }
+
+    /// <summary>Spec 2026-10-29: <c>smb_message_echoes</c>, un texto que el negocio escribió desde la app a <paramref name="toWaId"/>.</summary>
+    public static string SmbEchoes(string phoneNumberId, string toWaId, string wamid, string body, long timestamp)
+    {
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["message_echoes"] = new JsonArray(new JsonObject
+            {
+                ["from"] = "15550001111",
+                ["to"] = toWaId,
+                ["id"] = wamid,
+                ["timestamp"] = Seconds(timestamp),
+                ["type"] = "text",
+                ["text"] = new JsonObject { ["body"] = body },
+            }),
+        };
+        return Change("smb_message_echoes", value.ToJsonString());
+    }
+
+    /// <summary>Spec 2026-10-29: <c>smb_app_state_sync</c> con un contacto agregado o quitado.</summary>
+    public static string ContactsSync(string phoneNumberId, string phone, string fullName, string firstName, bool remove = false)
+    {
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            // V-1: unverified (formato de contact.phone_number, con o sin «+»)
+            ["state_sync"] = new JsonArray(new JsonObject
+            {
+                ["type"] = "contact",
+                ["contact"] = new JsonObject { ["full_name"] = fullName, ["first_name"] = firstName, ["phone_number"] = phone },
+                ["action"] = remove ? "remove" : "add",
+                ["metadata"] = new JsonObject { ["timestamp"] = "1761700000" },
+            }),
+        };
+        return Change("smb_app_state_sync", value.ToJsonString());
+    }
+
     /// <summary>Un cambio cualquiera con su <c>value</c> crudo: para campos que la ingesta ignora o para
     /// armar casos raros a mano.</summary>
     public static string Change(string field, string valueJson, string wabaId = DefaultWabaId) =>

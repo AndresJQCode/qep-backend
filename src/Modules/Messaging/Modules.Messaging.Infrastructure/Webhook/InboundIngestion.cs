@@ -127,6 +127,8 @@ internal static class InboundIngestion
         // FOR UPDATE: el INSERT de la sentencia 2 ya tiene FOR KEY SHARE sobre la fila (la FK), y FOR UPDATE choca con
         // ese candado; dos entregas de la misma conversación quedaban en deadlock (WebhookLoadTests lo mostró).
         // Spec 2026-10-15 §3.6: reabrir limpia el motivo vigente; el del evento `Resolved` viejo queda en su `details`.
+        // Spec 2026-10-29: un entrante en vivo saca la conversación de la regla de la importación (history_managed): desde acá su
+        // estado y sus no leídos los lleva el flujo en vivo, y una parte del historial que llegue después no los toca.
         var preview = Preview(message);
         var before = (await dbContext.Database.SqlQuery<PreviousState>(
             $"""
@@ -137,6 +139,7 @@ internal static class InboundIngestion
                 unread_count       = unread_count + 1,
                 status             = 'Open',
                 resolution_reason_id = NULL,
+                history_managed    = false,
                 profile_name       = COALESCE({message.ProfileName}, profile_name),
                 wa_id              = COALESCE({message.WaId}, wa_id),
                 username           = COALESCE({message.Username}, username),
@@ -231,7 +234,7 @@ internal static class InboundIngestion
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
     /// queda rendido de una vez, con el motivo, y el worker nunca lo reclama. Spec 2026-10-14 §6.2: un adjunto de Instagram no tiene
     /// id; viene con <c>source_url</c>, y con eso alcanza para copiarlo.</summary>
-    private static Task<int> InsertMediaAsync(MessagingDbContext dbContext, Guid messageId, InboundMedia media, DateTimeOffset now, CancellationToken cancellationToken)
+    internal static Task<int> InsertMediaAsync(MessagingDbContext dbContext, Guid messageId, InboundMedia media, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var valid = media.SourceUrl is not null || Media.MediaTransfer.IsValidMetaMediaId(media.MetaMediaId);
         var metaMediaId = valid ? media.MetaMediaId : string.Empty;

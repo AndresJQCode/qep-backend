@@ -637,6 +637,17 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(NextBlock);
     }
 
+    /// <summary>Spec 2026-10-29: lo que responde <c>smb_app_data</c>; por defecto, un <c>request_id</c> fijo.</summary>
+    public MessagingGraphResult<string> NextSmbAppData { get; set; } = new("request.default", null);
+
+    public List<HistorySyncType> SmbAppDataCalls { get; } = [];
+
+    public Task<MessagingGraphResult<string>> RequestSmbAppDataAsync(MessagingSender sender, HistorySyncType type, CancellationToken cancellationToken)
+    {
+        SmbAppDataCalls.Add(type);
+        return Task.FromResult(NextSmbAppData);
+    }
+
     /// <summary>§8.6: lo que responde <c>GET /{media-id}</c>; sin configurar, la prueba no debía llegar acá.</summary>
     public MessagingGraphResult<MediaInfo>? MediaInfo { get; set; }
 

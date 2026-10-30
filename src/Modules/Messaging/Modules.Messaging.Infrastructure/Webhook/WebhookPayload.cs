@@ -30,6 +30,36 @@ internal sealed record TemplateStatusChange(string WabaId, string MetaTemplateId
 
 internal sealed record UnknownChange(string Field) : WebhookChange;
 
+/// <summary>Spec 2026-10-29: <c>history</c> de la coexistencia. <paramref name="ErrorCodes"/>: cada <c>errors[].code</c> (2593109 = el
+/// dueño no aceptó compartir el historial).</summary>
+internal sealed record HistoryChange(string PhoneNumberId, IReadOnlyList<HistoryChunk> Chunks, IReadOnlyList<int> ErrorCodes) : WebhookChange;
+
+/// <summary>Un trozo del historial. <c>Phase</c> (0..2) y <c>Progress</c> (0..100) llegan ya validados: fuera de rango son null.
+/// <paramref name="SkippedMessages"/>: los mensajes sin id o sin fecha que se saltaron.</summary>
+internal sealed record HistoryChunk(int? Phase, int? ChunkOrder, int? Progress, IReadOnlyList<HistoryThread> Threads, int SkippedMessages);
+
+internal sealed record HistoryThread(string WaId, IReadOnlyList<CoexistenceMessage> Messages);
+
+/// <summary>Un mensaje del historial o un eco de la app del negocio. <paramref name="IsMediaPlaceholder"/>: Meta no manda el medio, sólo avisa que existió.</summary>
+internal sealed record CoexistenceMessage(
+    string Wamid,
+    DateTimeOffset OccurredAt,
+    MessageDirection Direction,
+    MessageKind Kind,
+    string? Text,
+    string? Caption,
+    string? DetailsJson,
+    InboundMedia? Media,
+    bool IsMediaPlaceholder);
+
+/// <summary>Spec 2026-10-29: <c>smb_message_echoes</c>, lo que el negocio escribe desde la app. El <c>WaId</c> es el destinatario.</summary>
+internal sealed record SmbEchoesChange(string PhoneNumberId, IReadOnlyList<(string WaId, CoexistenceMessage Message)> Echoes) : WebhookChange;
+
+/// <summary>Spec 2026-10-29: <c>smb_app_state_sync</c>, los contactos de la app del negocio.</summary>
+internal sealed record ContactsSyncChange(string PhoneNumberId, IReadOnlyList<SyncedContact> Contacts) : WebhookChange;
+
+internal sealed record SyncedContact(string WaId, string? FullName, string? FirstName, bool Removed);
+
 /// <summary>Decisión del owner 2026-10-12 (P1): el botón de respuesta rápida de una plantilla (<c>type = button</c>), con su texto y su
 /// payload. Sólo ese tipo lo trae: ni un texto escrito a mano ni la respuesta a un mensaje interactivo.</summary>
 internal sealed record QuickReplyButton(string Text, string? Payload);

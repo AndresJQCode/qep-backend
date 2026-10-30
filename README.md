@@ -2706,9 +2706,9 @@ más pasa en el request. Un worker reclama cada entrega con un lease (8 intentos
 `unread_count`), `statuses` (monótonos: `sent < delivered < read`; `failed` sólo sobre `sent`;
 `played` cuenta como `read`), `account_update` (cuenta deshabilitada → la conexión queda en
 `NeedsAttention`). Con la conexión `Paused` o el módulo apagado los entrantes se descartan y los
-`statuses` sí se aplican. Las entregas procesadas se purgan a los 7 días. No se suscriben los campos
-de coexistencia (`history`, `smb_app_state_sync`, `smb_message_echoes`): lo que se responde desde la app
-del teléfono no aparece en QEP todavía.
+`statuses` sí se aplican. Las entregas procesadas se purgan a los 7 días. Los campos de coexistencia
+(`history`, `smb_message_echoes`, `smb_app_state_sync`) se describen en
+[Historial de coexistencia](#historial-de-coexistencia).
 
 **Entrantes que Meta no entrega.** Un mensaje `type: "unsupported"` se guarda como `Unsupported` con el `type` y los
 `errors` de Meta en `details`. Al leer, `unsupportedReason` lo traduce a español como `failureReason`
@@ -2887,6 +2887,65 @@ El `webhook.json` de ejemplo lleva `"from_user_id": "CO.573001234567"` en el men
 
 Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguientes
 (`Messaging:Workers:DeliveryPollSeconds`).
+
+#### Historial de coexistencia
+
+Spec `docs/superpowers/specs/2026-10-29-historial-coexistencia-whatsapp-design.md`. Cuando un tenant
+conecta su número **por coexistencia** (el número sigue activo en la app del teléfono), QEP trae el
+historial de hasta 180 días y los contactos de la agenda, y desde ahí también ve lo que se responde
+desde la app.
+
+- **Qué hace.** Después del commit de la conexión, QEP pide a Graph (`smb_app_data`) dos sincronizaciones,
+  `smb_app_state_sync` (contactos) e `history`, y guarda cada `request_id` en la fila de sincronización de la
+  conexión. Un worker hace el pedido, así que no depende de que el pod siga vivo. Las partes del historial
+  llegan por el webhook y llenan los hilos **sin generar trabajo**: no disparan el bot, no crean negocios ni
+  asignan asesor. Las conversaciones importadas entran **cerradas**, salvo las que cumplen las dos
+  condiciones: el último mensaje es del contacto y llegó en las 24 h anteriores a la conexión (esas entran
+  abiertas, con `history_managed = true`). Los contactos crean clientes incompletos. Los ecos
+  (`smb_message_echoes`) guardan lo que el negocio responde desde la app.
+- **Regla de Meta: 24 h y una sola vez por tipo.** Meta acepta el pedido de cada tipo una sola vez y sólo
+  dentro de las 24 h siguientes a la conexión. Pasado el plazo no hay segunda oportunidad: el estado queda
+  `Expired` y la pantalla dice que hay que desconectar y volver a conectar. Un pedido rechazado por Graph
+  queda `Failed`; mientras no venza el plazo se puede reintentar.
+- **Campos del webhook a suscribir en el panel de la app de Meta:** `history`, `smb_message_echoes` y
+  `smb_app_state_sync`. Sin la suscripción el historial no llega.
+- **Endpoints.** `GET /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/history-sync`
+  (permiso `integrations.connection.read`) devuelve el estado, el progreso, `canRetry` y `mustReconnect`.
+  `POST …/history-sync/retry` (permiso `integrations.connection.manage`) reintenta lo que quedó `Pending` o
+  `Failed`; sin cuerpo.
+- **Orden de la puesta en marcha (spec §6).** (1) Conexiones de Clasic y Transportes CI creadas en QEP;
+  (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado, con la migración
+  `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización);
+  (4) recién entonces,
+  el número de QCode por coexistencia. **Despliégalo antes de conectar cualquier número por coexistencia:**
+  una conexión hecha antes pide el historial, QEP lo descarta como `UnknownChange` y no hay segunda
+  oportunidad. Sin configuración nueva: `Meta:App:*` no cambia.
+- **Límite de tamaño (V-3).** Revisa `Messaging:Webhook:MaxBodyBytes` contra el tamaño de una parte real de
+  historial; si queda corto, la parte se rechaza y se pierde.
+
+**Pendientes y límites conocidos.**
+
+- **V-1 a V-6 siguen sin verificar contra Meta real:** forma de los tres webhooks (V-1, en especial si
+  `history` trae el nombre del contacto), webhook que trae el archivo de un `media_placeholder` (V-2), tamaño
+  de una parte frente al límite (V-3), que la ventana de 24 h no la abran los mensajes del historial (V-4),
+  `TriageRules.IsPending` con `last_inbound_at` vacío (V-5) y que Graph no gaste la única oportunidad al
+  rechazar un pedido (V-6). Las pruebas usan fixtures que toleran esas variaciones.
+- **Qué apaga `history_managed`.** Mientras está prendida, cada parte del historial que llega recalcula si la
+  conversación está abierta y cuántos no leídos tiene. La apaga todo lo que hace la ingesta en vivo o el asesor:
+  un entrante en vivo, `Resolve` y `Reopen`, una respuesta enviada desde QEP, asignarla (a mano, por traspaso del
+  bot o por la autoasignación al responder), tomarla o transferirla, un eco de lo que el negocio responde desde la
+  app, y marcarla leída o no leída (también «no leído desde este mensaje»). **Un envío de campaña no la apaga.**
+  Si agregas una acción del asesor sobre una conversación, decide qué hace con la bandera: si no la apaga, la
+  siguiente parte del historial le pisa el estado o el contador.
+- **El reporte de mensajería cuenta lo importado el día de la conexión.** Las conversaciones y los mensajes
+  importados se guardan con `created_at` = la hora de la importación, y `MessagingReportSource` arma las
+  sesiones y los contactos nuevos con `created_at`. Así que ese día cada hilo importado con un entrante aparece
+  como contacto nuevo y como sesión (sin responder, porque su saliente tiene la misma hora). No se corrigió a
+  propósito: tocaría la semántica del reporte en otro módulo, y lo decide el owner.
+- **Ventana residual de doble envío con varias réplicas.** El pedido a Graph se reclama con un lease; con más
+  de una réplica queda una ventana pequeña en la que dos pods pueden enviar el mismo pedido.
+- **Un archivo que nunca llega queda `Pending`.** Si Meta no entrega el medio de un `media_placeholder`, el
+  mensaje sigue pendiente, sin reintentos propios.
 
 #### Despliegue
 

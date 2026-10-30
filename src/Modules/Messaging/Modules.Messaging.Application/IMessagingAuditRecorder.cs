@@ -35,6 +35,12 @@ public interface IMessagingAuditRecorder
     /// plantilla externa como de cotización manda <c>["kind"]</c>; <c>null</c> es <c>[]</c>, como el resto del módulo.</summary>
     void RecordTemplate(
         Guid tenantId, Guid actorId, string action, Guid templateId, DateTimeOffset occurredAt, IReadOnlyCollection<string>? changedFields = null);
+
+    /// <summary>Spec 2026-10-29 §5: el reintento de la importación del historial de una conexión, en la misma transacción que el cambio.
+    /// El recurso es la conexión y <paramref name="retriedTypes"/> (los <see cref="HistorySyncType"/> por nombre) va a
+    /// <c>changed_fields</c>. Siempre una persona.</summary>
+    void RecordHistorySync(
+        Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes);
 }
 
 public static class MessagingAuditActions
@@ -104,4 +110,7 @@ public static class MessagingAuditActions
     public const string TemplateCreated = "messaging.template.created";
     public const string TemplateQuotationProvisioned = "messaging.template.quotation_provisioned";
     public const string TemplateDeleted = "messaging.template.deleted";
+
+    public const string HistorySyncResourceType = "history_sync";
+    public const string HistorySyncRetried = "messaging.history_sync.retried";
 }

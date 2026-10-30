@@ -238,4 +238,100 @@ public sealed class CustomerWhatsAppDirectoryTests
         Assert.Equal(laura.CustomerId, Assert.Single(ids));
         Assert.Empty(foreign);
     }
+
+    [Fact]
+    public async Task AnUnknownPhoneCreatesAnIncompleteCustomerWithoutBsuid()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+
+        var ensured = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(
+            Tenant, new WhatsAppPhoneContact("+573001112233", "Ana Pérez"), TestContext.Current.CancellationToken));
+
+        Assert.Equal(EnsureOutcome.Created, ensured.Outcome);
+        Assert.Equal("Incomplete|+573001112233|NULL|Ana Pérez", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT completeness || '|' || phone_e164 || '|' || coalesce(whatsapp_user_id, 'NULL') || '|' || name FROM customers.customers WHERE id = '{ensured.CustomerId}'"));
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = '{CustomerAuditActions.CreatedFromMessaging}' AND payload->>'actorId' = '{Guid.Empty}'"));
+    }
+
+    [Fact]
+    public async Task AKnownPhoneIsNotDuplicated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var existing = await CreateCustomerAsync(client, city.CityId, classification.Id); // +573109352187
+
+        var ensured = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(
+            Tenant, new WhatsAppPhoneContact("+573109352187", "Otro nombre"), TestContext.Current.CancellationToken));
+
+        Assert.Equal(new EnsuredCustomer(existing.Id, EnsureOutcome.Existing), ensured);
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM customers.customers WHERE phone_e164 = '+573109352187'"));
+    }
+
+    [Fact]
+    public async Task ALaterLiveMessageAttachesTheBsuidToThePhoneCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var byPhone = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(
+            Tenant, new WhatsAppPhoneContact("+573001112233", "Ana"), TestContext.Current.CancellationToken));
+
+        var live = await InScopeAsync(factory, d => d.EnsureAsync(
+            Tenant, new WhatsAppContact("CO.123", "+573001112233", "Ana", null), TestContext.Current.CancellationToken));
+
+        Assert.Equal(new EnsuredCustomer(byPhone.CustomerId, EnsureOutcome.Linked), live);
+        Assert.Equal("CO.123", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT whatsapp_user_id FROM customers.customers WHERE id = '{byPhone.CustomerId}'"));
+    }
+
+    // P-7: sólo el nombre que es el respaldo del teléfono se reemplaza; el de una persona (o de una ficha completa) se respeta.
+    [Fact]
+    public async Task AContactNameReplacesOnlyThePhoneFallbackName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var complete = await CreateCustomerAsync(client, city.CityId, classification.Id); // +573109352187, completo
+        var ct = TestContext.Current.CancellationToken;
+        var fallbackNamed = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+573001112233", null), ct));
+        var handNamed = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+573004445566", "Nombre propio"), ct));
+
+        _ = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+573001112233", "Ana Pérez"), ct));
+        _ = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+573004445566", "Ana Pérez"), ct));
+        _ = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+573109352187", "Ana Pérez"), ct));
+
+        Assert.Equal("Ana Pérez", await ScalarAsync(database.GetConnectionString(), $"SELECT name FROM customers.customers WHERE id = '{fallbackNamed.CustomerId}'"));
+        Assert.Equal("Nombre propio", await ScalarAsync(database.GetConnectionString(), $"SELECT name FROM customers.customers WHERE id = '{handNamed.CustomerId}'"));
+        Assert.Equal("Verde Esencial S.A.S.", await ScalarAsync(database.GetConnectionString(), $"SELECT name FROM customers.customers WHERE id = '{complete.Id}'"));
+    }
+
+    // Hallazgo F2 de la revisión final: un wa_id que libphonenumber rechaza (los 521… de México que manda WhatsApp) se guarda sin
+    // phone_e164. La segunda llamada tiene que encontrar al primero por el teléfono guardado, no crear otro por cada parte o eco.
+    [Fact]
+    public async Task APhoneTheLibraryRejectsIsNotDuplicated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        var ct = TestContext.Current.CancellationToken;
+
+        var first = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+5215512345678", "Ana"), ct));
+        var second = await InScopeAsync(factory, d => d.EnsureByPhoneAsync(Tenant, new WhatsAppPhoneContact("+5215512345678", "Ana"), ct));
+
+        Assert.Equal(EnsureOutcome.Created, first.Outcome);
+        Assert.Equal(new EnsuredCustomer(first.CustomerId, EnsureOutcome.Existing), second);
+        Assert.Equal("1|0", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) || '|' || count(phone_e164) FROM customers.customers WHERE phone = '+5215512345678'"));
+    }
 }

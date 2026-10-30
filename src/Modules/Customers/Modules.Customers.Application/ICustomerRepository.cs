@@ -170,6 +170,11 @@ public interface ICustomerRepository
     /// número, y quien llama lo resuelve por <see cref="Customer.MergedIntoId"/>.</summary>
     Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-29, hallazgo F2: el más viejo con ese <c>phone</c> exacto y sin <c>phone_e164</c>, con el mismo orden que
+    /// <see cref="FindOldestByPhoneE164Async"/>. Es la llave de un teléfono que la librería rechazó, que se guarda sin normalizar. Sin
+    /// tracking.</summary>
+    Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken);
+
     /// <summary>
     /// D-A6 atómico: <c>UPDATE … SET whatsapp_user_id = @id WHERE … AND whatsapp_user_id IS NULL</c>. <c>true</c> si
     /// lo puso; <c>false</c> si ya tenía uno (dos vinculaciones concurrentes: gana la primera, no la última). No

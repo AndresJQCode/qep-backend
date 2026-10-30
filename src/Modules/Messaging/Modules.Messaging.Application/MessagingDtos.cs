@@ -161,7 +161,11 @@ public sealed record MessageDto(
     ChatbotRefDto? SentByChatbot = null,
     /// <summary>Spec 2026-10-21 D-I2: los botones, la lista o el enlace de un interactivo saliente, para que el hilo los pinte.
     /// <c>null</c> en todo lo demás, incluido el interactivo entrante (su respuesta ya va resumida en <c>text</c>).</summary>
-    InteractiveDto? Interactive = null);
+    InteractiveDto? Interactive = null,
+    /// <summary>Spec 2026-10-29 §1: de un <c>media_placeholder</c> del historial, <c>Pending</c> (el archivo puede llegar) o
+    /// <c>Unavailable</c> (Meta ya no lo guarda); <c>null</c> en todo lo demás. Cuando viaja, <c>UnsupportedReason</c> es <c>null</c>:
+    /// la burbuja dibuja el estado del medio y no «mensaje no compatible».</summary>
+    string? MediaState = null);
 
 /// <summary>Spec 2026-10-21 D-I3: el chatbot autor de un mensaje, con el nombre que hoy tiene.</summary>
 public sealed record ChatbotRefDto(Guid ChatbotId, string Name);

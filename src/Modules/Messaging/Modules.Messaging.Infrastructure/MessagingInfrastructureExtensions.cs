@@ -95,6 +95,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IQuickReplyRepository, QuickReplyRepository>();
         services.AddScoped<IResolutionReasonRepository, ResolutionReasonRepository>();
         services.AddScoped<IResolutionReasonNames, ResolutionReasonRepository>();
+        // Spec 2026-10-29 §5: la importación del historial de una conexión, con tracking.
+        services.AddScoped<IHistorySyncRepository, HistorySyncRepository>();
         // Spec 2026-10-21 §5: los horarios de atención; el repositorio es también el puerto IBusinessHours (misma instancia por scope).
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
         // Spec 2026-10-28: la extracción SQL del reporte de mensajería.
@@ -118,6 +120,13 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
         services.AddScoped<CampaignDispatcher>();
         services.AddHostedService<CampaignDispatchWorker>();
+        // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
+        services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
+        services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
+        // Spec 2026-10-29: el worker que le pide a Meta los contactos y el historial de cada importación Pending.
+        services.TryAddSingleton(Coexistence.HistorySyncRequestSchedule.Default);
+        services.AddSingleton<Coexistence.HistorySyncRequestProcessor>();
+        services.AddHostedService<Coexistence.HistorySyncRequestWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));

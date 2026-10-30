@@ -75,6 +75,65 @@ public sealed class CustomerWhatsAppDirectory(
         return new EnsuredCustomer(customer.Id.Value, EnsureOutcome.Created);
     }
 
+    public async Task<EnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, WhatsAppPhoneContact contact, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(contact);
+        // Hallazgo F2: se busca por lo que CreateIncompleteFromPhone guarda. Si la librería rechaza el número, el incompleto queda sin
+        // phone_e164 y la única llave es el teléfono tal cual; buscar por "+" + wa_id crearía un cliente nuevo en cada parte o eco.
+        var phone = contact.PhoneE164.Trim();
+        var region = phoneNormalizer.RegionOf(phone);
+        var stored = Customer.PhoneE164ForIncomplete(phone, region, phoneNormalizer);
+        var found = stored is null
+            ? await repository.FindOldestByUnnormalizedPhoneAsync(tenantId, phone, cancellationToken)
+            : await repository.FindOldestByPhoneE164Async(tenantId, stored, cancellationToken);
+        if (found is { } byPhone)
+        {
+            // Un fusionado se redirige al que quedó; sólo se renombra al que está vivo (P-7).
+            if (byPhone.MergedIntoId is null && !string.IsNullOrWhiteSpace(contact.Name))
+            {
+                await TryReplaceFallbackNameAsync(tenantId, byPhone, contact.Name, cancellationToken);
+            }
+
+            return new EnsuredCustomer((byPhone.MergedIntoId ?? byPhone.Id).Value, EnsureOutcome.Existing);
+        }
+
+        var now = clock.UtcNow;
+        var customer = Customer.CreateIncompleteFromPhone(
+            CustomerId.New(),
+            tenantId,
+            IncompleteCustomerProfile.NameForPhone(contact),
+            phone,
+            region,
+            now,
+            phoneNormalizer);
+        repository.Add(customer);
+        auditPublisher.Publish(tenantId, Guid.Empty, CustomerAuditActions.CreatedFromMessaging, customer.Id.ToString(), Success, now);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new EnsuredCustomer(customer.Id.Value, EnsureOutcome.Created);
+    }
+
+    private async Task TryReplaceFallbackNameAsync(Guid tenantId, Customer found, string name, CancellationToken cancellationToken)
+    {
+        // Barato antes de cargar el agregado: sólo un incompleto con el teléfono por nombre puede cambiar.
+        if (found.Completeness != CustomerCompleteness.Incomplete || (found.Name != found.Phone && found.Name != found.PhoneE164))
+        {
+            return;
+        }
+
+        var tracked = await repository.FindAsync(tenantId, found.Id, cancellationToken);
+        if (tracked is not null && tracked.ReplacePhoneFallbackName(name, clock.UtcNow))
+        {
+            try
+            {
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+            catch (RequestConcurrencyException)
+            {
+                // Alguien editó la ficha en medio: su nombre gana, y poner el del contacto es sólo cosmético.
+            }
+        }
+    }
+
     public async Task<bool> ReplaceWhatsAppUserIdAsync(Guid tenantId, string previous, string current, CancellationToken cancellationToken)
     {
         // Un solo UPDATE condicional (WHERE whatsapp_user_id = @previous): dos reemplazos simultáneos no se pisan, y
