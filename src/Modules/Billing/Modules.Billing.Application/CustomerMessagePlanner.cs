@@ -39,16 +39,22 @@ public static class CustomerMessagePlanner
             return null;
         }
 
-        var steps = triggered.Select(entry => (entry.Charge.Id, entry.Step)).ToArray();
-
         // Overdue lista todos los vencidos del cliente, no sólo los que dispararon: el cliente ve su deuda entera en un mensaje.
+        // Pero cubre sólo los pasos de los vencidos (owner, 2026-10-30): el before_5 o due de un cobro por vencer no se menciona
+        // en ese mensaje, y marcarlo cubierto perdería el aviso. Queda sin fila y sale como Reminder el día siguiente, porque
+        // ReminderCalendar.StepDueOn sigue devolviendo ese paso mientras sea el último con fecha <= hoy.
         if (triggered.Any(entry => entry.Charge.DueDate < today))
         {
             var overdue = pending.Where(charge => charge.DueDate < today).ToArray();
-            return new CustomerMessagePlan(BillingMessageKind.Overdue, overdue, steps, overdue[0].DueDate);
+            var overdueSteps = triggered
+                .Where(entry => entry.Charge.DueDate < today)
+                .Select(entry => (entry.Charge.Id, entry.Step))
+                .ToArray();
+            return new CustomerMessagePlan(BillingMessageKind.Overdue, overdue, overdueSteps, overdue[0].DueDate);
         }
 
         var upcoming = triggered.Select(entry => entry.Charge).ToArray();
+        var steps = triggered.Select(entry => (entry.Charge.Id, entry.Step)).ToArray();
         return new CustomerMessagePlan(BillingMessageKind.Reminder, upcoming, steps, upcoming[0].DueDate);
     }
 }

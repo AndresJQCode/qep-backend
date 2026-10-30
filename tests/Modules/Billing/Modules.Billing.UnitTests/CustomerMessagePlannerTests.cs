@@ -76,10 +76,39 @@ public sealed class CustomerMessagePlannerTests
         Assert.Equal(BillingMessageKind.Overdue, plan.Kind);
         // Lista todos los vencidos del cliente (no sólo el que disparó), del más viejo al más nuevo; el que vence después no.
         Assert.Equal([overdueAlreadyCovered.Id, after10Today.Id], plan.Charges.Select(c => c.Id));
-        // Cubre los pasos que tocaban hoy, incluido el before_5 del que todavía no vence: ese aviso ya va en este mensaje.
-        Assert.Equal(
-            new HashSet<(Guid, string)> { (after10Today.Id, "after_10"), (upcoming.Id, "before_5") },
-            plan.Steps.ToHashSet());
+        // Cubre sólo el paso del vencido que disparó: el before_5 del que todavía no vence no va en este mensaje (owner, 2026-10-30).
+        Assert.Equal([(after10Today.Id, "after_10")], plan.Steps);
+    }
+
+    [Fact]
+    public void AnOverdueMessageCoversOnlyTheStepsOfTheOverdueChargesItLists()
+    {
+        var today = Date("2026-10-30");
+        var hosting = ChargeDue("2026-10-27");
+        var domain = ChargeDue("2026-11-04");
+
+        var plan = CustomerMessagePlanner.Plan([hosting, domain], NothingCovered, today);
+
+        Assert.NotNull(plan);
+        Assert.Equal(BillingMessageKind.Overdue, plan.Kind);
+        Assert.Equal([hosting.Id], plan.Charges.Select(c => c.Id));
+        Assert.Equal([(hosting.Id, "after_3")], plan.Steps);
+    }
+
+    [Fact]
+    public void TheUncoveredStepOfANotYetDueChargeGoesOutAsAReminderTheNextDay()
+    {
+        var hosting = ChargeDue("2026-10-27");
+        var domain = ChargeDue("2026-11-04");
+        var covered = new HashSet<(Guid, string)> { (hosting.Id, "after_3") };
+
+        var plan = CustomerMessagePlanner.Plan([hosting, domain], covered, Date("2026-10-31"));
+
+        Assert.NotNull(plan);
+        Assert.Equal(BillingMessageKind.Reminder, plan.Kind);
+        Assert.Equal([domain.Id], plan.Charges.Select(c => c.Id));
+        Assert.Equal([(domain.Id, "before_5")], plan.Steps);
+        Assert.Equal(Date("2026-11-04"), plan.NearestDueDate);
     }
 
     [Fact]

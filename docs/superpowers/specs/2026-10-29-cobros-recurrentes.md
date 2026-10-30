@@ -249,6 +249,10 @@ Auditoría: `billing.import.completed` con `changedFields` = `["rows","imported"
      `Overdue` lista **todos** los cobros `Pending` vencidos del cliente (no sólo los que dispararon) con el total **por moneda**;
      `Reminder` lista los cobros con paso hoy (todos por vencer), con el total por moneda y el vencimiento más próximo.
      Un total por moneda, nunca convertido (diseño): «$ 450.000 y US$ 20,00».
+   - **Pasos que cubre** (owner, 2026-10-30): un `Reminder` cubre los pasos de hoy de los cobros que lista. Un `Overdue` cubre
+     **sólo** los pasos de hoy de los cobros vencidos (`due_date < today`); el `before_5` o `due` de un cobro por vencer que
+     también tocaba hoy queda sin fila, porque el mensaje no lo menciona, y sale como `Reminder` el día siguiente si ese día
+     no dispara ningún paso vencido (sigue siendo el último paso con fecha `<= today`).
    - Inserta la fila `Sending` del mensaje (si choca con el único, otra réplica ganó: nada) y una fila en `reminder_steps` por
      cada paso que cubre, resuelve el canal (§3.4), envía, marca `Sent` o `Failed` con `failure_code`. Un fallo también cubre los
      pasos: no se reintenta mañana el mismo paso; el siguiente paso del calendario volverá a intentar, y el fallo queda visible.
