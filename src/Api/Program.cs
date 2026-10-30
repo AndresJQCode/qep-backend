@@ -42,8 +42,8 @@ using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
-using Modules.Billing.Api;
-using Modules.Billing.Infrastructure;
+using Modules.ServiceContracts.Api;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -224,7 +224,7 @@ app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
 app.MapSupplierEndpoints();
-app.MapBillingEndpoints();
+app.MapServiceContractsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -297,8 +297,8 @@ await app.Services.InitializeShopifyDatabaseAsync(
 await app.Services.InitializeAutomationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
-// Billing (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
-await app.Services.InitializeBillingDatabaseAsync(
+// ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
+await app.Services.InitializeServiceContractsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

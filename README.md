@@ -3887,11 +3887,14 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
 
-### Facturación: cobros recurrentes
+### Contratos de servicio (cobros recurrentes)
 
 Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana ante cualquier discrepancia). Módulo
-`Modules.Billing.{Domain,Application,Infrastructure,Api}`, esquema `billing`, clave de módulo `billing`
-(`Dependencies = [Customers]`, fuera de `DefaultForNewTenants`: nace apagado).
+`Modules.ServiceContracts.{Domain,Application,Infrastructure,Api}` (hasta el 2026-10-30 se llamó `Billing`; el agregado
+`ServiceContract` era `BillingService`), esquema `billing`, clave de módulo `billing` (`Dependencies = [Customers]`, fuera de
+`DefaultForNewTenants`: nace apagado). **El renombre fue sólo de código y de pantalla:** esquema, clave, permisos
+`billing.service.*`, rutas `/billing`, acciones de auditoría, códigos de error y la sección `Billing` de configuración siguen
+como estaban, porque ya estaban desplegados.
 
 **Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
 lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
@@ -3924,7 +3927,7 @@ se cubre el paso más reciente. **Un mensaje por cliente y día** (índice únic
 si algún cobro con paso hoy está vencido (lista todos los vencidos), si no `Reminder`. Un total por moneda, nunca convertido. Un
 cliente **sin perfil de cobro** no recibe aviso; sus cobros van al email diario de cada miembro con `billing.service.manage`.
 
-**Worker** (`BillingReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
+**Worker** (`ServiceContractsReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
 `Billing:SendHourLocal` en la zona horaria del tenant genera cobros, manda el mensaje del día a cada cliente y el email diario al
 equipo, y cierra el día en `billing.tenant_runs`. La entrega es **al menos una vez**: si el proceso cae después de que el proveedor
 aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_email`, `channel_not_configured`,
@@ -3958,7 +3961,7 @@ quien lo contrata; mientras esté apagado el worker lo ignora.
 
 **Migraciones, en este orden de despliegue** (cada módulo aplica las suyas al arrancar, `Program.cs`): `Tenancy`
 `AddBillingModuleKey` (el CHECK de `tenant_modules` admite `billing`), `Messaging` `AddBillingTemplateKinds` (tipos de plantilla de
-cobro) y `Billing` `InitialBilling` (esquema `billing`). Billing se inicializa al final, después de Audit.
+cobro) y `ServiceContracts` `InitialBilling` (esquema `billing`). ServiceContracts se inicializa al final, después de Audit.
 
 **Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
 (3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la

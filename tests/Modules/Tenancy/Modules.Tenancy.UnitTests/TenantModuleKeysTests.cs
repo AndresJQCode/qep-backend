@@ -76,11 +76,11 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-29: cobros recurrentes; se prende por tenant y exige customers.
     [Fact]
-    public void BillingIsLastDependsOnCustomersAndIsOutsideTheDefaults()
+    public void ServiceContractsIsLastDependsOnCustomersAndIsOutsideTheDefaults()
     {
-        Assert.Equal(TenantModuleKeys.Billing, TenantModuleKeys.All[^1]);
-        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Billing));
-        Assert.DoesNotContain(TenantModuleKeys.Billing, TenantModuleKeys.DefaultForNewTenants);
+        Assert.Equal(TenantModuleKeys.ServiceContracts, TenantModuleKeys.All[^1]);
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.ServiceContracts));
+        Assert.DoesNotContain(TenantModuleKeys.ServiceContracts, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

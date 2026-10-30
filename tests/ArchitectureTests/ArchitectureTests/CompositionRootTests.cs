@@ -7,7 +7,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
-using Modules.Billing.Application;
+using Modules.ServiceContracts.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
 using Modules.Integrations.Application;
@@ -543,17 +543,17 @@ public sealed class CompositionRootTests
     /// a facturación (que cobra los servicios recurrentes); no a asesor ni cajero.
     /// </summary>
     [Fact]
-    public void TheBillingPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
+    public void TheServiceContractsPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
     {
         using var provider = BuildPlatformServices().BuildServiceProvider();
         var catalog = provider.GetRequiredService<IRoleCatalog>();
         var definitions = RegisteredPermissionDefinitions()
             .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
 
-        foreach (var permission in new[] { BillingPermissions.Read, BillingPermissions.Manage })
+        foreach (var permission in new[] { ServiceContractsPermissions.Read, ServiceContractsPermissions.Manage })
         {
-            Assert.Equal("Billing", definitions[permission].Category);
-            Assert.Equal([ModuleKeys.Billing], definitions[permission].RequiredModules!.ToArray());
+            Assert.Equal("Contratos de servicio", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.ServiceContracts], definitions[permission].RequiredModules!.ToArray());
             Assert.Contains(permission, catalog.PermissionsFor("admin"));
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
@@ -610,7 +610,7 @@ public sealed class CompositionRootTests
     /// después de crear el servicio y ningún cliente recibe su aviso, sin error en ningún lado. Mismo armado que el de Shopify.
     /// </summary>
     [Fact]
-    public void TheContainerValidatesAndBuildsTheBillingReminderWorker()
+    public void TheContainerValidatesAndBuildsTheServiceContractsReminderWorker()
     {
         var services = BuildPlatformServices();
         services.AddLogging();
@@ -621,9 +621,9 @@ public sealed class CompositionRootTests
 
         Assert.Contains(
             provider.GetServices<IHostedService>(),
-            service => service.GetType().FullName == "Modules.Billing.Infrastructure.Reminders.BillingReminderWorker");
+            service => service.GetType().FullName == "Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker");
         using var scope = provider.CreateScope();
-        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IBillingReminderProcessor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IServiceContractsReminderProcessor>());
     }
 
     /// <summary>

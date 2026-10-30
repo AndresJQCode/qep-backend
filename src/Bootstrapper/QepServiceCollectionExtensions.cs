@@ -53,12 +53,12 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
-using Modules.Billing.Infrastructure;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
-using BillingPermissions = Modules.Billing.Application.BillingPermissions;
+using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
@@ -289,67 +289,67 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
-        // Billing, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
+        // ServiceContracts, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
         // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetCustomerProfileQuery, Modules.Billing.Application.ProfileDto>,
-            Modules.Billing.Application.GetCustomerProfileHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetCustomerProfileQuery, Modules.ServiceContracts.Application.ProfileDto>,
+            Modules.ServiceContracts.Application.GetCustomerProfileHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpsertCustomerProfileCommand, Modules.Billing.Application.ProfileDto>,
-            Modules.Billing.Application.UpsertCustomerProfileHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpsertCustomerProfileCommand, Modules.ServiceContracts.Application.ProfileDto>,
+            Modules.ServiceContracts.Application.UpsertCustomerProfileHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListAssigneesQuery, Modules.Billing.Application.AssigneesDto>,
-            Modules.Billing.Application.ListAssigneesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListAssigneesQuery, Modules.ServiceContracts.Application.AssigneesDto>,
+            Modules.ServiceContracts.Application.ListAssigneesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListServicesQuery, Modules.Billing.Application.ServicePageDto>,
-            Modules.Billing.Application.ListServicesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListServicesQuery, Modules.ServiceContracts.Application.ServicePageDto>,
+            Modules.ServiceContracts.Application.ListServicesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetServiceQuery, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.GetServiceHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceQuery, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.GetServiceHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.PreviewServiceChargesQuery, Modules.Billing.Application.ChargesPreviewDto>,
-            Modules.Billing.Application.PreviewServiceChargesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.PreviewServiceChargesQuery, Modules.ServiceContracts.Application.ChargesPreviewDto>,
+            Modules.ServiceContracts.Application.PreviewServiceChargesHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.CreateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.CreateServiceHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.CreateServiceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.CreateServiceHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.UpdateServiceHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateServiceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.UpdateServiceHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.ChangeServiceStatusCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.ChangeServiceStatusHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.ChangeServiceStatusCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.ChangeServiceStatusHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListChargesQuery, Modules.Billing.Application.ChargePageDto>,
-            Modules.Billing.Application.ListChargesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
+            Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetChargeQuery, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.GetChargeHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetChargeQuery, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.GetChargeHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.PayChargeCommand, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.PayChargeHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.PayChargeCommand, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.PayChargeHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateChargePaymentCommand, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.UpdateChargePaymentHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateChargePaymentCommand, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.UpdateChargePaymentHandler>();
         // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetBillingSettingsQuery, Modules.Billing.Application.BillingSettingsDto>,
-            Modules.Billing.Application.GetBillingSettingsHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceContractsSettingsQuery, Modules.ServiceContracts.Application.ServiceContractsSettingsDto>,
+            Modules.ServiceContracts.Application.GetServiceContractsSettingsHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateBillingSettingsCommand, Modules.Billing.Application.BillingSettingsDto>,
-            Modules.Billing.Application.UpdateBillingSettingsHandler>();
-        services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
-        services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateServiceContractsSettingsCommand, Modules.ServiceContracts.Application.ServiceContractsSettingsDto>,
+            Modules.ServiceContracts.Application.UpdateServiceContractsSettingsHandler>();
+        services.AddScoped<Modules.ServiceContracts.Application.ChargeDtoComposer>();
+        services.AddScoped<Modules.ServiceContracts.Application.ServiceDetailComposer>();
         // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.PreviewBillingImportCommand, Modules.Billing.Application.ImportPreviewDto>,
-            Modules.Billing.Application.PreviewBillingImportHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.PreviewServiceContractsImportCommand, Modules.ServiceContracts.Application.ImportPreviewDto>,
+            Modules.ServiceContracts.Application.PreviewServiceContractsImportHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.ImportBillingServicesCommand, Modules.Billing.Application.ImportResultDto>,
-            Modules.Billing.Application.ImportBillingServicesHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.ImportServiceContractsCommand, Modules.ServiceContracts.Application.ImportResultDto>,
+            Modules.ServiceContracts.Application.ImportServiceContractsHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetBillingImportTemplateQuery, Modules.Billing.Application.BillingImportTemplateFile>,
-            Modules.Billing.Application.GetBillingImportTemplateHandler>();
-        services.AddScoped<Modules.Billing.Application.BillingImportAnalyzer>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceContractsImportTemplateQuery, Modules.ServiceContracts.Application.ServiceContractsImportTemplateFile>,
+            Modules.ServiceContracts.Application.GetServiceContractsImportTemplateHandler>();
+        services.AddScoped<Modules.ServiceContracts.Application.ServiceContractsImportAnalyzer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -951,7 +951,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
-        services.AddValidatorsFromAssemblyContaining<Modules.Billing.Application.UpsertCustomerProfileValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -966,7 +966,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
-        services.AddBillingInfrastructure(configuration);
+        services.AddServiceContractsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1189,17 +1189,17 @@ public static class QepServiceCollectionExtensions
         // Mismo patrón para `billing` (spec cobros-recurrentes §3.3): guarda clientes y encargados como ids sueltos y el
         // composition root cablea sus puertos contra Customers, Tenancy, Identity y Authorization. Con ruta completa porque
         // importar el namespace choca con Messaging (AssigneesDto, entre otros).
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerLookup, BillingCustomerLookup>();
-        services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
-        services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
-        services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
-        services.AddSingleton<Modules.Billing.Application.IBillingIdentificationTypes, BillingIdentificationTypes>();
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerProvisioning, BillingCustomerProvisioning>();
-        services.AddScoped<BillingEmailSender>();
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
-        services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
-        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingMetaWhatsAppSender>();
-        services.AddScoped<IUserReferenceProbe, BillingUserReferenceProbe>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerLookup, ServiceContractsCustomerLookup>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsMemberDirectory, ServiceContractsMemberDirectory>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsConsentGate, ServiceContractsConsentGate>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsPhoneNormalizer, ServiceContractsPhoneNormalizer>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsIdentificationTypes, ServiceContractsIdentificationTypes>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerProvisioning, ServiceContractsCustomerProvisioning>();
+        services.AddScoped<ServiceContractsEmailSender>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerEmail>(provider => provider.GetRequiredService<ServiceContractsEmailSender>());
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsStaffEmail>(provider => provider.GetRequiredService<ServiceContractsEmailSender>());
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
+        services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1430,8 +1430,8 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
-                BillingPermissions.Read,
-                BillingPermissions.Manage
+                ServiceContractsPermissions.Read,
+                ServiceContractsPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1522,8 +1522,8 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
                 // Facturación cobra los servicios recurrentes: ve «Por cobrar» y marca los pagos (owner, 2026-10-29).
-                BillingPermissions.Read,
-                BillingPermissions.Manage
+                ServiceContractsPermissions.Read,
+                ServiceContractsPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -2049,21 +2049,21 @@ public static class QepServiceCollectionExtensions
             RequiredModules: [ModuleKeys.Suppliers]));
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
-        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de BillingAuthorization queda de respaldo).
+        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
         services.AddSingleton(new PermissionDefinition(
-            BillingPermissions.Read,
-            "Ver cobros recurrentes",
-            "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
-            "Billing",
+            ServiceContractsPermissions.Read,
+            "Ver contratos de servicio",
+            "Permite ver los contratos de servicio, los cobros por cobrar y los encargados.",
+            "Contratos de servicio",
             "low",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: [ModuleKeys.ServiceContracts]));
         services.AddSingleton(new PermissionDefinition(
-            BillingPermissions.Manage,
-            "Gestionar cobros recurrentes",
-            "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
-            "Billing",
+            ServiceContractsPermissions.Manage,
+            "Gestionar contratos de servicio",
+            "Permite crear y editar contratos, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
+            "Contratos de servicio",
             "medium",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: [ModuleKeys.ServiceContracts]));
     }
 
     private static void AddAuthentication(
@@ -2430,11 +2430,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
-                BillingPermissions.Read,
-                policy => AddPermissionRequirement(policy, BillingPermissions.Read))
+                ServiceContractsPermissions.Read,
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Read))
             .AddPolicy(
-                BillingPermissions.Manage,
-                policy => AddPermissionRequirement(policy, BillingPermissions.Manage));
+                ServiceContractsPermissions.Manage,
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage));
     }
 
     private static void AddPermissionRequirement(
