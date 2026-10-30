@@ -331,6 +331,12 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Billing.Application.UpdateChargePaymentCommand, Modules.Billing.Application.ChargeDto>,
             Modules.Billing.Application.UpdateChargePaymentHandler>();
         // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetBillingSettingsQuery, Modules.Billing.Application.BillingSettingsDto>,
+            Modules.Billing.Application.GetBillingSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateBillingSettingsCommand, Modules.Billing.Application.BillingSettingsDto>,
+            Modules.Billing.Application.UpdateBillingSettingsHandler>();
         services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
@@ -1174,6 +1180,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
         services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
         services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingWhatsAppOutboundUnavailable>();
+        services.AddScoped<IUserReferenceProbe, BillingUserReferenceProbe>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules

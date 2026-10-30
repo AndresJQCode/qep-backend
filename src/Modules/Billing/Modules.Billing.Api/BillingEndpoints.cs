@@ -107,8 +107,34 @@ public static class BillingEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Ajustes (spec §4): sólo manage, también para leer. Sin If-Match, la última escritura gana.
+        group.MapGet("/settings", GetSettingsAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Produces<BillingSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPut("/settings", UpdateSettingsAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Accepts<UpdateBillingSettingsRequest>("application/json")
+            .Produces<BillingSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
+
+    private static async Task<IResult> GetSettingsAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetBillingSettingsQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> UpdateSettingsAsync(
+        Guid tenantId,
+        UpdateBillingSettingsRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(UpdateBillingSettingsCommand.From(tenantId, request), cancellationToken));
 
     private static async Task<IResult> GetCustomerProfileAsync(
         Guid tenantId,
