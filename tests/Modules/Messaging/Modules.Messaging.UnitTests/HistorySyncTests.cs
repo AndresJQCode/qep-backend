@@ -97,4 +97,19 @@ public sealed class HistorySyncTests
         reopened.Reopen(ConnectedAt.AddMinutes(2));
         Assert.False(reopened.HistoryManaged);
     }
+
+    // Regla R9: asignarla (tomarla o transferirla) también la saca de la regla de la importación.
+    [Fact]
+    public void TakingOrTransferringClearsHistoryManaged()
+    {
+        var taken = Conversation.WithHistoryManagedForTests(
+            Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", ConnectedAt));
+        taken.Take(Guid.CreateVersion7(), ConnectedAt.AddMinutes(1));
+        Assert.False(taken.HistoryManaged);
+
+        var transferred = Conversation.WithHistoryManagedForTests(
+            Conversation.Start(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "573001234567", "Laura", ConnectedAt));
+        transferred.TransferTo(Guid.CreateVersion7(), Guid.CreateVersion7(), ConnectedAt.AddMinutes(1));
+        Assert.False(transferred.HistoryManaged);
+    }
 }

@@ -124,8 +124,9 @@ public sealed partial class Conversation
     public bool IsBlocked => BlockedAt is not null;
 
     /// <summary>Spec 2026-10-29: la conversación la creó o la movió la importación del historial por coexistencia, así que los
-    /// bloques siguientes todavía pueden fijar su estado. La ingesta lo escribe por SQL; <see cref="Resolve"/> y <see cref="Reopen"/>
-    /// lo apagan, porque lo que hizo un asesor no lo pisa un bloque que llega después.</summary>
+    /// bloques siguientes todavía pueden fijar su estado. La ingesta lo escribe por SQL; <see cref="Resolve"/>, <see cref="Reopen"/> y
+    /// toda asignación (<see cref="Take"/>, <see cref="TransferTo"/>, el traspaso del asistente) lo apagan, porque lo que hizo un asesor
+    /// no lo pisa un bloque que llega después. Por SQL lo apagan también el entrante en vivo, el saliente enviado y la autoasignación.</summary>
     public bool HistoryManaged { get; private set; }
 
     public int UnreadCount { get; private set; }
@@ -451,6 +452,7 @@ public sealed partial class Conversation
         {
             AssignedMemberId = member;
             AssignedAt = now;
+            HistoryManaged = false;
         }
 
         Touch(now);
@@ -582,6 +584,7 @@ public sealed partial class Conversation
     {
         AssignedMemberId = memberId;
         AssignedAt = now;
+        HistoryManaged = false;
         Touch(now);
     }
 

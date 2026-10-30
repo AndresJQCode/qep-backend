@@ -160,10 +160,11 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
             // Spec 2026-10-21 §4.4: si el asistente estaba activo, la misma sentencia lo pausa (AdvisorReplied): asignar sin pausar
             // viola CK_conversations_automation_assignment. Los CASE miran el valor ANTERIOR de automation_status; RETURNING ve
             // el nuevo, y por eso PausedNow se deduce de la razón y la hora que acaba de escribir (COALESCE: sin asistente son NULL).
+            // Spec 2026-10-29 (regla R9): asignarla la saca de la regla de la importación (history_managed), como tomarla a mano.
             var taken = await dbContext.Database.SqlQuery<AutoAssignRow>(
                 $"""
                 UPDATE messaging.conversations
-                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = version + 1, updated_at = {at},
+                   SET assigned_member_id = {memberId}, assigned_at = {at}, version = version + 1, updated_at = {at}, history_managed = false,
                        automation_status = CASE WHEN automation_status = 'Active' THEN 'Paused' ELSE automation_status END,
                        automation_paused_at = CASE WHEN automation_status = 'Active' THEN {at} ELSE automation_paused_at END,
                        automation_paused_by_member_id = CASE WHEN automation_status = 'Active' THEN {memberId} ELSE automation_paused_by_member_id END,

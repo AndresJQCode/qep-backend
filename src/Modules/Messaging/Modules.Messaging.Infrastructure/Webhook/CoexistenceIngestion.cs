@@ -189,10 +189,11 @@ internal static class CoexistenceIngestion
 
     /// <summary>
     /// §4.1 y D-6, sólo mientras <c>history_managed</c>: abierta si el último mensaje de todo lo importado es del contacto y no es
-    /// anterior a la conexión menos 24 h, con no leídos = los mensajes del contacto posteriores al último del negocio; si no, cerrada y
-    /// en 0. Sin hora de conexión, cerrada. Una conversación con asistente no se toca: cerrarla rompería
-    /// <c>CK_conversations_automation_resolved</c>, y si tiene asistente ya la tomó el flujo en vivo. Si nada cambia no se escribe, así
-    /// que la versión sólo sube cuando la regla movió algo.
+    /// anterior a la conexión menos 24 h, con no leídos = los mensajes del contacto desde el último del negocio; si no, cerrada y
+    /// en 0. «Desde» incluye el mismo instante (regla R10): el timestamp de Meta es de segundos, y si el último de todos es del contacto,
+    /// uno suyo del mismo segundo que el saliente vino después. Sin hora de conexión, cerrada. Una conversación con asistente no se
+    /// toca: cerrarla rompería <c>CK_conversations_automation_resolved</c>, y si tiene asistente ya la tomó el flujo en vivo. Si nada
+    /// cambia no se escribe, así que la versión sólo sube cuando la regla movió algo.
     /// </summary>
     private static Task<int> ApplyOpenRuleAsync(
         MessagingDbContext dbContext, Guid conversationId, DateTimeOffset? connectedAt, DateTimeOffset now, CancellationToken cancellationToken) =>
@@ -211,7 +212,7 @@ internal static class CoexistenceIngestion
                        CASE WHEN rule.is_open THEN (
                            SELECT count(*) FROM messaging.messages m
                             WHERE m.conversation_id = rule.id AND m.direction = 1
-                              AND m.occurred_at > COALESCE(
+                              AND m.occurred_at >= COALESCE(
                                   (SELECT max(o.occurred_at) FROM messaging.messages o WHERE o.conversation_id = rule.id AND o.direction = 2),
                                   '-infinity'::timestamptz))::int
                        ELSE 0 END AS new_unread

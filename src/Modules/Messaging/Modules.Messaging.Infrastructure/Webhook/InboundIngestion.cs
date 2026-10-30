@@ -127,6 +127,8 @@ internal static class InboundIngestion
         // FOR UPDATE: el INSERT de la sentencia 2 ya tiene FOR KEY SHARE sobre la fila (la FK), y FOR UPDATE choca con
         // ese candado; dos entregas de la misma conversación quedaban en deadlock (WebhookLoadTests lo mostró).
         // Spec 2026-10-15 §3.6: reabrir limpia el motivo vigente; el del evento `Resolved` viejo queda en su `details`.
+        // Spec 2026-10-29: un entrante en vivo saca la conversación de la regla de la importación (history_managed): desde acá su
+        // estado y sus no leídos los lleva el flujo en vivo, y una parte del historial que llegue después no los toca.
         var preview = Preview(message);
         var before = (await dbContext.Database.SqlQuery<PreviousState>(
             $"""
@@ -137,6 +139,7 @@ internal static class InboundIngestion
                 unread_count       = unread_count + 1,
                 status             = 'Open',
                 resolution_reason_id = NULL,
+                history_managed    = false,
                 profile_name       = COALESCE({message.ProfileName}, profile_name),
                 wa_id              = COALESCE({message.WaId}, wa_id),
                 username           = COALESCE({message.Username}, username),

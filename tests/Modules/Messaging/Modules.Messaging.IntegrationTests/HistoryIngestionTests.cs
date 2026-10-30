@@ -27,7 +27,7 @@ public sealed class HistoryIngestionTests
         }
     }
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enableModule = true)
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool enableModule = true, bool withSync = true)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
@@ -39,6 +39,11 @@ public sealed class HistoryIngestionTests
 
         var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", PhoneNumberId, "222");
         var connectedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (!withSync)
+        {
+            return new Fixture(factory, connectionString, tenant.TenantId, tenant.OwnerUserId, connectionId, factory.CreateClient(), connectedAt);
+        }
+
         Assert.Equal(1, await ExecuteAsync(
             connectionString,
             """
@@ -121,6 +126,35 @@ public sealed class HistoryIngestionTests
 
         Assert.Equal("Open|2", await ConversationRowAsync(f));
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations WHERE last_inbound_at IS NOT NULL"));
+    }
+
+    // R10: el timestamp de Meta es de segundos. Un entrante del mismo segundo que el último saliente, y que Meta manda después, es
+    // posterior: cuenta como no leído.
+    [Fact]
+    public async Task AnInboundInTheSameSecondAsTheLastOutboundCountsAsUnread()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var second = HoursBefore(f, 1);
+
+        await PostAsync(f, History(50,
+            ("wamid.o", "¿Te sirve el martes?", second, true),
+            ("wamid.i", "Sí", second, false)));
+
+        Assert.Equal("Open|1", await ConversationRowAsync(f));
+    }
+
+    // Sin fila de sincronización no hay hora de conexión: la importada queda cerrada aunque el último sea un entrante reciente.
+    [Fact]
+    public async Task AThreadForAConnectionWithoutSyncIsClosedWithoutUnread()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database, withSync: false);
+
+        await PostAsync(f, History(50, ("wamid.i", "¿Me ayudas?", HoursBefore(f, 1), false)));
+
+        Assert.Equal("Resolved|0", await ConversationRowAsync(f));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.history_syncs"));
     }
 
     [Fact]
@@ -210,6 +244,25 @@ public sealed class HistoryIngestionTests
         Assert.Equal("2|100|True", await ScalarAsync<string>(f.ConnectionString,
             "SELECT history_phase || '|' || history_progress || '|' || CASE WHEN completed_at IS NOT NULL THEN 'True' ELSE 'False' END FROM messaging.history_syncs"));
         Assert.Equal(HistorySyncStatus.Completed, await StatusAsync(f));
+    }
+
+    // Una parte sin fase ni progreso (valores desconocidos) no pisa los que ya se conocían.
+    [Fact]
+    public async Task AChunkWithoutPhaseOrProgressKeepsTheKnownOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.History(PhoneNumberId, 1, 2, 40, (WaId, [("wamid.a", "uno", HoursBefore(f, 50), false)])));
+
+        var node = JsonNode.Parse(MetaPayloads.History(PhoneNumberId, 1, 3, 0, (WaId, [("wamid.b", "dos", HoursBefore(f, 60), false)])))!;
+        var metadata = node["entry"]![0]!["changes"]![0]!["value"]!["history"]![0]!["metadata"]!.AsObject();
+        metadata.Remove("phase");
+        metadata.Remove("progress");
+        await PostAsync(f, node.ToJsonString());
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE wamid = 'wamid.b'"));
+        Assert.Equal("1|40|null", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT history_phase || '|' || history_progress || '|' || coalesce(completed_at::text, 'null') FROM messaging.history_syncs"));
     }
 
     [Fact]
