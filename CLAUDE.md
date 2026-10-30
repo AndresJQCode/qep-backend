@@ -278,6 +278,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `null` y dos conversaciones con BSUID pueden compartir número (reciclado). Un cuerpo de webhook de prueba
   sin `from_user_id` se descarta en silencio —la entrega queda procesada y no aparece nada—: es el síntoma,
   no un bug de la ingesta.
+- **El historial de coexistencia no pasa por `IngestOnceAsync`; `history_managed` decide si la regla de abiertas corre, y
+  `Resolve`/`Reopen`/un entrante en vivo la apagan** (spec 2026-10-29). Un camino nuevo que toque una conversación importada
+  tiene que decidir qué hace con la bandera, o la regla de abiertas la cierra o la mantiene fuera de lo que el asesor decidió.
 - **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
   de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
   y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de
