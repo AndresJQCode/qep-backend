@@ -6,7 +6,8 @@ namespace Modules.Billing.Application;
 /// <summary>
 /// Lo que el plan necesita saber de la base, ya resuelto: los clientes que encontró el emparejamiento por fila, quién ya tiene
 /// perfil, los servicios <c>Active</c>/<c>Paused</c> de cada cliente (por nombre) y los encargados posibles por correo en
-/// minúsculas (sólo miembros activos con <c>billing.service.manage</c>).
+/// minúsculas (sólo miembros activos con <c>billing.service.manage</c>). <c>NewCustomerKeys</c> es el cliente nuevo de cada fila
+/// sin emparejar, ya enlazado con el de una fila anterior si es el mismo; sin él, la clave de la propia fila.
 /// </summary>
 public sealed record BillingImportContext(
     DateOnly Today,
@@ -15,7 +16,8 @@ public sealed record BillingImportContext(
     IReadOnlyDictionary<int, IReadOnlyList<BillingCustomerRef>> MatchesByRow,
     IReadOnlyCollection<Guid> CustomersWithProfile,
     IReadOnlyDictionary<Guid, IReadOnlyCollection<string>> OpenServiceNamesByCustomer,
-    IReadOnlyDictionary<string, BillingMemberRef> ManagersByEmail);
+    IReadOnlyDictionary<string, BillingMemberRef> ManagersByEmail,
+    IReadOnlyDictionary<int, string>? NewCustomerKeys = null);
 
 /// <summary>
 /// Una fila que se va a importar. <c>MatchedCustomerId</c> null es «se crea»; <c>NewCustomerKey</c> agrupa las filas del mismo
@@ -62,10 +64,12 @@ public static class BillingImportPlanner
         var errors = new List<ImportRowErrorDto>();
         // Clientes que ya van a tener perfil por una fila anterior de este archivo: la segunda fila lo conserva.
         var profilesPlanned = new HashSet<string>(StringComparer.Ordinal);
+        // Clientes nuevos que ya da de alta una fila anterior planeada: la que se suma no necesita traer teléfono propio.
+        var customersPlanned = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var row in rows)
         {
-            var outcome = PlanRow(row, context, profilesPlanned);
+            var outcome = PlanRow(row, context, profilesPlanned, customersPlanned);
             if (outcome.Error is { } error)
             {
                 errors.Add(error);
@@ -86,7 +90,7 @@ public static class BillingImportPlanner
     }
 
     private static (PlannedBillingRow? Row, ImportRowErrorDto? Error) PlanRow(
-        BillingImportRow row, BillingImportContext context, HashSet<string> profilesPlanned)
+        BillingImportRow row, BillingImportContext context, HashSet<string> profilesPlanned, HashSet<string> customersPlanned)
     {
         var matches = context.MatchesByRow.TryGetValue(row.RowNumber, out var found) ? found : [];
         if (matches.Count > 1)
@@ -100,7 +104,14 @@ public static class BillingImportPlanner
             return Fail(row, BillingErrorCodes.ImportRowCustomerInactive, "The matched customer is inactive.", null);
         }
 
-        if (matched is null && row.PhoneE164 is null)
+        // Crear exige teléfono, así que una fila nueva que crea siempre tiene clave; el número de fila es sólo una red.
+        var customerKey = matched is not null
+            ? matched.Id.ToString()
+            : context.NewCustomerKeys?.GetValueOrDefault(row.RowNumber)
+                ?? row.CustomerKey
+                ?? $"row:{row.RowNumber.ToString(CultureInfo.InvariantCulture)}";
+
+        if (matched is null && row.PhoneE164 is null && !customersPlanned.Contains(customerKey))
         {
             return Fail(row, BillingErrorCodes.ImportRowPhoneRequired, "A new customer needs a phone.", nameof(ExcelBillingRow.Phone));
         }
@@ -116,10 +127,6 @@ public static class BillingImportPlanner
                 nameof(ExcelBillingRow.ServiceName));
         }
 
-        // Crear exige teléfono, así que una fila nueva siempre tiene clave; el número de fila es sólo una red.
-        var customerKey = matched is not null
-            ? matched.Id.ToString()
-            : row.CustomerKey ?? $"row:{row.RowNumber.ToString(CultureInfo.InvariantCulture)}";
         var hasProfile = (matched is not null && context.CustomersWithProfile.Contains(matched.Id))
             || profilesPlanned.Contains(customerKey);
 
@@ -161,6 +168,10 @@ public static class BillingImportPlanner
         var transient = BillingService.Create(
             BillingServiceId.New(), Guid.Empty, Guid.Empty, "preview", 1m, currency, row.Cycle, row.FirstDueDate, context.Now);
         var charges = ChargeGenerator.Generate(transient, context.Today, context.Now);
+        if (matched is null)
+        {
+            customersPlanned.Add(customerKey);
+        }
 
         return (new PlannedBillingRow(
             row,

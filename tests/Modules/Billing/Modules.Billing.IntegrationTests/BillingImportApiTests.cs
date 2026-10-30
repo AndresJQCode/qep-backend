@@ -181,6 +181,29 @@ public sealed class BillingImportApiTests
             factory, $"SELECT count(*) FROM audit.entries WHERE action = '{BillingAuditActions.ImportCompleted}'"));
     }
 
+    /// <summary>
+    /// §3.2b, «el primero que aplica decide»: la fila trae documento, así que sólo el documento empareja. Que su teléfono sea el
+    /// de otro cliente no la suma a ese cliente: es uno nuevo.
+    /// </summary>
+    [Fact]
+    public async Task ANewDocumentWhosePhoneBelongsToAnExistingCustomerCreatesANewCustomer()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await SeedAnaAsync(factory);
+        var existing = await SeedCustomerAsync(factory, Tenant, "Ferretería Central", "+573001234567", "ferre@example.com");
+
+        var result = await ReadAsync<ImportResultDto>(
+            await CreateManager(factory).PostAsync(ImportUrl, Upload(Workbook(Row())), Ct));
+
+        var imported = Assert.Single(result.Imported);
+        Assert.True(imported.CustomerCreated);
+        Assert.NotEqual(existing, imported.CustomerId);
+        Assert.Equal(1, result.CustomersCreated);
+        Assert.Equal(0, await CountAsync(factory, $"SELECT count(*) FROM billing.services WHERE customer_id = '{existing}'"));
+    }
+
     [Fact]
     public async Task ImportCreatesTheProfileTheServiceAndItsCharges()
     {
