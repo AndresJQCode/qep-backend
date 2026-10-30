@@ -36,6 +36,7 @@ public static class BillingInfrastructureExtensions
         // Importación desde Excel (§3.2b), como los de Customers.
         services.AddScoped<IExcelBillingImporter, ClosedXmlBillingImporter>();
         services.AddScoped<IBillingImportTemplateBuilder, ClosedXmlBillingImportTemplateBuilder>();
+        services.AddSingleton<IBillingImportFailureLog, BillingImportFailureLog>();
 
         // El worker diario (spec §3.3, §6): opciones validadas al arrancar, como QuotationsOptions.
         services.AddOptions<BillingOptions>().Bind(configuration.GetSection(BillingOptions.SectionName)).ValidateOnStart();

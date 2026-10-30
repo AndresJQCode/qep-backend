@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Modules.Billing.Application;
 using Npgsql;
 using static Modules.Billing.IntegrationTests.BillingApiHarness;
@@ -99,6 +101,55 @@ public sealed class BillingImportApiTests
         await connection.OpenAsync(Ct);
         await using var command = new NpgsqlCommand(sql, connection);
         return (long)(await command.ExecuteScalarAsync(Ct))!;
+    }
+
+    private static async Task ExecuteAsync(QepApiFactory factory, string sql)
+    {
+        var connectionString = factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(Ct);
+    }
+
+    /// <summary>
+    /// Una falla de base que no es de dominio, a pedido: un trigger que rechaza el INSERT en <paramref name="table"/> cuando
+    /// <c>name</c> es «Falla». Es lo más cerca de un error real (red, constraint no traducida) sin tocar el código.
+    /// </summary>
+    private static Task FailInsertsNamedFallaAsync(QepApiFactory factory, string table) => ExecuteAsync(
+        factory,
+        $"""
+        CREATE FUNCTION public.qep_test_fail() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.name = 'Falla' THEN RAISE EXCEPTION 'forced failure'; END IF;
+            RETURN NEW;
+        END $$;
+        CREATE TRIGGER qep_test_fail BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION public.qep_test_fail();
+        """);
+
+    /// <summary>Junta lo que se loguea, para ver qué deja la importación cuando una fila falla.</summary>
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public ConcurrentQueue<(string Category, LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(
+            string category, ConcurrentQueue<(string, LogLevel, string, Exception?)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                entries.Enqueue((category, logLevel, formatter(state, exception), exception));
+        }
     }
 
     private static Task<Guid> SeedAnaAsync(QepApiFactory factory) =>
@@ -254,6 +305,44 @@ public sealed class BillingImportApiTests
         Assert.Equal(("billing.import.row.price_invalid", 4), (Assert.Single(result.Errors).Code, result.Errors[0].RowNumber));
         Assert.Equal(2, await CountAsync(factory, "SELECT count(*) FROM billing.services"));
         Assert.Equal(1, await CountAsync(factory, "SELECT count(*) FROM billing.customer_profiles"));
+    }
+
+    /// <summary>
+    /// Una falla que no es de dominio al dar de alta el cliente de una fila: esa fila sale como <c>row.failed</c>, la falla queda
+    /// en el log con el número de fila (sin datos personales), y el cliente que no entró no se queda en el contexto de Customers
+    /// para romper el alta de las filas siguientes.
+    /// </summary>
+    [Fact]
+    public async Task AFailedCustomerIsLoggedAndTheNextNewCustomersStillImport()
+    {
+        var logs = new CapturingLoggerProvider();
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(), services => services.AddSingleton<ILoggerProvider>(logs));
+        await SeedTenantAsync(factory);
+        await SeedAnaAsync(factory);
+        await FailInsertsNamedFallaAsync(factory, "customers.customers");
+        var file = Workbook(
+            Row(customer: "Falla", number: "111", phone: "3001111111"),
+            Row(customer: "Bien", number: "222", phone: "3002222222"),
+            Row(customer: "También", type: null, number: null, phone: "3003333333"));
+
+        var result = await ReadAsync<ImportResultDto>(
+            await CreateManager(factory).PostAsync(ImportUrl, Upload(file), Ct));
+
+        var error = Assert.Single(result.Errors);
+        Assert.Equal((2, "billing.import.row.failed"), (error.RowNumber, error.Code));
+        Assert.Equal([3, 4], result.Imported.Select(row => row.RowNumber));
+        Assert.All(result.Imported, row => Assert.True(row.CustomerCreated));
+        // Sólo lo de Billing: EF Core también loguea la falla del SaveChanges, con su propia categoría.
+        var logged = Assert.Single(
+            logs.Entries,
+            entry => entry.Category.Contains("Billing", StringComparison.Ordinal)
+                && entry.Level == LogLevel.Error
+                && entry.Exception is not null);
+        Assert.Contains("row 2 ", logged.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Falla", logged.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("3001111111", logged.Message, StringComparison.Ordinal);
     }
 
     [Fact]

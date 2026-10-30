@@ -1,6 +1,7 @@
 using Modules.Billing.Application;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Customers.Infrastructure.Persistence;
 
 namespace Bootstrapper;
 
@@ -10,7 +11,8 @@ namespace Bootstrapper;
 /// <c>billing</c>, con la persona que importa como actor); sin documento, la incompleta de una venta externa
 /// (<c>CreateIncompleteAsync</c>). Las dos nacen incompletas, sin CUC ni clasificación.
 /// </summary>
-internal sealed class BillingCustomerProvisioning(ICustomerProvisioning customers, IBillingCustomerLookup lookup)
+internal sealed class BillingCustomerProvisioning(
+    ICustomerProvisioning customers, IBillingCustomerLookup lookup, CustomersDbContext customersContext)
     : IBillingCustomerProvisioning
 {
     private const string Source = "billing";
@@ -19,6 +21,22 @@ internal sealed class BillingCustomerProvisioning(ICustomerProvisioning customer
         Guid tenantId, Guid actorUserId, BillingNewCustomer data, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
+        try
+        {
+            return await CreateCoreAsync(tenantId, actorUserId, data, cancellationToken);
+        }
+        catch
+        {
+            // La importación sigue con la fila siguiente en este mismo scope. Un cliente que no entró quedaría Added en el
+            // contexto de Customers y el SaveChanges del alta siguiente lo reintentaría, haciendo fallar también esa fila.
+            customersContext.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private async Task<BillingProvisionedCustomer> CreateCoreAsync(
+        Guid tenantId, Guid actorUserId, BillingNewCustomer data, CancellationToken cancellationToken)
+    {
         if (data.IdentificationType is null || data.IdentificationNumber is null)
         {
             var incomplete = await customers.CreateIncompleteAsync(

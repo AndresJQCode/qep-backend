@@ -27,6 +27,7 @@ public sealed class ImportBillingServicesHandler(
     IChargeRepository charges,
     IBillingUnitOfWork unitOfWork,
     IBillingAuditPublisher auditPublisher,
+    IBillingImportFailureLog failureLog,
     IClock clock)
     : ICommandHandler<ImportBillingServicesCommand, ImportResultDto>
 {
@@ -126,7 +127,10 @@ public sealed class ImportBillingServicesHandler(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return (Guid.Empty, false, Failed(row, "The customer could not be created", exception));
+            // El adaptador de Customers ya limpió su contexto; el de Billing no tiene nada de esta fila, pero se limpia igual
+            // para que ninguna fila herede lo que otra dejó a medias.
+            unitOfWork.Clear();
+            return (Guid.Empty, false, Failed(tenantId, row, "customer", "The customer could not be created", exception));
         }
     }
 
@@ -161,7 +165,7 @@ public sealed class ImportBillingServicesHandler(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return (null, Failed(row, "The service could not be saved", exception));
+            return (null, Failed(tenantId, row, "service", "The service could not be saved", exception));
         }
         finally
         {
@@ -170,11 +174,16 @@ public sealed class ImportBillingServicesHandler(
         }
     }
 
-    // El código de una regla de dominio dice qué pasó; el mensaje de cualquier otra excepción puede traer detalles de la base,
-    // así que no viaja.
-    private static ImportRowErrorDto Failed(BillingImportRow row, string what, Exception exception) => new(
-        row.RowNumber,
-        BillingErrorCodes.ImportRowFailed,
-        exception is DomainException domain ? $"{what}: {domain.Code}." : $"{what}.",
-        null);
+    // El código de una regla de dominio dice qué pasó y viaja en el mensaje de la fila. Cualquier otra excepción es un error del
+    // servidor: su mensaje puede traer detalles de la base, así que no viaja, y sin el log nadie sabría qué falló.
+    private ImportRowErrorDto Failed(Guid tenantId, BillingImportRow row, string stage, string what, Exception exception)
+    {
+        if (exception is DomainException domain)
+        {
+            return new(row.RowNumber, BillingErrorCodes.ImportRowFailed, $"{what}: {domain.Code}.", null);
+        }
+
+        failureLog.RowFailed(tenantId, row.RowNumber, stage, exception);
+        return new(row.RowNumber, BillingErrorCodes.ImportRowFailed, $"{what}.", null);
+    }
 }
