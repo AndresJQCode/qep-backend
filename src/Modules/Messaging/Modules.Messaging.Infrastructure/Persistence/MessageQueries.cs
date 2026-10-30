@@ -11,7 +11,8 @@ internal sealed class MessageQueries(MessagingDbContext dbContext) : IMessageQue
     internal static readonly Expression<Func<MessageRecord, MessageRow>> RowProjection = message => new MessageRow(
         message.Id, message.ConversationId, message.Direction, message.Kind, message.Text, message.Caption, message.Details, message.Status,
         message.FailureCode, message.OccurredAt, message.SentByMemberId, message.ClientId,
-        message.Media == null ? null : new MessageMediaRow(message.Media.MimeType, message.Media.FileName), message.ReplyToMessageId, message.SentByChatbotId);
+        message.Media == null ? null : new MessageMediaRow(message.Media.MimeType, message.Media.FileName), message.ReplyToMessageId, message.SentByChatbotId,
+        message.CreatedAt);
 
     public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) =>
         dbContext.Messages.AsNoTracking()

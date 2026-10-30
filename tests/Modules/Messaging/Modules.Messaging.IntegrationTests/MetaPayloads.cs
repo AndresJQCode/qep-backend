@@ -393,6 +393,36 @@ internal static class MetaPayloads
         return Change("history", value.ToJsonString());
     }
 
+    /// <summary>Spec 2026-10-29 §1: un <c>history</c> con un solo mensaje del contacto que es un <c>media_placeholder</c>
+    /// (<paramref name="mediaId"/> <c>null</c>) o, si trae <paramref name="mediaId"/>, una imagen con ese id (el medio que llega
+    /// después con el mismo wamid, P-6).</summary>
+    public static string HistoryMedia(string phoneNumberId, int chunkOrder, string waId, string wamid, long timestamp, string? mediaId)
+    {
+        var message = new JsonObject { ["from"] = waId, ["id"] = wamid, ["timestamp"] = Seconds(timestamp) };
+        if (mediaId is null)
+        {
+            message["type"] = "media_placeholder"; // V-1: unverified (campos del media_placeholder)
+        }
+        else
+        {
+            message["type"] = "image";
+            message["image"] = new JsonObject { ["id"] = mediaId, ["mime_type"] = "image/jpeg", ["sha256"] = "c2hhMjU2" };
+        }
+
+        var chunk = new JsonObject
+        {
+            ["metadata"] = new JsonObject { ["phase"] = 0, ["chunk_order"] = chunkOrder, ["progress"] = 50 },
+            ["threads"] = new JsonArray(new JsonObject { ["id"] = waId, ["messages"] = new JsonArray(message) }),
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550001111"),
+            ["history"] = new JsonArray(chunk),
+        };
+        return Change("history", value.ToJsonString());
+    }
+
     /// <summary>Spec 2026-10-29: el dueño no aceptó compartir el historial.</summary>
     public static string HistoryDeclined(string phoneNumberId, int code = 2593109)
     {

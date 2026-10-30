@@ -239,21 +239,54 @@ internal static class CoexistenceIngestion
                 version              = c.version + 1
               FROM target
              WHERE c.id = target.id
+               AND c.history_managed
                AND (c.status <> target.new_status OR c.unread_count <> target.new_unread OR c.resolution_reason_id IS NOT NULL)
             """, cancellationToken);
 
-    /// <summary>P-6 (Task 11): el archivo de un <c>media_placeholder</c> que llega después con el mismo <c>wamid</c>. Hasta entonces no
-    /// hace nada.</summary>
+    /// <summary>
+    /// P-6: el archivo de un <c>media_placeholder</c> que llega después con el mismo <c>wamid</c> (V-2: supuesto, la forma real del
+    /// webhook está sin verificar). Sólo si el guardado sigue siendo el placeholder y no tiene medio: entonces toma el <c>kind</c> y la
+    /// leyenda del que llegó, pierde la marca y queda encolado para que <c>MediaCopyWorker</c> lo baje. El <c>UPDATE</c> toma la fila:
+    /// dos partes simultáneas con el mismo wamid no encolan dos veces. Sube la <c>version</c> de la conversación (regla R4).
+    /// </summary>
     /// <returns><c>true</c> si cambió el mensaje guardado.</returns>
-    private static Task<bool> AttachLateMediaAsync(
+    private static async Task<bool> AttachLateMediaAsync(
         MessagingDbContext dbContext, Guid connectionId, CoexistenceMessage message, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        _ = dbContext;
-        _ = connectionId;
-        _ = message;
-        _ = now;
-        _ = cancellationToken;
-        return Task.FromResult(false);
+        if (message.Media is not { } media || message.IsMediaPlaceholder)
+        {
+            return false;
+        }
+
+        var kind = MessageColumnCodes.ToCode(message.Kind);
+        var attached = await dbContext.Database.SqlQuery<Guid>(
+            $"""
+            WITH upd AS (
+                UPDATE messaging.messages m SET
+                    kind    = {kind},
+                    caption = COALESCE(m.caption, {message.Caption}),
+                    details = NULLIF(m.details - 'historyMedia', jsonb_build_object())
+                 WHERE m.connection_id = {connectionId} AND m.wamid = {message.Wamid}
+                   AND m.details ->> 'historyMedia' = 'placeholder'
+                   AND NOT EXISTS (SELECT 1 FROM messaging.message_media mm WHERE mm.message_id = m.id)
+                RETURNING m.id, m.conversation_id),
+            conv AS (
+                UPDATE messaging.conversations c SET
+                    last_message_kind = CASE WHEN c.last_message_id = upd.id THEN {kind} ELSE c.last_message_kind END,
+                    updated_at        = {now},
+                    version           = c.version + 1
+                  FROM upd
+                 WHERE c.id = upd.conversation_id
+                RETURNING c.id)
+            SELECT upd.id AS "Value" FROM upd
+            """).ToListAsync(cancellationToken);
+        if (attached.Count == 0)
+        {
+            return false;
+        }
+
+        await InboundIngestion.InsertMediaAsync(dbContext, attached[0], media, now, cancellationToken);
+        return true;
     }
 
     /// <summary>El texto, o la leyenda de un medio, recortado al ancho de la columna, como <see cref="InboundIngestion.Preview"/>.</summary>
