@@ -14,6 +14,8 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
 
     public DbSet<Charge> Charges => Set<Charge>();
 
+    public DbSet<ServicePriceChange> ServicePriceChanges => Set<ServicePriceChange>();
+
     public DbSet<CustomerBillingProfile> Profiles => Set<CustomerBillingProfile>();
 
     public DbSet<ServiceContractsSettings> Settings => Set<ServiceContractsSettings>();
@@ -35,6 +37,7 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         ConfigureProfile(modelBuilder);
         ConfigureService(modelBuilder);
         ConfigureCharge(modelBuilder);
+        ConfigureServicePriceChange(modelBuilder);
         ConfigureCustomerMessage(modelBuilder);
         ConfigureReminderStep(modelBuilder);
         ConfigureDailyDigest(modelBuilder);
@@ -147,6 +150,31 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         charge.HasIndex(value => new { value.ServiceId, value.DueDate })
             .IsUnique()
             .HasDatabaseName("IX_charges_service_due");
+    }
+
+    // Sin FK a services, como charges: el módulo no declara FKs y el contrato nunca se borra. Sólo se inserta: es la
+    // justificación del cambio, no un estado que se corrige.
+    private static void ConfigureServicePriceChange(ModelBuilder modelBuilder)
+    {
+        var change = modelBuilder.Entity<ServicePriceChange>();
+        change.ToTable("service_price_changes", Schema);
+        change.HasKey(value => value.Id);
+        change.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        change.Property(value => value.TenantId).HasColumnName("tenant_id");
+        change.Property(value => value.ServiceId)
+            .HasColumnName("service_id")
+            .HasConversion(id => id.Value, value => new ServiceContractId(value));
+        change.Property(value => value.PreviousPrice).HasColumnName("previous_price").HasPrecision(18, 2);
+        change.Property(value => value.PreviousCurrency).HasColumnName("previous_currency").HasMaxLength(3);
+        change.Property(value => value.NewPrice).HasColumnName("new_price").HasPrecision(18, 2);
+        change.Property(value => value.NewCurrency).HasColumnName("new_currency").HasMaxLength(3);
+        change.Property(value => value.Reason)
+            .HasColumnName("reason")
+            .HasMaxLength(ServicePriceChange.ReasonMaxLength);
+        change.Property(value => value.ChangedByMemberId).HasColumnName("changed_by_member_id");
+        change.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        change.HasIndex(value => new { value.ServiceId, value.OccurredAt })
+            .HasDatabaseName("IX_service_price_changes_service_occurred");
     }
 
     private static void ConfigureCustomerMessage(ModelBuilder modelBuilder)

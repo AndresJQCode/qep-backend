@@ -13,6 +13,7 @@ public sealed class ServiceDetailComposer(
     IServiceContractsMemberDirectory members,
     ICustomerBillingProfileRepository profiles,
     IChargeRepository chargeRepository,
+    IServicePriceChangeRepository priceChanges,
     ChargeDtoComposer chargeComposer)
 {
     /// <summary>
@@ -31,9 +32,25 @@ public sealed class ServiceDetailComposer(
         var customer = await FindCustomerAsync(tenantId, service.CustomerId, cancellationToken);
         var profile = await profiles.FindAsync(tenantId, service.CustomerId, cancellationToken)
             ?? throw ServiceContractsNotFound.Profile(service.CustomerId);
-        var found = await members.FindAsync(tenantId, [profile.AssigneeMemberId], cancellationToken);
+        var history = await priceChanges.ListByServiceAsync(service.Id, cancellationToken);
+
+        // El encargado y los autores del historial salen en una sola consulta al directorio.
+        var memberIds = history
+            .Where(change => change.ChangedByMemberId.HasValue)
+            .Select(change => change.ChangedByMemberId!.Value)
+            .Append(profile.AssigneeMemberId)
+            .Distinct()
+            .ToArray();
+        var membersById = (await members.FindAsync(tenantId, memberIds, cancellationToken)).ToDictionary(member => member.MemberId);
         var profileDto = ServiceContractsMapping.ToProfileDto(
-            profile, ServiceContractsMapping.ToMemberRefDto(profile.AssigneeMemberId, found.Count > 0 ? found[0] : null));
+            profile, ServiceContractsMapping.ToMemberRefDto(profile.AssigneeMemberId, membersById.GetValueOrDefault(profile.AssigneeMemberId)));
+        var historyDtos = history
+            .Select(change => ServiceContractsMapping.ToPriceChangeDto(
+                change,
+                change.ChangedByMemberId is { } changedById
+                    ? ServiceContractsMapping.ToMemberRefDto(changedById, membersById.GetValueOrDefault(changedById))
+                    : null))
+            .ToList();
 
         var pending = charges.Where(charge => charge.Status == ChargeStatus.Pending).ToList();
         var next = pending.MinBy(charge => charge.DueDate);
@@ -42,7 +59,8 @@ public sealed class ServiceDetailComposer(
         return new ServiceDetailDto(
             ServiceContractsMapping.ToServiceDto(service, customer, nextDto, pending.Count, TotalsOf(pending)),
             profileDto,
-            chargeDtos);
+            chargeDtos,
+            historyDtos);
     }
 
     /// <summary>

@@ -404,7 +404,11 @@ public sealed class ServiceContractApiTests
         var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
 
         var response = await manager.SendAsync(
-            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), created.Service.Version, new { name = "Hosting Pro", price = 20m, currency = "USD" }),
+            WithVersion(
+                HttpMethod.Put,
+                ServiceUrl(created.Service.Id),
+                created.Service.Version,
+                new { name = "Hosting Pro", price = 20m, currency = "USD", priceChangeReason = "El cliente paga en dólares" }),
             Ct);
 
         var updated = await ReadDetailAsync(response);
@@ -421,6 +425,141 @@ public sealed class ServiceContractApiTests
         Assert.Equal(1, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceUpdated, created.Service.Id.ToString()));
     }
 
+    // El historial de precios (spec §3.2 y §4): cada cambio de precio o moneda deja una fila con el antes, el después, el motivo
+    // obligatorio y quién lo hizo, y el detalle la trae del más reciente al más viejo.
+    [Fact]
+    public async Task APriceChangeWithAReasonIsRecordedInTheHistoryWithItsAuthor()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        var caller = await SeedCallerMembershipAsync(factory, "Caro Cobros");
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        Assert.Empty(created.PriceChanges);
+
+        var first = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1,
+                new { name = "Hosting", price = 180000m, currency = "COP", priceChangeReason = "  Incremento del IPC 2026  " }),
+            Ct));
+        var second = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 2,
+                new { name = "Hosting", price = 180000m, currency = "USD", priceChangeReason = "Ahora factura en dólares" }),
+            Ct));
+
+        var change = Assert.Single(first.PriceChanges);
+        Assert.Equal(Price, change.PreviousPrice);
+        Assert.Equal("COP", change.PreviousCurrency);
+        Assert.Equal(180000m, change.NewPrice);
+        Assert.Equal("COP", change.NewCurrency);
+        Assert.Equal("Incremento del IPC 2026", change.Reason);
+        Assert.Equal(caller, change.ChangedBy!.MemberId);
+        Assert.Equal("Caro Cobros", change.ChangedBy.DisplayName);
+        Assert.NotEqual(default, change.OccurredAt);
+
+        // Del más reciente al más viejo: el cambio de moneda queda primero.
+        Assert.Equal(2, second.PriceChanges.Count);
+        Assert.Equal("Ahora factura en dólares", second.PriceChanges[0].Reason);
+        Assert.Equal("COP", second.PriceChanges[0].PreviousCurrency);
+        Assert.Equal("USD", second.PriceChanges[0].NewCurrency);
+        Assert.Equal(change.Id, second.PriceChanges[1].Id);
+
+        // GET devuelve el mismo historial que la respuesta del PUT.
+        var read = (await manager.GetFromJsonAsync<ServiceDetailDto>(ServiceUrl(created.Service.Id), Ct))!;
+        Assert.Equal(Snapshot(second), Snapshot(read));
+    }
+
+    [Fact]
+    public async Task APriceChangeWithoutAReasonAnswers422AndChangesNothing()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var missing = await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting Pro", price = 180000m, currency = "COP" }), Ct);
+        var blank = await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting", price = Price, currency = "USD", priceChangeReason = "   " }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, missing.StatusCode);
+        Assert.Equal("billing.service.price_reason_required", await CodeOfAsync(missing));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, blank.StatusCode);
+        Assert.Equal("billing.service.price_reason_required", await CodeOfAsync(blank));
+
+        var read = (await manager.GetFromJsonAsync<ServiceDetailDto>(ServiceUrl(created.Service.Id), Ct))!;
+        Assert.Equal("Hosting", read.Service.Name);
+        Assert.Equal(Price, read.Service.Price);
+        Assert.Equal(1, read.Service.Version);
+        Assert.Empty(read.PriceChanges);
+        Assert.Equal(0, await CountAuditEntriesAsync(factory, ServiceContractsAuditActions.ServiceUpdated, created.Service.Id.ToString()));
+    }
+
+    // Renombrar no es un cambio de precio: no exige motivo y no escribe historial, aunque el cuerpo traiga uno.
+    [Fact]
+    public async Task RenamingNeedsNoReasonAndRecordsNoPriceChange()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var renamed = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting Pro", price = Price, currency = "COP" }), Ct));
+        var renamedAgain = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 2, new { name = "Hosting Max", price = Price, currency = "COP", priceChangeReason = "ignorado" }), Ct));
+
+        Assert.Equal("Hosting Pro", renamed.Service.Name);
+        Assert.Empty(renamed.PriceChanges);
+        Assert.Equal("Hosting Max", renamedAgain.Service.Name);
+        Assert.Empty(renamedAgain.PriceChanges);
+    }
+
+    [Fact]
+    public async Task AReasonLongerThanTheLimitAnswers422NamingTheField()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var response = await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1,
+                new { name = "Hosting", price = 180000m, currency = "COP", priceChangeReason = new string('a', ServicePriceChange.ReasonMaxLength + 1) }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+        Assert.True(Has(await ErrorsOfAsync(response), "PriceChangeReason"));
+    }
+
+    // Quien edita sin membresía activa en el tenant (el stub sólo trae permisos) deja el cambio sin autor, no un 403.
+    [Fact]
+    public async Task APriceChangeByACallerWithoutMembershipHasNoAuthor()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+
+        var updated = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1,
+                new { name = "Hosting", price = 180000m, currency = "COP", priceChangeReason = "Ajuste" }),
+            Ct));
+
+        var change = Assert.Single(updated.PriceChanges);
+        Assert.Null(change.ChangedBy);
+    }
+
     [Fact]
     public async Task UpdateWithAnUnknownCurrencyOrInvalidDataAnswers422()
     {
@@ -432,9 +571,9 @@ public sealed class ServiceContractApiTests
         var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
 
         var currency = await manager.SendAsync(
-            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting", price = 10m, currency = "XYZ" }), Ct);
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting", price = 10m, currency = "XYZ", priceChangeReason = "x" }), Ct);
         var invalid = await manager.SendAsync(
-            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "", price = -1m, currency = "COP" }), Ct);
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "", price = -1m, currency = "COP", priceChangeReason = "x" }), Ct);
 
         Assert.Equal("billing.currency.unknown", await CodeOfAsync(currency));
         Assert.Equal("validation.failed", await CodeOfAsync(invalid));
@@ -452,7 +591,7 @@ public sealed class ServiceContractApiTests
         var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
         using var manager = CreateManager(factory);
         var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
-        var body = new { name = "Hosting 2", price = 10m, currency = "COP" };
+        var body = new { name = "Hosting 2", price = 10m, currency = "COP", priceChangeReason = "Descuento acordado" };
 
         var missing = await manager.SendAsync(WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), null, body), Ct);
         var first = await manager.SendAsync(WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, body), Ct);
@@ -520,7 +659,7 @@ public sealed class ServiceContractApiTests
         }
 
         var edit = await manager.SendAsync(
-            WithVersion(HttpMethod.Put, ServiceUrl(id), 4, new { name = "x", price = 1m, currency = "COP" }), Ct);
+            WithVersion(HttpMethod.Put, ServiceUrl(id), 4, new { name = "x", price = 1m, currency = "COP", priceChangeReason = "x" }), Ct);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, edit.StatusCode);
         Assert.Equal("billing.service.cancelled", await CodeOfAsync(edit));
 
@@ -759,7 +898,7 @@ public sealed class ServiceContractApiTests
         var responses = new[]
         {
             await manager.GetAsync(ServiceUrl(id), Ct),
-            await manager.SendAsync(WithVersion(HttpMethod.Put, ServiceUrl(id), 1, new { name = "x", price = 1m, currency = "COP" }), Ct),
+            await manager.SendAsync(WithVersion(HttpMethod.Put, ServiceUrl(id), 1, new { name = "x", price = 1m, currency = "COP", priceChangeReason = "x" }), Ct),
             await TransitionAsync(manager, id, "pause", 1),
             await TransitionAsync(manager, id, "cancel", 1),
         };
