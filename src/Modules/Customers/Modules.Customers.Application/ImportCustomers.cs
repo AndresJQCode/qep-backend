@@ -583,6 +583,16 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
+                // Una celda de clasificacion vacia en una actualizacion conserva la que el cliente ya tiene: la columna es
+                // opcional desde el 2026-10-19 y reimportar un archivo sin ella no puede borrarla ni quitarle el prefijo al
+                // CUC. El prefijo se relee porque Update lo exige siempre que haya clasificacion, aunque no cambie el CUC.
+                var classification = candidate.Classification;
+                if (classification is null && customer.ClassificationId is { } currentClassificationId)
+                {
+                    classification = await classificationRepository.FindAsync(
+                        tenantId, currentClassificationId, cancellationToken);
+                }
+
                 // La fila actualiza el domicilio del cliente (address, ciudad) y el resto de la
                 // ficha; la libreta de envio no se toca, mismo criterio que UpdateCustomerHandler
                 // (spec 2026-09-18).
@@ -606,11 +616,11 @@ public sealed class ImportCustomersHandler(
                     },
                     new CustomerCommercialInfo
                     {
-                        ClassificationId = candidate.Classification?.Id,
+                        ClassificationId = classification?.Id,
                         WithRetention = candidate.WithRetention,
                         VatSurplus = candidate.VatSurplus
                     },
-                    candidate.Classification?.Prefix,
+                    classification?.Prefix,
                     now,
                     phoneNormalizer);
 

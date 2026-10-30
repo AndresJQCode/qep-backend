@@ -499,6 +499,50 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// La clasificacion es opcional al crear, pero en una actualizacion la celda vacia no es "quitarla": reimportar un archivo
+    /// sin esa columna llena no puede borrarle la clasificacion al cliente ni sacarle el prefijo al CUC. El caso de alta sin
+    /// clasificacion lo fija <see cref="ImportingARowWithoutClassificationCreatesTheCustomerWithAnUnprefixedCuc"/>.
+    /// </summary>
+    [Fact]
+    public async Task ImportRowWithAnExistingCucAndNoClassificationKeepsTheCustomersClassificationAndCuc()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: existing.IdentificationType,
+                    IdentificationNumber: existing.IdentificationNumber,
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal(("updated", existing.Cuc), (result.Imported.Single().Action, result.Imported.Single().Cuc));
+
+        var item = Assert.Single((await ListAsync(client, string.Empty)).Items);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal(existing.Cuc, item.Cuc);
+        Assert.Equal(classification.Name, item.Classification?.Name);
+    }
+
+    /// <summary>
     /// El pedido es explicito: traer Cuc en una fila pide una actualizacion. Si no hay a quien
     /// actualizar, la fila falla — no cae a crear un cliente nuevo con ese Cuc inventado.
     /// </summary>
