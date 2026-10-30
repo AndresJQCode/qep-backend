@@ -11,14 +11,14 @@ public static class BillingReminderEmailTemplate
         var subject = input.Lines.Count == 1
             ? $"Tu servicio {input.Lines[0].ServiceName} vence el {due}"
             : $"Tus servicios vencen el {due}";
-        var total = BillingEmailParts.Totals(input.TotalByCurrency, format);
+        var total = BillingEmailParts.Totals(input.TotalByCurrency);
         const string closing = "Si ya realizaste el pago, ignora este mensaje.";
 
         var textBody =
             $"Hola {input.CustomerName},\n\n" +
             $"Te recordamos de parte de {input.TenantName} los servicios que están por vencer:\n\n" +
             string.Concat(input.Lines.Select(line =>
-                $"- {line.ServiceName}: {BillingEmailParts.Money(line.Amount, line.Currency, format)}, vence el {BillingEmailParts.Date(line.DueDate, format)}\n")) +
+                $"- {line.ServiceName}: {line.Amount}, vence el {BillingEmailParts.Date(line.DueDate, format)}\n")) +
             $"\nTotal: {total}\n\n{closing}\n";
 
         var table = BillingEmailParts.HtmlTable(
@@ -26,7 +26,7 @@ public static class BillingReminderEmailTemplate
             input.Lines.Select(line => new[]
             {
                 line.ServiceName,
-                BillingEmailParts.Money(line.Amount, line.Currency, format),
+                line.Amount,
                 BillingEmailParts.Date(line.DueDate, format),
             }));
 

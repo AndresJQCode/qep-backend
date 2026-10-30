@@ -48,7 +48,7 @@
 2. **Dos réplicas en el mismo minuto:** dos `ProcessTenantAsync` concurrentes sobre el mismo tenant generan cada período **una** vez y mandan a cada cliente **un** mensaje. Task 10, `TwoConcurrentRunsGenerateOnceAndMessageOnce`.
 3. **Worker apagado 10 días:** cobro vencido hace 12 días sin filas: hoy se cubre sólo `after_10`, no `before_5`+`due`+`after_3`; y se generan los períodos que entraron en ventana mientras tanto. Task 10, `ACatchUpCoversOnlyTheLatestDueStep` y `ACatchUpGeneratesEveryMissedPeriod`.
 4. **Migrar un servicio con tres meses de atraso:** `firstDueDate = today − 3 meses`, mensual: el `POST` responde con **cuatro** cobros (tres vencidos y el del mes en curso si entra en ventana), no uno. Task 7, `CreateWithAPastFirstDueDateGeneratesEveryPeriodUpToTheWindow`.
-5. **Cliente con dos cobros vencidos en monedas distintas:** un solo mensaje `Overdue` con «2 cobro(s)» y el total «$ 450.000 y USD 20», nunca sumado. Task 10, `AnOverdueMessageGroupsEveryOverdueChargeWithOneTotalPerCurrency`.
+5. **Cliente con dos cobros vencidos en monedas distintas:** un solo mensaje `Overdue` con «2 cobro(s)» y el total «$ 450.000 y US$ 20,00», nunca sumado. Task 10, `AnOverdueMessageGroupsEveryOverdueChargeWithOneTotalPerCurrency`.
 6. **Dos clientes existentes con el mismo teléfono y una fila sin documento:** la fila es `customer_ambiguous`, no se crea un tercero ni se elige uno. Task 14, `ARowMatchingTwoCustomersByPhoneIsAmbiguous`.
 7. **Vista previa y confirmación con el mismo archivo, pero alguien creó el servicio en el medio:** la confirmación devuelve esa fila como `service_exists` y las demás se importan. Task 14, `AServiceCreatedBetweenPreviewAndConfirmBecomesARowError`.
 
@@ -412,7 +412,7 @@ Agrega a **Files**: `Modules.Billing.Application/PreviewServiceCharges.cs` (`Pre
 ```csharp
 // BillingEmailTemplatesTests
 [Fact] public void ReminderUsesTheSoftSubjectAndTheTenantFormat();            // "vence el 10/03/2026" con DateFormat dd/MM/yyyy; "$ 150.000" con NumberFormat del tenant
-[Fact] public void ReminderWithTwoServicesListsBothAndOneTotalPerCurrency();   // "$ 150.000 y USD 20" (Review Focus 5 por email)
+[Fact] public void ReminderWithTwoServicesListsBothAndOneTotalPerCurrency();   // "$ 150.000 y US$ 20,00" (Review Focus 5 por email)
 [Fact] public void OverdueUsesTheFirmSubjectWithTheCountAndTheDaysOverdue();  // "Tienes 2 cobro(s) vencido(s)"
 [Fact] public void TemplatesEscapeTenantCustomerAndServiceNamesInHtml();      // "<b>" → "&lt;b&gt;"
 [Fact] public void DigestOmitsEmptySectionsAndCountsInTheSubject();
@@ -476,7 +476,7 @@ public void StepDueOnIsTheLatestStepNotAfterToday(string today, string? expected
 [Fact] public async Task ACatchUpCoversOnlyTheLatestDueStep();                       // Review Focus 3: due = today−12, sin filas → sólo after_10
 [Fact] public async Task ACatchUpGeneratesEveryMissedPeriod();                       // Review Focus 3: last_generated hace 3 meses, mensual → 3 cobros nuevos (hasta today+5)
 [Fact] public async Task TheRunGeneratesTheChargeFiveDaysBeforeItsDueDateAndNotEarlier(); // ancla today+5 → se crea; ancla today+6 → no
-[Fact] public async Task AnOverdueMessageGroupsEveryOverdueChargeWithOneTotalPerCurrency(); // Review Focus 5: 2 vencidos COP+USD → 1 mensaje Overdue, "$ 450.000 y USD 20"
+[Fact] public async Task AnOverdueMessageGroupsEveryOverdueChargeWithOneTotalPerCurrency(); // Review Focus 5: 2 vencidos COP+USD → 1 mensaje Overdue, "$ 450.000 y US$ 20,00"
 [Fact] public async Task TwoCustomersGetTwoMessagesAndOneCustomerNeverGetsTwo();
 [Fact] public async Task PaidAndCancelledChargesGetNoReminderButAPausedServicesPendingChargesDo(); // owner 2026-10-29
 [Fact] public async Task APausedServiceGeneratesNoNewCharge();
@@ -547,7 +547,7 @@ El reloj del tenant se fija inyectando un `ITenantClock` de prueba (precedente `
 [Fact] public void TheTwoDefinitionsCarryTheOwnersTextVerbatim();        // Body de §5, UTILITY, "es", 4 y 3 parámetros posicionales
 // BillingMetaWhatsAppSenderTests (IBillingTemplateOutbound grabador)
 [Fact] public async Task AReminderFillsCustomerServiceAmountAndDate();   // {{1}}="Ana Pérez", {{2}}="Hosting plan pro", {{3}}="$ 150.000", {{4}}="10/03/2026"
-[Fact] public async Task AReminderWithTwoServicesJoinsNamesAndTotalsWithY(); // {{2}}="Hosting plan pro y Dominio", {{3}}="$ 150.000 y USD 20"
+[Fact] public async Task AReminderWithTwoServicesJoinsNamesAndTotalsWithY(); // {{2}}="Hosting plan pro y Dominio", {{3}}="$ 150.000 y US$ 20,00"
 [Fact] public async Task AnOverdueMessageFillsCountAndTotal();           // {{2}}="2", {{3}}="$ 450.000"
 [Fact] public async Task ConnectionUnavailableAndFailedMapToTheFailureCodes(); // "connection_unavailable:paused", "send_failed:132018"
 [Fact] public async Task ListConnectionsMarksReadyOnlyWithBothTemplatesApproved();

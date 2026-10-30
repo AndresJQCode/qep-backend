@@ -2,6 +2,10 @@ using Modules.Notifications.Application;
 
 namespace Modules.Notifications.UnitTests;
 
+/// <summary>
+/// Los montos llegan ya escritos (símbolo, decimales y separadores los pone el adaptador de Bootstrapper con el catálogo de
+/// monedas de Tenancy): la plantilla sólo los ubica y los une con «y».
+/// </summary>
 public sealed class BillingEmailTemplatesTests
 {
     private static readonly EmailRegionalFormat Colombian =
@@ -10,27 +14,27 @@ public sealed class BillingEmailTemplatesTests
     private static BillingCustomerEmailInput Input(
         BillingEmailKind kind,
         IReadOnlyList<BillingEmailLine> lines,
-        IReadOnlyList<BillingEmailTotal> totals,
+        IReadOnlyList<string> totals,
         string tenant = "Verde SAS",
         string customer = "Ana") =>
         new(kind, "ana@cliente.co", customer, tenant, lines, totals, lines.Min(line => line.DueDate));
 
-    private static BillingEmailLine Line(string service, decimal amount, string currency, int days = 0) =>
-        new(service, amount, currency, new DateOnly(2026, 3, 10), days);
+    private static BillingEmailLine Line(string service, string amount, int days = 0) =>
+        new(service, amount, new DateOnly(2026, 3, 10), days);
 
     [Fact]
     public void ReminderUsesTheSoftSubjectAndTheTenantFormat()
     {
         var message = BillingReminderEmailTemplate.Render(
-            Input(BillingEmailKind.Reminder, [Line("Hosting", 150000m, "COP")], [new("COP", 150000m)]),
+            Input(BillingEmailKind.Reminder, [Line("Hosting", "$ 150.000")], ["$ 150.000"]),
             Colombian);
 
         Assert.Equal("ana@cliente.co", message.ToAddress);
         Assert.Equal("Tu servicio Hosting vence el 10/03/2026", message.Subject);
+        Assert.Contains("- Hosting: $ 150.000, vence el 10/03/2026\n", message.TextBody, StringComparison.Ordinal);
         foreach (var body in new[] { message.HtmlBody, message.TextBody })
         {
-            Assert.Contains("$ 150.000", body, StringComparison.Ordinal);
-            Assert.Contains("10/03/2026", body, StringComparison.Ordinal);
+            Assert.Contains("Total: $ 150.000", body, StringComparison.Ordinal);
             Assert.Contains("Si ya realizaste el pago, ignora este mensaje.", body, StringComparison.Ordinal);
         }
     }
@@ -41,16 +45,16 @@ public sealed class BillingEmailTemplatesTests
         var message = BillingReminderEmailTemplate.Render(
             Input(
                 BillingEmailKind.Reminder,
-                [Line("Hosting", 150000m, "COP"), Line("Dominio", 20m, "USD")],
-                [new("COP", 150000m), new("USD", 20m)]),
+                [Line("Hosting", "$ 150.000"), Line("Dominio", "US$ 20,00")],
+                ["$ 150.000", "US$ 20,00"]),
             Colombian);
 
         Assert.Equal("Tus servicios vencen el 10/03/2026", message.Subject);
+        Assert.Contains("- Dominio: US$ 20,00, vence el 10/03/2026\n", message.TextBody, StringComparison.Ordinal);
         foreach (var body in new[] { message.HtmlBody, message.TextBody })
         {
             Assert.Contains("Hosting", body, StringComparison.Ordinal);
-            Assert.Contains("Dominio", body, StringComparison.Ordinal);
-            Assert.Contains("$ 150.000 y USD 20", body, StringComparison.Ordinal);
+            Assert.Contains("Total: $ 150.000 y US$ 20,00", body, StringComparison.Ordinal);
         }
     }
 
@@ -60,25 +64,30 @@ public sealed class BillingEmailTemplatesTests
         var message = BillingOverdueEmailTemplate.Render(
             Input(
                 BillingEmailKind.Overdue,
-                [Line("Hosting", 150000m, "COP", days: 5), Line("Dominio", 20m, "USD", days: 12)],
-                [new("COP", 150000m), new("USD", 20m)]),
+                [Line("Hosting", "$ 150.000", days: 5), Line("Dominio", "US$ 20,00", days: 12)],
+                ["$ 150.000", "US$ 20,00"]),
             Colombian);
 
         Assert.Equal("Tienes 2 cobro(s) vencido(s)", message.Subject);
-        Assert.Contains("12", message.TextBody, StringComparison.Ordinal);
-        Assert.Contains("5", message.TextBody, StringComparison.Ordinal);
-        Assert.Contains("Escríbenos para ponerte al día.", message.HtmlBody, StringComparison.Ordinal);
+        Assert.Contains("- Hosting: $ 150.000, venció el 10/03/2026 (5 días de atraso)\n", message.TextBody, StringComparison.Ordinal);
+        Assert.Contains("- Dominio: US$ 20,00, venció el 10/03/2026 (12 días de atraso)\n", message.TextBody, StringComparison.Ordinal);
+        Assert.Contains("<td style=\"padding:4px 12px\">10/03/2026</td><td style=\"padding:4px 12px\">12</td>", message.HtmlBody, StringComparison.Ordinal);
+        foreach (var body in new[] { message.HtmlBody, message.TextBody })
+        {
+            Assert.Contains("Total vencido: $ 150.000 y US$ 20,00", body, StringComparison.Ordinal);
+            Assert.Contains("Escríbenos para ponerte al día.", body, StringComparison.Ordinal);
+            Assert.Contains("Si ya pagaste, ignora este mensaje.", body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
     public void TemplatesEscapeTenantCustomerAndServiceNamesInHtml()
     {
-        var lines = new[] { Line("<b>Hosting</b>", 10m, "COP", days: 1) };
-        var totals = new BillingEmailTotal[] { new("COP", 10m) };
+        var lines = new[] { Line("<b>Hosting</b>", "$ 10", days: 1) };
 
         foreach (var kind in new[] { BillingEmailKind.Reminder, BillingEmailKind.Overdue })
         {
-            var input = Input(kind, lines, totals, tenant: "<i>Verde</i>", customer: "<u>Ana</u>");
+            var input = Input(kind, lines, ["$ 10"], tenant: "<i>Verde</i>", customer: "<u>Ana</u>");
             var message = kind == BillingEmailKind.Reminder
                 ? BillingReminderEmailTemplate.Render(input, Colombian)
                 : BillingOverdueEmailTemplate.Render(input, Colombian);
@@ -93,7 +102,7 @@ public sealed class BillingEmailTemplatesTests
     [Fact]
     public void DigestOmitsEmptySectionsAndCountsInTheSubject()
     {
-        var row = new BillingDigestEmailRow("Ana <x>", "Hosting", 150000m, "COP", new DateOnly(2026, 3, 10), null);
+        var row = new BillingDigestEmailRow("Ana <x>", "Hosting", "$ 150.000", new DateOnly(2026, 3, 10), null);
         var failed = row with { FailureCode = "no_phone" };
         var digest = new BillingDigestEmailInput(
             "luis@verde.co", "Luis", "Verde SAS",
@@ -110,9 +119,11 @@ public sealed class BillingEmailTemplatesTests
         Assert.DoesNotContain("Vencidos", message.HtmlBody, StringComparison.Ordinal);
         Assert.Contains("Ana &lt;x&gt;", message.HtmlBody, StringComparison.Ordinal);
 
-        var withOverdue = digest with { Overdue = [row], OverdueTotalByCurrency = [new("COP", 150000m)] };
+        var usd = row with { ServiceName = "Dominio", Amount = "US$ 20,00" };
+        var withOverdue = digest with { Overdue = [row, usd], OverdueTotalByCurrency = ["$ 150.000", "US$ 20,00"] };
         var second = BillingDigestEmailTemplate.Render(withOverdue, Colombian);
         Assert.Contains("Vencidos", second.HtmlBody, StringComparison.Ordinal);
-        Assert.Contains("$ 150.000", second.TextBody, StringComparison.Ordinal);
+        Assert.Contains("- Ana <x> / Dominio: US$ 20,00, 10/03/2026\n", second.TextBody, StringComparison.Ordinal);
+        Assert.Contains("Total vencido: $ 150.000 y US$ 20,00", second.TextBody, StringComparison.Ordinal);
     }
 }

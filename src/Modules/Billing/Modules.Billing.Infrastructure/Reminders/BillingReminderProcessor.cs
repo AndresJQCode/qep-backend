@@ -527,7 +527,7 @@ internal sealed partial class BillingReminderProcessor(
     private static string ServiceName(IReadOnlyDictionary<BillingServiceId, BillingService> servicesById, Charge charge) =>
         servicesById.TryGetValue(charge.ServiceId, out var service) ? service.Name : string.Empty;
 
-    /// <summary>Un total por moneda, nunca convertido (design): «$ 450.000 y USD 20». En el orden en que aparece cada moneda.</summary>
+    /// <summary>Un total por moneda, nunca convertido (design): «$ 450.000 y US$ 20,00». En el orden en que aparece cada moneda.</summary>
     private static CurrencyAmountDto[] TotalsByCurrency(IEnumerable<Charge> listed) =>
         listed
             .GroupBy(charge => charge.Currency, StringComparer.Ordinal)

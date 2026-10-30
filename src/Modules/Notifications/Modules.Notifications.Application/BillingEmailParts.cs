@@ -10,13 +10,16 @@ public enum BillingEmailKind
     Overdue = 2,
 }
 
-public sealed record BillingEmailLine(string ServiceName, decimal Amount, string Currency, DateOnly DueDate, int DaysOverdue);
-
-public sealed record BillingEmailTotal(string Currency, decimal Amount);
+/// <summary>
+/// <c>Amount</c> llega escrito («US$ 20,00»): símbolo y decimales son del catálogo de monedas de Tenancy, que esta capa no ve, así
+/// que el adaptador de Bootstrapper lo resuelve con el mismo formateador que la plantilla de WhatsApp. El correo no tiene uno propio.
+/// </summary>
+public sealed record BillingEmailLine(string ServiceName, string Amount, DateOnly DueDate, int DaysOverdue);
 
 /// <summary>
 /// Lo que las plantillas de cobro necesitan para armar el aviso al cliente. Notifications no puede referenciar Billing
 /// (ruling F7), así que este record es el espejo de <c>BillingCustomerMessage</c> y el adaptador de Bootstrapper lo mapea.
+/// <c>TotalByCurrency</c>: un total ya escrito por moneda, en el orden en que se muestran.
 /// </summary>
 public sealed record BillingCustomerEmailInput(
     BillingEmailKind Kind,
@@ -24,15 +27,15 @@ public sealed record BillingCustomerEmailInput(
     string CustomerName,
     string TenantName,
     IReadOnlyList<BillingEmailLine> Lines,
-    IReadOnlyList<BillingEmailTotal> TotalByCurrency,
+    IReadOnlyList<string> TotalByCurrency,
     DateOnly NearestDueDate);
 
-/// <summary><c>FailureCode</c>: el fallo del último aviso del cobro, o null si no falló.</summary>
+/// <summary><c>Amount</c> ya escrito, como en <see cref="BillingEmailLine"/>. <c>FailureCode</c>: el fallo del último aviso del
+/// cobro, o null si no falló.</summary>
 public sealed record BillingDigestEmailRow(
     string CustomerName,
     string ServiceName,
-    decimal Amount,
-    string Currency,
+    string Amount,
     DateOnly DueDate,
     string? FailureCode);
 
@@ -43,35 +46,20 @@ public sealed record BillingDigestEmailInput(
     IReadOnlyList<BillingDigestEmailRow> DueSoon,
     IReadOnlyList<BillingDigestEmailRow> Overdue,
     IReadOnlyList<BillingDigestEmailRow> FailedReminders,
-    IReadOnlyList<BillingEmailTotal> OverdueTotalByCurrency);
+    IReadOnlyList<string> OverdueTotalByCurrency);
 
 /// <summary>
-/// Texto compartido por las tres plantillas de cobro: monto, fecha y tabla. Los nombres de tenant, cliente y servicio los
+/// Texto compartido por las tres plantillas de cobro: totales, fecha y tabla. Los nombres de tenant, cliente y servicio los
 /// escribe una persona, así que en HTML van escapados (mismo criterio que <see cref="InvitationEmailTemplate"/>) y en texto
 /// plano crudos.
 /// </summary>
 internal static class BillingEmailParts
 {
-    /// <summary>
-    /// COP con «$» y sin decimales; el resto con su código y sin decimales cuando el monto es entero («USD 20»). Notifications
-    /// no ve el catálogo de monedas de Tenancy, así que esta es la regla local del correo.
-    /// </summary>
-    public static string Money(decimal amount, string currency, EmailRegionalFormat format)
-    {
-        var isCop = string.Equals(currency, "COP", StringComparison.OrdinalIgnoreCase);
-        var decimals = isCop || amount % 1m == 0m ? 0 : 2;
-        var prefix = isCop ? "$" : currency.ToUpperInvariant();
-        return $"{prefix} {amount.ToString($"N{decimals}", format.Numbers)}";
-    }
-
-    /// <summary>Un total por moneda unido con «y»: «$ 150.000 y USD 20».</summary>
-    public static string Totals(IReadOnlyList<BillingEmailTotal> totals, EmailRegionalFormat format)
-    {
-        var parts = totals.Select(total => Money(total.Amount, total.Currency, format)).ToArray();
-        return parts.Length <= 1
-            ? string.Join(string.Empty, parts)
-            : string.Join(", ", parts[..^1]) + " y " + parts[^1];
-    }
+    /// <summary>Un total por moneda unido con «y»: «$ 150.000 y US$ 20,00».</summary>
+    public static string Totals(IReadOnlyList<string> totals) =>
+        totals.Count <= 1
+            ? string.Join(string.Empty, totals)
+            : string.Join(", ", totals.Take(totals.Count - 1)) + " y " + totals[^1];
 
     // InvariantCulture: la `/` del patrón es separador de cultura, no un literal.
     public static string Date(DateOnly date, EmailRegionalFormat format) =>

@@ -1,5 +1,6 @@
 using Modules.Billing.Application;
 using Modules.Notifications.Application;
+using Modules.Quotations.Application;
 using Modules.Tenancy.Application;
 
 namespace Bootstrapper;
@@ -17,15 +18,17 @@ internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustom
         try
         {
             var format = ToFormat(message.Format);
+            var numberFormat = message.Format.NumberFormat;
             var input = new BillingCustomerEmailInput(
                 message.Kind == BillingMessageKind.Overdue ? BillingEmailKind.Overdue : BillingEmailKind.Reminder,
                 message.ToAddress,
                 message.CustomerName,
                 message.TenantName,
                 message.Lines
-                    .Select(line => new BillingEmailLine(line.ServiceName, line.Amount, line.Currency, line.DueDate, line.DaysOverdue))
+                    .Select(line => new BillingEmailLine(
+                        line.ServiceName, Money(line.Amount, line.Currency, numberFormat), line.DueDate, line.DaysOverdue))
                     .ToArray(),
-                ToTotals(message.TotalByCurrency),
+                ToTotals(message.TotalByCurrency, numberFormat),
                 message.NearestDueDate);
 
             var email = message.Kind == BillingMessageKind.Overdue
@@ -45,14 +48,15 @@ internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustom
     {
         try
         {
+            var numberFormat = digest.Format.NumberFormat;
             var input = new BillingDigestEmailInput(
                 digest.ToAddress,
                 digest.MemberName,
                 digest.TenantName,
-                ToRows(digest.DueSoon),
-                ToRows(digest.Overdue),
-                ToRows(digest.FailedReminders),
-                ToTotals(digest.OverdueTotalByCurrency));
+                ToRows(digest.DueSoon, numberFormat),
+                ToRows(digest.Overdue, numberFormat),
+                ToRows(digest.FailedReminders, numberFormat),
+                ToTotals(digest.OverdueTotalByCurrency, numberFormat));
 
             await channel.SendAsync(BillingDigestEmailTemplate.Render(input, ToFormat(digest.Format)), cancellationToken);
             return new BillingSendResult.Sent();
@@ -63,19 +67,28 @@ internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustom
         }
     }
 
-    // EmailRegionalFormats.For es internal de Notifications.Infrastructure; se arma igual con los helpers públicos de Tenancy
-    // que ese método usa, así el correo respeta el mismo patrón y los mismos separadores que el resto de la app.
+    // Copia de `EmailRegionalFormats.For` (Notifications.Infrastructure/Messaging/EmailRegionalFormats.cs): ese helper es
+    // `internal` de Notifications.Infrastructure y Bootstrapper no lo ve, así que se arma con los mismos dos helpers públicos de
+    // Tenancy que él usa. Si `For` cambia de regla, esto cambia con él.
+    // El procesador manda "" en DateFormat y NumberFormat cuando el tenant no tiene fila regional, en vez de null: el record de
+    // Billing no admite null y "" es un valor que `RegionalDateFormat.Pattern` y `RegionalNumberFormat.ToNumberFormatInfo` no
+    // reconocen, así que cae en su default colombiano. Es el mismo resultado que `For(zone, null)` → `EmailRegionalFormat.Colombian`.
     private static EmailRegionalFormat ToFormat(BillingEmailFormat format) =>
         new(
             TimeZoneInfo.FindSystemTimeZoneById(format.TimeZoneId),
             RegionalDateFormat.Pattern(format.DateFormat),
             RegionalNumberFormat.ToNumberFormatInfo(format.NumberFormat));
 
-    private static BillingEmailTotal[] ToTotals(IReadOnlyList<CurrencyAmountDto> totals) =>
-        totals.Select(total => new BillingEmailTotal(total.Currency, total.Amount)).ToArray();
+    // El monto de un correo de cobro se escribe igual que en la plantilla de WhatsApp de una cotización: símbolo y decimales del
+    // catálogo de monedas de Tenancy, separadores del tenant («US$ 20,00»). Se reutiliza ese formateador en vez de tener uno más.
+    private static string Money(decimal amount, string currency, string numberFormat) =>
+        WhatsAppTemplateValues.Total(amount, currency, numberFormat);
 
-    private static BillingDigestEmailRow[] ToRows(IReadOnlyList<BillingDigestRow> rows) =>
+    private static string[] ToTotals(IReadOnlyList<CurrencyAmountDto> totals, string numberFormat) =>
+        totals.Select(total => Money(total.Amount, total.Currency, numberFormat)).ToArray();
+
+    private static BillingDigestEmailRow[] ToRows(IReadOnlyList<BillingDigestRow> rows, string numberFormat) =>
         rows.Select(row => new BillingDigestEmailRow(
-                row.CustomerName, row.ServiceName, row.Amount, row.Currency, row.DueDate, row.FailureCode))
+                row.CustomerName, row.ServiceName, Money(row.Amount, row.Currency, numberFormat), row.DueDate, row.FailureCode))
             .ToArray();
 }

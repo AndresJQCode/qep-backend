@@ -25,7 +25,7 @@ public static class BillingDigestEmailTemplate
         Section(text, html, "Vencidos", input.Overdue, format, withFailure: false);
         if (input.Overdue.Count > 0 && input.OverdueTotalByCurrency.Count > 0)
         {
-            var total = BillingEmailParts.Totals(input.OverdueTotalByCurrency, format);
+            var total = BillingEmailParts.Totals(input.OverdueTotalByCurrency);
             text.Append(CultureInfo.InvariantCulture, $"\nTotal vencido: {total}\n");
             html.Append(CultureInfo.InvariantCulture, $"<p>Total vencido: {total}</p>");
         }
@@ -51,7 +51,7 @@ public static class BillingDigestEmailTemplate
         text.Append(CultureInfo.InvariantCulture, $"\n{title}\n");
         foreach (var row in rows)
         {
-            text.Append(CultureInfo.InvariantCulture, $"- {row.CustomerName} / {row.ServiceName}: {BillingEmailParts.Money(row.Amount, row.Currency, format)}, {BillingEmailParts.Date(row.DueDate, format)}");
+            text.Append(CultureInfo.InvariantCulture, $"- {row.CustomerName} / {row.ServiceName}: {row.Amount}, {BillingEmailParts.Date(row.DueDate, format)}");
             text.Append(withFailure && row.FailureCode is not null ? $" ({row.FailureCode})\n" : "\n");
         }
 
@@ -67,7 +67,7 @@ public static class BillingDigestEmailTemplate
                 {
                     row.CustomerName,
                     row.ServiceName,
-                    BillingEmailParts.Money(row.Amount, row.Currency, format),
+                    row.Amount,
                     BillingEmailParts.Date(row.DueDate, format),
                 };
                 if (withFailure)

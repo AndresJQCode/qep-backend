@@ -71,7 +71,7 @@ public static class BillingMapping
         profile.Version);
 }
 
-/// <summary>Un total por moneda, nunca convertido («$ 450.000 y USD 20»): compartido por la lista, el servicio y los mensajes.</summary>
+/// <summary>Un total por moneda, nunca convertido («$ 450.000 y US$ 20,00»): compartido por la lista, el servicio y los mensajes.</summary>
 public static class CurrencyTotals
 {
     public static IReadOnlyList<CurrencyAmountDto> Of(IEnumerable<(string Currency, decimal Amount)> amounts) => amounts
