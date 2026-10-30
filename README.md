@@ -143,6 +143,7 @@ local y por variable de entorno en k8s
 | `Meta:App:AppId`, `Meta:App:ConfigId`                | ausentes (user-secrets en local)                                                              | La app de Meta de toda la plataforma (spec 2026-10-09). Públicos: viajan en el popup de Embedded Signup. **En `Production` son obligatorios** junto con los tres de abajo (`MetaAppOptionsValidator`); fuera, sin ellos `whatsapp-cloud` no sale en el catálogo y el webhook responde 403/401 |
 | `Meta:App:GraphApiVersion`                           | `v24.0` (sólo fuera de `Production`)                                                          | Versión de Graph; patrón `^v\d+\.\d+$`. **También es obligatoria en `Production`** (`MetaAppOptionsValidator` exige las cinco claves: AppId, ConfigId, GraphApiVersion, AppSecret, WebhookVerifyToken); el ConfigMap de k8s la fija en `v24.0` |
 | `Meta:App:AppSecret`, `Meta:App:WebhookVerifyToken`  | user-secrets                                                                                  | Secretos: el `AppSecret` canjea el `code` y firma el webhook; el token verifica la suscripción (aleatorio, ≥ 32 caracteres). En k8s van en el Secret |
+| `Meta:App:WebhookOverrideCallbackUrl` | vacío | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia) |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
 | `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
@@ -2939,16 +2940,70 @@ desde la app.
   (permiso `integrations.connection.read`) devuelve el estado, el progreso, `canRetry` y `mustReconnect`.
   `POST …/history-sync/retry` (permiso `integrations.connection.manage`) reintenta lo que quedó `Pending` o
   `Failed`; sin cuerpo.
-- **Orden de la puesta en marcha (spec §6).** (1) Conexiones de Clasic y Transportes CI creadas en QEP;
-  (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado, con la migración
+- **Orden de la puesta en marcha (addendum 2026-10-30 del spec).** (1) Este backend desplegado, con la migración
   `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización) y
-  `AddImportedMarker` (la marca `imported` de conversaciones y mensajes);
-  (4) recién entonces,
-  el número de QCode por coexistencia. **Despliégalo antes de conectar cualquier número por coexistencia:**
-  una conexión hecha antes pide el historial, QEP lo descarta como `UnknownChange` y no hay segunda
-  oportunidad. Sin configuración nueva: `Meta:App:*` no cambia.
+  `AddImportedMarker` (la marca `imported` de conversaciones y mensajes), y con la variable
+  `META_WEBHOOK_OVERRIDE_CALLBACK_URL` en `Backend-prod`; (2) los campos de arriba suscritos en el panel de la app;
+  (3) el número de QCode por coexistencia. **No hace falta mover la URL de la app:** ver el override, abajo.
+  **Despliégalo antes de conectar cualquier número por coexistencia:** una conexión hecha antes pide el
+  historial, QEP lo descarta como `UnknownChange` y no hay segunda oportunidad.
 - **Límite de tamaño (V-3).** Revisa `Messaging:Webhook:MaxBodyBytes` contra el tamaño de una parte real de
   historial; si queda corto, la parte se rechaza y se pierde.
+
+**Override temporal del webhook por WABA (`Meta:App:WebhookOverrideCallbackUrl`).** QEP y lulo chat comparten
+la app de Meta, y la URL del webhook de la app apunta a lulo. Para recibir en QEP una sola WABA sin mover
+los demás números, el signup le pide a Meta otra URL para esa WABA. Es **temporal**: se va cuando el owner
+pase la URL de la app a QEP.
+
+- **Qué hace.** Con la clave puesta, el `POST /{wabaId}/subscribed_apps` del signup lleva en su cuerpo JSON
+  `override_callback_uri` y `verify_token` (el `Meta:App:WebhookVerifyToken` de siempre). Meta hace el desafío
+  `GET` contra esa URL antes de contestar. Vale para los dos caminos del signup, coexistencia y número nuevo, y
+  para **toda la WABA**, no para un número. Sin la clave, o vacía, la llamada sale sin cuerpo, como siempre.
+- **Cómo se configura.** En producción es la variable `META_WEBHOOK_OVERRIDE_CALLBACK_URL` del grupo `Backend-prod`,
+  con el valor `https://qep-api.qcode.co/api/webhooks/whatsapp`. Si la variable no existe, el token queda literal y
+  cuenta como ausente: el pod arranca sin override. El validador exige una URL https absoluta de hasta 200
+  caracteres (el límite de Meta) y el token de verificación.
+- **Si Meta la rechaza** (por ejemplo, falla el desafío), el signup responde `422
+  integrations.whatsapp.registration_failed`, no guarda la conexión ni publica el evento del historial, y **no se
+  reintenta sin override**: eso mandaría a lulo un historial que se pide una sola vez. Arregla la causa y repite el
+  Embedded Signup.
+- **Qué sigue llegando a lulo.** Según la documentación de Meta (revisada el 2026-10-30), el override aplica a
+  `messages`, `history`, `smb_message_echoes` y `smb_app_state_sync`, entre otros, pero los webhooks de plantillas y de
+  cuenta (`message_template_status_update`, `account_update`…) van siempre a la URL de la app. Mientras dure, los
+  estados de las plantillas de esa WABA sólo se actualizan con el refresco del catálogo.
+- **Cómo verificar.** `GET /{wabaId}/subscribed_apps` devuelve `override_callback_uri` en el elemento de la app. Las
+  dos llamadas de abajo leen los secretos de un prompt y los pasan por archivo: el token nunca queda en la línea de
+  comandos ni en el historial.
+- **Cómo quitarlo.** Primero mueve la URL de la app a QEP. Después repite la suscripción **sin cuerpo** en cada WABA con
+  override (Meta lo documenta como la forma de borrarlo) y confirma con el `GET` que `override_callback_uri` ya no
+  aparece. Por último borra la clave de `k8s/prod-configMap.yaml` y la variable. Quitar la clave **no** limpia la WABA.
+- **Una conexión creada por `lulo-migrator` no se suscribe:** no pasa por el signup, así que la clave no la toca. Un
+  número migrado así necesita la llamada manual.
+
+```powershell
+$waba = "<WABA_ID>"
+$callback = "https://qep-api.qcode.co/api/webhooks/whatsapp"
+$graph = "https://graph.facebook.com/v24.0/$waba/subscribed_apps"
+$access = [pscredential]::new("x", (Read-Host "Token de acceso de la WABA" -AsSecureString)).GetNetworkCredential().Password
+$verify = [pscredential]::new("x", (Read-Host "Meta:App:WebhookVerifyToken" -AsSecureString)).GetNetworkCredential().Password
+$dir = Join-Path $env:TEMP ("waba-" + [guid]::NewGuid())
+New-Item -ItemType Directory $dir | Out-Null
+try {
+    # Sin BOM: Out-File y Set-Content de PowerShell 5.1 lo escriben, y Graph no lee ese JSON.
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText("$dir\headers.txt", "Authorization: Bearer $access`r`nContent-Type: application/json`r`n", $utf8)
+    [IO.File]::WriteAllText("$dir\body.json", (@{ override_callback_uri = $callback; verify_token = $verify } | ConvertTo-Json -Compress), $utf8)
+
+    # Aplica el override. Para quitarlo, la misma línea sin -d.
+    curl.exe -sS -X POST $graph -H "@$dir\headers.txt" -d "@$dir\body.json"
+
+    # Verifica.
+    curl.exe -sS $graph -H "@$dir\headers.txt"
+}
+finally {
+    Remove-Item -Recurse -Force $dir
+}
+```
 
 **Pendientes y límites conocidos.**
 
