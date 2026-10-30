@@ -850,6 +850,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
         // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
         services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
+        services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1179,7 +1180,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<BillingEmailSender>();
         services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
         services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
-        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingWhatsAppOutboundUnavailable>();
+        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, BillingUserReferenceProbe>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al

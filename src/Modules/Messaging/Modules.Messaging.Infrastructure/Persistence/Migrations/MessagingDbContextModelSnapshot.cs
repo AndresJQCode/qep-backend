@@ -655,6 +655,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Status" }, "IX_message_templates_status");
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId", "Kind" }, "UX_message_templates_billing")
+                        .IsUnique()
+                        .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "MetaTemplateId" }, "UX_message_templates_meta_id")
                         .IsUnique();
 
@@ -667,7 +671,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue')");
                         });
                 });
 

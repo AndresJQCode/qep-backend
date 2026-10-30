@@ -37,7 +37,7 @@ public sealed class BillingSettingsApiTests
         return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
     }
 
-    // Con el IBillingWhatsAppOutbound provisional (Task 12 lo reemplaza): sin ajustes guardados y sin conexiones.
+    // Sin conexiones de WhatsApp activas en el tenant: sin ajustes guardados y sin nada que ofrecer.
     [Fact]
     public async Task GetSettingsAnswersTheStoredConnectionAndWhatListConnectionsReturns()
     {
@@ -66,6 +66,38 @@ public sealed class BillingSettingsApiTests
         Assert.Equal(ReadyConnection.Id, stored!.WhatsAppConnectionId);
         Assert.Equal([ReadyConnection], stored.Connections);
         Assert.Equal(1, await CountAuditEntriesAsync(factory2, "billing.settings.updated", Tenant.ToString()));
+    }
+
+    private static readonly BillingConnectionDto PendingConnection =
+        new(Guid.Parse("01900000-0000-7000-8000-0000000000c2"), "Línea nueva", null, false, "template_not_approved");
+
+    [Fact]
+    public async Task GetSettingsListsTheConnectionsWithReadiness()
+    {
+        var (database, factory) = await OpenWithConnectionsAsync(ReadyConnection, PendingConnection);
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+
+        var get = await manager.GetAsync(SettingsUrl(), Ct);
+
+        var dto = await get.Content.ReadFromJsonAsync<BillingSettingsDto>(Ct);
+        Assert.Equal([ReadyConnection, PendingConnection], dto!.Connections);
+    }
+
+    // Elegirla antes de que Meta apruebe las plantillas es válido: el envío falla con template_not_approved hasta entonces.
+    [Fact]
+    public async Task PutAcceptsAListedConnectionEvenIfNotReadyYet()
+    {
+        var (database, factory) = await OpenWithConnectionsAsync(ReadyConnection, PendingConnection);
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+
+        var put = await manager.PutAsJsonAsync(SettingsUrl(), new { whatsAppConnectionId = PendingConnection.Id }, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.Equal(PendingConnection.Id, (await put.Content.ReadFromJsonAsync<BillingSettingsDto>(Ct))!.WhatsAppConnectionId);
     }
 
     [Fact]
@@ -117,7 +149,7 @@ public sealed class BillingSettingsApiTests
     private sealed class FakeOutbound(BillingConnectionDto[] connections) : IBillingWhatsAppOutbound
     {
         public Task<BillingSendResult> SendAsync(
-            BillingCustomerMessage message, Guid connectionId, CancellationToken cancellationToken) =>
+            BillingWhatsAppContext context, BillingCustomerMessage message, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<BillingSendResult>(new BillingSendResult.Failed("channel_not_configured"));
 
         public Task<IReadOnlyList<BillingConnectionDto>> ListConnectionsAsync(Guid tenantId, CancellationToken cancellationToken) =>

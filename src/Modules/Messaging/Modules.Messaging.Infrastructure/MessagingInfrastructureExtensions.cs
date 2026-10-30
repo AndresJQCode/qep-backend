@@ -28,6 +28,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBotOutbound, BotOutbound>();
         // Spec 2026-10-21 D16: la plantilla de cotización al hilo del número, sin las guardas de la bandeja.
         services.AddScoped<IQuotationTemplateOutbound, QuotationTemplateOutbound>();
+        services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
@@ -105,6 +106,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessageTemplateRepository, MessageTemplateRepository>();
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
         services.AddScoped<IQuotationTemplateReadiness, QuotationTemplateReadiness>();
+        services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

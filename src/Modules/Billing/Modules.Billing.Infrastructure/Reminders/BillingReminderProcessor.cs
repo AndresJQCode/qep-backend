@@ -197,6 +197,7 @@ internal sealed partial class BillingReminderProcessor(
                     new CustomerWork(
                         group.Key,
                         profilesByCustomer[group.Key].Channel,
+                        profilesByCustomer[group.Key].AssigneeMemberId,
                         group.ToArray(),
                         pending.Customers.GetValueOrDefault(group.Key),
                         todaysMessages.GetValueOrDefault(group.Key)),
@@ -318,7 +319,11 @@ internal sealed partial class BillingReminderProcessor(
                     return new BillingSendResult.Failed("channel_not_configured");
                 }
 
-                return await whatsApp.SendAsync(BuildMessage(run, work, plan, servicesById, phone), connection, cancellationToken);
+                return await whatsApp.SendAsync(
+                    new BillingWhatsAppContext(run.TenantId, work.CustomerId, work.AssigneeMemberId),
+                    BuildMessage(run, work, plan, servicesById, phone),
+                    connection,
+                    cancellationToken);
             }
 
             if (work.Customer?.Email is not { Length: > 0 } email)
@@ -556,6 +561,7 @@ internal sealed partial class BillingReminderProcessor(
     private sealed record CustomerWork(
         Guid CustomerId,
         BillingChannel Channel,
+        Guid AssigneeMemberId,
         IReadOnlyList<Charge> Charges,
         BillingCustomerRef? Customer,
         CustomerMessage? TodaysMessage);

@@ -128,6 +128,33 @@ public sealed class MessageTemplatePersistenceTests
     private static MessageTemplate Quotation(Guid tenantId, Guid connectionId, string metaId, string name) =>
         MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Quotation, null, Now);
 
+    private static MessageTemplate Billing(Guid tenantId, Guid connectionId, string metaId, string name, MessageTemplateKind kind) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "POSITIONAL", "PENDING", "[]", kind, null, Now);
+
+    // Cobros recurrentes §5: una fila por tipo de aviso y conexión (UX_message_templates_billing); los dos tipos conviven y el que
+    // pierde la carrera es billing_exists.
+    [Fact]
+    public async Task OneBillingTemplatePerKindInTheSameConnectionAndTheSecondIs422BillingExists()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Billing(f.TenantId, f.ConnectionId, "1", "qep_cobro_recordatorio", MessageTemplateKind.BillingReminder));
+            repository.Add(Billing(f.TenantId, f.ConnectionId, "2", "qep_cobro_vencido", MessageTemplateKind.BillingOverdue));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Billing(f.TenantId, f.ConnectionId, "3", "qep_cobro_recordatorio_v2", MessageTemplateKind.BillingReminder));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateBillingExists, exception.Code);
+    }
+
     // Fix de la Task 8: dos primeros aprovisionamientos a la vez crean qep_cotizacion y qep_cotizacion_v2 en Meta y los dos insertan su
     // Quotation. El índice único parcial UX_message_templates_quotation deja una sola por conexión y el que pierde es quotation_exists.
     [Fact]

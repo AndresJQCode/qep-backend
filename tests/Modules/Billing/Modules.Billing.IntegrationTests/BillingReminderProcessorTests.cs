@@ -296,8 +296,27 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
 
         var (sent, usedConnection) = Assert.Single(whatsApp.Sent);
         Assert.Equal(("+573001112233", connectionId), (sent.ToAddress, usedConnection));
+        var context = Assert.Single(whatsApp.Contexts);
+        Assert.Equal((Tenant, customer, assignee), (context.TenantId, context.CustomerId, context.SentByMemberId));
         Assert.Empty(customerEmail.Sent);
         Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await MessagesAsync()).Status);
+    }
+
+    [Fact]
+    public async Task AWhatsAppProfileWhoseConnectionLacksTheTemplateFailsTemplateNotApproved()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", phoneE164: "+573001112233", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.WhatsApp, assignee);
+        await SeedChargeAsync(customer, Today);
+        await SeedWhatsAppConnectionAsync(Guid.NewGuid());
+        whatsApp.Result = new BillingSendResult.Failed("template_not_approved");
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        var message = Assert.Single(await MessagesAsync());
+        Assert.Equal((MessageDeliveryStatus.Failed, "template_not_approved", BillingChannel.WhatsApp), (message.Status, message.FailureCode, message.Channel));
     }
 
     [Fact]
@@ -1007,13 +1026,21 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
     private sealed class RecordingWhatsApp : IBillingWhatsAppOutbound
     {
         private readonly ConcurrentQueue<(BillingCustomerMessage, Guid)> sent = new();
+        private readonly ConcurrentQueue<BillingWhatsAppContext> contexts = new();
 
         public IReadOnlyList<(BillingCustomerMessage Message, Guid ConnectionId)> Sent => sent.ToArray();
 
-        public Task<BillingSendResult> SendAsync(BillingCustomerMessage message, Guid connectionId, CancellationToken cancellationToken)
+        public IReadOnlyList<BillingWhatsAppContext> Contexts => contexts.ToArray();
+
+        /// <summary>El resultado que devuelve el puerto; por defecto, enviado.</summary>
+        public BillingSendResult Result { get; set; } = new BillingSendResult.Sent();
+
+        public Task<BillingSendResult> SendAsync(
+            BillingWhatsAppContext context, BillingCustomerMessage message, Guid connectionId, CancellationToken cancellationToken)
         {
+            contexts.Enqueue(context);
             sent.Enqueue((message, connectionId));
-            return Task.FromResult<BillingSendResult>(new BillingSendResult.Sent());
+            return Task.FromResult(Result);
         }
 
         public Task<IReadOnlyList<BillingConnectionDto>> ListConnectionsAsync(Guid tenantId, CancellationToken cancellationToken) =>

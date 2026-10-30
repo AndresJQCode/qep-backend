@@ -117,17 +117,6 @@ public sealed class BillingEmailSenderTests
         Assert.Contains("Total vencido: US$ 20,00", sent.TextBody, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task TheUnavailableWhatsAppOutboundFailsWithChannelNotConfigured()
-    {
-        var outbound = new BillingWhatsAppOutboundUnavailable();
-
-        var result = await outbound.SendAsync(Message(BillingMessageKind.Reminder), Guid.NewGuid(), CancellationToken.None);
-
-        Assert.Equal("channel_not_configured", Assert.IsType<BillingSendResult.Failed>(result).Code);
-        Assert.Empty(await outbound.ListConnectionsAsync(Guid.NewGuid(), CancellationToken.None));
-    }
-
     private sealed class RecordingChannel : IEmailChannel
     {
         public List<EmailMessage> Sent { get; } = [];

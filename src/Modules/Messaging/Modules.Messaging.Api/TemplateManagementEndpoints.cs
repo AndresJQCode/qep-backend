@@ -45,6 +45,13 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Cobros recurrentes §5: las dos plantillas de cobro, también sin cuerpo (su definición vive en el backend).
+        group.MapPost("/billing", ProvisionBillingAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<IReadOnlyList<ManagedTemplateDto>>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapDelete("/templates/{templateId:guid}", DeleteAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces(StatusCodes.Status204NoContent)
@@ -76,6 +83,12 @@ internal static class TemplateManagementEndpoints
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId), cancellationToken));
+
+    // Location = la pantalla, como al provisionar la de cotización.
+    private static async Task<IResult> ProvisionBillingAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Created(
+            $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
+            await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId), cancellationToken));
 
     // Sin cuerpo en la respuesta: el frontend quita la fila de su lista y no necesita nada más.
     private static async Task<IResult> DeleteAsync(Guid tenantId, Guid connectionId, Guid templateId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
