@@ -651,6 +651,14 @@ internal static class MessagingApiHarness
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Spec 2026-10-29: una pasada del consumidor del evento de coexistencia.</summary>
+    public static async Task DrainCoexistenceEventsAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Coexistence.CoexistenceEventsWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <summary>Corre una pasada de la copia de medios (§8.6, P10): reclama y copia lo pendiente.</summary>
     public static async Task DrainMediaAsync(WebApplicationFactory<Program> host)
     {

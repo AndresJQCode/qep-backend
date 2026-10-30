@@ -118,6 +118,9 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
         services.AddScoped<CampaignDispatcher>();
         services.AddHostedService<CampaignDispatchWorker>();
+        // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
+        services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
+        services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
