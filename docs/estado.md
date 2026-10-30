@@ -89,7 +89,7 @@ plan 3, ya mergeado en `develop` del frontend (`a2d28c17`).
 | 2026-10-11 notas de voz del asesor | Construido (`OggOpusSniffer`, `ConcentusOpusTranscoder`) | |
 | 2026-10-12 respuestas rápidas | Construido (`QuickReplyEndpoints`) | |
 | 2026-10-13 embudo de ventas | Construido en los dos repos; backend (módulo Pipeline) y frontend (merge `bdbb5963`) | La UI no usa todavía `DealDetailDto.orders`/`unlinkedCustomerOrders` ni `POST /deals/{id}/orders/{orderId}/link` |
-| 2026-10-14 gestor de plantillas de WhatsApp | Construido (`fb1734ea`) | Pendientes en [su plan](superpowers/plans/2026-10-15-gestor-de-plantillas-pendientes.md) |
+| 2026-10-14 gestor de plantillas de WhatsApp | Construido (backend `fb1734ea`, frontend `30e7f3d`) | Pendientes del backend en [su plan](superpowers/plans/2026-10-15-gestor-de-plantillas-pendientes.md). La pantalla (entrega 3 del §6) tiene su spec en `qep-frontend/docs/superpowers/specs/2026-10-30-gestor-de-plantillas-whatsapp-frontend-design.md`. Falta la prueba manual contra Meta real |
 | 2026-10-14 mensajería Instagram | Construido en el backend | Sin verificar contra Meta real: V-4 y V-8 |
 | 2026-10-14 mensajería: marcar no leída | Construido (`de85c573`) | |
 | 2026-10-14 versión desplegada | Construido (`8d15b8d4`; `DeploymentInfo`, `VersionEndpoints`) | El spec aún dice «borrador» |
@@ -217,6 +217,14 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-30 — Mergeado a `develop` del frontend (`--no-ff`, con push) **la pantalla del gestor de plantillas de WhatsApp**
+  (`feature/gestor-de-plantillas`, merge `30e7f3d`): lista por conexión en `/integrations/whatsapp/$connectionId/templates`
+  con estados, motivos de rechazo, filtros, sincronización con Meta, ficha y borrado, tarjetas de la plantilla de cotización
+  y de cobro, y constructor con vista previa de teléfono en vivo; enlace «Plantillas» en la tarjeta del número, sólo con
+  `messaging.template.manage`. Consume los contratos del spec 2026-10-14 §4.7 sin cambiar el backend. Verificado: build,
+  46 pruebas nuevas y suite completa 8375 de 8377; las 2 fallas son de `variants-table.test.tsx` (catálogo) y fallan igual en
+  `develop` sin esta rama. Sin probar contra Meta real. La rama remota `feature/gestor-de-plantillas` quedó sin borrar: el
+  entorno del agente no permitió borrar ramas en GitHub.
 - 2026-10-30 — Mergeados a `develop` de los dos repos (`--no-ff`, con push) **el renombre del módulo de cobros recurrentes a `ServiceContracts` («Contratos de servicio») y el historial de precios con motivo obligatorio**: backend `0165a99` y `cbaf506`, frontend `517bf22` y `893a795`. Decisión del owner: el renombre no toca nada desplegado (esquema, clave, permisos, rutas, códigos y configuración siguen en `billing`). **El backend se mergeó sin compilar**: el contenedor no tenía SDK de .NET; antes de llevarlo a `main` hay que correr el build y las pruebas.
 - 2026-10-30 — Mergeado a `develop` (`--no-ff`, sin push) **el override temporal del webhook por WABA**: con
   `Meta:App:WebhookOverrideCallbackUrl` puesto, el Embedded Signup suscribe la WABA con `override_callback_uri`, para probar el número de QCode en
