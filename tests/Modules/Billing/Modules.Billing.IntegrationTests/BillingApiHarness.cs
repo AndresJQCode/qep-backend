@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Billing.Application;
+using Modules.Billing.Infrastructure.Reminders;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
@@ -251,8 +253,12 @@ internal static class BillingApiHarness
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.
     /// </param>
+    /// <param name="runReminderWorker">
+    /// El worker diario de cobros apagado por defecto: las pruebas llaman al procesador directo y un tick propio competiría con
+    /// ellas. Mismo interruptor que <c>runDeliveryWorkers</c> en <c>NotificationsApiFactory</c>.
+    /// </param>
     public sealed class QepApiFactory(
-        string connectionString, Action<IServiceCollection>? configureServices = null)
+        string connectionString, Action<IServiceCollection>? configureServices = null, bool runReminderWorker = false)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -274,6 +280,20 @@ internal static class BillingApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+
+            if (!runReminderWorker)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    foreach (var descriptor in services
+                        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                            && descriptor.ImplementationType == typeof(BillingReminderWorker))
+                        .ToList())
+                    {
+                        services.Remove(descriptor);
+                    }
+                });
+            }
 
             if (configureServices is not null)
             {

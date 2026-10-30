@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Billing.Application;
 using Modules.Billing.Infrastructure.Persistence;
+using Modules.Billing.Infrastructure.Reminders;
 
 namespace Modules.Billing.Infrastructure;
 
@@ -29,6 +31,15 @@ public static class BillingInfrastructureExtensions
         services.AddScoped<IBillingSettingsRepository, BillingSettingsRepository>();
         services.AddScoped<IBillingUnitOfWork, BillingUnitOfWork>();
         services.AddScoped<IBillingAuditPublisher, BillingAuditPublisher>();
+
+        // El worker diario (spec §3.3, §6): opciones validadas al arrancar, como QuotationsOptions.
+        services.AddOptions<BillingOptions>().Bind(configuration.GetSection(BillingOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<BillingOptions>, BillingOptionsValidator>();
+        services.AddScoped<TenantRunStore>();
+        services.AddScoped<CustomerMessageStore>();
+        services.AddScoped<DailyDigestStore>();
+        services.AddScoped<IBillingReminderProcessor, BillingReminderProcessor>();
+        services.AddHostedService<BillingReminderWorker>();
 
         return services;
     }

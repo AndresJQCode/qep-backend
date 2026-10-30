@@ -606,6 +606,27 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec cobros-recurrentes §3.3: sin el worker registrado, o con un puerto del procesador sin adaptador, ningún cobro se genera
+    /// después de crear el servicio y ningún cliente recibe su aviso, sin error en ningún lado. Mismo armado que el de Shopify.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheBillingReminderWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Billing.Infrastructure.Reminders.BillingReminderWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IBillingReminderProcessor>());
+    }
+
+    /// <summary>
     /// Fallo P2-R31 (el mismo amarre que <c>ExternalApiUrlPolicyTests.TheNamedClientIsBoundToThePolicyHandler</c> de la tarea 10): el
     /// cliente del bloque HTTP del chatbot se registra en el composition root con el handler de la política anti-SSRF. Sin él, el handler
     /// por defecto sigue redirecciones con la clave, usa el proxy del sistema y conecta a 10/8 o a 169.254.169.254 sin que nada se ponga
