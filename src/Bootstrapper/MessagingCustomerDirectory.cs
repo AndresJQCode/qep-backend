@@ -62,6 +62,12 @@ internal sealed partial class MessagingCustomerDirectory(
         return new MessagingEnsuredCustomer(ensured.CustomerId, ensured.Outcome == EnsureOutcome.Created);
     }
 
+    public async Task<MessagingEnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, string waId, string? name, CancellationToken cancellationToken)
+    {
+        var ensured = await whatsApp.EnsureByPhoneAsync(tenantId, new WhatsAppPhoneContact("+" + waId, name), cancellationToken);
+        return new MessagingEnsuredCustomer(ensured.CustomerId, ensured.Outcome == EnsureOutcome.Created);
+    }
+
     private static MessagingCustomerContact ToMessaging(CustomerContact contact) =>
         new(contact.CustomerId, contact.Name, contact.PhoneE164, contact.WhatsAppUserId, contact.IsActive, contact.MarketingOptOut, contact.CreatedAt);
 

@@ -14,6 +14,15 @@ public static class IncompleteCustomerProfile
         return name.Length <= Customer.NameMaxLength ? name : name[..Customer.NameMaxLength];
     }
 
+    /// <summary>El nombre de quien aparece sólo por teléfono: el del contacto, o el teléfono mismo (el respaldo de
+    /// <see cref="NameFor"/> cuando no hay nombre de perfil).</summary>
+    public static string NameForPhone(WhatsAppPhoneContact contact)
+    {
+        ArgumentNullException.ThrowIfNull(contact);
+        var name = FirstNonBlank(contact.Name, contact.PhoneE164) ?? FallbackName;
+        return name.Length <= Customer.NameMaxLength ? name : name[..Customer.NameMaxLength];
+    }
+
     /// <summary>El prefijo ISO del BSUID («CO.…») si la librería conoce esa región; si no, la región del teléfono.</summary>
     public static string? CountryFor(WhatsAppContact contact, IPhoneNumberNormalizer normalizer)
     {

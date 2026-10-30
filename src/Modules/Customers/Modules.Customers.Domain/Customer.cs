@@ -507,6 +507,68 @@ public sealed class Customer
     /// <summary>La regla del BSUID (recortado, 1 a <see cref="WhatsAppUserIdMaxLength"/> caracteres). Pública porque
     /// <c>CustomerWhatsAppDirectory</c> lo escribe con un <c>UPDATE</c> condicional, sin pasar por el agregado.</summary>
     /// <summary>
+    /// Historial de coexistencia: la persona que aparece sólo con su teléfono (la app de WhatsApp Business no da BSUID) y
+    /// todavía no tiene ficha. Igual que <see cref="CreateIncomplete"/> pero sin BSUID: el primer mensaje en vivo lo vincula
+    /// después (D-A6). Lo crea el sistema, nunca una persona por HTTP.
+    /// </summary>
+    public static Customer CreateIncompleteFromPhone(
+        CustomerId id,
+        Guid tenantId,
+        string name,
+        string phoneE164,
+        string? country,
+        DateTimeOffset now,
+        IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var phone = phoneE164?.Trim();
+        if (string.IsNullOrEmpty(phone))
+        {
+            throw new CustomersDomainException("customers.customer.phone_required", "The customer phone is required.");
+        }
+
+        var normalizedCountry = string.IsNullOrWhiteSpace(country) ? null : country.Trim().ToUpperInvariant();
+        return new Customer
+        {
+            Id = id,
+            TenantId = tenantId,
+            Name = NormalizeName(name),
+            Phone = phone,
+            Country = normalizedCountry,
+            PhoneE164 = phoneNormalizer.ToE164(phone, normalizedCountry ?? UnknownRegion),
+            Completeness = CustomerCompleteness.Incomplete,
+            IsActive = true,
+            Version = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
+
+    /// <summary>
+    /// P-7: un incompleto que nació con el teléfono como nombre (porque nadie le conocía otro) toma el nombre del contacto
+    /// cuando llega. Sólo reemplaza ese respaldo: un nombre puesto por una persona, o el de una ficha completa, no se toca.
+    /// <c>true</c> si cambió.
+    /// </summary>
+    public bool ReplacePhoneFallbackName(string name, DateTimeOffset now)
+    {
+        if (Completeness != CustomerCompleteness.Incomplete || string.IsNullOrWhiteSpace(name) ||
+            (Name != Phone && Name != PhoneE164))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeName(name.Trim().Length <= NameMaxLength ? name : name.Trim()[..NameMaxLength]);
+        if (normalized == Name)
+        {
+            return false;
+        }
+
+        Name = normalized;
+        Touch(now);
+        return true;
+    }
+
+    /// <summary>
     /// Spec 2026-10-14 decisión 10: la persona que escribió por Instagram y todavía no tiene ficha. Sólo nombre, IGSID y usuario:
     /// sin teléfono, sin país (Instagram no los da) y sin libreta. Lo crea el sistema, nunca una persona por HTTP.
     /// </summary>
