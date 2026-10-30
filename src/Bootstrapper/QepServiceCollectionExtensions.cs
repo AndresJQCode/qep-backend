@@ -339,6 +339,17 @@ public static class QepServiceCollectionExtensions
             Modules.Billing.Application.UpdateBillingSettingsHandler>();
         services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
+        // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.PreviewBillingImportCommand, Modules.Billing.Application.ImportPreviewDto>,
+            Modules.Billing.Application.PreviewBillingImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.ImportBillingServicesCommand, Modules.Billing.Application.ImportResultDto>,
+            Modules.Billing.Application.ImportBillingServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetBillingImportTemplateQuery, Modules.Billing.Application.BillingImportTemplateFile>,
+            Modules.Billing.Application.GetBillingImportTemplateHandler>();
+        services.AddScoped<Modules.Billing.Application.BillingImportAnalyzer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1177,6 +1188,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
         services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
         services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
+        services.AddSingleton<Modules.Billing.Application.IBillingIdentificationTypes, BillingIdentificationTypes>();
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerProvisioning, BillingCustomerProvisioning>();
         services.AddScoped<BillingEmailSender>();
         services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
         services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());

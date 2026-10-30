@@ -9,4 +9,7 @@ namespace Modules.Billing.Application;
 public interface IBillingPhoneNormalizer
 {
     string? ToE164(string? phone, string? country);
+
+    /// <summary>Si el código ISO alfa-2 es un país que la librería de teléfonos conoce (§3.2b, <c>country_invalid</c>).</summary>
+    bool IsKnownCountry(string country);
 }

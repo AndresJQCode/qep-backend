@@ -70,6 +70,14 @@ internal sealed class BillingMemberDirectory(
             .ToArray();
     }
 
+    public async Task<BillingMemberRef?> FindManagerByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
+    {
+        // Sobre la misma lista de GET /assignees: un encargado de la importación es exactamente uno de los que el formulario ofrece.
+        var wanted = email.Trim();
+        var managers = await ListManagersAsync(tenantId, cancellationToken);
+        return managers.FirstOrDefault(member => string.Equals(member.Email, wanted, StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task<BillingMemberRef> ToRefAsync(TenantId tenant, Membership membership, CancellationToken cancellationToken)
     {
         var isActive = membership.State == MembershipState.Active;

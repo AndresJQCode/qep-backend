@@ -39,9 +39,22 @@ public sealed class BillingPhoneNormalizerTests
         Assert.Null(normalizer.ToE164(null, "MX"));
     }
 
+    [Fact]
+    public void AKnownCountryIsAskedInUpperCase()
+    {
+        var inner = new RecordingNormalizer();
+        var normalizer = new BillingPhoneNormalizer(inner);
+
+        Assert.True(normalizer.IsKnownCountry(" mx "));
+        Assert.Equal("MX", inner.LastRegion);
+        Assert.False(normalizer.IsKnownCountry("ZZ"));
+    }
+
     private sealed class RecordingNormalizer : IPhoneNumberNormalizer
     {
         public string? LastCountry { get; private set; }
+
+        public string? LastRegion { get; private set; }
 
         public string? ToE164(string? phone, string country)
         {
@@ -49,7 +62,11 @@ public sealed class BillingPhoneNormalizerTests
             return phone is null ? null : $"+{(country == "CO" ? "57" : "52")}-{phone}";
         }
 
-        public bool IsKnownRegion(string regionCode) => true;
+        public bool IsKnownRegion(string regionCode)
+        {
+            LastRegion = regionCode;
+            return regionCode != "ZZ";
+        }
 
         public string? RegionOf(string? e164) => null;
     }

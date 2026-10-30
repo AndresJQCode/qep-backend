@@ -6,6 +6,8 @@ namespace Modules.Billing.Infrastructure.Persistence;
 
 internal sealed class BillingUnitOfWork(BillingDbContext dbContext) : IBillingUnitOfWork
 {
+    public void Clear() => dbContext.ChangeTracker.Clear();
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         try

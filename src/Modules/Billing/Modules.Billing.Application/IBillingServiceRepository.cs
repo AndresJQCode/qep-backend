@@ -23,4 +23,8 @@ public interface IBillingServiceRepository
 
     /// <summary>Los servicios <c>Active</c> del tenant: sobre ellos corre la generación de cobros del worker (§3.3, paso 3).</summary>
     Task<IReadOnlyList<BillingService>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Los servicios <c>Active</c> o <c>Paused</c> de esos clientes del tenant: la importación rechaza un nombre repetido (§3.2b, <c>service_exists</c>).</summary>
+    Task<IReadOnlyList<BillingService>> ListOpenByCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 }

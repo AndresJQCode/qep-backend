@@ -66,6 +66,50 @@ internal sealed class BillingCustomerLookup(CustomersDbContext customers) : IBil
         return ids.Select(id => id.Value).ToArray();
     }
 
+    public async Task<IReadOnlyList<BillingCustomerRef>> FindByIdentificationAsync(
+        Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken)
+    {
+        // Mismo par que guarda el agregado: el tipo parseado y el número recortado (CustomerIdentification.Normalized).
+        var type = IdentificationTypeParser.Parse(identificationType);
+        var number = identificationNumber.Trim();
+        return await ListAsync(
+            customers.Customers.AsNoTracking().Where(customer => customer.TenantId == tenantId
+                && customer.MergedIntoId == null
+                && customer.IdentificationType == type
+                && customer.IdentificationNumber == number),
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<BillingCustomerRef>> FindByPhoneE164Async(
+        Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
+        ListAsync(
+            customers.Customers.AsNoTracking().Where(customer => customer.TenantId == tenantId
+                && customer.MergedIntoId == null
+                && customer.PhoneE164 == phoneE164),
+            cancellationToken);
+
+    public Task<IReadOnlyList<BillingCustomerRef>> FindByEmailAsync(
+        Guid tenantId, string email, CancellationToken cancellationToken)
+    {
+        // Customers guarda el correo en minúsculas (CustomerContactInfo.NormalizeEmail y el alta incompleta): igualdad
+        // exacta contra el buscado en minúsculas, y el índice de la columna sirve.
+        var lowered = email.Trim().ToLowerInvariant();
+        return ListAsync(
+            customers.Customers.AsNoTracking().Where(customer => customer.TenantId == tenantId
+                && customer.MergedIntoId == null
+                && customer.Email == lowered),
+            cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<BillingCustomerRef>> ListAsync(
+        IQueryable<Customer> query, CancellationToken cancellationToken)
+    {
+        var rows = await query
+            .Select(customer => new Row(customer.Id, customer.Name, customer.PhoneE164, customer.Email, customer.IsActive))
+            .ToListAsync(cancellationToken);
+        return rows.Select(row => row.ToRef()).ToArray();
+    }
+
     private sealed record Row(CustomerId Id, string Name, string? PhoneE164, string? Email, bool IsActive)
     {
         public BillingCustomerRef ToRef() => new(Id.Value, Name, PhoneE164, Email, IsActive);

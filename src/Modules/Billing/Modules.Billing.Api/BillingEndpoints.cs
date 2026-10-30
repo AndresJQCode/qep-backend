@@ -120,7 +120,69 @@ public static class BillingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Importación desde Excel (§3.2b, §4). Todo con manage, también la plantilla, como /customers/import. Antiforgery
+        // apagado como CustomerEndpoints: el CSRF lo frena X-Qep-Client, no el token de formulario.
+        group.MapGet("/import/template", GetImportTemplateAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Produces(StatusCodes.Status200OK, contentType: ExcelContentType)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        group.MapPost("/import/preview", PreviewImportAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Produces<ImportPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
+        group.MapPost("/import", ImportAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Produces<ImportResultDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .DisableAntiforgery();
+
         return endpoints;
+    }
+
+    private const string ExcelContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private static async Task<IResult> GetImportTemplateAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var template = await dispatcher.QueryAsync(new GetBillingImportTemplateQuery(tenantId), cancellationToken);
+
+        return Results.File(template.Content, ExcelContentType, template.FileName);
+    }
+
+    // IFormFile anulable: sin archivo el handler responde 422 billing.import.file_required y no un 400 del binding.
+    private static async Task<IResult> PreviewImportAsync(
+        Guid tenantId,
+        IFormFile? file,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var preview = await dispatcher.SendAsync(
+            new PreviewBillingImportCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content),
+            cancellationToken);
+
+        return Results.Ok(preview);
+    }
+
+    private static async Task<IResult> ImportAsync(
+        Guid tenantId,
+        IFormFile? file,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await using var content = file?.OpenReadStream() ?? Stream.Null;
+        var result = await dispatcher.SendAsync(
+            new ImportBillingServicesCommand(tenantId, file?.FileName ?? string.Empty, file?.Length ?? 0, content),
+            cancellationToken);
+
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> GetSettingsAsync(

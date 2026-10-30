@@ -12,4 +12,6 @@ internal sealed class BillingPhoneNormalizer(IPhoneNumberNormalizer phones) : IB
 {
     public string? ToE164(string? phone, string? country) =>
         phones.ToE164(phone, string.IsNullOrWhiteSpace(country) ? Customer.ColombiaCountryCode : country);
+
+    public bool IsKnownCountry(string country) => phones.IsKnownRegion(country.Trim().ToUpperInvariant());
 }

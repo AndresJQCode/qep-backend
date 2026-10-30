@@ -89,4 +89,20 @@ internal sealed class BillingServiceRepository(BillingDbContext dbContext) : IBi
         await dbContext.Services
             .Where(service => service.TenantId == tenantId && service.Status == BillingServiceStatus.Active)
             .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<BillingService>> ListOpenByCustomersAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        if (customerIds.Count == 0)
+        {
+            return [];
+        }
+
+        var wanted = customerIds.Distinct().ToArray();
+        return await dbContext.Services.AsNoTracking()
+            .Where(service => service.TenantId == tenantId
+                && wanted.Contains(service.CustomerId)
+                && (service.Status == BillingServiceStatus.Active || service.Status == BillingServiceStatus.Paused))
+            .ToListAsync(cancellationToken);
+    }
 }
