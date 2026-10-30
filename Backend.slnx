@@ -143,15 +143,15 @@
   <Folder Name="/tests/Modules/Authorization/">
     <Project Path="tests/Modules/Authorization/Modules.Authorization.UnitTests/Modules.Authorization.UnitTests.csproj" />
   </Folder>
-  <Folder Name="/src/Modules/Billing/">
-    <Project Path="src/Modules/Billing/Modules.Billing.Api/Modules.Billing.Api.csproj" />
-    <Project Path="src/Modules/Billing/Modules.Billing.Application/Modules.Billing.Application.csproj" />
-    <Project Path="src/Modules/Billing/Modules.Billing.Domain/Modules.Billing.Domain.csproj" />
-    <Project Path="src/Modules/Billing/Modules.Billing.Infrastructure/Modules.Billing.Infrastructure.csproj" />
+  <Folder Name="/src/Modules/ServiceContracts/">
+    <Project Path="src/Modules/ServiceContracts/Modules.ServiceContracts.Api/Modules.ServiceContracts.Api.csproj" />
+    <Project Path="src/Modules/ServiceContracts/Modules.ServiceContracts.Application/Modules.ServiceContracts.Application.csproj" />
+    <Project Path="src/Modules/ServiceContracts/Modules.ServiceContracts.Domain/Modules.ServiceContracts.Domain.csproj" />
+    <Project Path="src/Modules/ServiceContracts/Modules.ServiceContracts.Infrastructure/Modules.ServiceContracts.Infrastructure.csproj" />
   </Folder>
-  <Folder Name="/tests/Modules/Billing/">
-    <Project Path="tests/Modules/Billing/Modules.Billing.UnitTests/Modules.Billing.UnitTests.csproj" />
-    <Project Path="tests/Modules/Billing/Modules.Billing.IntegrationTests/Modules.Billing.IntegrationTests.csproj" />
+  <Folder Name="/tests/Modules/ServiceContracts/">
+    <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.UnitTests/Modules.ServiceContracts.UnitTests.csproj" />
+    <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.IntegrationTests/Modules.ServiceContracts.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Suppliers/">
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Api/Modules.Suppliers.Api.csproj" />

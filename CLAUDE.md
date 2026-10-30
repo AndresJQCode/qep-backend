@@ -267,6 +267,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
   liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
+- **El módulo de cobros recurrentes se llama `ServiceContracts` en el código y `billing` en todo lo desplegado** (owner,
+  2026-10-30). Carpeta `src/Modules/ServiceContracts/`, namespaces `Modules.ServiceContracts.*`, agregado `ServiceContract`
+  (antes `BillingService`), tipos `ServiceContracts*` (`ServiceContractsDbContext`, `ServiceContractsPermissions`,
+  `IServiceContractsAuditPublisher`…), en pantalla «Contratos de servicio». **No cambiaron, y no se cambian sin migración de
+  datos ni despliegue conjunto con el frontend:** el esquema `billing`, la clave de módulo `billing` (`TenantModuleKey.ServiceContracts`),
+  los permisos `billing.service.read|manage`, las rutas `/api/v1/tenants/{id}/billing` y `/billing` del SPA, las acciones de
+  auditoría y los códigos de error `billing.*`, la sección `Billing` de configuración (`ServiceContractsOptions.SectionName`) y el id
+  de la migración `20261029180546_InitialBilling`. Conservan «Billing» a propósito porque nombran el cobro y no el módulo, o son de
+  otro módulo: `BillingCycle`, `BillingChannel`, `CustomerBillingProfile`; `MessageTemplateKind.BillingReminder|BillingOverdue`
+  (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
+  (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
+  (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
   Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada

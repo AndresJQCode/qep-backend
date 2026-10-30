@@ -17,6 +17,12 @@
 
 ## 1. Módulo
 
+> **Renombre (owner, 2026-10-30).** El módulo se llama `ServiceContracts` en el código (`src/Modules/ServiceContracts/`,
+> `Modules.ServiceContracts.*`, agregado `ServiceContract`, antes `BillingService`) y «Contratos de servicio» en pantalla. El
+> contrato desplegado no cambió: esquema `billing`, clave de módulo `billing`, permisos `billing.service.*`, rutas `/billing`,
+> auditoría y códigos `billing.*`, sección `Billing` de configuración. Lo que sigue describe ese contrato con los nombres de
+> entonces; para la correspondencia de nombres ver `CLAUDE.md`.
+
 | Qué | Valor | Precedente |
 | --- | --- | --- |
 | Carpeta | `src/Modules/Billing/Modules.Billing.{Domain,Application,Infrastructure,Api}` | `src/Modules/Suppliers` |
