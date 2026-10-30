@@ -202,12 +202,12 @@ public sealed class ExcelCustomerRowRulesTests
     }
 
     [Fact]
-    public void AnEmptyClassificationFails()
+    public void AnEmptyClassificationIsValid()
     {
         var result = validator.Validate(ValidRow(classification: null));
 
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error =>
+        Assert.True(result.IsValid);
+        Assert.DoesNotContain(result.Errors, error =>
             error.ErrorCode == "customers.import.row.classification_required");
     }
 

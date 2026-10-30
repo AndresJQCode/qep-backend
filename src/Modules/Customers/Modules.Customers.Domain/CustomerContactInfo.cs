@@ -158,7 +158,7 @@ public sealed record CustomerContactInfo
     // consumidor a normalizar de nuevo. Opcional: vacio y ausente son lo mismo (el formulario manda
     // "" cuando el usuario borra el input) y se guardan como null, no como cadena vacia; si viene,
     // tiene que ser una direccion.
-    private static string? NormalizeEmail(string? email)
+    internal static string? NormalizeEmail(string? email)
     {
         if (string.IsNullOrWhiteSpace(email))
         {

@@ -292,6 +292,33 @@ public sealed class MessagingPersistenceTests
             "SELECT is_nullable || '|' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'messaging' AND table_name = 'conversations' AND column_name = 'wa_id'"));
     }
 
+    // Final review de cobros recurrentes: Postgres valida las filas existentes al volver a agregar el CHECK sin los kinds de Billing,
+    // así que el Down tiene que descartar las plantillas Billing* antes (como AddBillingModuleKey en Tenancy) o el rollback falla.
+    [Fact]
+    public async Task TheDownOfAddBillingTemplateKindsDropsTheBillingTemplatesAndKeepsTheRest()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var scope = factory.Services.CreateScope();
+        var migrator = scope.ServiceProvider.GetRequiredService<MessagingDbContext>().GetService<IMigrator>();
+        foreach (var kind in new[] { "BillingReminder", "BillingOverdue", "Quotation" })
+        {
+            await ExecuteAsync(connectionString,
+                """
+                INSERT INTO messaging.message_templates
+                    (id, tenant_id, connection_id, meta_template_id, name, language, category, parameter_format, status, components, kind, created_at, updated_at)
+                VALUES (@id, @tenant, @connection, @meta, @name, 'es', 'UTILITY', 'NAMED', 'APPROVED', '[]', @kind, now(), now())
+                """,
+                ("id", Guid.CreateVersion7()), ("tenant", Guid.CreateVersion7()), ("connection", Guid.CreateVersion7()),
+                ("meta", kind), ("name", kind.ToLowerInvariant()), ("kind", kind));
+        }
+
+        await migrator.MigrateAsync("20261028213648_AddMessagingReportIndexes", Ct);
+
+        Assert.Equal("Quotation", await ScalarAsync<string>(connectionString, "SELECT string_agg(kind, ',') FROM messaging.message_templates"));
+    }
+
     [Fact]
     public async Task TheWamidIsUniquePerConnectionAndTheConversationCascades()
     {

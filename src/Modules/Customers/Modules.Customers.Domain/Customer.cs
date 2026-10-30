@@ -379,6 +379,8 @@ public sealed class Customer
     /// documento y, si lo hay, teléfono; sin CUC (lo emite <see cref="Complete"/> cuando alguien la completa), sin
     /// clasificación, ciudad, correo ni libreta. El país es el del formulario web (<see cref="ColombiaCountryCode"/>):
     /// la caja no lo pregunta y el teléfono se normaliza contra esa región. Todo se valida antes de armar la ficha.
+    /// <paramref name="email"/> lo trae la importación de cobros recurrentes (spec cobros-recurrentes §5): mismas reglas
+    /// que el correo del formulario; la caja no lo manda.
     /// </summary>
     public static Customer CreateFromRegister(
         CustomerId id,
@@ -387,7 +389,8 @@ public sealed class Customer
         CustomerIdentification identification,
         string? phone,
         DateTimeOffset now,
-        IPhoneNumberNormalizer phoneNormalizer)
+        IPhoneNumberNormalizer phoneNormalizer,
+        string? email = null)
     {
         ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
@@ -407,6 +410,7 @@ public sealed class Customer
             TenantId = tenantId,
             Name = normalizedName,
             Phone = normalizedPhone,
+            Email = CustomerContactInfo.NormalizeEmail(email),
             Country = ColombiaCountryCode,
             PhoneE164 = normalizedPhone is null ? null : phoneNormalizer.ToE164(normalizedPhone, ColombiaCountryCode),
             Completeness = CustomerCompleteness.Incomplete,

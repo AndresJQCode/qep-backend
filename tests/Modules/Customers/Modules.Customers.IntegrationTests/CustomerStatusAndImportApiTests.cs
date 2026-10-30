@@ -241,6 +241,79 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// La clasificacion es opcional (decision 2026-10-19, <c>Customer.cs</c>): una fila sin ella
+    /// crea el cliente con un CUC sin prefijo (departamento + consecutivo) y sin clasificacion.
+    /// </summary>
+    [Fact]
+    public async Task ImportingARowWithoutClassificationCreatesTheCustomerWithAnUnprefixedCuc()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Clasificacion S.A.S.",
+                    IdentificationType: "NIT",
+                    IdentificationNumber: "900.222.222-2",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: null,
+                    WithRetention: "No")
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Equal(0, result.ErrorCount);
+        var imported = Assert.Single(result.Imported);
+        Assert.Equal($"{city.DepartmentDivipolaCode}000001", imported.Cuc);
+        Assert.Equal(8, imported.Cuc.Length);
+
+        var page = await ListAsync(client, string.Empty);
+        var item = Assert.Single(page.Items);
+        Assert.Equal(imported.Cuc, item.Cuc);
+        Assert.Null(item.Classification);
+    }
+
+    /// <summary>Opcional no es "cualquier cosa": un nombre dado que no existe sigue fallando la fila.</summary>
+    [Fact]
+    public async Task ImportingARowWithAnUnknownClassificationStillFails()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: "Clasificacion Que No Existe")
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ImportedCount);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("customers.import.row.classification_not_found", error.Code);
+        Assert.Empty((await ListAsync(client, string.Empty)).Items);
+    }
+
+    /// <summary>
     /// El caso central de la Fase 5: un archivo con una mezcla de filas validas e invalidas no
     /// pierde las buenas por las malas. Cubre los seis motivos de error de fila que el slice
     /// promete: campo vacio, departamento inexistente, ciudad que no pertenece al departamento
@@ -423,6 +496,50 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(existing.Cuc, item.Cuc);
         Assert.Equal("Nombre Actualizado", item.Name);
         Assert.Equal("3009998877", item.Phone);
+    }
+
+    /// <summary>
+    /// La clasificacion es opcional al crear, pero en una actualizacion la celda vacia no es "quitarla": reimportar un archivo
+    /// sin esa columna llena no puede borrarle la clasificacion al cliente ni sacarle el prefijo al CUC. El caso de alta sin
+    /// clasificacion lo fija <see cref="ImportingARowWithoutClassificationCreatesTheCustomerWithAnUnprefixedCuc"/>.
+    /// </summary>
+    [Fact]
+    public async Task ImportRowWithAnExistingCucAndNoClassificationKeepsTheCustomersClassificationAndCuc()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: existing.IdentificationType,
+                    IdentificationNumber: existing.IdentificationNumber,
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Classification: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal(("updated", existing.Cuc), (result.Imported.Single().Action, result.Imported.Single().Cuc));
+
+        var item = Assert.Single((await ListAsync(client, string.Empty)).Items);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal(existing.Cuc, item.Cuc);
+        Assert.Equal(classification.Name, item.Classification?.Name);
     }
 
     /// <summary>

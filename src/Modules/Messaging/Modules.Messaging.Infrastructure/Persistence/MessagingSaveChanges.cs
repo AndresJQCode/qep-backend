@@ -88,6 +88,15 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateQuotationExists, "This connection already has its quotation template.", exception);
         }
+        // Cobros recurrentes §5: lo mismo para las plantillas de cobro.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateBillingIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateBillingExists, "This connection already has its billing templates.", exception);
+        }
         // Dos refrescos de la misma conexión a la vez: el segundo pierde y el cliente reintenta (412, como la versión vieja). Lo mismo con
         // el marcador de template_mirror_syncs: dos primeros llenados lo insertan los dos y el segundo choca con su PK.
         catch (DbUpdateException exception)

@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -70,9 +70,17 @@ public sealed class TenantModuleKeysTests
     [Fact]
     public void SuppliersIsLastWithoutDependenciesAndOutsideTheDefaults()
     {
-        Assert.Equal(TenantModuleKeys.Suppliers, TenantModuleKeys.All[^1]);
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Suppliers));
         Assert.DoesNotContain(TenantModuleKeys.Suppliers, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-10-29: cobros recurrentes; se prende por tenant y exige customers.
+    [Fact]
+    public void BillingIsLastDependsOnCustomersAndIsOutsideTheDefaults()
+    {
+        Assert.Equal(TenantModuleKeys.Billing, TenantModuleKeys.All[^1]);
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Billing));
+        Assert.DoesNotContain(TenantModuleKeys.Billing, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

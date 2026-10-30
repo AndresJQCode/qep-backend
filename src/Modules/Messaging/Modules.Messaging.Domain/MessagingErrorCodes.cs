@@ -128,6 +128,9 @@ public static class MessagingErrorCodes
     /// <summary>§4.5: la conexión ya tiene su plantilla de cotización en <c>PENDING</c>, <c>APPROVED</c> o <c>IN_APPEAL</c>.</summary>
     public const string TemplateQuotationExists = "messaging.template.quotation_exists";
 
+    /// <summary>Cobros recurrentes §5: dos aprovisionamientos de la plantilla de cobro a la vez; el que pierde recibe este código.</summary>
+    public const string TemplateBillingExists = "messaging.template.billing_exists";
+
     /// <summary>§4.5: existe una <c>qep_cotizacion</c> creada fuera de QEP cuyo cuerpo no es el de la definición.</summary>
     public const string TemplateQuotationConflict = "messaging.template.quotation_conflict";
 

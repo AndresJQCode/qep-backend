@@ -3810,6 +3810,83 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
 
+### Facturación: cobros recurrentes
+
+Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana ante cualquier discrepancia). Módulo
+`Modules.Billing.{Domain,Application,Infrastructure,Api}`, esquema `billing`, clave de módulo `billing`
+(`Dependencies = [Customers]`, fuera de `DefaultForNewTenants`: nace apagado).
+
+**Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
+lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
+declaran `RequiredModules: [billing]`: con el módulo apagado el editor de roles no los ofrece y la API responde un `403` pelado, sin
+el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca se muestran opciones que el tenant no tiene).
+
+**Rutas** (`/api/v1/tenants/{tenantId}/billing`, con `X-Tenant-Id`):
+
+| Método | Ruta | Permiso | Qué hace |
+| --- | --- | --- | --- |
+| `GET` / `PUT` | `/customers/{customerId}/profile` | read / manage | Perfil de cobro: canal (`WhatsApp` o `Email`) y encargado. Sin `If-Match`: la última escritura gana |
+| `GET` | `/assignees` | manage | Miembros activos que pueden ser encargados |
+| `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene) |
+| `GET` | `/services/preview-charges` | manage | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir |
+| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros / edita nombre, precio y moneda (`If-Match`) |
+| `POST` | `/services/{serviceId}/pause`, `/resume`, `/cancel` | manage | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending` |
+| `GET` | `/charges`, `/charges/{chargeId}` | read | Cobros con cliente, encargado y último aviso |
+| `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage | Marca pagado / corrige el pago |
+| `GET` / `PUT` | `/settings` | manage | Conexión de WhatsApp con la que se avisa (`whatsAppConnectionId`) |
+| `GET` / `POST` | `/import/template`, `/import/preview`, `/import` | manage | Importación desde Excel |
+
+**Generación por período.** Cada período genera su propio cobro aunque el anterior siga sin pagar; marcar pagado no genera nada. Un
+cobro nace cuando `due_date <= hoy del tenant + 5`. Las fechas son `firstDueDate + k × cycleMonths` con el día del ancla (31 ene →
+28 feb → 31 mar). Crear un servicio con fecha pasada genera todos los períodos hasta hoy + 5; el worker genera los que falten. La
+unicidad `(service_id, due_date)` hace la generación idempotente entre réplicas. Pausar no silencia los cobros ya existentes;
+reanudar no cobra los períodos en pausa.
+
+**Calendario y agrupación.** Pasos de aviso de un cobro: `due − 5`, `due`, `due + 3` y cada 7 días después. Si un día se perdió, sólo
+se cubre el paso más reciente. **Un mensaje por cliente y día** (índice único `IX_customer_messages_tenant_customer_day`): `Overdue`
+si algún cobro con paso hoy está vencido (lista todos los vencidos), si no `Reminder`. Un total por moneda, nunca convertido. Un
+cliente **sin perfil de cobro** no recibe aviso; sus cobros van al email diario de cada miembro con `billing.service.manage`.
+
+**Worker** (`BillingReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
+`Billing:SendHourLocal` en la zona horaria del tenant genera cobros, manda el mensaje del día a cada cliente y el email diario al
+equipo, y cierra el día en `billing.tenant_runs`. La entrega es **al menos una vez**: si el proceso cae después de que el proveedor
+aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_email`, `channel_not_configured`,
+`template_not_approved`, `connection_unavailable`, `send_failed`) queda en el mensaje y nunca cambia de canal.
+
+**Configuración** (`src/Api/appsettings.json`, validada al arrancar):
+
+```json
+"Billing": { "SweepMinutes": 15, "SendHourLocal": 8 }
+```
+
+`SweepMinutes > 0` y `SendHourLocal` entre 0 y 23; si no, la API no arranca. No hay secretos propios: el correo sale por el canal de
+Notifications y WhatsApp por la conexión `whatsapp-cloud` del tenant.
+
+**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con parámetros posicionales: `qep_cobro_recordatorio` y
+`qep_cobro_vencido` (texto literal en la spec, §5). QEP las crea en la cuenta de Meta del tenant con
+`POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/billing` (exige el módulo `billing`;
+reintenta si quedó a medias). **Meta debe aprobarlas** antes de enviar: sin aprobación el aviso falla con
+`template_not_approved`. Una vez aprobadas, el tenant elige la conexión en `PUT /billing/settings`.
+
+**Importación desde Excel.** `.xlsx`/`.xls`, 10 MB, 500 filas. `preview` no escribe; `import` revalida y guarda las filas válidas (una
+fila con error no frena a las demás). Columnas: `Cliente`, `Tipo de documento`, `Número de documento`, `Teléfono`, `Correo`, `País`,
+`Servicio`, `Precio`, `Moneda`, `Ciclo`, `Próximo vencimiento`, `Canal de aviso`, `Encargado` (correo de un miembro con
+`billing.service.manage`). El cliente se empareja por documento, o si no por teléfono, o si no por correo (el primero que aplica
+decide); sin coincidencia se crea **incompleto**, sin código de cliente. Si ya tiene perfil, canal y encargado de la fila se ignoran. La
+importación de **Clientes** dejó de exigir la clasificación: vacía, el cliente queda sin clasificación (y sin prefijo de CUC).
+Los errores por fila se registran en el log con su código y el detalle.
+
+**Habilitarlo.** Desde la consola del operador (ver «Módulos por tenant»), prender el módulo `billing` al tenant. Se prende sólo para
+quien lo contrata; mientras esté apagado el worker lo ignora.
+
+**Migraciones, en este orden de despliegue** (cada módulo aplica las suyas al arrancar, `Program.cs`): `Tenancy`
+`AddBillingModuleKey` (el CHECK de `tenant_modules` admite `billing`), `Messaging` `AddBillingTemplateKinds` (tipos de plantilla de
+cobro) y `Billing` `InitialBilling` (esquema `billing`). Billing se inicializa al final, después de Audit.
+
+**Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
+(3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la
+conexión en Configuración.
+
 ## Verificación
 
 ```powershell

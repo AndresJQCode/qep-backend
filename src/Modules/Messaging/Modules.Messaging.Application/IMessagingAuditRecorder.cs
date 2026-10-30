@@ -109,6 +109,7 @@ public static class MessagingAuditActions
     public const string TemplateResourceType = "message_template";
     public const string TemplateCreated = "messaging.template.created";
     public const string TemplateQuotationProvisioned = "messaging.template.quotation_provisioned";
+    public const string TemplateBillingProvisioned = "messaging.template.billing_provisioned";
     public const string TemplateDeleted = "messaging.template.deleted";
 
     public const string HistorySyncResourceType = "history_sync";
