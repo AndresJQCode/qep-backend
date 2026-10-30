@@ -152,6 +152,24 @@ public sealed class CustomerProvisioningTests
     }
 
     [Fact]
+    public async Task RegisterWithAnEmailStoresIt()
+    {
+        // Spec cobros-recurrentes §5: la importación de Billing da el alta con el correo de la fila.
+        var bed = NewBed();
+
+        await bed.Provisioning.CreateFromRegisterAsync(
+            Tenant,
+            Guid.NewGuid(),
+            new RegisterCustomerData("Laura Gómez", "CC", "1020304050", null, " Laura@Verde.co "),
+            "billing",
+            TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        Assert.Equal("laura@verde.co", customer.Email);
+        Assert.False(customer.IsComplete);
+    }
+
+    [Fact]
     public async Task CreateFromRegisterLetsTheIdentificationRaceThrough()
     {
         var bed = NewBed(saveFailure: new CustomersDomainException("customers.customer.identification_taken", "taken"));
