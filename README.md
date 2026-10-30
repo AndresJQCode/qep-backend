@@ -2922,7 +2922,8 @@ desde la app.
   conversación nació de la importación y el contacto todavía no ha escrito en vivo (`imported` y sin
   `last_inbound_at`). Con eso el compositor muestra «Esta conversación viene del historial; para responder usa
   una plantilla.» sin otra llamada. Viaja en todo lo que devuelve un `ConversationSummary`: el listado, el
-  detalle, la búsqueda y las respuestas de las acciones sobre la conversación. No sale de `history_managed`:
+  detalle y las respuestas de las acciones sobre la conversación. Los resultados de la búsqueda de mensajes no
+  lo llevan, porque son `MessageHitDto`. No sale de `history_managed`:
   esa bandera se apaga cuando el asesor toma, transfiere o marca leída la conversación, y nada de eso abre la
   ventana de 24 h, así que la respuesta sigue exigiendo plantilla.
 - **Regla de Meta: 24 h y una sola vez por tipo.** Meta acepta el pedido de cada tipo una sola vez y sólo
