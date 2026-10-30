@@ -147,6 +147,15 @@ public sealed class BillingService
     public void MarkGenerated(DateOnly dueDate) => LastGeneratedDueDate = dueDate;
 
     /// <summary>
+    /// Lo llama la corrida diaria cuando generó cobros sobre un servicio ya guardado. Sin esto, una cancelación que cargó el servicio
+    /// y sus <c>Pending</c> antes de que la corrida confirmara seguiría casando su <c>WHERE version</c> y dejaría el servicio
+    /// <c>Cancelled</c> con un <c>Pending</c> que nunca vio; con la versión arriba pierde con 412 y se reintenta sobre lo nuevo.
+    /// No vive en <see cref="MarkGenerated"/>: crear e importar también generan, sobre un servicio que nace en la misma transacción
+    /// y cuya versión tiene que seguir siendo 1. <see cref="UpdatedAt"/> no se toca: nadie editó el servicio.
+    /// </summary>
+    public void BumpVersionAfterGeneration() => Version++;
+
+    /// <summary>
     /// El precio con la escala de <c>numeric(18,2)</c> (siempre dos decimales): lo que se responde al crear es lo que la base
     /// devuelve después, y los cobros que copian el precio heredan la misma escala. El validador del borde ya rechaza más de dos
     /// decimales; acá nunca se pierde un dígito significativo.

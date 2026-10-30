@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -613,6 +614,37 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
         Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedDueDate);
     }
 
+    /// <summary>
+    /// Final review: la cancelación cargó el servicio, la corrida generó y confirmó el cobro de hoy, y recién ahí la cancelación
+    /// guarda. Si ganara, el servicio quedaría <c>Cancelled</c> con un <c>Pending</c> que nunca vio (F3 dice que eso no existe): tiene
+    /// que perder con 412 por el token de versión y dejar todo como lo dejó la corrida.
+    /// </summary>
+    [Fact]
+    public async Task ACancelThatLoadedBeforeTheRunGeneratedAnswers412AndLeavesNoPendingOnACancelledService()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var anchor = Today.AddMonths(-1);
+        var service = await SeedServiceAsync(customer, anchor, lastGenerated: anchor, pendingDueDates: [anchor]);
+        var loadedVersion = (await ServiceAsync(service)).Version;
+        chargeClash.ArmAfterListPendingByService(ProcessAsync);
+
+        using var manager = CreateManager(factory);
+        using var cancel = new HttpRequestMessage(HttpMethod.Post, $"{BillingUrl()}/services/{service.Value}/cancel");
+        cancel.Headers.TryAddWithoutValidation("If-Match", $"\"{loadedVersion}\"");
+        var response = await manager.SendAsync(cancel, Ct);
+
+        var charges = await ChargesOfAsync(service);
+        Assert.Equal([anchor, Today], charges.Select(c => c.DueDate));
+        var stored = await ServiceAsync(service);
+        Assert.False(
+            stored.Status == BillingServiceStatus.Cancelled && charges.Any(c => c.Status == ChargeStatus.Pending),
+            $"The service ended {stored.Status} with Pending charges on {string.Join(", ", charges.Where(c => c.Status == ChargeStatus.Pending).Select(c => c.DueDate))}.");
+        Assert.Equal(HttpStatusCode.PreconditionFailed, response.StatusCode);
+        Assert.Equal(BillingServiceStatus.Active, stored.Status);
+    }
+
     /// <summary>T10-I2: perder el único del día del cliente es «otra réplica ganó», no una excepción, y no deja filas a medias.</summary>
     [Fact]
     public async Task TheMessageClaimYieldsWhenAnotherReplicaHasTheCustomersDay()
@@ -716,6 +748,49 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
 
         Assert.Empty(customerEmail.Sent);
         Assert.Empty(staffEmail.Sent);
+        Assert.Empty(await RunsAsync());
+        Assert.Single(await ChargesOfAsync(service));
+    }
+
+    /// <summary>
+    /// Decisión del owner (spec §3.3, «cuyo cliente tiene perfil»): sin perfil no hay canal ni encargado, así que el cliente no recibe
+    /// nada; el cobro no se pierde, va al digest de cada miembro que puede gestionar cobros.
+    /// </summary>
+    [Fact]
+    public async Task ACustomerWithoutProfileGetsNoNoticeAndGoesToEveryManager()
+    {
+        await SeedMemberAsync(factory, "admin@example.com", "Admin", "admin");
+        await SeedMemberAsync(factory, "billing@example.com", "Billing", "billing");
+        await SeedMemberAsync(factory, "advisor@example.com", "Advisor", "advisor");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedChargeAsync(customer, Today, name: "Acme hosting");
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(whatsApp.Sent);
+        Assert.Empty(await MessagesAsync());
+        Assert.Empty(await StepsAsync());
+        Assert.Equal(["admin@example.com", "billing@example.com"], staffEmail.Sent.Select(digest => digest.ToAddress).Order());
+        Assert.All(staffEmail.Sent, digest => Assert.Equal(["Acme hosting"], digest.DueSoon.Select(row => row.ServiceName)));
+    }
+
+    /// <summary>Decisión del owner: el módulo apagado con servicios ya creados no genera, no avisa ni reclama el día.</summary>
+    [Fact]
+    public async Task ATenantWithBillingOffIsSkipped()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today);
+        var service = await SeedServiceAsync(customer, Today.AddMonths(-1), lastGenerated: Today.AddMonths(-1), paidDueDates: [Today.AddMonths(-1)]);
+        await ExecuteSqlAsync("DELETE FROM tenancy.tenant_modules WHERE tenant_id = '" + BillingApiHarness.TenantId + "' AND module_key = 'billing';");
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(staffEmail.Sent);
+        Assert.Empty(await MessagesAsync());
         Assert.Empty(await RunsAsync());
         Assert.Single(await ChargesOfAsync(service));
     }
@@ -915,8 +990,12 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
         public Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken) =>
             inner.FindAsync(tenantId, chargeId, cancellationToken);
 
-        public Task<IReadOnlyList<Charge>> ListPendingByServiceAsync(BillingServiceId serviceId, CancellationToken cancellationToken) =>
-            inner.ListPendingByServiceAsync(serviceId, cancellationToken);
+        public async Task<IReadOnlyList<Charge>> ListPendingByServiceAsync(BillingServiceId serviceId, CancellationToken cancellationToken)
+        {
+            var pending = await inner.ListPendingByServiceAsync(serviceId, cancellationToken);
+            await clash.AfterListPendingByServiceAsync();
+            return pending;
+        }
 
         public Task<IReadOnlyList<Charge>> ListPendingByServicesAsync(
             IReadOnlyCollection<BillingServiceId> serviceIds, CancellationToken cancellationToken) =>
@@ -944,10 +1023,20 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
     {
         private string? connectionString;
         private int addRangeCalls;
+        private Func<Task>? afterListPendingByService;
 
         public int AddRangeCalls => addRangeCalls;
 
         public void Arm(string connection) => connectionString = connection;
+
+        /// <summary>
+        /// Corre <paramref name="action"/> una vez, cuando la cancelación ya cargó el servicio y leyó sus <c>Pending</c>: el hueco
+        /// entre esa lectura y su SaveChanges en que la corrida puede confirmar un cobro que la cancelación no vio.
+        /// </summary>
+        public void ArmAfterListPendingByService(Func<Task> action) => afterListPendingByService = action;
+
+        public Task AfterListPendingByServiceAsync() =>
+            Interlocked.Exchange(ref afterListPendingByService, null) is { } action ? action() : Task.CompletedTask;
 
         public void BeforeAdd(List<Charge> charges)
         {

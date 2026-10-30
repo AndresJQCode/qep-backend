@@ -149,6 +149,8 @@ internal sealed partial class BillingReminderProcessor(
                 return;
             }
 
+            // Una cancelación o edición que cargó la versión anterior pierde con 412 en vez de confirmar sobre cobros que no vio.
+            service.BumpVersionAfterGeneration();
             charges.AddRange(generated);
             try
             {
