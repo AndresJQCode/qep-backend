@@ -396,6 +396,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("history_managed");
 
+                    b.Property<bool>("Imported")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("imported");
+
                     b.Property<DateTimeOffset>("LastActivityAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_activity_at");
@@ -446,6 +452,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ResolutionReasonId")
                         .HasColumnType("uuid")
                         .HasColumnName("resolution_reason_id");
+
+                    b.Property<bool>("StartedByEcho")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("started_by_echo");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -520,6 +532,9 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "CustomerId", "LastActivityAt" }, "IX_conversations_tenant_customer_activity")
                         .IsDescending(false, false, true)
                         .HasFilter("customer_id IS NOT NULL");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_imported")
+                        .HasFilter("imported");
 
                     b.HasIndex(new[] { "TenantId" }, "IX_conversations_tenant_open")
                         .HasFilter("status = 'Open'");
@@ -1186,6 +1201,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<string>("FailureTitle")
                         .HasColumnType("text")
                         .HasColumnName("failure_title");
+
+                    b.Property<bool>("Imported")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("imported");
 
                     b.Property<short>("Kind")
                         .HasColumnType("smallint")

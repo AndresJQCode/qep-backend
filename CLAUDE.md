@@ -286,6 +286,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
   sin cambio le da un 412 al asesor.
+- **Un eco (`smb_message_echoes`) a un número desconocido crea la conversación `Resolved`, no `Open`** (P-5, owner
+  2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
+  abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
+  reabre el entrante en vivo con su `Reopened`. No la «arregles» a `Open` para que se vea el eco: el hilo está en
+  «Resueltas». Lleva `started_by_echo`, que saca su creación de las sesiones del reporte (`MessagingReportSource`): sin eso, el
+  eco más el `Reopened` contarían dos sesiones por una conversación. No lo cambies por «tiene entrante»: una conversación que
+  abre un asesor con plantilla no tiene entrante y sí cuenta desde su creación (S3).
+- **Lo importado se marca con `imported` (conversación y mensaje), y esa marca no se apaga nunca** (owner 2026-10-30). No es
+  `history_managed`, que se apaga con cualquier acción del asesor: el reporte no puede depender de una bandera que un «marcar
+  leída» borra. `MessagingReportSource` la lee por nombre en SQL crudo: una conversación importada no arranca sesión al crearse
+  (la arranca su primer entrante en vivo, salvo que ya la haya arrancado un `Reopened`), y un mensaje importado nunca es entrante
+  de arranque ni respuesta, porque su `created_at` es la hora de la importación y una parte tardía cae *después* del entrante en
+  vivo. Para «primer entrante» sí cuenta, con `occurred_at`. Un camino nuevo que escriba historial en `messaging.messages` tiene
+  que poner `imported = true`, o infla el reporte del día en que llega. Lo amarra `CoexistenceReportTests`. El `fromHistory` del
+  resumen sale de `imported` y `last_inbound_at`, no de `history_managed`: tomarla, transferirla o marcarla leída apaga esa bandera
+  sin abrir la ventana, y el aviso del compositor tiene que seguir mientras responder exija plantilla.
 - **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
   de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
   y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de

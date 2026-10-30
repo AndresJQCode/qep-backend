@@ -54,7 +54,14 @@ public sealed record ConversationSummary(
     ConversationAutomationDto? Automation = null,
     /// <summary>Spec 2026-10-26 §3.5 (BFF): <c>null</c> si el contacto no está bloqueado. Viaja como <c>null</c> explícito: el frontend distingue
     /// «backend nuevo, sin bloqueo» de «backend viejo», que no manda la clave.</summary>
-    ConversationBlockDto? Blocked = null)
+    ConversationBlockDto? Blocked = null,
+    /// <summary>Decisión del owner del 2026-10-30 (BFF): <c>true</c> si la conversación nació de la importación del historial y el
+    /// contacto todavía no ha escrito en vivo. Viaja calculado para que el compositor elija su aviso («Esta conversación viene del
+    /// historial; para responder usa una plantilla.») sin saber de <c>imported</c>; con <c>customerWindowExpiresAt</c> en <c>null</c> no
+    /// alcanza, porque una conversación que abrió QEP tampoco tiene ventana. No es <c>history_managed</c>: esa bandera se apaga cuando
+    /// el asesor toma, transfiere o marca leída la conversación, o cuando llega un eco, y nada de eso abre la ventana: el aviso se
+    /// iría mientras la respuesta sigue exigiendo plantilla.</summary>
+    bool FromHistory = false)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT

@@ -43,6 +43,8 @@ internal static class CoexistenceIngestion
             dbContext, tenantId, connectionId, waId, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
 
         var changed = created;
+        // La marca durable de lo importado (decisión del owner del 2026-10-30): un eco es tráfico en vivo y no la lleva.
+        var imported = source == CoexistenceSource.History;
         CoexistenceMessage? newest = null;
         var newestId = Guid.Empty;
         foreach (var message in ordered)
@@ -54,8 +56,8 @@ internal static class CoexistenceIngestion
             var status = MessageColumnCodes.ToCode(message.Direction == MessageDirection.Outbound ? MessageStatus.Sent : MessageStatus.Delivered);
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
-                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, details, wamid, reply_to_wamid, reply_to_message_id, created_at)
-                VALUES ({messageId}, {conversationId}, {tenantId}, {connectionId}, {message.OccurredAt}, {direction}, {kind}, {status}, {message.Text}, {message.Caption}, {message.DetailsJson}::jsonb, {message.Wamid}, NULL, NULL, {now})
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, details, wamid, reply_to_wamid, reply_to_message_id, created_at, imported)
+                VALUES ({messageId}, {conversationId}, {tenantId}, {connectionId}, {message.OccurredAt}, {direction}, {kind}, {status}, {message.Text}, {message.Caption}, {message.DetailsJson}::jsonb, {message.Wamid}, NULL, NULL, {now}, {imported})
                 ON CONFLICT (connection_id, wamid) WHERE wamid IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -131,8 +133,11 @@ internal static class CoexistenceIngestion
             """, cancellationToken);
 
     /// <summary>Como <c>ConversationOpener.OpenByPhoneAsync</c>: la conversación con BSUID de ese número, si no la legada; si no hay,
-    /// una legada nueva. La del historial nace cerrada y con <c>history_managed</c>; la de un eco nace abierta y sin él (P-5): un eco
-    /// es tráfico en vivo, no la importación. <c>Created</c> sólo si esta llamada la insertó.</summary>
+    /// una legada nueva. Las dos nacen cerradas. La del historial lleva <c>history_managed</c>, y la regla de abiertas decide después si
+    /// queda abierta. La de un eco no lo lleva, porque un eco es tráfico en vivo y no la importación. Nace cerrada porque el negocio
+    /// escribiendo desde la app no le deja nada pendiente a un asesor (P-5, decisión del owner del 2026-10-30): abierta y sin asignar
+    /// caería en la bandeja y en el triage del embudo. La reabre el contacto cuando escribe en vivo, por el camino de siempre.
+    /// <c>Created</c> sólo si esta llamada la insertó.</summary>
     private static async Task<(Guid Id, bool Created)> FindOrCreateAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, string waId, Guid? customerId, CoexistenceSource source,
         DateTimeOffset earliest, DateTimeOffset now, CancellationToken cancellationToken)
@@ -144,14 +149,15 @@ internal static class CoexistenceIngestion
 
         var id = Guid.CreateVersion7();
         var fromHistory = source == CoexistenceSource.History;
-        var status = fromHistory ? nameof(ConversationStatus.Resolved) : nameof(ConversationStatus.Open);
+        var status = nameof(ConversationStatus.Resolved);
+        var fromEcho = source == CoexistenceSource.Echo;
         var channel = nameof(ConversationChannel.WhatsApp);
         // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
         var inserted = await dbContext.Database.SqlQuery<Guid>(
             $"""
             INSERT INTO messaging.conversations (id, tenant_id, connection_id, channel, user_id, wa_id, profile_name, customer_id, status, unread_count,
-                                                 last_activity_at, history_managed, created_at, updated_at, version)
-            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {now}, {now}, 1)
+                                                 last_activity_at, history_managed, imported, started_by_echo, created_at, updated_at, version)
+            VALUES ({id}, {tenantId}, {connectionId}, {channel}, NULL, {waId}, NULL, {customerId}, {status}, 0, {earliest}, {fromHistory}, {fromHistory}, {fromEcho}, {now}, {now}, 1)
             ON CONFLICT (connection_id, wa_id) WHERE user_id IS NULL DO NOTHING
             RETURNING id AS "Value"
             """).ToListAsync(cancellationToken);

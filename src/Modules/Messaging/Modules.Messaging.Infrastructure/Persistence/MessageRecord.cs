@@ -36,6 +36,10 @@ internal sealed class MessageRecord
     public int? FailureCode { get; set; }
     public string? FailureTitle { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>Decisión del owner del 2026-10-30: lo escribió la importación del historial por coexistencia. Nunca se apaga.</summary>
+    public bool Imported { get; set; }
+
     public MessageMediaRecord? Media { get; set; }
 }
 
