@@ -231,7 +231,7 @@ internal static class InboundIngestion
     /// <summary>§8.6: un id que no cabe en la columna haría fallar el INSERT y con él el mensaje entero. El mensaje entra; el medio
     /// queda rendido de una vez, con el motivo, y el worker nunca lo reclama. Spec 2026-10-14 §6.2: un adjunto de Instagram no tiene
     /// id; viene con <c>source_url</c>, y con eso alcanza para copiarlo.</summary>
-    private static Task<int> InsertMediaAsync(MessagingDbContext dbContext, Guid messageId, InboundMedia media, DateTimeOffset now, CancellationToken cancellationToken)
+    internal static Task<int> InsertMediaAsync(MessagingDbContext dbContext, Guid messageId, InboundMedia media, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var valid = media.SourceUrl is not null || Media.MediaTransfer.IsValidMetaMediaId(media.MetaMediaId);
         var metaMediaId = valid ? media.MetaMediaId : string.Empty;
