@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using ClosedXML.Excel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,8 +24,26 @@ public sealed class BillingImportApiTests
     private static readonly Guid Tenant = Guid.Parse(BillingApiHarness.TenantId);
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    // America/Bogota (UTC-5, sin horario de verano): la «hoy» del tenant de pruebas.
-    private static DateOnly TenantToday => DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-5));
+    // El reloj fijado: 08:00 en America/Bogota (UTC-5, sin horario de verano), así que la «hoy» del tenant es 2026-03-10 y los
+    // cobros que nacen de una fecha se cuentan exactos, sin depender del día en que corre la prueba.
+    private static readonly DateTimeOffset PinnedNow = new(2026, 3, 10, 13, 0, 0, TimeSpan.Zero);
+    private static readonly DateOnly TenantToday = new(2026, 3, 10);
+
+    private sealed class PinnedClock : IClock
+    {
+        public DateTimeOffset UtcNow => PinnedNow;
+    }
+
+    private static void PinClock(IServiceCollection services) => services.AddSingleton<IClock>(new PinnedClock());
+
+    /// <summary>El <see cref="BillingApiHarness.OpenAsync"/> de siempre, con el reloj fijado.</summary>
+    private static async Task<(Testcontainers.PostgreSql.PostgreSqlContainer Database, QepApiFactory Factory)> OpenAsync()
+    {
+        var database = await StartDatabaseAsync();
+        var factory = new QepApiFactory(database.GetConnectionString(), PinClock);
+        await SeedTenantAsync(factory);
+        return (database, factory);
+    }
 
     private static readonly string[] Headers =
     [
@@ -193,7 +212,8 @@ public sealed class BillingImportApiTests
         Assert.Equal(2, valid.RowNumber);
         Assert.Equal("create", valid.Customer.Action);
         Assert.Equal("create", valid.ProfileAction);
-        Assert.True(valid.ChargesToGenerate >= 3);
+        // 2026-01-10 mensual con hoy 2026-03-10: enero, febrero y marzo.
+        Assert.Equal(3, valid.ChargesToGenerate);
         var error = Assert.Single(preview.Errors);
         Assert.Equal((3, "billing.import.row.cycle_invalid"), (error.RowNumber, error.Code));
         Assert.Equal(1, preview.Summary.CustomersToCreate);
@@ -268,8 +288,8 @@ public sealed class BillingImportApiTests
             await CreateManager(factory).PostAsync(ImportUrl, Upload(file), Ct));
 
         var imported = Assert.Single(result.Imported);
-        Assert.True(imported.ChargesGenerated >= 3);
-        Assert.True(imported.OverdueCharges >= 2);
+        // 2026-01-10 mensual con hoy 2026-03-10: tres cobros, vencidos los de enero y febrero.
+        Assert.Equal((3, 2), (imported.ChargesGenerated, imported.OverdueCharges));
         Assert.Equal(imported.ChargesGenerated, await CountAsync(
             factory, $"SELECT count(*) FROM billing.charges WHERE service_id = '{imported.ServiceId}'"));
         Assert.Equal(imported.OverdueCharges, await CountAsync(
@@ -318,7 +338,12 @@ public sealed class BillingImportApiTests
         var logs = new CapturingLoggerProvider();
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(
-            database.GetConnectionString(), services => services.AddSingleton<ILoggerProvider>(logs));
+            database.GetConnectionString(),
+            services =>
+            {
+                PinClock(services);
+                services.AddSingleton<ILoggerProvider>(logs);
+            });
         await SeedTenantAsync(factory);
         await SeedAnaAsync(factory);
         await FailInsertsNamedFallaAsync(factory, "customers.customers");
