@@ -116,7 +116,8 @@ encargado y día es la deduplicación del email interno.
 ### `billing.tenant_runs`
 
 PK `(tenant_id, run_date)`; `claimed_until`, `finished_at`. Un tick que encuentra la fila con `finished_at` no hace nada; una
-`Sending` con lease vencido se retoma.
+sin `finished_at` con lease vencido se retoma. `finished_at` es la hora en que la corrida terminó, y sólo se escribe si el día
+no tiene ningún `customer_messages` ni `daily_digests` en `Sending` (§3.3, paso 6).
 
 ### `billing.settings`
 
@@ -227,15 +228,18 @@ Auditoría: `billing.import.completed` con `changedFields` = `["rows","imported"
 **`BillingReminderWorker`** (`Modules.Billing.Infrastructure`): `BackgroundService` + `PeriodicTimer` cada
 `Billing:SweepMinutes` (default 15; precedente `QuotationExpirationWorker.cs`). Cada tick, en su propio scope:
 
-1. Recorre los tenants (`IActiveTenantsQuery`, `Modules.Tenancy.Application`) y se queda con los que tienen `billing` habilitado
-   (`ITenantModules`).
+1. Recorre los tenants con algún servicio de cobro (`billing.services`; `IActiveTenantsQuery` lista los de un usuario, no los de
+   la plataforma) y se queda con los que están `Active` (`ITenantDirectory.GetStatusAsync`: uno suspendido o en otro estado no
+   genera ni avisa) y tienen `billing` habilitado (`ITenantModules`).
 2. Por tenant: `calendar = ITenantClock.GetAsync(tenantId)`. Si la hora local es `< Billing:SendHourLocal` (default 8), nada. Si
    `billing.tenant_runs(tenant_id, calendar.Today)` existe con `finished_at`, nada. Si no, reclama la fila (insert, o lease
    vencido) y corre los pasos 3 a 5 para `today = calendar.Today`.
 3. **Generación.** Para cada servicio `Active` del tenant, la regla de ventana de §3.2 (`due <= today + 5`). Corre **antes** de
    avisar para que el cobro exista cuando toque su `before_5`.
 4. **Mensaje del día a cada cliente.** Candidatos: cobros `Pending` de servicios `Active` **o `Paused`** (owner: la pausa no
-   silencia) cuyo cliente tiene perfil. Por cliente:
+   silencia) cuyo cliente tiene perfil. **Cliente sin perfil** (owner, 2026-10-29): no tiene canal, así que no recibe ningún
+   aviso; sus cobros sí entran al email diario del paso 5 y, como no tienen encargado, van a **cada** miembro con
+   `billing.service.manage`. Por cliente:
    - Pasos del calendario de cada cobro: `before_5 = due − 5`, `due = due`, `after_3 = due + 3`, `after_{3+7k} = due + 3 + 7k`.
      **Paso que toca hoy** de un cobro: el **último** con fecha `<= today` que no tenga fila en `billing.reminder_steps` (catch-up:
      un día perdido cubre sólo el paso más reciente).
@@ -248,13 +252,23 @@ Auditoría: `billing.import.completed` con `changedFields` = `["rows","imported"
    - Inserta la fila `Sending` del mensaje (si choca con el único, otra réplica ganó: nada) y una fila en `reminder_steps` por
      cada paso que cubre, resuelve el canal (§3.4), envía, marca `Sent` o `Failed` con `failure_code`. Un fallo también cubre los
      pasos: no se reintenta mañana el mismo paso; el siguiente paso del calendario volverá a intentar, y el fallo queda visible.
+   **Entrega al menos una vez:** si el proveedor acepta el mensaje y el proceso cae (o falla la escritura) antes de marcar
+   `Sent`, la fila queda `Sending`; cuando vence su lease otra corrida la retoma y lo reenvía **una** vez, así que el cliente
+   puede recibir ese aviso dos veces. Se prefiere a perderlo: no hay forma de saber si el proveedor lo entregó.
 5. **Email diario al equipo.** Para cada encargado con cobros «de interés» —`Pending` con `due_date <= today + 5` (vencen
    pronto o vencidos) **o** cuyo último mensaje está `Failed`— arma un email con esas filas (y los totales por moneda) y lo
    manda; una fila en `billing.daily_digests` por `(member, today)` es la deduplicación. Si la membresía del encargado no está
-   `Active` o sus roles ya no conceden `billing.service.manage`, esos cobros van al email de **cada** miembro con ese permiso
+   `Active`, sus roles ya no conceden `billing.service.manage` o el cliente no tiene perfil (paso 4), esos cobros van al email
+   de **cada** miembro con ese permiso
    (`IBillingMemberDirectory.ListManagersAsync`). Sin cobros de interés, no se manda nada. Formato de fechas y montos con
-   `EmailRegionalFormats.For(calendar.TimeZone, regionalSettings)` (precedente `SupplierExportDeliveryWorker.cs:38`).
-6. Marca `finished_at`. Un error en un servicio, un cliente o un email se registra y **no** frena a los demás (precedente
+   `EmailRegionalFormats.For(calendar.TimeZone, regionalSettings)` (precedente `SupplierExportDeliveryWorker.cs:38`). Cada
+   monto, en los dos correos al cliente y en éste, se escribe como `WhatsAppTemplateValues.Total`: símbolo y decimales del
+   catálogo `Currencies` de Tenancy y separadores del tenant («US$ 20,00»).
+6. Cierra los `Sending` que nadie retomó: un mensaje o digest del tenant con el lease vencido (de hoy o de un día anterior)
+   que los pasos 4 y 5 no volvieron a reclamar pasa a `Failed` con `send_failed` (o con el código que dejó su retoma). Después
+   marca `finished_at` con la hora de cierre, **sólo si** al día no le queda ninguna fila `Sending`: una que sigue viva (otra
+   réplica a mitad de envío, o un `MarkSent` que falló) deja el día abierto, y el tick siguiente la retoma cuando vence su
+   lease. Un error en un servicio, un cliente o un email se registra y **no** frena a los demás (precedente
    `OutboxDeliveryWorker.DrainAsync`, un `try` por elemento).
 
 **Puertos** (en `Modules.Billing.Application`, adaptadores en `Bootstrapper`):
