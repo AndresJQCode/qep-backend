@@ -282,6 +282,9 @@ internal static class MessagingApiHarness
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient("integrations.instagram-graph")
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                // Spec 2026-10-29: el worker de smb_app_data tampoco corre solo; su intervalo no es configuración, así que se reemplaza acá.
+                services.RemoveAll<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule>();
+                services.AddSingleton(new Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule(TimeSpan.FromHours(1)));
             });
         }
     }
@@ -656,6 +659,14 @@ internal static class MessagingApiHarness
     {
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Coexistence.CoexistenceEventsWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Spec 2026-10-29: una pasada del worker que le pide a Meta los contactos y el historial (<c>smb_app_data</c>).</summary>
+    public static async Task DrainHistorySyncRequestsAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestWorker>().Single();
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 

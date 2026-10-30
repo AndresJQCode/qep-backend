@@ -121,6 +121,10 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
         services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
         services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
+        // Spec 2026-10-29: el worker que le pide a Meta los contactos y el historial de cada importación Pending.
+        services.TryAddSingleton(Coexistence.HistorySyncRequestSchedule.Default);
+        services.AddSingleton<Coexistence.HistorySyncRequestProcessor>();
+        services.AddHostedService<Coexistence.HistorySyncRequestWorker>();
 
         // Spec 2026-10-09 §9. Meta:App se valida en Integrations (P1); acá sólo se bindea lo que se usa.
         services.AddOptions<MessagingMetaOptions>().Bind(configuration.GetSection(MessagingMetaOptions.SectionName));
