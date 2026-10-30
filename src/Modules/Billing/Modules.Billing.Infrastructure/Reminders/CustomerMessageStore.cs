@@ -90,6 +90,19 @@ internal sealed class CustomerMessageStore(BillingDbContext dbContext)
             """,
             cancellationToken);
 
+    /// <summary>
+    /// Cierra como <c>Failed</c> los <c>Sending</c> del tenant con el lease vencido antes de <paramref name="now"/>, de hoy o de un
+    /// día anterior. La corrida lo llama al final: lo que el paso 4 pudo retomar ya tiene un lease nuevo, así que lo que queda
+    /// vencido no tiene quién lo retome. Conserva el código de una retoma previa; si no hay, <c>send_failed</c>.
+    /// </summary>
+    public Task FailStaleAsync(Guid tenantId, DateOnly today, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE billing.customer_messages SET status = 'Failed', failure_code = COALESCE(failure_code, 'send_failed')
+            WHERE tenant_id = {tenantId} AND run_date <= {today} AND status = 'Sending' AND claimed_until < {now}
+            """,
+            cancellationToken);
+
     public Task MarkSentAsync(Guid messageId, DateTimeOffset now, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""

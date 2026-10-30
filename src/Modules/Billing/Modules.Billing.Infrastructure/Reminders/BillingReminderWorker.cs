@@ -49,8 +49,8 @@ internal sealed partial class BillingReminderWorker(
 
     /// <summary>
     /// Los tenants con algún servicio de cobro: un tenant sin servicios no tiene nada que generar, avisar ni reportar. No se usa
-    /// <c>IActiveTenantsQuery</c>, que lista los tenants de un usuario, no los de la plataforma. Que el módulo esté prendido lo
-    /// revisa el procesador.
+    /// <c>IActiveTenantsQuery</c>, que lista los tenants de un usuario, no los de la plataforma. Que el tenant esté <c>Active</c> y el
+    /// módulo prendido lo revisa el procesador.
     /// </summary>
     private async Task<IReadOnlyList<Guid>> ListTenantsAsync(CancellationToken cancellationToken)
     {

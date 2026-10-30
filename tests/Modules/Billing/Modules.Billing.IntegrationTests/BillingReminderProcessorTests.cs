@@ -5,7 +5,11 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Billing.Application;
 using Modules.Billing.Domain;
 using Modules.Billing.Infrastructure.Persistence;
+using Modules.Billing.Infrastructure.Reminders;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+using Modules.Tenancy.Infrastructure.Persistence;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using static Modules.Billing.IntegrationTests.BillingApiHarness;
 
@@ -28,6 +32,7 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
     private readonly RecordingCustomerEmail customerEmail = new();
     private readonly RecordingStaffEmail staffEmail = new();
     private readonly RecordingWhatsApp whatsApp = new();
+    private readonly ChargeClash chargeClash = new();
     private PostgreSqlContainer database = null!;
     private QepApiFactory factory = null!;
 
@@ -46,6 +51,13 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
             services.AddSingleton<IBillingStaffEmail>(staffEmail);
             services.RemoveAll<IBillingWhatsAppOutbound>();
             services.AddSingleton<IBillingWhatsAppOutbound>(whatsApp);
+
+            // Transparente salvo que una prueba arme `chargeClash`: ahí mete la escritura de «otra réplica» entre la lectura del
+            // servicio y el SaveChanges de la generación, el único hueco en que IX_charges_service_due puede chocar.
+            var charges = services.Single(descriptor => descriptor.ServiceType == typeof(IChargeRepository));
+            services.Remove(charges);
+            services.AddScoped<IChargeRepository>(provider => new InterleavingChargeRepository(
+                (IChargeRepository)ActivatorUtilities.CreateInstance(provider, charges.ImplementationType!), chargeClash));
         });
         await SeedTenantAsync(factory);
     }
@@ -445,10 +457,269 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
         Assert.Equal((MessageDeliveryStatus.Failed, "send_failed"), (message.Status, message.FailureCode));
     }
 
+    /// <summary>
+    /// Review 9+10, T10-I1 (a): el envío salió pero marcar <c>Sent</c> falló. La fila queda <c>Sending</c> con su lease, y si la
+    /// corrida se diera por terminada nadie la volvería a mirar. Sin cerrar el día, el tick siguiente la retoma (spec §2, una vez).
+    /// </summary>
+    [Fact]
+    public async Task AFailureAfterTheClaimKeepsTheDayOpenUntilTheMessageIsRetaken()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today);
+        await ExecuteSqlAsync(
+            """
+            CREATE FUNCTION billing.test_refuse_sent() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''mark sent refused''; END';
+            CREATE TRIGGER test_refuse_sent BEFORE UPDATE ON billing.customer_messages
+                FOR EACH ROW WHEN (NEW.status = 'Sent') EXECUTE FUNCTION billing.test_refuse_sent();
+            """);
+
+        await ProcessAsync();
+
+        Assert.Single(customerEmail.Sent);
+        Assert.Equal(MessageDeliveryStatus.Sending, Assert.Single(await MessagesAsync()).Status);
+        Assert.Null(Assert.Single(await RunsAsync()).FinishedAt);
+
+        await ExecuteSqlAsync("DROP TRIGGER test_refuse_sent ON billing.customer_messages;");
+        clock.UtcNow = NineLocal.AddMinutes(20);
+        await ProcessAsync();
+
+        // Al menos una vez: el proveedor ya lo había aceptado, así que el cliente lo recibe dos veces (spec §3.3).
+        Assert.Equal(2, customerEmail.Sent.Length);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await MessagesAsync()).Status);
+        Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
+    }
+
+    /// <summary>
+    /// Review 9+10, T10-I1 (b): la réplica A sigue enviando cuando vence el lease de la corrida; B la retoma, ve el mensaje de A con
+    /// su lease vivo y no lo toca. Si B cerrara el día y A muriera, el mensaje quedaría colgado para siempre.
+    /// </summary>
+    [Fact]
+    public async Task AReplicaThatRetakesTheRunWhileAMessageLeaseIsLiveDoesNotCloseTheDay()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var charge = await SeedChargeAsync(customer, Today);
+        var messageId = await SeedSendingMessageAsync(
+            customer, charge.Id, "due", claimedUntil: NineLocal.AddMinutes(3), runClaimedUntil: NineLocal.AddMinutes(-1));
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        Assert.Equal(MessageDeliveryStatus.Sending, Assert.Single(await MessagesAsync()).Status);
+        Assert.Null(Assert.Single(await RunsAsync()).FinishedAt);
+
+        // A murió sin marcar nada: vencidos los dos leases, el tick siguiente retoma el mensaje y cierra el día.
+        clock.UtcNow = NineLocal.AddMinutes(10);
+        await ProcessAsync();
+
+        Assert.Equal("acme@example.com", Assert.Single(customerEmail.Sent).ToAddress);
+        var message = Assert.Single(await MessagesAsync());
+        Assert.Equal((messageId, MessageDeliveryStatus.Sent), (message.Id, message.Status));
+        Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
+    }
+
+    /// <summary>
+    /// Una fila <c>Sending</c> vencida que ningún paso del día retoma —el cobro se pagó entretanto, o es de un día que no terminó—
+    /// no puede quedar colgada ni tener el día abierto para siempre: pasa a <c>Failed</c> y el día cierra.
+    /// </summary>
+    [Fact]
+    public async Task StaleSendingRowsNobodyRetakesAreClosedAndTheDayFinishes()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        var service = await SeedServiceAsync(customer, Today, lastGenerated: Today, paidDueDates: [Today]);
+        var paid = Assert.Single(await ChargesOfAsync(service));
+        await SeedSendingMessageAsync(customer, paid.Id, "due", claimedUntil: NineLocal.AddMinutes(-15), runClaimedUntil: NineLocal.AddMinutes(-15));
+        var yesterday = await SeedSendingMessageAsync(
+            Guid.NewGuid(), paid.Id, "before_5", claimedUntil: NineLocal.AddDays(-1), runClaimedUntil: null, runDate: Today.AddDays(-1));
+        await WithDbAsync(async db =>
+        {
+            db.DailyDigests.Add(new DailyDigest
+            {
+                TenantId = Tenant,
+                MemberId = assignee,
+                RunDate = Today,
+                Status = MessageDeliveryStatus.Sending,
+                ClaimedUntil = NineLocal.AddMinutes(-15),
+            });
+            return await db.SaveChangesAsync(Ct);
+        });
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(staffEmail.Sent);
+        Assert.All(await MessagesAsync(), message =>
+            Assert.Equal((MessageDeliveryStatus.Failed, "send_failed"), (message.Status, message.FailureCode)));
+        Assert.Contains(await MessagesAsync(), message => message.Id == yesterday);
+        var digest = Assert.Single(await DigestsAsync());
+        Assert.Equal((MessageDeliveryStatus.Failed, "send_failed"), (digest.Status, digest.FailureCode));
+        Assert.NotNull(Assert.Single(await RunsAsync(), run => run.RunDate == Today).FinishedAt);
+    }
+
+    [Fact]
+    public async Task FinishedAtIsWhenTheRunEndedNotWhenItStarted()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today);
+        customerEmail.OnSend = () => clock.UtcNow = NineLocal.AddMinutes(2);
+
+        await ProcessAsync();
+
+        Assert.Equal(NineLocal.AddMinutes(2), Assert.Single(await RunsAsync()).FinishedAt);
+    }
+
+    /// <summary>
+    /// Review 9+10, T10-I2: otra réplica generó el primer período entre la lectura del servicio y el SaveChanges de esta. El
+    /// choque con IX_charges_service_due no es un error: se relee el servicio (ya avanzado) y se genera sólo lo que falta.
+    /// </summary>
+    [Fact]
+    public async Task AGenerationClashRereadsTheServiceAndGeneratesOnlyWhatIsLeft()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var anchor = Today.AddMonths(-2);
+        var service = await SeedServiceAsync(customer, anchor, lastGenerated: anchor, paidDueDates: [anchor]);
+        chargeClash.Arm(database.GetConnectionString());
+
+        await ProcessAsync();
+
+        Assert.Equal(2, chargeClash.AddRangeCalls);
+        Assert.Equal([anchor, Today.AddMonths(-1), Today], (await ChargesOfAsync(service)).Select(c => c.DueDate));
+        Assert.Equal(Today, (await ServiceAsync(service)).LastGeneratedDueDate);
+    }
+
+    /// <summary>T10-I2: perder el único del día del cliente es «otra réplica ganó», no una excepción, y no deja filas a medias.</summary>
+    [Fact]
+    public async Task TheMessageClaimYieldsWhenAnotherReplicaHasTheCustomersDay()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var first = await SeedChargeAsync(customer, Today);
+        var second = await SeedChargeAsync(customer, Today.AddDays(5));
+
+        var won = await ClaimAsync(customer, [(first.Id, "due")]);
+        var lost = await ClaimAsync(customer, [(second.Id, "before_5")]);
+
+        Assert.NotNull(won);
+        Assert.Null(lost);
+        Assert.Equal(won, Assert.Single(await MessagesAsync()).Id);
+        Assert.Equal((first.Id, "due"), (Assert.Single(await StepsAsync()).ChargeId, Assert.Single(await StepsAsync()).Step));
+    }
+
+    /// <summary>T10-I2: el mismo paso de un cobro no se cubre dos veces aunque el mensaje sea otro (PK_reminder_steps).</summary>
+    [Fact]
+    public async Task TheMessageClaimYieldsWhenAnotherReplicaCoveredTheSameStep()
+    {
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        var charge = await SeedChargeAsync(customer, Today);
+
+        var won = await ClaimAsync(customer, [(charge.Id, "due")]);
+        var lost = await ClaimAsync(customer, [(charge.Id, "due")], runDate: Today.AddDays(1));
+
+        Assert.NotNull(won);
+        Assert.Null(lost);
+        Assert.Equal(won, Assert.Single(await MessagesAsync()).Id);
+        Assert.Single(await StepsAsync());
+    }
+
+    /// <summary>T10-I2: el digest del día se reclama una vez; un lease vivo lo protege y uno vencido se retoma; uno enviado no vuelve.</summary>
+    [Fact]
+    public async Task TheDigestClaimYieldsToALiveLeaseAndRetakesAnExpiredOne()
+    {
+        var member = Guid.NewGuid();
+
+        Assert.True(await ClaimDigestAsync(member, NineLocal));
+        Assert.False(await ClaimDigestAsync(member, NineLocal.AddMinutes(1)));
+        Assert.True(await ClaimDigestAsync(member, NineLocal.AddMinutes(6)));
+
+        await WithServicesAsync(async services =>
+        {
+            await services.GetRequiredService<DailyDigestStore>().MarkSentAsync(Tenant, member, Today, NineLocal.AddMinutes(6), Ct);
+            return true;
+        });
+        Assert.False(await ClaimDigestAsync(member, NineLocal.AddMinutes(30)));
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+    }
+
+    /// <summary>T10-I2: una corrida retomada (lease vencido) no vuelve a mandar el digest que la otra réplica ya mandó.</summary>
+    [Fact]
+    public async Task ARetakenRunDoesNotResendTheDigestAnotherReplicaSent()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today.AddDays(3));
+        await WithDbAsync(async db =>
+        {
+            db.TenantRuns.Add(new TenantRun { TenantId = Tenant, RunDate = Today, ClaimedUntil = NineLocal.AddMinutes(-1) });
+            db.DailyDigests.Add(new DailyDigest
+            {
+                TenantId = Tenant,
+                MemberId = assignee,
+                RunDate = Today,
+                Status = MessageDeliveryStatus.Sent,
+                ClaimedUntil = NineLocal.AddMinutes(-6),
+                SentAt = NineLocal.AddMinutes(-10),
+            });
+            return await db.SaveChangesAsync(Ct);
+        });
+
+        await ProcessAsync();
+
+        Assert.Empty(staffEmail.Sent);
+        Assert.Equal(MessageDeliveryStatus.Sent, Assert.Single(await DigestsAsync()).Status);
+        Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
+    }
+
+    /// <summary>Review 9+10, T10-w: un tenant suspendido no genera, no avisa ni reclama el día aunque tenga el módulo prendido.</summary>
+    [Fact]
+    public async Task ASuspendedTenantIsSkipped()
+    {
+        var assignee = await SeedMemberAsync(factory, "owner@example.com", "Owner", "billing");
+        var customer = await SeedCustomerAsync(factory, Tenant, "Acme", email: "acme@example.com");
+        await SeedProfileAsync(customer, BillingChannel.Email, assignee);
+        await SeedChargeAsync(customer, Today);
+        var service = await SeedServiceAsync(customer, Today.AddMonths(-1), lastGenerated: Today.AddMonths(-1), paidDueDates: [Today.AddMonths(-1)]);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Tenant)], Ct);
+            tenant!.Suspend(ChangeReason.Nonpayment, NineLocal);
+            await tenancy.SaveChangesAsync(Ct);
+        }
+
+        await ProcessAsync();
+
+        Assert.Empty(customerEmail.Sent);
+        Assert.Empty(staffEmail.Sent);
+        Assert.Empty(await RunsAsync());
+        Assert.Single(await ChargesOfAsync(service));
+    }
+
+    private Task<Guid?> ClaimAsync(Guid customerId, IReadOnlyList<(Guid ChargeId, string Step)> steps, DateOnly? runDate = null) =>
+        WithServicesAsync(services => services.GetRequiredService<CustomerMessageStore>().TryClaimAsync(
+            Tenant, customerId, runDate ?? Today, BillingMessageKind.Reminder, BillingChannel.Email, steps, NineLocal, Ct));
+
+    private Task<bool> ClaimDigestAsync(Guid memberId, DateTimeOffset now) =>
+        WithServicesAsync(services => services.GetRequiredService<DailyDigestStore>().TryClaimAsync(Tenant, memberId, Today, now, Ct));
+
+    private Task<int> ExecuteSqlAsync(string sql) => WithDbAsync(db => db.Database.ExecuteSqlRawAsync(sql, Ct));
+
     private async Task ProcessAsync()
     {
         await using var scope = factory.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<IBillingReminderProcessor>().ProcessTenantAsync(Tenant, Ct);
+    }
+
+    private async Task<T> WithServicesAsync<T>(Func<IServiceProvider, Task<T>> action)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await action(scope.ServiceProvider);
     }
 
     private async Task<T> WithDbAsync<T>(Func<BillingDbContext, Task<T>> action)
@@ -572,6 +843,122 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
             return message.Id;
         });
 
+    /// <summary>
+    /// Un mensaje <c>Sending</c> con su paso, como lo deja una réplica a mitad de envío. <paramref name="runClaimedUntil"/> siembra
+    /// también la fila de <c>tenant_runs</c> de ese día, sin terminar; null no la siembra.
+    /// </summary>
+    private Task<Guid> SeedSendingMessageAsync(
+        Guid customerId,
+        Guid chargeId,
+        string step,
+        DateTimeOffset claimedUntil,
+        DateTimeOffset? runClaimedUntil,
+        DateOnly? runDate = null) =>
+        WithDbAsync(async db =>
+        {
+            var message = new CustomerMessage
+            {
+                Id = Guid.CreateVersion7(),
+                TenantId = Tenant,
+                CustomerId = customerId,
+                RunDate = runDate ?? Today,
+                Kind = CustomerMessageKind.Reminder,
+                Channel = BillingChannel.Email,
+                Status = MessageDeliveryStatus.Sending,
+                AttemptedAt = claimedUntil - CustomerMessageStore.Lease,
+                ClaimedUntil = claimedUntil,
+            };
+            db.CustomerMessages.Add(message);
+            db.ReminderSteps.Add(new ReminderStep { ChargeId = chargeId, Step = step, MessageId = message.Id, TenantId = Tenant });
+            if (runClaimedUntil is { } runLease)
+            {
+                db.TenantRuns.Add(new TenantRun { TenantId = Tenant, RunDate = runDate ?? Today, ClaimedUntil = runLease });
+            }
+
+            await db.SaveChangesAsync(Ct);
+            return message.Id;
+        });
+
+    /// <summary>
+    /// Decorador de <see cref="IChargeRepository"/>: la primera vez que la generación agrega cobros con <see cref="ChargeClash"/>
+    /// armado, escribe antes —en otra conexión, como otra réplica— el primero de esos períodos y avanza el servicio hasta él, sin
+    /// tocar su versión. El SaveChanges de esta réplica choca entonces con IX_charges_service_due, no con el token.
+    /// </summary>
+    private sealed class InterleavingChargeRepository(IChargeRepository inner, ChargeClash clash) : IChargeRepository
+    {
+        public void AddRange(IEnumerable<Charge> charges)
+        {
+            var list = charges.ToList();
+            clash.BeforeAdd(list);
+            inner.AddRange(list);
+        }
+
+        public Task<Charge?> FindAsync(Guid tenantId, Guid chargeId, CancellationToken cancellationToken) =>
+            inner.FindAsync(tenantId, chargeId, cancellationToken);
+
+        public Task<IReadOnlyList<Charge>> ListPendingByServiceAsync(BillingServiceId serviceId, CancellationToken cancellationToken) =>
+            inner.ListPendingByServiceAsync(serviceId, cancellationToken);
+
+        public Task<IReadOnlyList<Charge>> ListPendingByServicesAsync(
+            IReadOnlyCollection<BillingServiceId> serviceIds, CancellationToken cancellationToken) =>
+            inner.ListPendingByServicesAsync(serviceIds, cancellationToken);
+
+        public Task<IReadOnlyList<Charge>> ListPendingByTenantAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            inner.ListPendingByTenantAsync(tenantId, cancellationToken);
+
+        public Task<(IReadOnlyList<Charge> Items, int Total)> ListAsync(ChargeQuery query, CancellationToken cancellationToken) =>
+            inner.ListAsync(query, cancellationToken);
+
+        public Task<IReadOnlyList<Charge>> ListByServiceAsync(BillingServiceId serviceId, CancellationToken cancellationToken) =>
+            inner.ListByServiceAsync(serviceId, cancellationToken);
+
+        public Task<ChargeSummaryDto> SummaryAsync(Guid tenantId, DateOnly today, CancellationToken cancellationToken) =>
+            inner.SummaryAsync(tenantId, today, cancellationToken);
+
+        public Task<IReadOnlyDictionary<Guid, ReminderDto>> ListLastRemindersAsync(
+            IReadOnlyCollection<Guid> chargeIds, CancellationToken cancellationToken) =>
+            inner.ListLastRemindersAsync(chargeIds, cancellationToken);
+    }
+
+    /// <summary>La escritura de «la otra réplica». Sincrónica porque <c>AddRange</c> lo es; corre una sola vez por <see cref="Arm"/>.</summary>
+    private sealed class ChargeClash
+    {
+        private string? connectionString;
+        private int addRangeCalls;
+
+        public int AddRangeCalls => addRangeCalls;
+
+        public void Arm(string connection) => connectionString = connection;
+
+        public void BeforeAdd(List<Charge> charges)
+        {
+            Interlocked.Increment(ref addRangeCalls);
+            if (Interlocked.Exchange(ref connectionString, null) is not { } connection || charges.Count == 0)
+            {
+                return;
+            }
+
+            var first = charges.MinBy(charge => charge.DueDate)!;
+            using var npgsql = new NpgsqlConnection(connection);
+            npgsql.Open();
+            using var insert = new NpgsqlCommand(
+                """
+                INSERT INTO billing.charges (id, tenant_id, service_id, customer_id, amount, currency, due_date, status, version, created_at)
+                VALUES (@id, @tenant, @service, @customer, @amount, @currency, @due, 'Pending', 1, now());
+                UPDATE billing.services SET last_generated_due_date = @due WHERE id = @service;
+                """,
+                npgsql);
+            insert.Parameters.AddWithValue("id", Guid.CreateVersion7());
+            insert.Parameters.AddWithValue("tenant", first.TenantId);
+            insert.Parameters.AddWithValue("service", first.ServiceId.Value);
+            insert.Parameters.AddWithValue("customer", first.CustomerId);
+            insert.Parameters.AddWithValue("amount", first.Amount);
+            insert.Parameters.AddWithValue("currency", first.Currency);
+            insert.Parameters.AddWithValue("due", first.DueDate);
+            insert.ExecuteNonQuery();
+        }
+    }
+
     private sealed class MutableTenantClock(DateTimeOffset utcNow) : ITenantClock
     {
         public DateTimeOffset UtcNow { get; set; } = utcNow;
@@ -586,7 +973,10 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
 
         public string? ThrowFor { get; set; }
 
-        public IReadOnlyList<BillingCustomerMessage> Sent => sent.ToArray();
+        /// <summary>Corre en cada envío aceptado: las pruebas lo usan para mover el reloj mientras la corrida está en curso.</summary>
+        public Action? OnSend { get; set; }
+
+        public BillingCustomerMessage[] Sent => sent.ToArray();
 
         public Task<BillingSendResult> SendAsync(BillingCustomerMessage message, CancellationToken cancellationToken)
         {
@@ -595,6 +985,7 @@ public sealed class BillingReminderProcessorTests : IAsyncLifetime
                 throw new InvalidOperationException("The provider is down.");
             }
 
+            OnSend?.Invoke();
             sent.Enqueue(message);
             return Task.FromResult<BillingSendResult>(new BillingSendResult.Sent());
         }

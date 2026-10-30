@@ -31,6 +31,18 @@ internal sealed class DailyDigestStore(BillingDbContext dbContext)
         return claimed.Count > 0;
     }
 
+    /// <summary>
+    /// El mismo cierre que <see cref="CustomerMessageStore.FailStaleAsync"/>: un digest <c>Sending</c> vencido que el paso 5 no volvió a
+    /// reclamar (el encargado ya no tiene filas, o el día no terminó) pasa a <c>Failed send_failed</c>.
+    /// </summary>
+    public Task FailStaleAsync(Guid tenantId, DateOnly today, DateTimeOffset now, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE billing.daily_digests SET status = 'Failed', failure_code = 'send_failed'
+            WHERE tenant_id = {tenantId} AND run_date <= {today} AND status = 'Sending' AND claimed_until < {now}
+            """,
+            cancellationToken);
+
     public Task MarkSentAsync(Guid tenantId, Guid memberId, DateOnly runDate, DateTimeOffset now, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""

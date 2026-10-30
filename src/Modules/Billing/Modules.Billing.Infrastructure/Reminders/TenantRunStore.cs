@@ -31,11 +31,24 @@ internal sealed class TenantRunStore(BillingDbContext dbContext)
         return claimed.Count > 0;
     }
 
-    public Task MarkFinishedAsync(Guid tenantId, DateOnly runDate, DateTimeOffset now, CancellationToken cancellationToken) =>
-        dbContext.Database.ExecuteSqlInterpolatedAsync(
+    /// <summary>
+    /// Cierra el día sólo si no le queda ningún mensaje ni digest <c>Sending</c>. Con <c>finished_at</c> ningún tick vuelve a mirar
+    /// el día, así que cerrarlo con un <c>Sending</c> vivo —de otra réplica que retomó o perdió la corrida, o de un envío cuyo
+    /// <c>MarkSent</c> falló— lo dejaría colgado para siempre. Abierto, el tick siguiente reclama la corrida cuando vence su lease y
+    /// retoma el mensaje cuando vence el suyo (spec §2). False: el día sigue abierto.
+    /// </summary>
+    public async Task<bool> TryFinishAsync(
+        Guid tenantId, DateOnly runDate, DateTimeOffset finishedAt, CancellationToken cancellationToken) =>
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
-            UPDATE billing.tenant_runs SET finished_at = {now}
-            WHERE tenant_id = {tenantId} AND run_date = {runDate}
+            UPDATE billing.tenant_runs SET finished_at = {finishedAt}
+            WHERE tenant_id = {tenantId} AND run_date = {runDate} AND finished_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM billing.customer_messages m
+                  WHERE m.tenant_id = {tenantId} AND m.run_date = {runDate} AND m.status = 'Sending')
+              AND NOT EXISTS (
+                  SELECT 1 FROM billing.daily_digests d
+                  WHERE d.tenant_id = {tenantId} AND d.run_date = {runDate} AND d.status = 'Sending')
             """,
-            cancellationToken);
+            cancellationToken) == 1;
 }

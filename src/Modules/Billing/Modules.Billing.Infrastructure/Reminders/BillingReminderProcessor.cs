@@ -58,6 +58,13 @@ internal sealed partial class BillingReminderProcessor(
             return;
         }
 
+        // Un tenant suspendido (o en cualquier estado que no sea Active) no recibe servicio: tampoco se cobra en su nombre. null es
+        // el tenant del stub, sin fila (ITenantDirectory.GetStatusAsync).
+        if (await tenantDirectory.GetStatusAsync(new TenantId(tenantId), cancellationToken) != TenantStatus.Active)
+        {
+            return;
+        }
+
         // El módulo puede apagarse con servicios ya creados: sin él no se genera ni se avisa nada. null es el tenant del stub.
         var modules = await tenantModules.FindAsync(tenantId, cancellationToken);
         if (modules is null || !modules.IsEnabled(TenantModuleKeys.Billing))
@@ -76,7 +83,15 @@ internal sealed partial class BillingReminderProcessor(
         await GenerateAsync(run, cancellationToken);
         await MessageCustomersAsync(run, cancellationToken);
         await SendDigestsAsync(run, cancellationToken);
-        await runs.MarkFinishedAsync(tenantId, today, now, cancellationToken);
+
+        // Un Sending vencido que los pasos de arriba no retomaron ya no tiene quién lo retome (su cobro se pagó, su encargado ya
+        // no recibe el digest, o es de un día que no terminó): se cierra como send_failed en vez de quedar colgado.
+        await messages.FailStaleAsync(tenantId, today, now, cancellationToken);
+        await digests.FailStaleAsync(tenantId, today, now, cancellationToken);
+
+        // La hora de cierre, no la de inicio: la corrida puede llevar minutos enviando.
+        var finishedAt = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
+        await runs.TryFinishAsync(tenantId, today, finishedAt, cancellationToken);
     }
 
     private async Task<Run> OpenRunAsync(Guid tenantId, TenantCalendar calendar, CancellationToken cancellationToken)
