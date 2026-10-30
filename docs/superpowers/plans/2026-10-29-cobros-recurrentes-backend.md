@@ -300,7 +300,7 @@ public void TheBillingPermissionsRequireTheBillingModuleAndGoToAdminAndBilling()
 [Fact] public async Task PutWhatsAppForACustomerWithoutPhoneAnswers422();         // billing.profile.whatsapp_requires_phone
 [Fact] public async Task GetWithoutProfileAnswers404WithCode();                   // billing.profile.not_found
 [Fact] public async Task AnotherTenantAnswers403NotFound404();                    // authorization.denied
-[Fact] public async Task WithTheModuleOffAnswers403ModuleNotEnabled();            // SeedTenantAsync sin Billing
+[Fact] public async Task WithTheModuleOffAnswersABare403();                       // SeedTenantAsync sin Billing; la máscara quita el permiso: 403 sin código
 [Fact] public async Task AssigneesListsOnlyActiveMembersWhoCanManageSortedByName();
 ```
 
