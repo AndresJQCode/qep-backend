@@ -16,8 +16,8 @@ public sealed class CompleteWhatsAppSignupHandlerTests
     private static CompleteWhatsAppSignupCommand Finish(Guid tenantId, string name = "Ventas", string? phoneNumberId = "111", string? pin = null) =>
         new(tenantId, name, "new_number", "FINISH", "AQB-code", "222", phoneNumberId, "333", pin);
 
-    private static CompleteWhatsAppSignupCommand Coexistence(Guid tenantId, string? pin = null) =>
-        new(tenantId, "Ventas", "existing_business_app", "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", "AQB-code", "222", null, null, pin);
+    private static CompleteWhatsAppSignupCommand Coexistence(Guid tenantId, string? pin = null, string? phoneNumberId = null) =>
+        new(tenantId, "Ventas", "existing_business_app", "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", "AQB-code", "222", phoneNumberId, null, pin);
 
     [Fact]
     public async Task FinishExchangesRegistersSubscribesReadsAndCreatesTheConnectionWithItsRoute()
@@ -182,6 +182,48 @@ public sealed class CompleteWhatsAppSignupHandlerTests
         Assert.Equal(IntegrationsErrorCodes.WhatsAppRegistrationFailed, error.Code);
         Assert.Contains("varios números", error.Message, StringComparison.Ordinal);
         Assert.Equal(0, bed.UnitOfWork.Saves);
+    }
+
+    // Meta ahora manda phone_number_id también en la coexistencia: se acepta, y si la WABA tiene varios números lo desempata.
+    [Fact]
+    public async Task CoexistenceWithASuppliedNumberUsesItAmongSeveral()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.WabaNumbers["222"] = [new WabaPhoneNumber("111", "+57 1", "A", "GREEN"), new WabaPhoneNumber("112", "+57 2", "B", "GREEN")];
+        bed.Gateway.PhoneNumbers["112"] = new WabaPhoneNumber("112", "+57 2", "B", "GREEN");
+
+        var response = await bed.SignupHandler().HandleAsync(Coexistence(bed.TenantId, phoneNumberId: "112"), Ct);
+
+        Assert.Equal("112", response.Fields["phoneNumberId"]);
+        Assert.DoesNotContain(bed.Gateway.Calls, call => call.StartsWith("register", StringComparison.Ordinal));
+        Assert.Single(bed.Events.Published);
+    }
+
+    [Fact]
+    public async Task CoexistenceWithASuppliedNumberOutsideTheWabaFailsAndPublishesNothing()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.WabaNumbers["222"] = [new WabaPhoneNumber("111", "+57 1", "A", "GREEN")];
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", "+57 1", "A", "GREEN");
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() =>
+            bed.SignupHandler().HandleAsync(Coexistence(bed.TenantId, phoneNumberId: "999"), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.WhatsAppRegistrationFailed, error.Code);
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task TheValidatorAcceptsDigitsOnCoexistenceAndRejectsAnythingElse()
+    {
+        var validator = new CompleteWhatsAppSignupValidator();
+        var tenant = Guid.CreateVersion7();
+
+        Assert.True((await validator.ValidateAsync(Coexistence(tenant, phoneNumberId: "371881597446121"), Ct)).IsValid);
+        Assert.True((await validator.ValidateAsync(Coexistence(tenant), Ct)).IsValid);
+        var bad = await validator.ValidateAsync(Coexistence(tenant, phoneNumberId: "abc"), Ct);
+        Assert.Contains(bad.Errors, failure => failure.PropertyName == "phoneNumberId");
     }
 
     [Theory]
