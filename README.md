@@ -2914,7 +2914,9 @@ desde la app.
   `POST …/history-sync/retry` (permiso `integrations.connection.manage`) reintenta lo que quedó `Pending` o
   `Failed`; sin cuerpo.
 - **Orden de la puesta en marcha (spec §6).** (1) Conexiones de Clasic y Transportes CI creadas en QEP;
-  (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado; (4) recién entonces,
+  (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado, con la migración
+  `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización);
+  (4) recién entonces,
   el número de QCode por coexistencia. **Despliégalo antes de conectar cualquier número por coexistencia:**
   una conexión hecha antes pide el historial, QEP lo descarta como `UnknownChange` y no hay segunda
   oportunidad. Sin configuración nueva: `Meta:App:*` no cambia.
@@ -2928,8 +2930,18 @@ desde la app.
   de una parte frente al límite (V-3), que la ventana de 24 h no la abran los mensajes del historial (V-4),
   `TriageRules.IsPending` con `last_inbound_at` vacío (V-5) y que Graph no gaste la única oportunidad al
   rechazar un pedido (V-6). Las pruebas usan fixtures que toleran esas variaciones.
-- **Un envío de campaña no apaga `history_managed`.** La regla de abiertas la apagan `Resolve`, `Reopen` y un
-  entrante en vivo; un envío de campaña a esa conversación no.
+- **Qué apaga `history_managed`.** Mientras está prendida, cada parte del historial que llega recalcula si la
+  conversación está abierta y cuántos no leídos tiene. La apaga todo lo que hace la ingesta en vivo o el asesor:
+  un entrante en vivo, `Resolve` y `Reopen`, una respuesta enviada desde QEP, asignarla (a mano, por traspaso del
+  bot o por la autoasignación al responder), tomarla o transferirla, un eco de lo que el negocio responde desde la
+  app, y marcarla leída o no leída (también «no leído desde este mensaje»). **Un envío de campaña no la apaga.**
+  Si agregas una acción del asesor sobre una conversación, decide qué hace con la bandera: si no la apaga, la
+  siguiente parte del historial le pisa el estado o el contador.
+- **El reporte de mensajería cuenta lo importado el día de la conexión.** Las conversaciones y los mensajes
+  importados se guardan con `created_at` = la hora de la importación, y `MessagingReportSource` arma las
+  sesiones y los contactos nuevos con `created_at`. Así que ese día cada hilo importado con un entrante aparece
+  como contacto nuevo y como sesión (sin responder, porque su saliente tiene la misma hora). No se corrigió a
+  propósito: tocaría la semántica del reporte en otro módulo, y lo decide el owner.
 - **Ventana residual de doble envío con varias réplicas.** El pedido a Graph se reclama con un lease; con más
   de una réplica queda una ventana pequeña en la que dos pods pueden enviar el mismo pedido.
 - **Un archivo que nunca llega queda `Pending`.** Si Meta no entrega el medio de un `media_placeholder`, el
