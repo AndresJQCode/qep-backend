@@ -9,6 +9,7 @@ public sealed class MetaAppOptionsValidatorTests
 {
     private const string Secret = "meta-app-secret-SENTINEL-1a2b";
     private const string Token = "meta-verify-token-SENTINEL-3c4d-0123456789abcdef";
+    private const string OverrideUrl = "https://qep-api.qcode.co/api/webhooks/whatsapp";
 
     private static MetaAppOptionsValidator Validator(bool production) =>
         new(new FixedEnvironment(production ? Environments.Production : Environments.Development));
@@ -66,6 +67,119 @@ public sealed class MetaAppOptionsValidatorTests
         Assert.True(Validator(production: false).Validate(null, options).Succeeded);
         Assert.False(options.IsConfigured());
         Assert.True(Complete().IsConfigured());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void WithoutTheOverrideNothingChanges(string? value)
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = value;
+
+        Assert.True(Validator(production: true).Validate(null, options).Succeeded);
+        Assert.True(Validator(production: false).Validate(null, options).Succeeded);
+        Assert.Null(options.ResolvedWebhookOverrideCallbackUrl());
+    }
+
+    [Fact]
+    public void AnHttpsOverrideIsAcceptedAndResolvedTrimmed()
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = $"  {OverrideUrl}  ";
+
+        Assert.True(Validator(production: true).Validate(null, options).Succeeded);
+        Assert.True(Validator(production: false).Validate(null, options).Succeeded);
+        Assert.Equal(OverrideUrl, options.ResolvedWebhookOverrideCallbackUrl());
+    }
+
+    [Theory]
+    [InlineData("http://qep-api.qcode.co/api/webhooks/whatsapp")]
+    [InlineData("/api/webhooks/whatsapp")]
+    [InlineData("qep-api.qcode.co")]
+    [InlineData("ftp://qep-api.qcode.co/x")]
+    public void TheOverrideMustBeAnAbsoluteHttpsUrlEverywhere(string value)
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = value;
+
+        foreach (var production in new[] { true, false })
+        {
+            var result = Validator(production).Validate(null, options);
+
+            Assert.True(result.Failed);
+            var message = string.Join(" ", result.Failures!);
+            Assert.Contains("Meta:App:WebhookOverrideCallbackUrl", message, StringComparison.Ordinal);
+            Assert.DoesNotContain(Token, message, StringComparison.Ordinal);
+        }
+    }
+
+    // Meta rechaza un override_callback_uri de más de 200 caracteres: mejor que el pod lo diga al arrancar que el signup.
+    [Fact]
+    public void TheOverrideCannotPassTheLimitOfMeta()
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = $"https://qep-api.qcode.co/{new string('a', 176)}";
+        Assert.Equal(201, options.WebhookOverrideCallbackUrl.Length);
+
+        Assert.True(Validator(production: true).Validate(null, options).Failed);
+
+        options.WebhookOverrideCallbackUrl = options.WebhookOverrideCallbackUrl[..200];
+        Assert.True(Validator(production: true).Validate(null, options).Succeeded);
+    }
+
+    [Theory]
+    [InlineData("#{META_WEBHOOK_OVERRIDE_CALLBACK_URL}#")]
+    [InlineData("  #{META_WEBHOOK_OVERRIDE_CALLBACK_URL}#  ")]
+    public void AnUnresolvedPipelineTokenCountsAsAbsentInProduction(string value)
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = value;
+
+        Assert.True(Validator(production: true).Validate(null, options).Succeeded);
+        Assert.Null(options.ResolvedWebhookOverrideCallbackUrl());
+    }
+
+    // Fuera de Production nadie reemplaza tokens: ahí es un valor mal escrito, y se dice al arrancar.
+    [Fact]
+    public void OutsideProductionAPipelineTokenIsJustABadUrl()
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = "#{META_WEBHOOK_OVERRIDE_CALLBACK_URL}#";
+
+        Assert.True(Validator(production: false).Validate(null, options).Failed);
+    }
+
+    // Un token que no se reemplazó del todo no es el del pipeline: se rechaza en vez de apagar el override en silencio.
+    [Theory]
+    [InlineData("#{META_WEBHOOK_OVERRIDE_CALLBACK_URL}")]
+    [InlineData("x#{META_WEBHOOK_OVERRIDE_CALLBACK_URL}#")]
+    public void AMangledTokenIsNotAbsent(string value)
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = value;
+
+        Assert.True(Validator(production: true).Validate(null, options).Failed);
+    }
+
+    [Theory]
+    [InlineData(true, "#{META_WEBHOOK_VERIFY_TOKEN}#")]
+    [InlineData(true, " ")]
+    [InlineData(false, null)]
+    [InlineData(false, " ")]
+    public void TheOverrideNeedsTheVerifyToken(bool production, string? verifyToken)
+    {
+        var options = Complete();
+        options.WebhookOverrideCallbackUrl = OverrideUrl;
+        options.WebhookVerifyToken = verifyToken;
+
+        var result = Validator(production).Validate(null, options);
+
+        Assert.True(result.Failed);
+        var message = string.Join(" ", result.Failures!);
+        Assert.Contains("Meta:App:WebhookVerifyToken", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("#{META_WEBHOOK_VERIFY_TOKEN}#", message, StringComparison.Ordinal);
     }
 
     private sealed class FixedEnvironment(string name) : IHostEnvironment

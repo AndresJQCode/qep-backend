@@ -140,6 +140,24 @@ public sealed class CompleteWhatsAppSignupHandlerTests
         Assert.Equal(bed.Clock.UtcNow, published.OccurredAt);
     }
 
+    // Addendum 2026-10-30: el pedido del historial nace de este evento. Sin suscripción no hay evento, y por eso el historial no
+    // puede pedirse antes de que la WABA apunte a QEP. Se pide una sola vez: si saliera con la suscripción rota, llegaría a lulo.
+    [Fact]
+    public async Task ARejectedSubscribePublishesNoCoexistenceEvent()
+    {
+        var bed = new IntegrationsTestBed();
+        bed.Gateway.WabaNumbers["222"] = [new WabaPhoneNumber("111", "+57 1", "Origen", "GREEN")];
+        bed.Gateway.PhoneNumbers["111"] = new WabaPhoneNumber("111", "+57 1", "Origen", "GREEN");
+        bed.Gateway.FailAt = "subscribe";
+
+        var error = await Assert.ThrowsAsync<IntegrationsDomainException>(() => bed.SignupHandler().HandleAsync(Coexistence(bed.TenantId), Ct));
+
+        Assert.Equal(IntegrationsErrorCodes.WhatsAppRegistrationFailed, error.Code);
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+        Assert.Single(bed.Gateway.Calls, call => call == "subscribe:222");
+    }
+
     [Fact]
     public async Task ARegularSignupPublishesNoEvent()
     {

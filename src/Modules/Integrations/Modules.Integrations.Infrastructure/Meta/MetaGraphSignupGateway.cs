@@ -79,6 +79,14 @@ internal sealed class MetaGraphSignupGateway(MetaGraphClient graph, IOptions<Met
     public async Task<GraphResult<bool>> SubscribeAppAsync(string wabaId, string accessToken, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, graph.Path($"{Uri.EscapeDataString(wabaId)}/subscribed_apps"));
+
+        // Addendum 2026-10-30 del spec 2026-10-29. En el cuerpo y no en la query: el token no puede quedar en una URL. Sin el override
+        // la llamada no lleva cuerpo, que para Meta también significa «quita el override que tenga esta WABA».
+        if (options.Value.ResolvedWebhookOverrideCallbackUrl() is { } callbackUrl)
+        {
+            request.Content = JsonContent.Create(new { override_callback_uri = callbackUrl, verify_token = options.Value.WebhookVerifyToken?.Trim() });
+        }
+
         var response = await graph.SendAsync("subscribed-apps", request, accessToken, cancellationToken);
         return response.IsSuccess ? new GraphResult<bool>(true, null) : new GraphResult<bool>(false, Failure(response));
     }

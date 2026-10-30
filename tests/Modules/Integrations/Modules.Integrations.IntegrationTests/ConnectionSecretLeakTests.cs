@@ -237,6 +237,37 @@ public sealed class ConnectionSecretLeakTests
         await AssertNothingLeaksAsync(connectionString, logs, [failedBody, createdBody], SentinelMetaCode, SentinelMetaAccessToken, SentinelMetaAppSecret, sentinelPin);
     }
 
+    // Addendum 2026-10-30 del spec 2026-10-29: el verify_token viaja en el cuerpo de subscribed_apps. Ni un rechazo de Meta que lo
+    // repita, ni el 201 de después, lo dejan en la respuesta, los logs, la auditoría, el outbox o las fallas guardadas.
+    [Fact]
+    public async Task TheWebhookOverrideNeverLeaksTheVerifyToken()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var logs = new CapturedLogs();
+        using var host = factory.WithWebhookOverride(WebhookOverrideUrl).WithCapturedLogs(logs);
+        factory.MetaHandler.Respond("/222/subscribed_apps", HttpStatusCode.BadRequest, $$$"""{"error":{"message":"challenge failed for {{{SentinelMetaVerifyToken}}}","code":2200}}""");
+        ScriptHappySignup(factory.MetaHandler);
+        var tenant = await RegisterTenantAsync(host);
+        await EnableModuleAsync(connectionString, tenant.TenantId, "messaging");
+        using var client = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+
+        var failed = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody());
+        var failedBody = await failed.Content.ReadAsStringAsync(Ct);
+        factory.MetaHandler.Reset();
+        ScriptHappySignup(factory.MetaHandler);
+        var created = await SendAsync(client, HttpMethod.Post, EmbeddedSignupUrl(tenant.TenantId), SignupBody());
+        var createdBody = await created.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        // Control positivo: el token sí salió hacia Meta, así que su ausencia en el resto significa algo.
+        Assert.Contains(factory.MetaHandler.Requests, request => request.Body?.Contains(SentinelMetaVerifyToken, StringComparison.Ordinal) == true);
+        AssertLogged(logs, "Graph subscribed-apps answered HTTP 400");
+        await AssertNothingLeaksAsync(connectionString, logs, [failedBody, createdBody], SentinelMetaVerifyToken);
+    }
+
     // Spec 2026-10-15 §12: el token de la Admin API (y el code y el client secret) no salen por ningún camino en el enlace,
     // el probador ni un rechazo de Shopify que repite el token en su cuerpo.
     [Fact]

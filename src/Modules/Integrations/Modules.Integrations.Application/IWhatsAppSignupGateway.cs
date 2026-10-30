@@ -36,7 +36,9 @@ public interface IWhatsAppSignupGateway
     /// <summary>GET /{wabaId}/phone_numbers.</summary>
     Task<GraphResult<IReadOnlyList<WabaPhoneNumber>>> ListPhoneNumbersAsync(string wabaId, string accessToken, CancellationToken cancellationToken);
 
-    /// <summary>POST /{wabaId}/subscribed_apps.</summary>
+    /// <summary>POST /{wabaId}/subscribed_apps. Con <c>Meta:App:WebhookOverrideCallbackUrl</c> lleva <c>override_callback_uri</c> y
+    /// <c>verify_token</c>; Meta hace el desafío GET antes de contestar, y un rechazo es una falla como cualquier otra: nunca se
+    /// reintenta sin ellos.</summary>
     Task<GraphResult<bool>> SubscribeAppAsync(string wabaId, string accessToken, CancellationToken cancellationToken);
 
     /// <summary>GET /{phoneNumberId}?fields=display_phone_number,verified_name,quality_rating,status,platform_type.</summary>
