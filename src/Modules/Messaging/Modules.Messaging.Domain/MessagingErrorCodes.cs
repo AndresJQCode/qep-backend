@@ -190,4 +190,10 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-26: el contacto está bloqueado, así que la conversación no envía.</summary>
     public const string ContactBlocked = "messaging.contact.blocked";
+
+    /// <summary>Spec 2026-10-29: la importación del historial no se puede reintentar (rechazada, vencida o sin nada que pedir).</summary>
+    public const string HistorySyncRetryNotAllowed = "messaging.history_sync.retry_not_allowed";
+
+    /// <summary>Spec 2026-10-29: la conexión no tiene importación del historial.</summary>
+    public const string HistorySyncNotFound = "messaging.history_sync.not_found";
 }
