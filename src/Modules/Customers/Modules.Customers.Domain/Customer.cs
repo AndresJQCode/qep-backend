@@ -511,6 +511,16 @@ public sealed class Customer
     /// todavía no tiene ficha. Igual que <see cref="CreateIncomplete"/> pero sin BSUID: el primer mensaje en vivo lo vincula
     /// después (D-A6). Lo crea el sistema, nunca una persona por HTTP.
     /// </summary>
+    /// <summary>El <c>phone_e164</c> que <see cref="CreateIncompleteFromPhone"/> guarda para ese teléfono y país: <c>null</c> si la
+    /// librería lo rechaza (los <c>521…</c> de México que manda WhatsApp, rangos más nuevos que su metadata). Quien busca antes de
+    /// crear busca por este valor, no por el texto que recibió, o no encuentra lo que él mismo guardó (hallazgo F2, spec 2026-10-29).</summary>
+    public static string? PhoneE164ForIncomplete(string phone, string? country, IPhoneNumberNormalizer phoneNormalizer)
+    {
+        ArgumentNullException.ThrowIfNull(phoneNormalizer);
+        var normalizedCountry = string.IsNullOrWhiteSpace(country) ? null : country.Trim().ToUpperInvariant();
+        return phoneNormalizer.ToE164(phone?.Trim(), normalizedCountry ?? UnknownRegion);
+    }
+
     public static Customer CreateIncompleteFromPhone(
         CustomerId id,
         Guid tenantId,
@@ -535,7 +545,7 @@ public sealed class Customer
             Name = NormalizeName(name),
             Phone = phone,
             Country = normalizedCountry,
-            PhoneE164 = phoneNormalizer.ToE164(phone, normalizedCountry ?? UnknownRegion),
+            PhoneE164 = PhoneE164ForIncomplete(phone, normalizedCountry, phoneNormalizer),
             Completeness = CustomerCompleteness.Incomplete,
             IsActive = true,
             Version = 1,

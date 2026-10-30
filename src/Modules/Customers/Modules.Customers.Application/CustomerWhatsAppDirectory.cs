@@ -78,7 +78,15 @@ public sealed class CustomerWhatsAppDirectory(
     public async Task<EnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, WhatsAppPhoneContact contact, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(contact);
-        if (await repository.FindOldestByPhoneE164Async(tenantId, contact.PhoneE164, cancellationToken) is { } byPhone)
+        // Hallazgo F2: se busca por lo que CreateIncompleteFromPhone guarda. Si la librería rechaza el número, el incompleto queda sin
+        // phone_e164 y la única llave es el teléfono tal cual; buscar por "+" + wa_id crearía un cliente nuevo en cada parte o eco.
+        var phone = contact.PhoneE164.Trim();
+        var region = phoneNormalizer.RegionOf(phone);
+        var stored = Customer.PhoneE164ForIncomplete(phone, region, phoneNormalizer);
+        var found = stored is null
+            ? await repository.FindOldestByUnnormalizedPhoneAsync(tenantId, phone, cancellationToken)
+            : await repository.FindOldestByPhoneE164Async(tenantId, stored, cancellationToken);
+        if (found is { } byPhone)
         {
             // Un fusionado se redirige al que quedó; sólo se renombra al que está vivo (P-7).
             if (byPhone.MergedIntoId is null && !string.IsNullOrWhiteSpace(contact.Name))
@@ -94,8 +102,8 @@ public sealed class CustomerWhatsAppDirectory(
             CustomerId.New(),
             tenantId,
             IncompleteCustomerProfile.NameForPhone(contact),
-            contact.PhoneE164,
-            phoneNormalizer.RegionOf(contact.PhoneE164),
+            phone,
+            region,
             now,
             phoneNormalizer);
         repository.Add(customer);
