@@ -202,4 +202,70 @@ public sealed class HistoryTakeoverTests
 
         Assert.Equal("Open|1|False", await RowAsync(f));
     }
+
+    /// <summary>Una importada cerrada: el último es del negocio, de hace una hora.</summary>
+    private static async Task ImportClosedAsync(Fixture f)
+    {
+        await PostAsync(f, History(50,
+            ("wamid.i", "¿Y el precio?", HoursBefore(f, 3), false),
+            ("wamid.o", "Te confirmo mañana", HoursBefore(f, 1), true)));
+        Assert.Equal("Resolved|0|True", await RowAsync(f));
+    }
+
+    // Hallazgo F1 de la revisión final: marcarla leída es una acción del asesor. Una parte vieja que llega después no le devuelve el
+    // contador que ya leyó.
+    [Fact]
+    public async Task MarkingItReadStopsTheImportRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ImportOpenAsync(f);
+        f.Factory.MetaHandler.Respond("/111/messages", HttpStatusCode.OK, """{"success":true}""");
+        var url = ConversationUrl(f.Tenant.TenantId, await ConversationIdAsync(f));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Advisor, HttpMethod.Post, $"{url}/read")).StatusCode);
+        Assert.Equal("Open|0|False", await RowAsync(f));
+
+        // Una parte vieja: el último sigue siendo el entrante, y la regla volvería a contarlo.
+        await PostAsync(f, MetaPayloads.History(PhoneNumberId, 0, 2, 60, (WaId, [("wamid.old", "Buenas", HoursBefore(f, 50), false)])));
+
+        Assert.Equal("Open|0|False", await RowAsync(f));
+    }
+
+    // F1: marcarla no leída tampoco se pisa.
+    [Fact]
+    public async Task MarkingItUnreadStopsTheImportRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ImportClosedAsync(f);
+        var url = ConversationUrl(f.Tenant.TenantId, await ConversationIdAsync(f));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Advisor, HttpMethod.Post, $"{url}/unread")).StatusCode);
+        Assert.Equal("Resolved|1|False", await RowAsync(f));
+
+        // Una parte vieja: el último sigue siendo el saliente, y la regla dejaría el contador en 0.
+        await PostAsync(f, MetaPayloads.History(PhoneNumberId, 0, 2, 60, (WaId, [("wamid.old", "Buenas", HoursBefore(f, 50), false)])));
+
+        Assert.Equal("Resolved|1|False", await RowAsync(f));
+    }
+
+    // F1: «no leído desde este mensaje», igual.
+    [Fact]
+    public async Task MarkingItUnreadFromAMessageStopsTheImportRule()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await ImportClosedAsync(f);
+        var conversationId = await ConversationIdAsync(f);
+        var inboundId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE wamid = 'wamid.i'");
+
+        Assert.Equal(HttpStatusCode.NoContent, (await SendAsync(f.Advisor, HttpMethod.Post,
+            $"{MessagesUrl(f.Tenant.TenantId, conversationId)}/{inboundId}/unread")).StatusCode);
+        Assert.Equal("Resolved|1|False", await RowAsync(f));
+
+        await PostAsync(f, MetaPayloads.History(PhoneNumberId, 0, 2, 60, (WaId, [("wamid.old", "Buenas", HoursBefore(f, 50), false)])));
+
+        Assert.Equal("Resolved|1|False", await RowAsync(f));
+    }
 }

@@ -59,11 +59,12 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
     public async Task<ReadReceiptTarget?> MarkReadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // Spec 2026-10-09 §8.4: una sentencia, sin comparar version. La fila queda con su candado sólo mientras
-        // corre el UPDATE; una ingesta concurrente (§7.5) espera y suma su no leído después, nunca se pierde.
+        // corre el UPDATE; una ingesta concurrente (§7.5) espera y suma su no leído después, nunca se pierde. Leerla es una acción del
+        // asesor: la saca de la regla de la importación (history_managed, spec 2026-10-29), o una parte vieja le devolvería el contador.
         var rows = await dbContext.Database.SqlQuery<ReadRow>(
             $"""
             UPDATE messaging.conversations
-               SET unread_count = 0, updated_at = {now}, version = version + 1
+               SET unread_count = 0, updated_at = {now}, version = version + 1, history_managed = false
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND unread_count > 0
             RETURNING connection_id AS "ConnectionId", last_inbound_wamid AS "LastInboundWamid", last_inbound_at AS "LastInboundAt", channel AS "Channel", user_id AS "UserId"
             """).ToListAsync(cancellationToken);
@@ -107,11 +108,12 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
     public async Task<bool> MarkUnreadAsync(Guid tenantId, Guid conversationId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         // Spec 2026-10-14 §3.2: una sentencia, como el read. El 1 es el mismo número que dejaría un entrante nuevo,
-        // así que la fila, el badge y counts.unread lo dibujan sin saber que fue una marca manual.
+        // así que la fila, el badge y counts.unread lo dibujan sin saber que fue una marca manual. Como el read, la saca de la regla de
+        // la importación (history_managed).
         var rows = await dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE messaging.conversations
-               SET unread_count = 1, updated_at = {now}, version = version + 1
+               SET unread_count = 1, updated_at = {now}, version = version + 1, history_managed = false
              WHERE id = {conversationId} AND tenant_id = {tenantId} AND unread_count = 0
             """, cancellationToken);
         return rows == 1;
@@ -127,12 +129,13 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         }
 
         // Spec 2026-10-14 §7.1: «desde» es el orden del hilo (IX_messages_thread), y cuentan sólo los entrantes, como
-        // en la ingesta. GREATEST por lo mismo que en MarkUnreadAsync: pisar no leídos reales mentiría.
+        // en la ingesta. GREATEST por lo mismo que en MarkUnreadAsync: pisar no leídos reales mentiría. Saca la conversación de la
+        // regla de la importación (history_managed), como el read.
         var inbound = MessageColumnCodes.ToCode(MessageDirection.Inbound);
         var rows = await dbContext.Database.ExecuteSqlAsync(
             $"""
             UPDATE messaging.conversations AS conversation
-               SET unread_count = pending.count, updated_at = {now}, version = conversation.version + 1
+               SET unread_count = pending.count, updated_at = {now}, version = conversation.version + 1, history_managed = false
               FROM (SELECT count(*)::int AS count
                       FROM messaging.messages AS message
                       JOIN messaging.messages AS anchor ON anchor.id = {messageId}
