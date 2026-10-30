@@ -5,13 +5,17 @@ namespace Modules.Integrations.Application;
 
 /// <summary>
 /// Spec 2026-10-08, «Eventos de outbox»: para que un consumidor suelte una conexión que ya no sirve.
-/// Sin consumidores en este spec.
+/// Sólo <see cref="WhatsAppCoexistenceConnected"/> tiene consumidor: Messaging, que importa el historial
+/// de la app de WhatsApp Business del número recién conectado.
 /// </summary>
 public static class ConnectionEvents
 {
     public const string Paused = "integrations.connection-paused.v1";
     public const string Deleted = "integrations.connection-deleted.v1";
     public const string NeedsAttention = "integrations.connection-needs-attention.v1";
+
+    /// <summary>Se publica al crear una conexión por coexistencia; <c>occurredAt</c> es la hora de la conexión.</summary>
+    public const string WhatsAppCoexistenceConnected = "integrations.whatsapp-coexistence-connected.v1";
 }
 
 /// <summary>

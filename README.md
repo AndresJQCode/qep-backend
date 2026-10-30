@@ -2706,9 +2706,9 @@ más pasa en el request. Un worker reclama cada entrega con un lease (8 intentos
 `unread_count`), `statuses` (monótonos: `sent < delivered < read`; `failed` sólo sobre `sent`;
 `played` cuenta como `read`), `account_update` (cuenta deshabilitada → la conexión queda en
 `NeedsAttention`). Con la conexión `Paused` o el módulo apagado los entrantes se descartan y los
-`statuses` sí se aplican. Las entregas procesadas se purgan a los 7 días. No se suscriben los campos
-de coexistencia (`history`, `smb_app_state_sync`, `smb_message_echoes`): lo que se responde desde la app
-del teléfono no aparece en QEP todavía.
+`statuses` sí se aplican. Las entregas procesadas se purgan a los 7 días. Los campos de coexistencia
+(`history`, `smb_message_echoes`, `smb_app_state_sync`) se describen en
+[Historial de coexistencia](#historial-de-coexistencia).
 
 **Entrantes que Meta no entrega.** Un mensaje `type: "unsupported"` se guarda como `Unsupported` con el `type` y los
 `errors` de Meta en `details`. Al leer, `unsupportedReason` lo traduce a español como `failureReason`
@@ -2887,6 +2887,87 @@ El `webhook.json` de ejemplo lleva `"from_user_id": "CO.573001234567"` en el men
 
 Esperado: `200`. Sin el header: `401`. La entrega se procesa en los 3 s siguientes
 (`Messaging:Workers:DeliveryPollSeconds`).
+
+#### Historial de coexistencia
+
+Spec `docs/superpowers/specs/2026-10-29-historial-coexistencia-whatsapp-design.md`. Cuando un tenant
+conecta su número **por coexistencia** (el número sigue activo en la app del teléfono), QEP trae el
+historial de hasta 180 días y los contactos de la agenda, y desde ahí también ve lo que se responde
+desde la app.
+
+- **Qué hace.** Después del commit de la conexión, QEP pide a Graph (`smb_app_data`) dos sincronizaciones,
+  `smb_app_state_sync` (contactos) e `history`, y guarda cada `request_id` en la fila de sincronización de la
+  conexión. Un worker hace el pedido, así que no depende de que el pod siga vivo. Las partes del historial
+  llegan por el webhook y llenan los hilos **sin generar trabajo**: no disparan el bot, no crean negocios ni
+  asignan asesor. Las conversaciones importadas entran **cerradas**, salvo las que cumplen las dos
+  condiciones: el último mensaje es del contacto y llegó en las 24 h anteriores a la conexión (esas entran
+  abiertas, con `history_managed = true`). Los contactos crean clientes incompletos. Los ecos
+  (`smb_message_echoes`) guardan lo que el negocio responde desde la app.
+- **Un eco a un número que QEP no conoce crea la conversación cerrada** (P-5, decisión del owner del
+  2026-10-30). Que el negocio escriba desde la app no le deja nada pendiente a un asesor, así que no aparece en
+  la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
+  reabre por el camino de siempre, con su evento `Reopened`. Un eco a una conversación que ya existe no le
+  cambia el estado. En el reporte, esa conversación (marca `started_by_echo`) no cuenta como sesión al crearse:
+  su sesión la arranca el `Reopened`, así que el eco más el entrante dan una sola, y un periodo con sólo el eco
+  da cero. Una conversación que abre un asesor desde QEP sí cuenta desde su creación, aunque el contacto no
+  conteste.
+- **El historial importado no cuenta en el reporte de mensajería** (decisión del owner del 2026-10-30). Lo
+  importado lleva la marca `imported`, en `messaging.conversations` y en `messaging.messages`, y esa marca
+  no se apaga nunca, a diferencia de `history_managed`. Su `created_at` es la hora de la importación, así que
+  `MessagingReportSource` lo deja fuera de las sesiones, de los entrantes de arranque y de las respuestas: el
+  día de la conexión no se infla con contactos nuevos ni con sesiones sin responder. Lo que pasa en vivo
+  después cuenta como siempre: una conversación importada arranca sesión con su primer entrante en vivo, o
+  con su `Reopened` si se reabrió. Para saber si un contacto es nuevo o vuelve, un entrante importado sí
+  cuenta, con su `occurred_at`: un contacto que ya escribía por la app no es nuevo por escribir en vivo. Los
+  ecos no llevan la marca, porque son tráfico en vivo. La migración `AddImportedMarker` agrega las columnas
+  `imported` y `started_by_echo`, y el índice parcial `IX_conversations_tenant_imported`.
+- **`fromHistory` en el resumen de la conversación.** `ConversationSummary` lleva `fromHistory`: `true` si la
+  conversación nació de la importación y el contacto todavía no ha escrito en vivo (`imported` y sin
+  `last_inbound_at`). Con eso el compositor muestra «Esta conversación viene del historial; para responder usa
+  una plantilla.» sin otra llamada. Viaja en todo lo que devuelve un `ConversationSummary`: el listado, el
+  detalle y las respuestas de las acciones sobre la conversación. Los resultados de la búsqueda de mensajes no
+  lo llevan, porque son `MessageHitDto`. No sale de `history_managed`:
+  esa bandera se apaga cuando el asesor toma, transfiere o marca leída la conversación, y nada de eso abre la
+  ventana de 24 h, así que la respuesta sigue exigiendo plantilla.
+- **Regla de Meta: 24 h y una sola vez por tipo.** Meta acepta el pedido de cada tipo una sola vez y sólo
+  dentro de las 24 h siguientes a la conexión. Pasado el plazo no hay segunda oportunidad: el estado queda
+  `Expired` y la pantalla dice que hay que desconectar y volver a conectar. Un pedido rechazado por Graph
+  queda `Failed`; mientras no venza el plazo se puede reintentar.
+- **Campos del webhook a suscribir en el panel de la app de Meta:** `history`, `smb_message_echoes` y
+  `smb_app_state_sync`. Sin la suscripción el historial no llega.
+- **Endpoints.** `GET /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/history-sync`
+  (permiso `integrations.connection.read`) devuelve el estado, el progreso, `canRetry` y `mustReconnect`.
+  `POST …/history-sync/retry` (permiso `integrations.connection.manage`) reintenta lo que quedó `Pending` o
+  `Failed`; sin cuerpo.
+- **Orden de la puesta en marcha (spec §6).** (1) Conexiones de Clasic y Transportes CI creadas en QEP;
+  (2) URL del webhook de la app de Meta apuntando a QEP; (3) este backend desplegado, con la migración
+  `AddHistorySync` (Messaging: `history_managed` en las conversaciones y las tablas de la sincronización) y
+  `AddImportedMarker` (la marca `imported` de conversaciones y mensajes);
+  (4) recién entonces,
+  el número de QCode por coexistencia. **Despliégalo antes de conectar cualquier número por coexistencia:**
+  una conexión hecha antes pide el historial, QEP lo descarta como `UnknownChange` y no hay segunda
+  oportunidad. Sin configuración nueva: `Meta:App:*` no cambia.
+- **Límite de tamaño (V-3).** Revisa `Messaging:Webhook:MaxBodyBytes` contra el tamaño de una parte real de
+  historial; si queda corto, la parte se rechaza y se pierde.
+
+**Pendientes y límites conocidos.**
+
+- **V-1 a V-6 siguen sin verificar contra Meta real:** forma de los tres webhooks (V-1, en especial si
+  `history` trae el nombre del contacto), webhook que trae el archivo de un `media_placeholder` (V-2), tamaño
+  de una parte frente al límite (V-3), que la ventana de 24 h no la abran los mensajes del historial (V-4),
+  `TriageRules.IsPending` con `last_inbound_at` vacío (V-5) y que Graph no gaste la única oportunidad al
+  rechazar un pedido (V-6). Las pruebas usan fixtures que toleran esas variaciones.
+- **Qué apaga `history_managed`.** Mientras está prendida, cada parte del historial que llega recalcula si la
+  conversación está abierta y cuántos no leídos tiene. La apaga todo lo que hace la ingesta en vivo o el asesor:
+  un entrante en vivo, `Resolve` y `Reopen`, una respuesta enviada desde QEP, asignarla (a mano, por traspaso del
+  bot o por la autoasignación al responder), tomarla o transferirla, un eco de lo que el negocio responde desde la
+  app, y marcarla leída o no leída (también «no leído desde este mensaje»). **Un envío de campaña no la apaga.**
+  Si agregas una acción del asesor sobre una conversación, decide qué hace con la bandera: si no la apaga, la
+  siguiente parte del historial le pisa el estado o el contador.
+- **Ventana residual de doble envío con varias réplicas.** El pedido a Graph se reclama con un lease; con más
+  de una réplica queda una ventana pequeña en la que dos pods pueden enviar el mismo pedido.
+- **Un archivo que nunca llega queda `Pending`.** Si Meta no entrega el medio de un `media_placeholder`, el
+  mensaje sigue pendiente, sin reintentos propios.
 
 #### Despliegue
 
@@ -3750,6 +3831,83 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 3. La app en el Dev Dashboard de Shopify, la verificación con una tienda de desarrollo y el primer tenant piloto: los
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
+
+### Facturación: cobros recurrentes
+
+Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana ante cualquier discrepancia). Módulo
+`Modules.Billing.{Domain,Application,Infrastructure,Api}`, esquema `billing`, clave de módulo `billing`
+(`Dependencies = [Customers]`, fuera de `DefaultForNewTenants`: nace apagado).
+
+**Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
+lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
+declaran `RequiredModules: [billing]`: con el módulo apagado el editor de roles no los ofrece y la API responde un `403` pelado, sin
+el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca se muestran opciones que el tenant no tiene).
+
+**Rutas** (`/api/v1/tenants/{tenantId}/billing`, con `X-Tenant-Id`):
+
+| Método | Ruta | Permiso | Qué hace |
+| --- | --- | --- | --- |
+| `GET` / `PUT` | `/customers/{customerId}/profile` | read / manage | Perfil de cobro: canal (`WhatsApp` o `Email`) y encargado. Sin `If-Match`: la última escritura gana |
+| `GET` | `/assignees` | manage | Miembros activos que pueden ser encargados |
+| `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene) |
+| `GET` | `/services/preview-charges` | manage | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir |
+| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros / edita nombre, precio y moneda (`If-Match`) |
+| `POST` | `/services/{serviceId}/pause`, `/resume`, `/cancel` | manage | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending` |
+| `GET` | `/charges`, `/charges/{chargeId}` | read | Cobros con cliente, encargado y último aviso |
+| `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage | Marca pagado / corrige el pago |
+| `GET` / `PUT` | `/settings` | manage | Conexión de WhatsApp con la que se avisa (`whatsAppConnectionId`) |
+| `GET` / `POST` | `/import/template`, `/import/preview`, `/import` | manage | Importación desde Excel |
+
+**Generación por período.** Cada período genera su propio cobro aunque el anterior siga sin pagar; marcar pagado no genera nada. Un
+cobro nace cuando `due_date <= hoy del tenant + 5`. Las fechas son `firstDueDate + k × cycleMonths` con el día del ancla (31 ene →
+28 feb → 31 mar). Crear un servicio con fecha pasada genera todos los períodos hasta hoy + 5; el worker genera los que falten. La
+unicidad `(service_id, due_date)` hace la generación idempotente entre réplicas. Pausar no silencia los cobros ya existentes;
+reanudar no cobra los períodos en pausa.
+
+**Calendario y agrupación.** Pasos de aviso de un cobro: `due − 5`, `due`, `due + 3` y cada 7 días después. Si un día se perdió, sólo
+se cubre el paso más reciente. **Un mensaje por cliente y día** (índice único `IX_customer_messages_tenant_customer_day`): `Overdue`
+si algún cobro con paso hoy está vencido (lista todos los vencidos), si no `Reminder`. Un total por moneda, nunca convertido. Un
+cliente **sin perfil de cobro** no recibe aviso; sus cobros van al email diario de cada miembro con `billing.service.manage`.
+
+**Worker** (`BillingReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
+`Billing:SendHourLocal` en la zona horaria del tenant genera cobros, manda el mensaje del día a cada cliente y el email diario al
+equipo, y cierra el día en `billing.tenant_runs`. La entrega es **al menos una vez**: si el proceso cae después de que el proveedor
+aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_email`, `channel_not_configured`,
+`template_not_approved`, `connection_unavailable`, `send_failed`) queda en el mensaje y nunca cambia de canal.
+
+**Configuración** (`src/Api/appsettings.json`, validada al arrancar):
+
+```json
+"Billing": { "SweepMinutes": 15, "SendHourLocal": 8 }
+```
+
+`SweepMinutes > 0` y `SendHourLocal` entre 0 y 23; si no, la API no arranca. No hay secretos propios: el correo sale por el canal de
+Notifications y WhatsApp por la conexión `whatsapp-cloud` del tenant.
+
+**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con parámetros posicionales: `qep_cobro_recordatorio` y
+`qep_cobro_vencido` (texto literal en la spec, §5). QEP las crea en la cuenta de Meta del tenant con
+`POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/billing` (exige el módulo `billing`;
+reintenta si quedó a medias). **Meta debe aprobarlas** antes de enviar: sin aprobación el aviso falla con
+`template_not_approved`. Una vez aprobadas, el tenant elige la conexión en `PUT /billing/settings`.
+
+**Importación desde Excel.** `.xlsx`/`.xls`, 10 MB, 500 filas. `preview` no escribe; `import` revalida y guarda las filas válidas (una
+fila con error no frena a las demás). Columnas: `Cliente`, `Tipo de documento`, `Número de documento`, `Teléfono`, `Correo`, `País`,
+`Servicio`, `Precio`, `Moneda`, `Ciclo`, `Próximo vencimiento`, `Canal de aviso`, `Encargado` (correo de un miembro con
+`billing.service.manage`). El cliente se empareja por documento, o si no por teléfono, o si no por correo (el primero que aplica
+decide); sin coincidencia se crea **incompleto**, sin código de cliente. Si ya tiene perfil, canal y encargado de la fila se ignoran. La
+importación de **Clientes** dejó de exigir la clasificación: vacía, el cliente queda sin clasificación (y sin prefijo de CUC).
+Los errores por fila se registran en el log con su código y el detalle.
+
+**Habilitarlo.** Desde la consola del operador (ver «Módulos por tenant»), prender el módulo `billing` al tenant. Se prende sólo para
+quien lo contrata; mientras esté apagado el worker lo ignora.
+
+**Migraciones, en este orden de despliegue** (cada módulo aplica las suyas al arrancar, `Program.cs`): `Tenancy`
+`AddBillingModuleKey` (el CHECK de `tenant_modules` admite `billing`), `Messaging` `AddBillingTemplateKinds` (tipos de plantilla de
+cobro) y `Billing` `InitialBilling` (esquema `billing`). Billing se inicializa al final, después de Audit.
+
+**Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
+(3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la
+conexión en Configuración.
 
 ## Verificación
 

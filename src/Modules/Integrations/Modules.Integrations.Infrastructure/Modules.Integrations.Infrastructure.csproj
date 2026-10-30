@@ -25,5 +25,7 @@
          buscan en el host. -->
     <InternalsVisibleTo Include="Modules.Integrations.UnitTests" />
     <InternalsVisibleTo Include="Modules.Integrations.IntegrationTests" />
+    <!-- CoexistenceEventParityTests: serializa por el publicador real. -->
+    <InternalsVisibleTo Include="Bootstrapper.UnitTests" />
   </ItemGroup>
 </Project>

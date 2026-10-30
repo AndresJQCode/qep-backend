@@ -54,7 +54,14 @@ public sealed record ConversationSummary(
     ConversationAutomationDto? Automation = null,
     /// <summary>Spec 2026-10-26 §3.5 (BFF): <c>null</c> si el contacto no está bloqueado. Viaja como <c>null</c> explícito: el frontend distingue
     /// «backend nuevo, sin bloqueo» de «backend viejo», que no manda la clave.</summary>
-    ConversationBlockDto? Blocked = null)
+    ConversationBlockDto? Blocked = null,
+    /// <summary>Decisión del owner del 2026-10-30 (BFF): <c>true</c> si la conversación nació de la importación del historial y el
+    /// contacto todavía no ha escrito en vivo. Viaja calculado para que el compositor elija su aviso («Esta conversación viene del
+    /// historial; para responder usa una plantilla.») sin saber de <c>imported</c>; con <c>customerWindowExpiresAt</c> en <c>null</c> no
+    /// alcanza, porque una conversación que abrió QEP tampoco tiene ventana. No es <c>history_managed</c>: esa bandera se apaga cuando
+    /// el asesor toma, transfiere o marca leída la conversación, o cuando llega un eco, y nada de eso abre la ventana: el aviso se
+    /// iría mientras la respuesta sigue exigiendo plantilla.</summary>
+    bool FromHistory = false)
 {
     /// <summary>Spec 2026-10-24 §4.1 (BFF): los otros clientes del tenant con el número de la conversación, sin el que ella muestra, por
     /// created_at, hasta 10; sin etiquetas. Viaja siempre. Se llena en toda respuesta de una sola conversación (detalle, PUT
@@ -161,7 +168,11 @@ public sealed record MessageDto(
     ChatbotRefDto? SentByChatbot = null,
     /// <summary>Spec 2026-10-21 D-I2: los botones, la lista o el enlace de un interactivo saliente, para que el hilo los pinte.
     /// <c>null</c> en todo lo demás, incluido el interactivo entrante (su respuesta ya va resumida en <c>text</c>).</summary>
-    InteractiveDto? Interactive = null);
+    InteractiveDto? Interactive = null,
+    /// <summary>Spec 2026-10-29 §1: de un <c>media_placeholder</c> del historial, <c>Pending</c> (el archivo puede llegar) o
+    /// <c>Unavailable</c> (Meta ya no lo guarda); <c>null</c> en todo lo demás. Cuando viaja, <c>UnsupportedReason</c> es <c>null</c>:
+    /// la burbuja dibuja el estado del medio y no «mensaje no compatible».</summary>
+    string? MediaState = null);
 
 /// <summary>Spec 2026-10-21 D-I3: el chatbot autor de un mensaje, con el nombre que hoy tiene.</summary>
 public sealed record ChatbotRefDto(Guid ChatbotId, string Name);

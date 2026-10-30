@@ -282,6 +282,9 @@ internal static class MessagingApiHarness
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
                 services.AddHttpClient("integrations.instagram-graph")
                     .ConfigurePrimaryHttpMessageHandler(() => MetaHandler);
+                // Spec 2026-10-29: el worker de smb_app_data tampoco corre solo; su intervalo no es configuración, así que se reemplaza acá.
+                services.RemoveAll<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule>();
+                services.AddSingleton(new Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule(TimeSpan.FromHours(1)));
             });
         }
     }
@@ -649,6 +652,27 @@ internal static class MessagingApiHarness
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Webhook.WebhookDeliveryWorker>().Single();
         await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Spec 2026-10-29: una pasada del consumidor del evento de coexistencia.</summary>
+    public static async Task DrainCoexistenceEventsAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Coexistence.CoexistenceEventsWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Spec 2026-10-29: una pasada del worker que le pide a Meta los contactos y el historial (<c>smb_app_data</c>).</summary>
+    public static Task DrainHistorySyncRequestsAsync(WebApplicationFactory<Program> host) =>
+        DrainHistorySyncRequestsWithTokenAsync(host, TestContext.Current.CancellationToken);
+
+    /// <summary>La misma pasada con el token que la prueba controla (p. ej., el apagado del host a mitad de una fila). Otro nombre y no
+    /// una sobrecarga: con la sobrecarga, xUnit1051 marca cada llamada de un solo argumento.</summary>
+    public static async Task DrainHistorySyncRequestsWithTokenAsync(WebApplicationFactory<Program> host, CancellationToken cancellationToken)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestWorker>().Single();
+        await worker.DrainAsync(cancellationToken);
     }
 
     /// <summary>Corre una pasada de la copia de medios (§8.6, P10): reclama y copia lo pendiente.</summary>

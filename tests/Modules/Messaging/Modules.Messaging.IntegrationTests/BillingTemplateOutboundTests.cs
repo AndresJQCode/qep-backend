@@ -1,0 +1,182 @@
+using System.Net;
+using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
+using Modules.Messaging.Domain;
+using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
+
+namespace Modules.Messaging.IntegrationTests;
+
+/// <summary>Cobros recurrentes §5: la plantilla de cobro sale al hilo del número en la conexión, sin las guardas de la bandeja y sin
+/// documento ni R2. Es el camino real de producción de <see cref="IBillingTemplateOutbound"/>, resuelto de un scope como el del
+/// procesador de avisos; el gemelo de <see cref="QuotationTemplateOutboundTests"/> sin el PDF.</summary>
+public sealed class BillingTemplateOutboundTests
+{
+    private const string Phone = "573001234567";
+    private const string TemplateName = "qep_cobro_recordatorio";
+
+    private static readonly string[] Values = ["Ana Pérez", "Hosting plan pro", "$ 150.000", "10/03/2026"];
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, RegisteredTenant Tenant, Guid ConnectionId, Guid MemberId);
+
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database)
+    {
+        var connectionString = database.GetConnectionString();
+        var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        var memberId = await OwnerMembershipIdAsync(connectionString, tenant);
+        return new Fixture(factory, factory, connectionString, tenant, connectionId, memberId);
+    }
+
+    private static void ScriptMetaOk(FakeMetaGraphHandler meta) =>
+        meta.Respond("/111/messages$", HttpStatusCode.OK,
+            """{"messaging_product":"whatsapp","contacts":[{"input":"573001234567","wa_id":"573001234567"}],"messages":[{"id":"wamid.b"}]}""");
+
+    private static List<MetaRequest> MetaCalls(Fixture f) =>
+        f.Factory.MetaHandler.Requests.Where(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request)).ToList();
+
+    private static BillingTemplateSend Send(Fixture f, string waId = Phone, Guid? customerId = null, IReadOnlyList<string>? values = null) =>
+        new(f.Tenant.TenantId, f.ConnectionId, f.MemberId, waId, customerId, "Ana Pérez", MessageTemplateKind.BillingReminder, TemplateName, "es", values ?? Values);
+
+    private static async Task<BillingTemplateSendResult> SendAsync(Fixture f, BillingTemplateSend send)
+    {
+        using var scope = f.Host.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<IBillingTemplateOutbound>().SendAsync(send, Ct);
+    }
+
+    [Fact]
+    public async Task SendsThePositionalTemplateIntoANewOpenUnassignedConversationWithTheAssigneeAsAuthor()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var customerId = Guid.CreateVersion7();
+
+        var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f, customerId: customerId)));
+
+        // Abre por teléfono, sin asignar a nadie, con el cliente.
+        Assert.Equal($"Open||{Phone}||{customerId}", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT status || '|' || coalesce(assigned_member_id::text, '') || '|' || wa_id || '|' || coalesce(user_id, '') || '|' || customer_id
+            FROM messaging.conversations WHERE id = @id
+            """,
+            ("id", sent.ConversationId)));
+        // Reclamo + DetailsJson + liquidación (status 1 = Sent) + el encargado como autor.
+        var definition = BillingTemplateDefinitions.For(MessageTemplateKind.BillingReminder);
+        var text = definition.Render(definition.ParametersFor(Values));
+        Assert.Equal($"{sent.ConversationId}|{f.MemberId}|{TemplateName}|es|1|{text}", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT conversation_id || '|' || sent_by_member_id || '|' || (details->'template'->>'name') || '|' || (details->'template'->>'language')
+                   || '|' || status || '|' || text
+            FROM messaging.messages WHERE id = @id
+            """,
+            ("id", sent.MessageId)));
+        Assert.Equal("wamid.b", await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
+
+        // Una sola llamada a Meta: por teléfono, la plantilla con parámetros posicionales y sin encabezado de documento.
+        var call = Assert.Single(MetaCalls(f));
+        Assert.Equal("/v24.0/111/messages", call.Uri!.AbsolutePath);
+        using var body = JsonDocument.Parse(call.Body!);
+        Assert.Equal(Phone, body.RootElement.GetProperty("to").GetString());
+        var template = body.RootElement.GetProperty("template");
+        Assert.Equal(TemplateName, template.GetProperty("name").GetString());
+        var components = template.GetProperty("components").EnumerateArray().ToArray();
+        var component = Assert.Single(components);
+        Assert.Equal("body", component.GetProperty("type").GetString());
+        Assert.Equal(Values, component.GetProperty("parameters").EnumerateArray().Select(item => item.GetProperty("text").GetString()));
+    }
+
+    /// <summary>La ventana de 24 h cerrada no impide la plantilla: es justo para lo que existe.</summary>
+    [Fact]
+    public async Task AClosedTwentyFourHourWindowStillSendsTheTemplateIntoTheExistingConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using (var anonymous = f.Host.CreateClient())
+        {
+            await PostWebhookAsync(anonymous, MetaPayloads.InboundText("111", Phone, "w1", DateTimeOffset.UtcNow.AddDays(-3).ToUnixTimeSeconds(), "hola"));
+            await DrainDeliveriesAsync(f.Host);
+        }
+
+        var existing = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f)));
+
+        Assert.Equal(existing, sent.ConversationId);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages WHERE conversation_id = @id AND direction = 2 AND status = 1", ("id", existing)));
+    }
+
+    [Fact]
+    public async Task AConnectionThatIsNotActiveReturnsConnectionUnavailableAndWritesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await ExecuteAsync(f.ConnectionString, "UPDATE integrations.connections SET status = 'Paused'");
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var result = await SendAsync(f, Send(f));
+
+        Assert.Equal(new BillingTemplateSendResult.ConnectionUnavailable("paused"), result);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Empty(MetaCalls(f));
+    }
+
+    /// <summary>Un 190 al enviar dice que la credencial ya no sirve: la conexión queda NeedsAttention y no queda fila de mensaje.</summary>
+    [Fact]
+    public async Task ARejectedTokenOnSendFlagsTheConnectionAndReturnsConnectionUnavailable()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.Unauthorized, FakeMetaGraphHandler.GraphError(190));
+
+        var result = await SendAsync(f, Send(f));
+
+        Assert.Equal(new BillingTemplateSendResult.ConnectionUnavailable("credentials_rejected"), result);
+        Assert.Equal("NeedsAttention", await ScalarAsync<string>(f.ConnectionString, "SELECT status FROM integrations.connections"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages"));
+    }
+
+    /// <summary>Meta rechaza la plantilla: el mensaje queda Failed (status 4) con su código, para que el hilo muestre qué no salió.</summary>
+    [Fact]
+    public async Task MetaRejectingTheTemplateLeavesAFailedMessageAndReturnsFailed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(132015));
+
+        var result = await SendAsync(f, Send(f));
+
+        Assert.Equal(new BillingTemplateSendResult.Failed("messaging.message.rejected"), result);
+        Assert.Equal("4|132015", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status || '|' || failure_code FROM messaging.messages WHERE direction = 2"));
+    }
+
+    [Fact]
+    public async Task AnInvalidValueIsRejectedBeforeAnyCall()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var result = await SendAsync(f, Send(f, values: ["Ana\nPérez", "Hosting plan pro", "$ 150.000", "10/03/2026"]));
+
+        Assert.Equal(new BillingTemplateSendResult.Failed("messaging.message.rejected"), result);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Empty(MetaCalls(f));
+    }
+}

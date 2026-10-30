@@ -25,8 +25,10 @@ public sealed record CompleteCustomerData(
     string? CityName,
     Guid ClassificationId);
 
-/// <summary>Lo que la caja del POS sabe del comprador al darlo de alta: nombre, documento y, si lo dio, teléfono.</summary>
-public sealed record RegisterCustomerData(string Name, string IdentificationType, string IdentificationNumber, string? Phone);
+/// <summary>Lo que la caja del POS sabe del comprador al darlo de alta: nombre, documento y, si lo dio, teléfono. El correo
+/// lo trae la importación de cobros recurrentes (spec cobros-recurrentes §5); la caja no lo pide.</summary>
+public sealed record RegisterCustomerData(
+    string Name, string IdentificationType, string IdentificationNumber, string? Phone, string? Email = null);
 
 /// <summary>
 /// Altas de clientes que hace el sistema, casi todas por una integración sin persona detrás (spec de Shopify §6.2.1
@@ -324,7 +326,8 @@ public sealed class CustomerProvisioning(
             CustomerMapping.ToIdentification(data.IdentificationType, data.IdentificationNumber),
             data.Phone,
             now,
-            phoneNormalizer);
+            phoneNormalizer,
+            data.Email);
         repository.Add(customer);
         // Hay una persona detrás (el cajero), así que va como Human y no por PublishByIntegration.
         auditPublisher.Publish(tenantId, actorId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now, source);

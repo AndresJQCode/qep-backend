@@ -233,6 +233,51 @@ public sealed class CustomerMergeReferencesTests
         Assert.Equal("Foto de la venta", Assert.Single(await ScalarsAsync<string>(database, "SELECT customer_name FROM pos.sales")));
     }
 
+    // Cobros recurrentes (spec 2026-10-29 §3.1): servicios y cobros pasan al que queda; el perfil del fusionado se borra si el que
+    // queda ya tiene uno y se le reasigna si no. Dos fusionados con perfil dejan uno solo (la clave es (tenant, cliente)).
+    [Fact]
+    public async Task MergingMovesServicesAndChargesToTheSurvivorAndDropsTheDuplicateProfile()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateReplicaTablesAsync(database);
+        var (withProfile, withoutProfile, mergedA, mergedB, mergedC) =
+            (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        var (keep, drop, reassign, older, newer) =
+            (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
+        await AddRowAsync(database, "billing.services", "customer_id", TenantId, mergedA);
+        await AddRowAsync(database, "billing.charges", "customer_id", TenantId, mergedA);
+        await AddRowAsync(database, "billing.services", "customer_id", OtherTenantId, mergedA);
+        await AddProfileAsync(database, TenantId, withProfile, keep, 0);
+        await AddProfileAsync(database, TenantId, mergedA, drop, 0);
+        await AddProfileAsync(database, OtherTenantId, mergedA, drop, 0);
+
+        await using (var customers = CustomersFor(database))
+        {
+            await new CustomerMergeReferences(customers).MoveAsync(
+                TenantId, withProfile, [mergedA], TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal([withProfile], await CustomerIdsAsync(database, "billing.services", "customer_id", TenantId));
+        Assert.Equal([withProfile], await CustomerIdsAsync(database, "billing.charges", "customer_id", TenantId));
+        Assert.Equal([mergedA], await CustomerIdsAsync(database, "billing.services", "customer_id", OtherTenantId));
+        Assert.Equal([(withProfile, keep)], await ProfilesAsync(database, TenantId));
+        Assert.Equal([(mergedA, drop)], await ProfilesAsync(database, OtherTenantId));
+
+        // El que queda no tiene perfil: se reasigna el del fusionado; con dos, gana el escrito más tarde y el otro se borra.
+        await AddProfileAsync(database, TenantId, mergedB, older, -10);
+        await AddProfileAsync(database, TenantId, mergedC, newer, 0);
+        await AddProfileAsync(database, TenantId, mergedA, reassign, -20);
+        await using (var customers = CustomersFor(database))
+        {
+            await new CustomerMergeReferences(customers).MoveAsync(
+                TenantId, withoutProfile, [mergedA, mergedB, mergedC], TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            new[] { (withProfile, keep), (withoutProfile, newer) }.Order().ToArray(),
+            (await ProfilesAsync(database, TenantId)).Order().ToArray());
+    }
+
     // Las columnas que la fusión mueve (§4), en el orden del adaptador, sin la audiencia de campañas, que va aparte.
     private static readonly (string Table, string Column)[] ReferenceColumns =
     [
@@ -245,6 +290,8 @@ public sealed class CustomerMergeReferencesTests
         ("pipeline.triage_decisions", "customer_id"),
         ("messaging.conversations", "customer_id"),
         ("shopify.orders", "qep_customer_id"),
+        ("billing.services", "customer_id"),
+        ("billing.charges", "customer_id"),
     ];
 
     private static CustomersDbContext CustomersFor(PostgreSqlContainer database, CommandCounter? commands = null)
@@ -265,6 +312,12 @@ public sealed class CustomerMergeReferencesTests
             CREATE SCHEMA pipeline;
             CREATE SCHEMA messaging;
             CREATE SCHEMA shopify;
+            CREATE SCHEMA billing;
+            CREATE TABLE billing.services (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL,
+                version integer NOT NULL DEFAULT 1);
+            CREATE TABLE billing.charges (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL);
+            CREATE TABLE billing.customer_profiles (tenant_id uuid NOT NULL, customer_id uuid NOT NULL, assignee_member_id uuid NOT NULL,
+                updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id, customer_id));
             CREATE TABLE quotations.quotations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, client_id uuid NOT NULL);
             CREATE TABLE quotations.orders (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, client_id uuid);
             CREATE TABLE pos.sales (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL,
@@ -299,6 +352,36 @@ public sealed class CustomerMergeReferencesTests
             $"INSERT INTO {table} (tenant_id, {column}) VALUES (@tenant, @customer)",
             ("tenant", tenantId),
             ("customer", customerId));
+
+    private static Task AddProfileAsync(
+        PostgreSqlContainer database, Guid tenantId, Guid customerId, Guid assigneeMemberId, int minutesFromNow) =>
+        ExecuteAsync(
+            database,
+            """
+            INSERT INTO billing.customer_profiles (tenant_id, customer_id, assignee_member_id, updated_at)
+            VALUES (@tenant, @customer, @assignee, now() + make_interval(mins => @minutes))
+            """,
+            ("tenant", tenantId),
+            ("customer", customerId),
+            ("assignee", assigneeMemberId),
+            ("minutes", minutesFromNow));
+
+    private static async Task<(Guid CustomerId, Guid AssigneeMemberId)[]> ProfilesAsync(PostgreSqlContainer database, Guid tenantId)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT customer_id, assignee_member_id FROM billing.customer_profiles WHERE tenant_id = @tenant", connection);
+        command.Parameters.AddWithValue("tenant", tenantId);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<(Guid, Guid)>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add((reader.GetGuid(0), reader.GetGuid(1)));
+        }
+
+        return [.. rows];
+    }
 
     private static async Task<Guid> AddCampaignAsync(PostgreSqlContainer database, Guid tenantId, string status, Guid[] audience)
     {

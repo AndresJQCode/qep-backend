@@ -16,6 +16,9 @@ public enum EnsureOutcome
     Created,
 }
 
+/// <summary>Quien aparece sólo por teléfono (historial de coexistencia): E.164 con «+» y el nombre del contacto si lo hay.</summary>
+public sealed record WhatsAppPhoneContact(string PhoneE164, string? Name);
+
 public sealed record EnsuredCustomer(Guid CustomerId, EnsureOutcome Outcome);
 
 public sealed record CustomerWhatsAppRef(Guid Id, string Name, bool IsComplete);
@@ -29,6 +32,10 @@ public interface ICustomerWhatsAppDirectory
     /// <summary>§8.2: por BSUID → por teléfono → incompleto nuevo. Idempotente: un reintento encuentra el
     /// cliente por BSUID. Dos llamadas concurrentes con el mismo BSUID nuevo devuelven el mismo cliente.</summary>
     Task<EnsuredCustomer> EnsureAsync(Guid tenantId, WhatsAppContact contact, CancellationToken cancellationToken);
+
+    /// <summary>Historial de coexistencia: por teléfono → incompleto nuevo, sin BSUID (la app de WhatsApp Business no lo da).
+    /// Si el número ya tiene cliente es <see cref="EnsureOutcome.Existing"/>; nunca escribe <c>whatsapp_user_id</c>.</summary>
+    Task<EnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, WhatsAppPhoneContact contact, CancellationToken cancellationToken);
 
     /// <summary>§8.3: el cliente con <paramref name="previous"/> pasa a <paramref name="current"/>. <c>false</c>
     /// si nadie tenía el anterior o si el nuevo ya es de otro cliente (no se toca). El teléfono no cambia.</summary>

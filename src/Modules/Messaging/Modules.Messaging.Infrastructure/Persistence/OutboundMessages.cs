@@ -142,9 +142,12 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // nuevo. No sube version ni updated_at: el envío no es una edición que la persona pueda pisar, y subirla
             // convertiría un resolver justo después de responder en un 412 (mismo criterio que los acuses de §7.5).
             // Una nota de voz deja kind 4 y preview NULL, igual que un audio entrante (spec 2026-10-11 §6.5).
+            // Spec 2026-10-29 (regla R9): responder desde QEP saca la conversación de la regla de la importación; una parte del
+            // historial que llegue después no la cierra a espaldas del asesor. Tampoco sube version, por lo mismo de arriba.
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.conversations SET
+                    history_managed        = false,
                     last_activity_at       = GREATEST(last_activity_at, {occurredAt}),
                     last_message_id        = CASE WHEN last_message_at IS NULL OR {occurredAt} >= last_message_at THEN {MessageId} ELSE last_message_id END,
                     last_message_direction = CASE WHEN last_message_at IS NULL OR {occurredAt} >= last_message_at THEN 2 ELSE last_message_direction END,

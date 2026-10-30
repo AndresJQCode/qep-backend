@@ -75,6 +75,9 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             return Task.CompletedTask;
         }
 
+        public Task<EnsuredCustomer> EnsureByPhoneAsync(Guid tenantId, WhatsAppPhoneContact contact, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<EnsuredCustomer> EnsureAsync(Guid tenantId, WhatsAppContact contact, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

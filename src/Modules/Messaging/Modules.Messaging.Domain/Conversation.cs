@@ -123,6 +123,23 @@ public sealed partial class Conversation
 
     public bool IsBlocked => BlockedAt is not null;
 
+    /// <summary>Spec 2026-10-29: la conversación la creó o la movió la importación del historial por coexistencia, así que los
+    /// bloques siguientes todavía pueden fijar su estado. La ingesta lo escribe por SQL; <see cref="Resolve"/>, <see cref="Reopen"/> y
+    /// toda asignación (<see cref="Take"/>, <see cref="TransferTo"/>, el traspaso del asistente) lo apagan, porque lo que hizo un asesor
+    /// no lo pisa un bloque que llega después. Por SQL lo apagan también el entrante en vivo, el saliente enviado y la autoasignación.</summary>
+    public bool HistoryManaged { get; private set; }
+
+    /// <summary>Decisión del owner del 2026-10-30: la conversación nació de la importación del historial por coexistencia. A diferencia
+    /// de <see cref="HistoryManaged"/>, nunca se apaga: el reporte de mensajería no cuenta su creación como sesión (la hora de creación es
+    /// la de la importación, no la de una conversación), y la bandeja avisa que viene del historial mientras el contacto no escriba en
+    /// vivo. La escribe la ingesta por SQL; el agregado no la cambia.</summary>
+    public bool Imported { get; private set; }
+
+    /// <summary>Revisión de los ajustes del 2026-10-30: la conversación nació de un eco de la app (<c>smb_message_echoes</c>) a un número
+    /// desconocido. Nace cerrada, así que su primera sesión la arranca el <c>Reopened</c> del contacto: el reporte no cuenta su creación,
+    /// o la misma conversación daría dos sesiones. Nunca se apaga. La escribe la ingesta por SQL; el agregado no la cambia.</summary>
+    public bool StartedByEcho { get; private set; }
+
     public int UnreadCount { get; private set; }
 
     public DateTimeOffset? LastInboundAt { get; private set; }
@@ -236,6 +253,13 @@ public sealed partial class Conversation
         return source;
     }
 
+    /// <summary>Sólo pruebas: una conversación como la deja la importación del historial.</summary>
+    internal static Conversation WithHistoryManagedForTests(Conversation source)
+    {
+        source.HistoryManaged = true;
+        return source;
+    }
+
     /// <summary>Spec 2026-10-15 §3.3: la regla de «ya está resuelta» se puede preguntar sin resolver, para que el handler la
     /// compruebe antes de buscar o crear el motivo. No toca el estado ni la versión.</summary>
     public void EnsureCanResolve()
@@ -255,6 +279,7 @@ public sealed partial class Conversation
         // Spec 2026-10-16 §3.2: resolver es la última palabra del asesor, así que la marca de no leída no sobrevive. Va aquí y no en el
         // handler para que viaje en el mismo SaveChanges (y la misma versión) que la resolución; reabrir no la restaura.
         UnreadCount = 0;
+        HistoryManaged = false;
         ClearAutomation();
         Touch(now);
     }
@@ -268,6 +293,7 @@ public sealed partial class Conversation
 
         Status = ConversationStatus.Open;
         ResolutionReasonId = null;
+        HistoryManaged = false;
         Touch(now);
     }
 
@@ -437,6 +463,7 @@ public sealed partial class Conversation
         {
             AssignedMemberId = member;
             AssignedAt = now;
+            HistoryManaged = false;
         }
 
         Touch(now);
@@ -568,6 +595,7 @@ public sealed partial class Conversation
     {
         AssignedMemberId = memberId;
         AssignedAt = now;
+        HistoryManaged = false;
         Touch(now);
     }
 

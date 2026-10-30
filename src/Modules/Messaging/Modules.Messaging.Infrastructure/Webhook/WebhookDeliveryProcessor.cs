@@ -64,6 +64,13 @@ internal sealed partial class WebhookDeliveryProcessor(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: the marketing opt-out by button could not be recorded; the message was ingested anyway.")]
     private static partial void LogButtonOptOutFailed(ILogger logger, long deliveryId, Exception exception);
 
+    // Spec 2026-10-29: sin el teléfono ni el texto; sólo la conexión.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: history for connection {ConnectionId} has no history sync row; its state was not recorded.")]
+    private static partial void LogHistoryWithoutSync(ILogger logger, long deliveryId, Guid connectionId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Webhook delivery {DeliveryId}: {Count} history message(s) without id or timestamp were skipped for connection {ConnectionId}.")]
+    private static partial void LogHistorySkipped(ILogger logger, long deliveryId, int count, Guid connectionId);
+
     public Task<DeliveryOutcome> ProcessAsync(long deliveryId, string payload, int attempts, CancellationToken cancellationToken) =>
         ProcessAsync(deliveryId, WebhookProvider.WhatsApp, payload, attempts, cancellationToken);
 
@@ -98,6 +105,15 @@ internal sealed partial class WebhookDeliveryProcessor(
                     break;
                 case UserIdUpdateChange update:
                     await ProcessUserIdUpdateAsync(deliveryId, update, cancellationToken);
+                    break;
+                case HistoryChange history:
+                    await ProcessHistoryAsync(deliveryId, history, cancellationToken);
+                    break;
+                case SmbEchoesChange echoes:
+                    await ProcessEchoesAsync(deliveryId, echoes, cancellationToken);
+                    break;
+                case ContactsSyncChange contacts:
+                    await ProcessContactsAsync(deliveryId, contacts, cancellationToken);
                     break;
                 default:
                     break;
@@ -165,6 +181,107 @@ internal sealed partial class WebhookDeliveryProcessor(
 
         // Los statuses se aplican siempre, también con Paused o módulo apagado (decisión 7, D-M18). Task 13b.
         return await ProcessStatusesAsync(deliveryId, route, change, attempts, cancellationToken);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-29 §4.1 y §4.4: el historial de la app. Se procesa también con la conexión <c>Paused</c> o el módulo apagado (D-5):
+    /// no se puede volver a pedir y no envía ni dispara nada. Por cada hilo, el cliente por teléfono (D-10) fuera de la transacción de
+    /// Messaging, como la ingesta en vivo, y después el hilo en su propia transacción; al final de cada parte, su progreso. Todo es
+    /// idempotente, así que reprocesar una entrega a medias no duplica nada.
+    /// </summary>
+    private async Task ProcessHistoryAsync(long deliveryId, HistoryChange change, CancellationToken cancellationToken)
+    {
+        var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
+        if (route is null)
+        {
+            var count = change.Chunks.Sum(chunk => chunk.Threads.Sum(thread => thread.Messages.Count));
+            LogDiscarded(logger, deliveryId, count, change.PhoneNumberId, "unknown-route");
+            return;
+        }
+
+        var now = clock.UtcNow;
+        if (change.ErrorCodes.Contains(WebhookPayloadParser.HistoryDeclinedCode)
+            && await CoexistenceIngestion.RecordDeclinedAsync(dbContext, route.ConnectionId, now, cancellationToken) == 0)
+        {
+            LogHistoryWithoutSync(logger, deliveryId, route.ConnectionId);
+        }
+
+        if (change.Chunks.Count == 0)
+        {
+            return;
+        }
+
+        var connectedAt = (await dbContext.Database.SqlQuery<DateTimeOffset>(
+            $"""SELECT connected_at AS "Value" FROM messaging.history_syncs WHERE connection_id = {route.ConnectionId}""")
+            .ToListAsync(cancellationToken)) is [var at] ? at : (DateTimeOffset?)null;
+        foreach (var chunk in change.Chunks)
+        {
+            if (chunk.SkippedMessages > 0)
+            {
+                LogHistorySkipped(logger, deliveryId, chunk.SkippedMessages, route.ConnectionId);
+            }
+
+            foreach (var thread in chunk.Threads.Where(thread => thread.Messages.Count > 0))
+            {
+                var customer = await customers.EnsureByPhoneAsync(route.TenantId, thread.WaId, null, cancellationToken);
+                await CoexistenceIngestion.IngestThreadAsync(
+                    dbContext, route.TenantId, route.ConnectionId, thread.WaId, thread.Messages, customer.CustomerId, CoexistenceSource.History,
+                    connectedAt, now, cancellationToken);
+            }
+
+            if (await CoexistenceIngestion.RecordChunkAsync(dbContext, route.ConnectionId, chunk, now, cancellationToken) == 0)
+            {
+                LogHistoryWithoutSync(logger, deliveryId, route.ConnectionId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-10-29 §4.4: lo que el negocio escribe desde la app. Con la conexión <c>Paused</c> o el módulo apagado también se
+    /// procesa (D-5): ya ocurrió y no envía nada. Los ecos seguidos del mismo teléfono van en una sola llamada. No suma no leídos, no
+    /// toca la ventana ni el bot y no avisa en tiempo real.
+    /// </summary>
+    private async Task ProcessEchoesAsync(long deliveryId, SmbEchoesChange change, CancellationToken cancellationToken)
+    {
+        var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
+        if (route is null)
+        {
+            LogDiscarded(logger, deliveryId, change.Echoes.Count, change.PhoneNumberId, "unknown-route");
+            return;
+        }
+
+        var now = clock.UtcNow;
+        var index = 0;
+        while (index < change.Echoes.Count)
+        {
+            var waId = change.Echoes[index].WaId;
+            var group = new List<CoexistenceMessage>();
+            while (index < change.Echoes.Count && change.Echoes[index].WaId == waId)
+            {
+                group.Add(change.Echoes[index++].Message);
+            }
+
+            var customer = await customers.EnsureByPhoneAsync(route.TenantId, waId, null, cancellationToken);
+            await CoexistenceIngestion.IngestThreadAsync(
+                dbContext, route.TenantId, route.ConnectionId, waId, group, customer.CustomerId, CoexistenceSource.Echo, null, now, cancellationToken);
+        }
+    }
+
+    /// <summary>Spec 2026-10-29 §8: los contactos de la app del negocio entran como clientes incompletos, sin BSUID. Un contacto quitado
+    /// se ignora (D-7): borrarlo en la app no borra al cliente de QEP.</summary>
+    private async Task ProcessContactsAsync(long deliveryId, ContactsSyncChange change, CancellationToken cancellationToken)
+    {
+        var route = await routing.FindRouteAsync(change.PhoneNumberId, cancellationToken);
+        if (route is null)
+        {
+            LogDiscarded(logger, deliveryId, change.Contacts.Count, change.PhoneNumberId, "unknown-route");
+            return;
+        }
+
+        foreach (var contact in change.Contacts.Where(contact => !contact.Removed))
+        {
+            await customers.EnsureByPhoneAsync(route.TenantId, contact.WaId, contact.FullName ?? contact.FirstName, cancellationToken);
+        }
     }
 
     /// <summary>Decisión del owner 2026-10-12 (P1): ya con el mensaje commiteado, si es el botón de respuesta rápida «Detener promociones» y la

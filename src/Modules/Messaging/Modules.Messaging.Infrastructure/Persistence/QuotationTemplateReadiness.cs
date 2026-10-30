@@ -16,3 +16,15 @@ internal sealed class QuotationTemplateReadiness(MessagingDbContext dbContext) :
             .Select(template => new ApprovedQuotationTemplate(template.Name, template.Language))
             .FirstOrDefaultAsync(cancellationToken);
 }
+
+/// <summary>Cobros recurrentes §5: una lectura del espejo, hermana de <see cref="QuotationTemplateReadiness"/>. Sin caché: va por el índice único
+/// parcial <c>UX_message_templates_billing</c> (a lo sumo una fila por tipo de aviso y conexión).</summary>
+internal sealed class BillingTemplateReadiness(MessagingDbContext dbContext) : IBillingTemplateReadiness
+{
+    public Task<ApprovedBillingTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.AsNoTracking()
+            .Where(template => template.TenantId == tenantId && template.ConnectionId == connectionId
+                && template.Kind == kind && template.Status == MessageTemplateStatuses.Approved)
+            .Select(template => new ApprovedBillingTemplate(template.Name, template.Language))
+            .FirstOrDefaultAsync(cancellationToken);
+}

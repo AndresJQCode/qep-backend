@@ -24,7 +24,7 @@ internal sealed partial class IntegrationsTestBed
     public InMemoryRouteRepository Routes { get; } = new();
 
     public CompleteWhatsAppSignupHandler SignupHandler(IExecutionContext? context = null) =>
-        new(Catalog, Repository, Routes, UnitOfWork, Audit, Protector, Gateway, MetaApp, Modules, Memberships, AuthorNames,
+        new(Catalog, Repository, Routes, UnitOfWork, Audit, Events, Protector, Gateway, MetaApp, Modules, Memberships, AuthorNames,
             context ?? Context(), Clock, new CompleteWhatsAppSignupValidator());
 
     public FakeInstagramAppSettings InstagramApp { get; } = new();

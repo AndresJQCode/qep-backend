@@ -8,6 +8,12 @@ public enum MessageTemplateKind
     Free,
     Quotation,
     External,
+
+    /// <summary>Cobros recurrentes §5: la plantilla del recordatorio de vencimiento que QEP aprovisiona por conexión.</summary>
+    BillingReminder,
+
+    /// <summary>Cobros recurrentes §5: la plantilla del aviso de cobros vencidos que QEP aprovisiona por conexión.</summary>
+    BillingOverdue,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -77,8 +83,14 @@ public static partial class MessageTemplateName
 
     public static bool IsValid(string? name) => name is not null && Pattern().IsMatch(name);
 
+    /// <summary>Cobros recurrentes §5: <c>qep_cobro_recordatorio</c>, <c>qep_cobro_vencido</c> y sus versiones (<c>_v2</c>…).</summary>
+    public const string BillingPrefix = "qep_cobro_";
+
     public static bool IsReserved(string? name) =>
-        name is not null && (string.Equals(name, QuotationName, StringComparison.Ordinal) || name.StartsWith(QuotationPrefix, StringComparison.Ordinal));
+        name is not null
+        && (string.Equals(name, QuotationName, StringComparison.Ordinal)
+            || name.StartsWith(QuotationPrefix, StringComparison.Ordinal)
+            || name.StartsWith(BillingPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -148,7 +160,7 @@ public sealed class MessageTemplate
     {
         if (kind == MessageTemplateKind.External)
         {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free or Quotation.");
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation or Billing.");
         }
 
         if (!MessageTemplateName.IsValid(name))

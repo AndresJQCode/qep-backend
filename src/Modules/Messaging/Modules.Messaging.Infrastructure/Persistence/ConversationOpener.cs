@@ -93,7 +93,7 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
             throw new ArgumentException("A wa_id is 1 to 20 digits.", nameof(waId));
         }
 
-        if (await FindByPhoneAsync(tenantId, connectionId, waId, cancellationToken) is { } existing)
+        if (await FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken) is { } existing)
         {
             return new OpenedConversation(existing, false);
         }
@@ -117,13 +117,15 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
         }
 
         // Otro envío la creó entre el SELECT y el INSERT; el SELECT va en una sentencia aparte, así ve lo commiteado.
-        var raced = await FindByPhoneAsync(tenantId, connectionId, waId, cancellationToken)
+        var raced = await FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken)
             ?? throw new InvalidOperationException("The conversation that blocked the insert could not be found.");
         return new OpenedConversation(raced, false);
     }
 
-    /// <summary>Los pasos (2) y (4) de <see cref="FindAsync"/>: la conversación con BSUID de ese número y, si no, la fila vieja.</summary>
-    private async Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken)
+    /// <summary>Los pasos (2) y (4) de <see cref="FindAsync"/>: la conversación con BSUID de ese número y, si no, la fila vieja. Spec
+    /// 2026-10-29: la importación del historial busca igual (<c>CoexistenceIngestion</c>).</summary>
+    internal static async Task<Guid?> FindByPhoneAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken)
     {
         var byPhone = await dbContext.Database.SqlQuery<Guid>(
             $"""

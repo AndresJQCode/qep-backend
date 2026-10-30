@@ -53,10 +53,12 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
+using Modules.Billing.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using BillingPermissions = Modules.Billing.Application.BillingPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
@@ -287,6 +289,67 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
+        // Billing, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
+        // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetCustomerProfileQuery, Modules.Billing.Application.ProfileDto>,
+            Modules.Billing.Application.GetCustomerProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpsertCustomerProfileCommand, Modules.Billing.Application.ProfileDto>,
+            Modules.Billing.Application.UpsertCustomerProfileHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListAssigneesQuery, Modules.Billing.Application.AssigneesDto>,
+            Modules.Billing.Application.ListAssigneesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListServicesQuery, Modules.Billing.Application.ServicePageDto>,
+            Modules.Billing.Application.ListServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetServiceQuery, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.GetServiceHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.PreviewServiceChargesQuery, Modules.Billing.Application.ChargesPreviewDto>,
+            Modules.Billing.Application.PreviewServiceChargesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.CreateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.CreateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.UpdateServiceHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.ChangeServiceStatusCommand, Modules.Billing.Application.ServiceDetailDto>,
+            Modules.Billing.Application.ChangeServiceStatusHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListChargesQuery, Modules.Billing.Application.ChargePageDto>,
+            Modules.Billing.Application.ListChargesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetChargeQuery, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.GetChargeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.PayChargeCommand, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.PayChargeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateChargePaymentCommand, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.UpdateChargePaymentHandler>();
+        // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetBillingSettingsQuery, Modules.Billing.Application.BillingSettingsDto>,
+            Modules.Billing.Application.GetBillingSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateBillingSettingsCommand, Modules.Billing.Application.BillingSettingsDto>,
+            Modules.Billing.Application.UpdateBillingSettingsHandler>();
+        services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
+        services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
+        // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.PreviewBillingImportCommand, Modules.Billing.Application.ImportPreviewDto>,
+            Modules.Billing.Application.PreviewBillingImportHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.ImportBillingServicesCommand, Modules.Billing.Application.ImportResultDto>,
+            Modules.Billing.Application.ImportBillingServicesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetBillingImportTemplateQuery, Modules.Billing.Application.BillingImportTemplateFile>,
+            Modules.Billing.Application.GetBillingImportTemplateHandler>();
+        services.AddScoped<Modules.Billing.Application.BillingImportAnalyzer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -793,6 +856,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<DeleteBusinessHoursCommand, bool>, DeleteBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<DuplicateBusinessHoursCommand, BusinessHoursDto>, DuplicateBusinessHoursHandler>();
         services.AddScoped<ICommandHandler<SetDefaultBusinessHoursCommand, BusinessHoursDto>, SetDefaultBusinessHoursHandler>();
+        // Spec 2026-10-29 §5: estado y reintento de la importación del historial por coexistencia. Sin estos registros, 500.
+        services.AddScoped<IQueryHandler<GetHistorySyncQuery, HistorySyncDto>, GetHistorySyncHandler>();
+        services.AddScoped<ICommandHandler<RetryHistorySyncCommand, HistorySyncDto>, RetryHistorySyncHandler>();
         // Messaging (spec 2026-10-14 §4.3): la pantalla de plantillas de una conexión y su refresco contra Meta.
         services.AddScoped<IQueryHandler<GetTemplateManagementQuery, TemplateManagementDto>, GetTemplateManagementHandler>();
         services.AddScoped<ICommandHandler<SyncTemplatesCommand, TemplateManagementDto>, SyncTemplatesHandler>();
@@ -800,6 +866,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateTemplateCommand, ManagedTemplateDto>, CreateTemplateHandler>();
         // Messaging (spec 2026-10-14 §4.3): aprovisionar, adoptar o reintentar la plantilla de cotización de una conexión.
         services.AddScoped<ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>, ProvisionQuotationTemplateHandler>();
+        services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -884,6 +951,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Billing.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -898,6 +966,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
+        services.AddBillingInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1116,6 +1185,21 @@ public static class QepServiceCollectionExtensions
         // Mismo patrón para `suppliers`: el puerto es suyo y el composition root lo cablea contra
         // los repositorios de Geography.
         services.AddScoped<ISupplierGeographyLookup, SupplierGeographyLookup>();
+
+        // Mismo patrón para `billing` (spec cobros-recurrentes §3.3): guarda clientes y encargados como ids sueltos y el
+        // composition root cablea sus puertos contra Customers, Tenancy, Identity y Authorization. Con ruta completa porque
+        // importar el namespace choca con Messaging (AssigneesDto, entre otros).
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerLookup, BillingCustomerLookup>();
+        services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
+        services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
+        services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
+        services.AddSingleton<Modules.Billing.Application.IBillingIdentificationTypes, BillingIdentificationTypes>();
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerProvisioning, BillingCustomerProvisioning>();
+        services.AddScoped<BillingEmailSender>();
+        services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
+        services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
+        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingMetaWhatsAppSender>();
+        services.AddScoped<IUserReferenceProbe, BillingUserReferenceProbe>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1344,7 +1428,10 @@ public static class QepServiceCollectionExtensions
                 AutomationsPermissions.ChatbotManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
-                SuppliersPermissions.Manage
+                SuppliersPermissions.Manage,
+                // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
+                BillingPermissions.Read,
+                BillingPermissions.Manage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1433,7 +1520,10 @@ public static class QepServiceCollectionExtensions
                 StoragePermissions.FileRead,
                 // Spec 2026-10-23 D-14: facturación paga a los proveedores, así que ve y gestiona el directorio.
                 SuppliersPermissions.Read,
-                SuppliersPermissions.Manage
+                SuppliersPermissions.Manage,
+                // Facturación cobra los servicios recurrentes: ve «Por cobrar» y marca los pagos (owner, 2026-10-29).
+                BillingPermissions.Read,
+                BillingPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -1957,6 +2047,23 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
+        // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
+        // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
+        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de BillingAuthorization queda de respaldo).
+        services.AddSingleton(new PermissionDefinition(
+            BillingPermissions.Read,
+            "Ver cobros recurrentes",
+            "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
+            "Billing",
+            "low",
+            RequiredModules: [ModuleKeys.Billing]));
+        services.AddSingleton(new PermissionDefinition(
+            BillingPermissions.Manage,
+            "Gestionar cobros recurrentes",
+            "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
+            "Billing",
+            "medium",
+            RequiredModules: [ModuleKeys.Billing]));
     }
 
     private static void AddAuthentication(
@@ -2320,7 +2427,14 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, SuppliersPermissions.Read))
             .AddPolicy(
                 SuppliersPermissions.Manage,
-                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage));
+                policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage))
+            // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                BillingPermissions.Read,
+                policy => AddPermissionRequirement(policy, BillingPermissions.Read))
+            .AddPolicy(
+                BillingPermissions.Manage,
+                policy => AddPermissionRequirement(policy, BillingPermissions.Manage));
     }
 
     private static void AddPermissionRequirement(

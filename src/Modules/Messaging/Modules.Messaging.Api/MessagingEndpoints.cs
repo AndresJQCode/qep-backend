@@ -269,6 +269,8 @@ public static class MessagingEndpoints
         // Spec 2026-10-28: reporte de mensajería.
         group.MapMessagingReportEndpoints();
         group.MapTemplateManagementEndpoints();
+        // Spec 2026-10-29 §5: estado y reintento de la importación del historial por coexistencia.
+        group.MapHistorySyncEndpoints();
 
         return endpoints;
     }

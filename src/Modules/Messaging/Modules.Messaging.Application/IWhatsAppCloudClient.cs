@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
 
@@ -20,7 +21,11 @@ public sealed record SendResult(SendOutcome Outcome, string? Wamid, int? Code, s
 /// <summary>Copia chica de <c>GraphFailure</c> de Integrations: Messaging no lo referencia. Spec 2026-10-14 §4.8: <c>UserTitle</c> y
 /// <c>UserMessage</c> son <c>error_user_title</c> y <c>error_user_msg</c> de Graph, lo único que distingue «nombre ya existe» del
 /// resto de los 400 ahora que <c>error_subcode</c> no se devuelve. Sólo las operaciones de plantillas los llenan.</summary>
-public sealed record MessagingGraphFailure(int HttpStatus, int? Code, string Reason, string? UserTitle = null, string? UserMessage = null, int? Subcode = null, string? FbTraceId = null);
+public sealed record MessagingGraphFailure(int HttpStatus, int? Code, string Reason, string? UserTitle = null, string? UserMessage = null, int? Subcode = null, string? FbTraceId = null)
+{
+    /// <summary>Spec 2026-10-29 (P-3): el pedido no se puede dar por recibido ni por rechazado (sin respuesta, 5xx o 2xx ilegible).</summary>
+    public const string UnconfirmedReason = "unconfirmed";
+}
 
 /// <summary>Spec 2026-10-26 §2: lo que <c>block_users</c> contestó con 2xx. <c>Applied</c> = el número vino en <c>added_users</c> (bloquear) o
 /// <c>removed_users</c> (desbloquear); <c>FailedCode</c>/<c>FailedSubcode</c> = el primer error de <c>failed_users</c>. Son para el log: nunca llevan el número.</summary>
@@ -121,6 +126,12 @@ public interface IWhatsAppCloudClient
 
     /// <summary>Spec 2026-10-26 §2: <c>DELETE /{phone_number_id}/block_users</c>, mismo cuerpo que bloquear.</summary>
     Task<MessagingGraphResult<BlockUsersResult>> UnblockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken);
+
+    /// <summary>POST /{phone_number_id}/smb_app_data con { messaging_product: "whatsapp", sync_type }. Devuelve el request_id.</summary>
+    /// <remarks>Spec 2026-10-29 (P-3): sin respuesta (timeout, red), un 5xx o un 2xx sin <c>request_id</c> fallan con
+    /// <see cref="MessagingGraphFailure.UnconfirmedReason"/>: Meta pudo haberlo recibido y el pedido se repite. Un error de Graph
+    /// lleva su status y su <c>Code</c>.</remarks>
+    Task<MessagingGraphResult<string>> RequestSmbAppDataAsync(MessagingSender sender, HistorySyncType type, CancellationToken cancellationToken);
 
     /// <summary>§8.6, paso 2: GET /{mediaId} → url (vence a los 5 min), mime_type, sha256, file_size.</summary>
     Task<MessagingGraphResult<MediaInfo>> GetMediaAsync(MessagingSender sender, string mediaId, CancellationToken cancellationToken);

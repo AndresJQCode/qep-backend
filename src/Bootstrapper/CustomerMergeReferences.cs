@@ -91,12 +91,43 @@ internal sealed class CustomerMergeReferences(CustomersDbContext customers) : IC
              WHERE tenant_id = {tenantId} AND status IN ('Draft', 'Scheduled') AND audience_customer_ids && {ids}
             """, cancellationToken);
 
+        // Cobros recurrentes (spec 2026-10-29 §3.1): servicios y cobros pasan al que queda, sin subir versión (F15). Antes de
+        // Shopify, que sigue siendo la última sentencia.
+        await database.ExecuteSqlAsync($"""
+            UPDATE billing.services SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE billing.charges SET customer_id = {survivorId} WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
+        // El perfil es uno por cliente (PK (tenant, cliente)): si el que queda ya tiene uno, el del fusionado sobra; si no, el
+        // más reciente de los fusionados se reasigna y los demás se borran.
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM billing.customer_profiles
+            WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+              AND EXISTS (SELECT 1 FROM billing.customer_profiles survivor
+                          WHERE survivor.tenant_id = {tenantId} AND survivor.customer_id = {survivorId})
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            DELETE FROM billing.customer_profiles older
+            WHERE older.tenant_id = {tenantId} AND older.customer_id = ANY({ids})
+              AND EXISTS (SELECT 1 FROM billing.customer_profiles newer
+                          WHERE newer.tenant_id = {tenantId} AND newer.customer_id = ANY({ids})
+                            AND (newer.updated_at, newer.customer_id) > (older.updated_at, older.customer_id))
+            """, cancellationToken);
+        await database.ExecuteSqlAsync($"""
+            UPDATE billing.customer_profiles SET customer_id = {survivorId}
+            WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
+            """, cancellationToken);
+
         await database.ExecuteSqlAsync($"""
             UPDATE shopify.orders SET qep_customer_id = {survivorId}
             WHERE tenant_id = {tenantId} AND qep_customer_id = ANY({ids})
             """, cancellationToken);
     }
 
+    // Seguimiento (spec cobros-recurrentes §3.1): los servicios y cobros de Billing no entran en CustomerMergeReferenceCounts
+    // porque sumar una columna cambiaría la vista previa de la fusión en el frontend. Sin cambios en la fase 1.
     public async Task<CustomerMergeReferenceCounts> CountAsync(
         Guid tenantId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
     {

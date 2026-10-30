@@ -108,6 +108,10 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// trabajo lo traduce por nombre a <c>quotation_exists</c>.</summary>
     public const string MessageTemplateQuotationIndex = "UX_message_templates_quotation";
 
+    /// <summary>Cobros recurrentes §5: una plantilla por tipo de aviso de cobro en cada conexión; el guardado lo traduce a
+    /// <c>billing_exists</c>.</summary>
+    public const string MessageTemplateBillingIndex = "UX_message_templates_billing";
+
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
@@ -148,6 +152,13 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
     internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
 
+    /// <summary>Spec 2026-10-29: la importación del historial por coexistencia, una por conexión.</summary>
+    public DbSet<HistorySync> HistorySyncs => Set<HistorySync>();
+
+    internal DbSet<MessagingInboxMessage> InboxMessages => Set<MessagingInboxMessage>();
+
+    internal DbSet<MessagingOutboxRecord> OutboxMessages => Set<MessagingOutboxRecord>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -166,6 +177,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureAutomationInbox(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
+        ConfigureHistorySync(modelBuilder);
+        ConfigureInbox(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
     }
 
@@ -241,6 +255,13 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.Property(value => value.BlockedAt).HasColumnName("blocked_at");
         conversation.Property(value => value.BlockedByMemberId).HasColumnName("blocked_by_member_id");
         conversation.Property(value => value.BlockedWaId).HasColumnName("blocked_wa_id").HasMaxLength(Conversation.WaIdMaxLength);
+        // Spec 2026-10-29: lo escribe la importación del historial por SQL. En un bool el centinela no puede ser otro valor que
+        // false, que es el mismo default de la base: EF omite la columna sólo cuando vale false, y la base pone false.
+        conversation.Property(value => value.HistoryManaged).HasColumnName("history_managed").HasDefaultValue(false).HasSentinel(false);
+        // Decisión del owner del 2026-10-30: la marca durable de lo importado (history_managed se apaga; ésta no). Mismo criterio de
+        // centinela que history_managed.
+        conversation.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
+        conversation.Property(value => value.StartedByEcho).HasColumnName("started_by_echo").HasDefaultValue(false).HasSentinel(false);
         conversation.Ignore(value => value.CustomerWindowExpiresAt);
 
         // Todos con el overload con nombre: sin nombre en HasIndex, EF funde los que tienen las mismas columnas
@@ -262,6 +283,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         conversation.HasIndex(value => new { value.TenantId, value.CustomerId, value.LastActivityAt }, "IX_conversations_tenant_customer_activity")
             .IsDescending(false, false, true).HasFilter("customer_id IS NOT NULL");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_open").HasFilter("status = 'Open'");
+        // MessagingReportSource: la sesión de una importada sale de su primer entrante en vivo; parcial porque la mayoría no es importada.
+        conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_imported").HasFilter("imported");
         conversation.HasIndex(value => value.TenantId, "IX_conversations_tenant_unread")
             .HasFilter("unread_count > 0").IncludeProperties(value => value.UnreadCount);
         conversation.HasIndex(value => value.ProfileName, "IX_conversations_profile_name_trgm")
@@ -318,6 +341,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
         message.Property(value => value.FailureTitle).HasColumnName("failure_title");
         message.Property(value => value.CreatedAt).HasColumnName("created_at");
+        // Decisión del owner del 2026-10-30: el mensaje llegó por la importación del historial; su created_at es la hora de la
+        // importación, no la de llegada, y el reporte lo deja fuera de sesiones y respuestas (MessagingReportSource).
+        message.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
         // §7.3: generada y almacenada; EF la lee pero nunca la escribe.
         message.Property<NpgsqlTsVector>("SearchVector").HasColumnName("search_vector")
             .HasComputedColumnSql(SearchVectorSql, stored: true);
@@ -574,7 +600,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     {
         var template = modelBuilder.Entity<MessageTemplate>();
         template.ToTable("message_templates", Schema, table =>
-            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External')"));
+            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -595,7 +621,74 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
+        // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
+            .HasFilter("kind IN ('BillingReminder','BillingOverdue')");
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Status }, "IX_message_templates_status");
+    }
+
+    /// <summary>Spec 2026-10-29: la importación del historial por conexión. Sin FK: la conexión es de Integrations, otro schema.
+    /// <c>claimed_until</c> y <c>attempts</c> son del worker que hace los pedidos a Meta (SQL crudo), así que van como propiedades
+    /// ocultas: el dominio no las ve.</summary>
+    private static void ConfigureHistorySync(ModelBuilder modelBuilder)
+    {
+        var sync = modelBuilder.Entity<HistorySync>();
+        sync.ToTable("history_syncs", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_history_syncs_contacts_state", "contacts_state IN ('Pending','Requested','Failed')");
+            table.HasCheckConstraint("CK_history_syncs_history_state", "history_state IN ('Pending','Requested','Failed')");
+            table.HasCheckConstraint("CK_history_syncs_progress", "history_progress BETWEEN 0 AND 100");
+        });
+        sync.HasKey(value => value.ConnectionId);
+        sync.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        sync.Property(value => value.TenantId).HasColumnName("tenant_id");
+        sync.Property(value => value.ConnectedAt).HasColumnName("connected_at");
+        sync.Property(value => value.ContactsState).HasColumnName("contacts_state").HasConversion<string>().HasMaxLength(16);
+        sync.Property(value => value.ContactsRequestId).HasColumnName("contacts_request_id").HasMaxLength(HistorySync.RequestIdMaxLength);
+        sync.Property(value => value.ContactsRequestedAt).HasColumnName("contacts_requested_at");
+        sync.Property(value => value.ContactsErrorCode).HasColumnName("contacts_error_code").HasMaxLength(HistorySync.ErrorCodeMaxLength);
+        sync.Property(value => value.HistoryState).HasColumnName("history_state").HasConversion<string>().HasMaxLength(16);
+        sync.Property(value => value.HistoryRequestId).HasColumnName("history_request_id").HasMaxLength(HistorySync.RequestIdMaxLength);
+        sync.Property(value => value.HistoryRequestedAt).HasColumnName("history_requested_at");
+        sync.Property(value => value.HistoryErrorCode).HasColumnName("history_error_code").HasMaxLength(HistorySync.ErrorCodeMaxLength);
+        sync.Property(value => value.HistoryPhase).HasColumnName("history_phase").HasConversion<short?>();
+        sync.Property(value => value.HistoryProgress).HasColumnName("history_progress").HasConversion<short?>();
+        sync.Property(value => value.DeclinedAt).HasColumnName("declined_at");
+        sync.Property(value => value.CompletedAt).HasColumnName("completed_at");
+        sync.Property<DateTimeOffset?>("ClaimedUntil").HasColumnName("claimed_until");
+        sync.Property<int>("Attempts").HasColumnName("attempts").HasDefaultValue(0);
+        sync.Property(value => value.CreatedAt).HasColumnName("created_at");
+        sync.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        sync.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        sync.Ignore(value => value.Deadline);
+        sync.HasIndex(value => value.TenantId, "IX_history_syncs_tenant");
+        sync.HasIndex("ClaimedUntil").HasDatabaseName("IX_history_syncs_pending")
+            .HasFilter("contacts_state = 'Pending' OR history_state = 'Pending'");
+    }
+
+    /// <summary>Copia de <c>PipelineDbContext.ConfigureInbox</c>: la idempotencia por consumidor de los eventos del outbox.</summary>
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<MessagingInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(100);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        // Los nombres van a mano porque MessagingInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
+    }
+
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<MessagingOutboxRecord>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name");
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
     }
 
     private static void ConfigureTemplateMirrorSync(ModelBuilder modelBuilder)

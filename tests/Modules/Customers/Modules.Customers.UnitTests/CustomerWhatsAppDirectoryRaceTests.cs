@@ -85,6 +85,9 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
             Task.FromResult(ByPhone);
 
+        public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+            Task.FromResult(ByPhone);
+
         public Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken) =>
             AttachIsTaken ? throw new WhatsAppUserIdTakenException() : Task.FromResult(AttachResult);
 

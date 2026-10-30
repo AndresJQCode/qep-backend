@@ -62,8 +62,12 @@ public static class TenantModuleKeys
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Suppliers = TenantModuleKey.Define("suppliers");
 
+    /// <summary>Spec 2026-10-29: cobros recurrentes. Depende de <see cref="Customers"/> (cobra a un cliente) y queda
+    /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Billing = TenantModuleKey.Define("billing");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, Billing];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -80,6 +84,8 @@ public static class TenantModuleKeys
         [Shopify] = [Orders],
         // Spec 2026-10-21 D-C11: un chatbot responde por la bandeja; sin messaging no hay conversaciones.
         [Automations] = [Messaging],
+        // Spec 2026-10-29: un cobro recurrente se emite a un cliente.
+        [Billing] = [Customers],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

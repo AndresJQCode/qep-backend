@@ -209,6 +209,12 @@ internal sealed class FakeCustomerRepository(params Customer[] customers) : ICus
         return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164));
     }
 
+    public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.PhoneE164 is null && customer.Phone == phone));
+    }
+
     public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
     {
         Calls++;

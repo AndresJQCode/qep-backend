@@ -28,6 +28,8 @@
          buscan en el host. -->
     <InternalsVisibleTo Include="Modules.Messaging.UnitTests" />
     <InternalsVisibleTo Include="Modules.Messaging.IntegrationTests" />
+    <!-- CoexistenceEventParityTests: ve Integrations y Messaging a la vez. -->
+    <InternalsVisibleTo Include="Bootstrapper.UnitTests" />
     <!-- Spec 2026-10-21 §5.2: las pruebas de punta a punta del motor de chatbots corren una pasada de la ingesta y de la copia de medios
          (WebhookDeliveryWorker.DrainAsync, MediaCopyWorker.DrainAsync) como las de Mensajería. -->
     <InternalsVisibleTo Include="Modules.Automations.IntegrationTests" />

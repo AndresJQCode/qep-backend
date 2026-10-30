@@ -136,11 +136,6 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.city_required")
                 .WithMessage("The city is required.");
 
-        RuleFor(row => row.Classification)
-            .NotEmpty()
-                .WithErrorCode("customers.import.row.classification_required")
-                .WithMessage("The classification is required.");
-
         RuleFor(row => row.WithRetention)
             .Must(BeSiOrNoOrEmpty)
                 .WithErrorCode("customers.import.row.with_retention_invalid")
@@ -339,9 +334,16 @@ public sealed class ImportCustomersHandler(
                 continue;
             }
 
-            var classification = await classificationRepository.FindByNameAsync(
-                tenantId, row.Classification!.Trim(), cancellationToken);
-            if (classification is null)
+            // Opcional desde la decision del 2026-10-19 (Customer.cs): vacia es "sin clasificacion",
+            // pero un nombre dado que no existe sigue siendo un error de la fila.
+            ClientClassification? classification = null;
+            if (!string.IsNullOrWhiteSpace(row.Classification))
+            {
+                classification = await classificationRepository.FindByNameAsync(
+                    tenantId, row.Classification.Trim(), cancellationToken);
+            }
+
+            if (classification is null && !string.IsNullOrWhiteSpace(row.Classification))
             {
                 errors.Add(new ImportRowError(
                     row.RowNumber,
@@ -581,6 +583,16 @@ public sealed class ImportCustomersHandler(
                     continue;
                 }
 
+                // Una celda de clasificacion vacia en una actualizacion conserva la que el cliente ya tiene: la columna es
+                // opcional desde el 2026-10-19 y reimportar un archivo sin ella no puede borrarla ni quitarle el prefijo al
+                // CUC. El prefijo se relee porque Update lo exige siempre que haya clasificacion, aunque no cambie el CUC.
+                var classification = candidate.Classification;
+                if (classification is null && customer.ClassificationId is { } currentClassificationId)
+                {
+                    classification = await classificationRepository.FindAsync(
+                        tenantId, currentClassificationId, cancellationToken);
+                }
+
                 // La fila actualiza el domicilio del cliente (address, ciudad) y el resto de la
                 // ficha; la libreta de envio no se toca, mismo criterio que UpdateCustomerHandler
                 // (spec 2026-09-18).
@@ -604,11 +616,11 @@ public sealed class ImportCustomersHandler(
                     },
                     new CustomerCommercialInfo
                     {
-                        ClassificationId = candidate.Classification.Id,
+                        ClassificationId = classification?.Id,
                         WithRetention = candidate.WithRetention,
                         VatSurplus = candidate.VatSurplus
                     },
-                    candidate.Classification.Prefix,
+                    classification?.Prefix,
                     now,
                     phoneNormalizer);
 
@@ -621,7 +633,7 @@ public sealed class ImportCustomersHandler(
             var sequence = nextSequence;
             nextSequence++;
             var cuc = CucFormatter.Build(
-                candidate.Classification.Prefix, candidate.City.DepartmentDivipolaCode, sequence);
+                candidate.Classification?.Prefix, candidate.City.DepartmentDivipolaCode, sequence);
 
             var newCustomer = Customer.Create(
                 CustomerId.New(),
@@ -650,7 +662,7 @@ public sealed class ImportCustomersHandler(
                 },
                 new CustomerCommercialInfo
                 {
-                    ClassificationId = candidate.Classification.Id,
+                    ClassificationId = candidate.Classification?.Id,
                     WithRetention = candidate.WithRetention,
                     VatSurplus = candidate.VatSurplus
                 },
@@ -747,7 +759,7 @@ public sealed class ImportCustomersHandler(
         string? Email,
         string? Address,
         CustomerCityRef City,
-        ClientClassification Classification,
+        ClientClassification? Classification,
         bool WithRetention,
         bool VatSurplus,
         CustomerId? TargetId,

@@ -155,7 +155,8 @@ public sealed class ConversationSummaryBuilder(
             AutomationFrom(row, memberNames, chatbotNames),
             row.BlockedAt is { } blockedAt
                 ? new ConversationBlockDto(blockedAt, row.BlockedByMemberId is { } blocker ? memberNames.GetValueOrDefault(blocker) ?? MessageMapping.DeletedMemberName : null)
-                : null);
+                : null,
+            row.Imported && row.LastInboundAt is null);
     }
 
     /// <summary><c>null</c> en <c>None</c> (D-A10). La guarda de <c>StartedAt</c> es inalcanzable por <c>CK_conversations_automation_started</c>;
@@ -205,6 +206,9 @@ internal static class MessageMapping
         ArgumentNullException.ThrowIfNull(memberNames);
         ArgumentNullException.ThrowIfNull(replyTargets);
         var conversationEvent = row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson) : null;
+        var mediaState = row.Kind == MessageKind.Unsupported
+            ? HistoryMediaState.For(row.DetailsJson, row.Media is not null, row.OccurredAt, row.CreatedAt)
+            : null;
         return new(
             row.Id,
             row.Direction.ToString(),
@@ -233,11 +237,12 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
-            row.Kind == MessageKind.Unsupported ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
+            row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
             row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null,
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
-            row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null);
+            row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null,
+            mediaState);
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>

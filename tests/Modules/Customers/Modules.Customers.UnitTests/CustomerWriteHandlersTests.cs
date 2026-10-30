@@ -12,12 +12,12 @@ public sealed class CustomerWriteHandlersTests
     private const string TakenCode = "customers.customer.identification_taken";
 
     private static readonly EngagementTestBed.Context Manager =
-        new(Tenant, EngagementTestBed.UserA, EngagementTestBed.Manager);
+        new(CustomerWriteDoubles.Tenant, EngagementTestBed.UserA, EngagementTestBed.Manager);
 
     private static Customer Owner(bool active = true)
     {
         var owner = Customer.CreateFromRegister(
-            CustomerId.New(), Tenant, "Laura Pérez", new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
+            CustomerId.New(), CustomerWriteDoubles.Tenant, "Laura Pérez", new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
             "3109352187", Now, new PlusNormalizer());
         if (!active)
         {
@@ -29,7 +29,7 @@ public sealed class CustomerWriteHandlersTests
 
     private static Customer CompleteCustomer() =>
         Customer.Create(
-            CustomerId.New(), Tenant, "CLI08000001", "Verde Esencial", null, null,
+            CustomerId.New(), CustomerWriteDoubles.Tenant, "CLI08000001", "Verde Esencial", null, null,
             new CustomerIdentification { Type = IdentificationType.Nit, Number = "900123456" },
             null,
             new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
@@ -38,7 +38,7 @@ public sealed class CustomerWriteHandlersTests
             new PlusNormalizer());
 
     private static Customer IncompleteCustomer() =>
-        Customer.CreateIncomplete(CustomerId.New(), Tenant, "Alguien", "3000000001", "CO", "bsuid-" + Guid.NewGuid().ToString("N"), Now, new PlusNormalizer());
+        Customer.CreateIncomplete(CustomerId.New(), CustomerWriteDoubles.Tenant, "Alguien", "3000000001", "CO", "bsuid-" + Guid.NewGuid().ToString("N"), Now, new PlusNormalizer());
 
     private static CreateCustomerHandler NewCreate(
         FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
@@ -53,11 +53,11 @@ public sealed class CustomerWriteHandlersTests
             tenant ?? new TenantDirectory());
 
     private static CreateCustomerCommand CreateCommand() =>
-        new(Tenant, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", CityId,
+        new(CustomerWriteDoubles.Tenant, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", CityId,
             null, Classification.Id.Value, false, false);
 
     private static UpdateCustomerCommand UpdateCommand(Customer target) =>
-        new(Tenant, target.Id.Value, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO",
+        new(CustomerWriteDoubles.Tenant, target.Id.Value, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO",
             CityId, null, Classification.Id.Value, false, false);
 
     private static UnitOfWork Taken() => new(new CustomersDomainException(TakenCode, "taken"));
