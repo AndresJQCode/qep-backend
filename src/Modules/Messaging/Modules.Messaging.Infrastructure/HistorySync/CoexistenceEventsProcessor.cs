@@ -1,4 +1,3 @@
-using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,8 +9,8 @@ namespace Modules.Messaging.Infrastructure.Coexistence;
 
 /// <summary>
 /// Spec 2026-10-29: consume del outbox de plataforma el evento de una conexión de WhatsApp por coexistencia y deja la fila
-/// <c>Pending</c> de su importación de historial (<c>messaging.history_syncs</c>). La fila y el inbox se guardan en el mismo
-/// SaveChanges: un mensaje procesado nunca queda sin marcar, ni uno marcado sin su efecto. Singleton: el estado es del proceso.
+/// <c>Pending</c> de su importación de historial (<c>messaging.history_syncs</c>). La fila (SQL crudo) y la marca del inbox (SaveChanges) van en la misma
+/// transacción explícita: un mensaje procesado nunca queda sin marcar, ni uno marcado sin su efecto. Singleton: el estado es del proceso.
 /// La curva de reintentos es la de <c>QuotationEventsProcessor</c> (5 s, 30 s, 5 minutos). Messaging no referencia Integrations:
 /// el nombre del evento y el payload (camelCase) son contrato y se leen por nombre.
 /// </summary>
@@ -46,7 +45,9 @@ internal sealed partial class CoexistenceEventsProcessor(IServiceScopeFactory sc
     private async Task ProcessAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
         var record = message.Record;
-        if (TryRead(record.PayloadJson, out var tenantId, out var connectionId, out var connectedAt))
+        // El insert crudo y el SaveChanges que marca el inbox comparten transacción: o quedan los dos, o ninguno.
+        await using var transaction = await message.DbContext.Database.BeginTransactionAsync(cancellationToken);
+        if (CoexistenceEventPayload.TryRead(record.PayloadJson, out var tenantId, out var connectionId, out var connectedAt))
         {
             // Un reintento o un evento repetido no pisa la fila que ya existe: la hora de conexión es la del primero.
             var sync = HistorySync.Start(tenantId, connectionId, connectedAt, message.Now);
@@ -68,26 +69,7 @@ internal sealed partial class CoexistenceEventsProcessor(IServiceScopeFactory sc
 
         await Claims.MarkProcessedAsync(message, cancellationToken);
         await MessagingSaveChanges.SaveAsync(message.DbContext, cancellationToken);
-    }
-
-    /// <summary>Un payload roto es determinista: reintentarlo no lo arregla, así que se lee como inválido y se marca procesado.</summary>
-    private static bool TryRead(string json, out Guid tenantId, out Guid connectionId, out DateTimeOffset occurredAt)
-    {
-        tenantId = connectionId = Guid.Empty;
-        occurredAt = default;
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            tenantId = root.GetProperty("tenantId").GetGuid();
-            connectionId = root.GetProperty("connectionId").GetGuid();
-            occurredAt = root.GetProperty("occurredAt").GetDateTimeOffset();
-            return tenantId != Guid.Empty && connectionId != Guid.Empty;
-        }
-        catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
-        {
-            return false;
-        }
+        await transaction.CommitAsync(cancellationToken);
     }
 
     // Sin intento (null) falló el reclamo mismo: no se contó nada y el mensaje vuelve en el tick siguiente.

@@ -62,12 +62,33 @@ public sealed class CoexistenceEventsTests
     }
 
     [Fact]
-    public async Task AMalformedPayloadIsMarkedProcessedWithoutARow()
+    public async Task TwoDistinctMessagesForTheSameConnectionKeepOneRow()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
         using var factory = new QepApiFactory(connectionString);
-        await InsertRawEventAsync(connectionString, """{"tenantId":"not-a-guid","connectionId":null}""");
+        var tenantId = Guid.NewGuid();
+        var connectionId = Guid.NewGuid();
+        var connectedAt = new DateTimeOffset(2026, 10, 29, 15, 30, 0, TimeSpan.Zero);
+        await InsertEventAsync(connectionString, tenantId, connectionId, connectedAt);
+        await InsertEventAsync(connectionString, tenantId, connectionId, connectedAt.AddHours(2));
+
+        await DrainCoexistenceEventsAsync(factory);
+
+        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.history_syncs"));
+        Assert.Equal(2L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.inbox_messages WHERE consumer = 'messaging.coexistence-events' AND processed_at IS NOT NULL"));
+    }
+
+    [Theory]
+    [InlineData("""{"tenantId":"not-a-guid","connectionId":null}""")]
+    [InlineData("""{"tenantId":"6f1c2f0e-7d6b-4c1a-9a53-0d8f3c2b1a11","connectionId":"0b4b7a8e-1d52-4a0e-8d55-3f6d8f1c9a22"}""")]
+    [InlineData("""{"tenantId":"6f1c2f0e-7d6b-4c1a-9a53-0d8f3c2b1a11","connectionId":"0b4b7a8e-1d52-4a0e-8d55-3f6d8f1c9a22","occurredAt":"ayer"}""")]
+    public async Task AMalformedPayloadIsMarkedProcessedWithoutARow(string payload)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        await InsertRawEventAsync(connectionString, payload);
 
         await DrainCoexistenceEventsAsync(factory);
 

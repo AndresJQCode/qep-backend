@@ -82,7 +82,7 @@ internal sealed class ClaimedOutboxConsumer(
         }
     }
 
-    /// <summary>Marca como terminada la fila que dejó el reclamo, sin guardar: quien llama la guarda en el mismo SaveChanges que su
+    /// <summary>Marca como terminada la fila que dejó el reclamo, sin guardar: quien llama la guarda en la misma transacción que su
     /// efecto, así que un mensaje procesado nunca queda sin marcar.</summary>
     public async Task MarkProcessedAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
