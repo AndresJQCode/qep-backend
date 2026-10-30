@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Modules.Billing.Application;
 using Modules.Notifications.Application;
 using Modules.Quotations.Application;
@@ -11,8 +12,16 @@ namespace Bootstrapper;
 /// y el formato regional a <see cref="EmailRegionalFormat"/>. Cualquier excepción del canal es <c>send_failed</c>: el worker
 /// reintenta o lo deja en el digest, nunca se cae por el correo.
 /// </summary>
-internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustomerEmail, IBillingStaffEmail
+internal sealed partial class BillingEmailSender(IEmailChannel channel, ILogger<BillingEmailSender> logger)
+    : IBillingCustomerEmail, IBillingStaffEmail
 {
+    private const string DigestKind = "Digest";
+
+    // Sólo el tipo de la excepción y la clase de mensaje: el Message del proveedor y la excepción misma (que el proveedor de logs
+    // imprimiría entera) pueden traer la dirección del destinatario.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Billing email of kind {MessageKind} failed with {ExceptionType}; it is reported as send_failed.")]
+    private static partial void LogSendFailed(ILogger logger, string messageKind, string exceptionType);
+
     public async Task<BillingSendResult> SendAsync(BillingCustomerMessage message, CancellationToken cancellationToken)
     {
         try
@@ -40,6 +49,7 @@ internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustom
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            LogSendFailed(logger, message.Kind.ToString(), exception.GetType().Name);
             return new BillingSendResult.Failed("send_failed");
         }
     }
@@ -63,6 +73,7 @@ internal sealed class BillingEmailSender(IEmailChannel channel) : IBillingCustom
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            LogSendFailed(logger, DigestKind, exception.GetType().Name);
             return new BillingSendResult.Failed("send_failed");
         }
     }
