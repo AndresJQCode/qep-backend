@@ -32,7 +32,7 @@
 Todas las rutas cuelgan de `/api/v1/tenants/{tenantId:guid}/billing`, con `X-Tenant-Id` en el header como el resto. Errores por
 `ApiExceptionHandler`: ProblemDetails con `code` y `traceId`; `422 validation.failed` con `errors` por campo (FluentValidation,
 nombres en PascalCase: `Name`, `Profile.AssigneeMemberId`); `404` con código de recurso; `412 concurrency.conflict` /
-`428` cuando la ruta pide `If-Match`.
+`428` cuando la ruta pide `If-Match`. Dos primeras escrituras simultáneas del mismo perfil o de los ajustes (misma PK) responden `409 billing.concurrent_first_write`: reintentar.
 
 ## 2. Modelo de datos
 
