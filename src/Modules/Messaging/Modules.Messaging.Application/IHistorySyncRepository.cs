@@ -8,8 +8,4 @@ public interface IHistorySyncRepository
 {
     /// <summary>Con tracking. <c>null</c> si la conexión no tiene importación o es de otro tenant.</summary>
     Task<HistorySync?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
-
-    /// <summary>Suelta el reclamo del worker (<c>claimed_until = NULL</c>) para que el pedido salga en su próxima pasada y no cuando venza
-    /// el reclamo anterior. Se guarda con el resto del cambio.</summary>
-    void ReleaseClaim(HistorySync sync);
 }

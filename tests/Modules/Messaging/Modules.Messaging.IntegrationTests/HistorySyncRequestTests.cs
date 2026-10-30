@@ -364,8 +364,22 @@ public sealed class HistorySyncRequestTests
         var second = await SeedWhatsAppConnectionAsync(f.Host, f.TenantId, "Soporte", "333", "444");
         await InsertSyncAsync(f, clock.UtcNow.AddHours(-2));
         await InsertSyncAsync(f, clock.UtcNow.AddHours(-1), connectionId: second);
+        var calls = 0;
+        DateTimeOffset? firstClaim = null;
+        DateTimeOffset? secondClaim = null;
         f.Factory.MetaHandler.RespondWith("/smb_app_data", _ =>
         {
+            // El primer pedido de cada fila ve el reclamo con el que salió (al terminar la fila, la pasada lo suelta).
+            switch (Interlocked.Increment(ref calls))
+            {
+                case 1:
+                    firstClaim = ClaimNow(f.ConnectionString, f.ConnectionId);
+                    break;
+                case 3:
+                    secondClaim = ClaimNow(f.ConnectionString, second);
+                    break;
+            }
+
             clock.UtcNow = clock.UtcNow.AddSeconds(30);
             return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R"}""");
         });
@@ -377,15 +391,70 @@ public sealed class HistorySyncRequestTests
             2L,
             await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.history_syncs WHERE contacts_state = 'Requested' AND history_state = 'Requested'"));
         // El segundo se reclamó después de los dos pedidos del primero: su reclamo vence un minuto más tarde.
-        Assert.Equal(
-            1L,
-            await CountAsync(
-                f.ConnectionString,
-                """
-                SELECT count(*) FROM messaging.history_syncs a JOIN messaging.history_syncs b ON b.connection_id = @second
-                 WHERE a.connection_id = @first AND b.claimed_until = a.claimed_until + interval '1 minute'
-                """,
-                ("first", f.ConnectionId), ("second", second)));
+        Assert.NotNull(firstClaim);
+        Assert.Equal(firstClaim.Value.AddMinutes(1), secondClaim);
+    }
+
+    // Revisión de la Task 12: una pasada suelta su propio reclamo al terminar la fila, así un tipo que el reintento de la API devolvió a
+    // Pending mientras la pasada pedía el otro sale con el reclamo siguiente (en la misma pasada del worker, que sigue reclamando), sin
+    // esperar a que el reclamo venza: el reloj no se mueve en toda la prueba.
+    [Fact]
+    public async Task ARetryDuringAPassIsRequestedWithoutWaitingForTheClaim()
+    {
+        await using var database = await StartDatabaseAsync();
+        var clock = new TestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var f = await ArrangeAsync(database, clock);
+        await InsertSyncAsync(f, clock.UtcNow.AddHours(-1), historyState: "Failed");
+        var calls = 0;
+        f.Factory.MetaHandler.RespondWith(SmbAppDataPath, _ =>
+        {
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                // Mientras Meta contesta los contactos, la persona reintenta: el historial vuelve a Pending sin tocar el reclamo.
+                ExecuteNow(
+                    f.ConnectionString,
+                    "UPDATE messaging.history_syncs SET history_state = 'Pending', version = version + 1");
+                return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R-C"}""");
+            }
+
+            return FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"request_id":"R-H"}""");
+        });
+
+        await DrainHistorySyncRequestsAsync(f.Host);
+
+        var requests = SmbAppDataRequests(f);
+        Assert.Equal(2, requests.Count);
+        Assert.Contains("smb_app_state_sync", requests[0].Body, StringComparison.Ordinal);
+        Assert.Contains("\"history\"", requests[1].Body, StringComparison.Ordinal);
+        Assert.Equal("Requested|R-C|-|Requested|R-H|-", await RowAsync(f));
+        // Dos reclamos: el primero se soltó al terminar su fila. El segundo también, al terminar.
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT attempts::bigint FROM messaging.history_syncs"));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.history_syncs WHERE claimed_until IS NOT NULL"));
+    }
+
+    // Una fila que deja un tipo Pending por «unconfirmed» conserva su reclamo: su vencimiento es lo que espacia el reintento.
+    [Fact]
+    public async Task APassThatLeavesAnUnconfirmedTypeKeepsItsClaim()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InsertSyncAsync(f, DateTimeOffset.UtcNow.AddHours(-1));
+        f.Factory.MetaHandler.Throw = new TaskCanceledException("timed out", new TimeoutException());
+
+        await DrainHistorySyncRequestsAsync(f.Host);
+
+        Assert.Equal(2, SmbAppDataRequests(f).Count);
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.history_syncs WHERE claimed_until IS NOT NULL"));
+    }
+
+    /// <summary>El reclamo de una fila en este instante, sin <c>await</c> (lo llama el handler sincrónico de Graph).</summary>
+    private static DateTimeOffset? ClaimNow(string connectionString, Guid connectionId)
+    {
+        using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        connection.Open();
+        using var command = new Npgsql.NpgsqlCommand("SELECT claimed_until FROM messaging.history_syncs WHERE connection_id = @id", connection);
+        command.Parameters.AddWithValue("id", connectionId);
+        return command.ExecuteScalar() is DateTime value ? new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)) : null;
     }
 
     // Los contactos ya pedidos y el historial devuelto a Pending por Retry (sin código de error): sólo se pide el historial.

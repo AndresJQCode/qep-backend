@@ -67,7 +67,10 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
 
             try
             {
-                await RequestAsync(sync, cancellationToken);
+                if (await RequestAsync(sync, cancellationToken))
+                {
+                    await ReleaseOwnClaimAsync(sync);
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -102,7 +105,24 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
         return claimed.Count == 0 ? null : claimed[0];
     }
 
-    private async Task RequestAsync(ClaimedSync sync, CancellationToken cancellationToken)
+    /// <summary>
+    /// Revisión de la Task 12: al terminar la fila, la pasada suelta su propio reclamo (y sólo el suyo: <c>claimed_until</c> igual al que
+    /// tomó), así un tipo que el reintento de la API devolvió a <c>Pending</c> mientras esta pasada pedía el otro sale en el tick
+    /// siguiente. El reintento nunca toca un reclamo vigente: soltarlo a mitad de una pasada dejaría que otra pida el mismo tipo.
+    /// </summary>
+    private async Task ReleaseOwnClaimAsync(ClaimedSync sync)
+    {
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE messaging.history_syncs SET claimed_until = NULL WHERE connection_id = {sync.ConnectionId} AND claimed_until = {sync.ClaimedUntil}",
+            CancellationToken.None);
+    }
+
+    /// <summary>Pide los tipos <c>Pending</c> de la fila. Devuelve si la pasada puede soltar su reclamo: no cuando dejó un tipo
+    /// <c>Pending</c> que se repite al vencer el reclamo (<c>unconfirmed</c>, <c>connection_unavailable</c>, que ese vencimiento
+    /// espacia) ni cuando el reclamo ya no es suyo.</summary>
+    private async Task<bool> RequestAsync(ClaimedSync sync, CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -114,7 +134,7 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null)
         {
-            return;
+            return false;
         }
 
         var pending = Types
@@ -130,17 +150,18 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
                 await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Pending, null, ConnectionUnavailable, clock.UtcNow, requireClaim: true);
             }
 
-            return;
+            return false;
         }
 
         var client = services.GetRequiredService<IWhatsAppCloudClient>();
+        var leftPendingForTheClaim = false;
         foreach (var type in pending)
         {
             var check = await CheckBeforeSendAsync(dbContext, sync, type, clock.UtcNow, cancellationToken);
             if (check == SendCheck.ClaimLost)
             {
                 LogClaimLost(logger, sync.ConnectionId);
-                return;
+                return false;
             }
 
             if (check == SendCheck.NoLongerPending)
@@ -167,8 +188,10 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
                         dbContext, sync, type, HistorySyncRequestState.Pending, null, MessagingGraphFailure.UnconfirmedReason, now, requireClaim: true))
                 {
                     LogClaimLost(logger, sync.ConnectionId);
-                    return;
+                    return false;
                 }
+
+                leftPendingForTheClaim = true;
             }
             else
             {
@@ -178,6 +201,8 @@ internal sealed partial class HistorySyncRequestProcessor(IServiceScopeFactory s
                 await SaveAsync(dbContext, sync, type, HistorySyncRequestState.Failed, null, code, now, requireClaim: false);
             }
         }
+
+        return !leftPendingForTheClaim;
     }
 
     private enum SendCheck

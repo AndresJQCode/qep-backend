@@ -82,9 +82,11 @@ public sealed class GetHistorySyncHandler(IHistorySyncRepository syncs, IExecuti
     }
 }
 
-/// <summary>§5 <c>POST /connections/{id}/history-sync/retry</c>: devuelve a <c>Pending</c> lo que falló y suelta el reclamo, para que el
-/// pedido salga en la próxima pasada del worker. Vencido, rechazado o sin nada que pedir es 422 (el dominio). Un cambio del worker entre
-/// la lectura y el guardado es <c>concurrency.conflict</c>.</summary>
+/// <summary>§5 <c>POST /connections/{id}/history-sync/retry</c>: devuelve a <c>Pending</c> lo que falló. No toca <c>claimed_until</c>: un
+/// reclamo vencido o nulo ya deja que la próxima pasada tome la fila, y uno vigente es de una pasada que puede estar pidiendo a Meta
+/// ahora mismo (soltarlo dejaría que otra pida el mismo tipo y gaste el único pedido). Esa pasada suelta su reclamo al terminar, así que
+/// lo reintentado sale en el tick siguiente. Vencido, rechazado o sin nada que pedir es 422 (el dominio). Un cambio del worker entre la
+/// lectura y el guardado es <c>concurrency.conflict</c> (412).</summary>
 public sealed class RetryHistorySyncHandler(
     IHistorySyncRepository syncs,
     IMessagingUnitOfWork unitOfWork,
@@ -114,7 +116,6 @@ public sealed class RetryHistorySyncHandler(
         }
 
         sync.Retry(now);
-        syncs.ReleaseClaim(sync);
         audit.RecordHistorySync(command.TenantId, executionContext.SubjectId, MessagingAuditActions.HistorySyncRetried, sync.ConnectionId, now, retried);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return HistorySyncSupport.ToDto(sync, now);

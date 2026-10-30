@@ -116,8 +116,7 @@ public sealed class HistorySyncApiTests
         var connectionId = Guid.CreateVersion7();
         var connectedAt = NowToTheSecond().AddHours(-1);
         await SeedSyncAsync(connectionString, tenant.TenantId, connectionId, connectedAt,
-            contactsState: "Requested", contactsRequestedAt: connectedAt.AddMinutes(1), historyState: "Failed", historyErrorCode: "graph:100",
-            claimedUntil: DateTimeOffset.UtcNow.AddMinutes(2));
+            contactsState: "Requested", contactsRequestedAt: connectedAt.AddMinutes(1), historyState: "Failed", historyErrorCode: "graph:100");
         using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermission, ManagePermission);
 
         var response = await client.PostAsync($"{Url(tenant.TenantId, connectionId)}/retry", content: null, Ct);
@@ -128,12 +127,61 @@ public sealed class HistorySyncApiTests
         Assert.Equal("Pending", body.GetProperty("history").GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Null, body.GetProperty("history").GetProperty("errorCode").ValueKind);
         Assert.Equal("Requested", body.GetProperty("contacts").GetProperty("state").GetString());
-        Assert.Equal("Pending|<none>|<free>|2", await ScalarAsync<string>(connectionString,
-            "SELECT history_state || '|' || coalesce(history_error_code, '<none>') || '|' || CASE WHEN claimed_until IS NULL THEN '<free>' ELSE 'claimed' END || '|' || version FROM messaging.history_syncs WHERE connection_id = @id",
+        Assert.Equal("Pending|<none>|2", await ScalarAsync<string>(connectionString,
+            "SELECT history_state || '|' || coalesce(history_error_code, '<none>') || '|' || version FROM messaging.history_syncs WHERE connection_id = @id",
             ("id", connectionId)));
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE source = 'messaging' AND action = 'messaging.history_sync.retried' AND resource_id = @id AND tenant_id = @tenantId AND changed_fields::text = '[\"History\"]'",
             ("id", connectionId.ToString()), ("tenantId", tenant.TenantId)));
+    }
+
+    // Revisión: una pasada del worker puede estar pidiendo a Meta con este reclamo. Soltarlo dejaría que otra pasada pida el mismo tipo
+    // otra vez y gaste el único pedido; el reintento sólo cambia los estados y la pasada suelta su reclamo al terminar.
+    [Fact]
+    public async Task RetryKeepsAnUnexpiredClaim()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        var connectionId = Guid.CreateVersion7();
+        var claimedUntil = NowToTheSecond().AddMinutes(2);
+        await SeedSyncAsync(connectionString, tenant.TenantId, connectionId, NowToTheSecond().AddHours(-1), claimedUntil: claimedUntil);
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermission);
+
+        var response = await client.PostAsync($"{Url(tenant.TenantId, connectionId)}/retry", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1L, await CountAsync(connectionString,
+            "SELECT count(*) FROM messaging.history_syncs WHERE connection_id = @id AND claimed_until = @until",
+            ("id", connectionId), ("until", claimedUntil)));
+    }
+
+    [Fact]
+    public async Task AConnectionOfAnotherTenantUnderMyRouteIs404AndUntouched()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenantA = Guid.CreateVersion7();
+        var connectionOfB = Guid.CreateVersion7();
+        // Sin tipos Pending: el worker del host no la toca, así la versión sólo puede cambiar por el reintento.
+        var connectedAt = NowToTheSecond().AddHours(-1);
+        await SeedSyncAsync(connectionString, Guid.CreateVersion7(), connectionOfB, connectedAt,
+            contactsState: "Requested", contactsRequestedAt: connectedAt.AddMinutes(1), historyState: "Failed", historyErrorCode: "graph:100");
+        using var client = CreateClient(factory, Guid.CreateVersion7(), tenantA, ReadPermission, ManagePermission);
+
+        var get = await client.GetAsync(Url(tenantA, connectionOfB), Ct);
+        var retry = await client.PostAsync($"{Url(tenantA, connectionOfB)}/retry", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
+        Assert.Equal("messaging.history_sync.not_found", (await ProblemAsync(get)).Code);
+        Assert.Equal(HttpStatusCode.NotFound, retry.StatusCode);
+        Assert.Equal("messaging.history_sync.not_found", (await ProblemAsync(retry)).Code);
+        Assert.Equal("Failed|graph:100|1", await ScalarAsync<string>(connectionString,
+            "SELECT history_state || '|' || history_error_code || '|' || version FROM messaging.history_syncs WHERE connection_id = @id",
+            ("id", connectionOfB)));
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM audit.entries WHERE action = 'messaging.history_sync.retried'"));
     }
 
     [Fact]

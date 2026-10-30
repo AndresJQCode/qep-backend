@@ -31,7 +31,8 @@ internal static class HistorySyncEndpoints
             .Produces<HistorySyncDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict)
+            // concurrency.conflict (un cambio del worker entre la lectura y el guardado) es 412 en ApiExceptionHandler.
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
