@@ -13,6 +13,21 @@ internal sealed class BillingServiceRepository(BillingDbContext dbContext) : IBi
         dbContext.Services.FirstOrDefaultAsync(
             service => service.TenantId == tenantId && service.Id == id, cancellationToken);
 
+    public async Task<IReadOnlyList<BillingService>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<BillingServiceId> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var wanted = ids.ToArray();
+        return await dbContext.Services
+            .AsNoTracking()
+            .Where(service => service.TenantId == tenantId && wanted.Contains(service.Id))
+            .ToListAsync(cancellationToken);
+    }
+
     // Los filtros del listado, compartidos por la página y por ListAllAsync.
     private IQueryable<BillingService> Filtered(BillingServiceQuery query)
     {

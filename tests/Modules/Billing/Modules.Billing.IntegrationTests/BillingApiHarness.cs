@@ -170,6 +170,30 @@ internal static class BillingApiHarness
         return membership.Id.Value;
     }
 
+    /// <summary>
+    /// La membresía activa de quien llama (<see cref="SubjectId"/>) en el tenant: la que marca un cobro como pagado y la que
+    /// resuelve <c>assignee=me</c>. Sin ella el stub sólo trae permisos y el handler responde 403.
+    /// </summary>
+    public static async Task<Guid> SeedCallerMembershipAsync(
+        QepApiFactory factory, string displayName, string role = "admin", string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var ct = TestContext.Current.CancellationToken;
+        var now = DateTimeOffset.UtcNow;
+
+        var user = User.CreateInvited(UserId.Parse(SubjectId), $"caller-{tenantId[^2..]}@example.com", now);
+        identity.Users.Add(user);
+        var membership = Membership.CreateActive(
+            MembershipId.New(), user.Id.Value, new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId)), [role], "test", now);
+        membership.UpdateProfile(displayName, null, now);
+        tenancy.Memberships.Add(membership);
+        await identity.SaveChangesAsync(ct);
+        await tenancy.SaveChangesAsync(ct);
+        return membership.Id.Value;
+    }
+
     /// <summary>La cantidad de filas de <c>audit.entries</c> de una acción sobre un recurso: la auditoría atómica no tiene API de lectura acá.</summary>
     public static async Task<int> CountAuditEntriesAsync(QepApiFactory factory, string action, string resourceId)
     {

@@ -77,6 +77,36 @@ public static class BillingEndpoints
         MapTransition(group, "resume", BillingServiceTransition.Resume);
         MapTransition(group, "cancel", BillingServiceTransition.Cancel);
 
+        // Cobros (spec §4). La lista y el detalle leen; marcar pagado y corregir el pago gestionan. Sin If-Match: pagar dos
+        // veces es 422 not_pending, no 412.
+        group.MapGet("/charges", ListChargesAsync)
+            .RequireAuthorization(BillingPermissions.Read)
+            .Produces<ChargePageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/charges/{chargeId:guid}", GetChargeAsync)
+            .RequireAuthorization(BillingPermissions.Read)
+            .Produces<ChargeDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPost("/charges/{chargeId:guid}/pay", PayChargeAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Accepts<PayChargeRequest>("application/json")
+            .Produces<ChargeDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/charges/{chargeId:guid}/payment", UpdateChargePaymentAsync)
+            .RequireAuthorization(BillingPermissions.Manage)
+            .Accepts<PayChargeRequest>("application/json")
+            .Produces<ChargeDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
     }
 
@@ -199,6 +229,66 @@ public static class BillingEndpoints
             UpdateServiceCommand.From(tenantId, serviceId, request, RequireVersion(httpContext)), cancellationToken);
 
         return Results.Ok(service);
+    }
+
+    private static async Task<IResult> ListChargesAsync(
+        Guid tenantId,
+        Guid? customerId,
+        string? status,
+        string? assignee,
+        string? search,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ListChargesQuery.DefaultPageSize)
+    {
+        var charges = await dispatcher.QueryAsync(
+            new ListChargesQuery(
+                tenantId,
+                string.IsNullOrWhiteSpace(status) ? ListChargesQuery.DefaultStatus : status,
+                string.Equals(assignee?.Trim(), "me", StringComparison.OrdinalIgnoreCase),
+                customerId,
+                search,
+                page,
+                pageSize),
+            cancellationToken);
+
+        return Results.Ok(charges);
+    }
+
+    private static async Task<IResult> GetChargeAsync(
+        Guid tenantId,
+        Guid chargeId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var charge = await dispatcher.QueryAsync(new GetChargeQuery(tenantId, chargeId), cancellationToken);
+
+        return Results.Ok(charge);
+    }
+
+    private static async Task<IResult> PayChargeAsync(
+        Guid tenantId,
+        Guid chargeId,
+        PayChargeRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var charge = await dispatcher.SendAsync(PayChargeCommand.From(tenantId, chargeId, request), cancellationToken);
+
+        return Results.Ok(charge);
+    }
+
+    private static async Task<IResult> UpdateChargePaymentAsync(
+        Guid tenantId,
+        Guid chargeId,
+        PayChargeRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var charge = await dispatcher.SendAsync(UpdateChargePaymentCommand.From(tenantId, chargeId, request), cancellationToken);
+
+        return Results.Ok(charge);
     }
 
     // Copia de MessagingEndpoints.RequireVersion (Billing no referencia Messaging): sin If-Match 428; la versión vieja es 412 en el handler.

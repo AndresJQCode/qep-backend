@@ -318,6 +318,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Billing.Application.ChangeServiceStatusCommand, Modules.Billing.Application.ServiceDetailDto>,
             Modules.Billing.Application.ChangeServiceStatusHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.ListChargesQuery, Modules.Billing.Application.ChargePageDto>,
+            Modules.Billing.Application.ListChargesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Billing.Application.GetChargeQuery, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.GetChargeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.PayChargeCommand, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.PayChargeHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Billing.Application.UpdateChargePaymentCommand, Modules.Billing.Application.ChargeDto>,
+            Modules.Billing.Application.UpdateChargePaymentHandler>();
         // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
         services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
         services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();

@@ -8,6 +8,10 @@ public interface IBillingServiceRepository
 
     Task<BillingService?> FindAsync(Guid tenantId, BillingServiceId id, CancellationToken cancellationToken);
 
+    /// <summary>Los servicios del tenant con esos ids, en un solo viaje: la lista de cobros pinta el nombre del servicio de cada fila.</summary>
+    Task<IReadOnlyList<BillingService>> FindManyAsync(
+        Guid tenantId, IReadOnlyCollection<BillingServiceId> ids, CancellationToken cancellationToken);
+
     Task<(IReadOnlyList<BillingService> Items, int Total)> ListAsync(
         BillingServiceQuery query, CancellationToken cancellationToken);
 

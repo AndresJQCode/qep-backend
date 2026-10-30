@@ -26,7 +26,8 @@ public static class BillingMapping
             charge.Currency,
             charge.DueDate,
             charge.IsOverdue(today) ? "Overdue" : charge.Status.ToString(),
-            Math.Max(0, today.DayNumber - charge.DueDate.DayNumber),
+            // Sólo lo vencido cuenta días: un cobro pagado o cancelado con vencimiento pasado no está «vencido hace N días».
+            charge.IsOverdue(today) ? today.DayNumber - charge.DueDate.DayNumber : 0,
             charge.PaidOn is { } paidOn
                 ? new PaymentDto(paidOn, charge.PaymentNote, paidBy, charge.PaidAt ?? default)
                 : null,
