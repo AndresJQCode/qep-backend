@@ -701,6 +701,8 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Billing.Application": "[1.0.0, )",
