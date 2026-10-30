@@ -131,8 +131,11 @@ internal static class CoexistenceIngestion
             """, cancellationToken);
 
     /// <summary>Como <c>ConversationOpener.OpenByPhoneAsync</c>: la conversación con BSUID de ese número, si no la legada; si no hay,
-    /// una legada nueva. La del historial nace cerrada y con <c>history_managed</c>; la de un eco nace abierta y sin él (P-5): un eco
-    /// es tráfico en vivo, no la importación. <c>Created</c> sólo si esta llamada la insertó.</summary>
+    /// una legada nueva. Las dos nacen cerradas. La del historial lleva <c>history_managed</c>, y la regla de abiertas decide después si
+    /// queda abierta. La de un eco no lo lleva, porque un eco es tráfico en vivo y no la importación. Nace cerrada porque el negocio
+    /// escribiendo desde la app no le deja nada pendiente a un asesor (P-5, decisión del owner del 2026-10-30): abierta y sin asignar
+    /// caería en la bandeja y en el triage del embudo. La reabre el contacto cuando escribe en vivo, por el camino de siempre.
+    /// <c>Created</c> sólo si esta llamada la insertó.</summary>
     private static async Task<(Guid Id, bool Created)> FindOrCreateAsync(
         MessagingDbContext dbContext, Guid tenantId, Guid connectionId, string waId, Guid? customerId, CoexistenceSource source,
         DateTimeOffset earliest, DateTimeOffset now, CancellationToken cancellationToken)
@@ -144,7 +147,7 @@ internal static class CoexistenceIngestion
 
         var id = Guid.CreateVersion7();
         var fromHistory = source == CoexistenceSource.History;
-        var status = fromHistory ? nameof(ConversationStatus.Resolved) : nameof(ConversationStatus.Open);
+        var status = nameof(ConversationStatus.Resolved);
         var channel = nameof(ConversationChannel.WhatsApp);
         // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
         var inserted = await dbContext.Database.SqlQuery<Guid>(

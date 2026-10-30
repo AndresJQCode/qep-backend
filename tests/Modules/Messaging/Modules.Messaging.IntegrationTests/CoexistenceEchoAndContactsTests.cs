@@ -75,15 +75,17 @@ public sealed class CoexistenceEchoAndContactsTests
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE message_id IN (SELECT id FROM messaging.messages WHERE wamid = 'wamid.echo')"));
     }
 
+    // P-5 (decisión del owner, 2026-10-30): el negocio escribiendo desde la app no le deja nada pendiente a un asesor, así que la
+    // conversación nace cerrada: ni en la bandeja de abiertas ni en el triage del embudo (TriageRules.IsPending exige abierta).
     [Fact]
-    public async Task AnEchoToAnUnknownPhoneCreatesAnOpenLegacyConversation()
+    public async Task AnEchoToAnUnknownPhoneCreatesAResolvedLegacyConversation()
     {
         await using var database = await StartDatabaseAsync();
         using var f = await ArrangeAsync(database);
 
         await PostAsync(f, MetaPayloads.SmbEchoes(PhoneNumberId, WaId, "wamid.echo", "Hola, te escribo desde el celular", f.ConnectedAt + 60));
 
-        Assert.Equal("Open|0|False|True", await ScalarAsync<string>(f.ConnectionString,
+        Assert.Equal("Resolved|0|False|True", await ScalarAsync<string>(f.ConnectionString,
             """
             SELECT status || '|' || unread_count || '|' || CASE WHEN history_managed THEN 'True' ELSE 'False' END || '|'
                 || CASE WHEN user_id IS NULL THEN 'True' ELSE 'False' END
@@ -91,6 +93,22 @@ public sealed class CoexistenceEchoAndContactsTests
             """, ("waId", WaId)));
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE wamid = 'wamid.echo' AND direction = 2"));
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations WHERE last_inbound_at IS NOT NULL"));
+    }
+
+    // P-5: lo que la reabre es el contacto escribiendo en vivo, por el camino de siempre (con su evento Reopened).
+    [Fact]
+    public async Task ALiveInboundReopensTheConversationAnEchoCreated()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await PostAsync(f, MetaPayloads.SmbEchoes(PhoneNumberId, WaId, "wamid.echo", "Hola, te escribo desde el celular", f.ConnectedAt + 60));
+
+        await PostAsync(f, MetaPayloads.Inbound(PhoneNumberId, "CO.1", WaId, "wamid.live", f.ConnectedAt + 120, "Hola"));
+
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Equal("Open|1", await ScalarAsync<string>(f.ConnectionString, "SELECT status || '|' || unread_count FROM messaging.conversations"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages WHERE direction = 3 AND details ->> 'type' = 'Reopened'"));
     }
 
     // R11: responder desde la app es actividad en vivo; una parte vieja del historial que llega después no la cierra.

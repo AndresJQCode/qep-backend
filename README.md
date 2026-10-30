@@ -2903,6 +2903,11 @@ desde la app.
   condiciones: el último mensaje es del contacto y llegó en las 24 h anteriores a la conexión (esas entran
   abiertas, con `history_managed = true`). Los contactos crean clientes incompletos. Los ecos
   (`smb_message_echoes`) guardan lo que el negocio responde desde la app.
+- **Un eco a un número que QEP no conoce crea la conversación cerrada** (P-5, decisión del owner del
+  2026-10-30). Que el negocio escriba desde la app no le deja nada pendiente a un asesor, así que no aparece en
+  la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
+  reabre por el camino de siempre, con su evento `Reopened`. Un eco a una conversación que ya existe no le
+  cambia el estado.
 - **Regla de Meta: 24 h y una sola vez por tipo.** Meta acepta el pedido de cada tipo una sola vez y sólo
   dentro de las 24 h siguientes a la conexión. Pasado el plazo no hay segunda oportunidad: el estado queda
   `Expired` y la pantalla dice que hay que desconectar y volver a conectar. Un pedido rechazado por Graph

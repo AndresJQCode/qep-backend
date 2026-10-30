@@ -286,6 +286,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
   sin cambio le da un 412 al asesor.
+- **Un eco (`smb_message_echoes`) a un número desconocido crea la conversación `Resolved`, no `Open`** (P-5, owner
+  2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
+  abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
+  reabre el entrante en vivo con su `Reopened`. No la «arregles» a `Open` para que se vea el eco: el hilo está en
+  «Resueltas».
 - **Un cliente puede ser `Incomplete`** (sin CUC, dirección ni clasificación): lo crean la ingesta
   de Messaging, la importación de pedidos de Shopify (`Customer.CreateIncompleteFromExternalSale`, sin BSUID ni IGSID)
   y `POST /pos/customers` (incompleto **con** documento y teléfono, sin CUC; spec 2026-10-14, POSC-05). Los de
