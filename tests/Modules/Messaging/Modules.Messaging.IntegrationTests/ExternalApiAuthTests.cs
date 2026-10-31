@@ -95,17 +95,42 @@ public sealed class ExternalApiAuthTests
         Assert.False(string.IsNullOrEmpty(body.GetProperty("traceId").GetString()));
     }
 
+    // El prefijo es público (la lista de claves lo devuelve): lo único que impide entrar con él es la comparación del secreto.
+    private static string WithWrongSecret(string plaintext) => plaintext[..13] + new string('A', 43);
+
     [Fact]
-    public async Task TheThreeBodiesAreEqualExceptForTheTraceId()
+    public async Task AKnownPrefixWithAWrongSecretIs401()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
+        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope);
+        var wrong = WithWrongSecret(plaintext);
+        Assert.NotEqual(plaintext, wrong);
+        Assert.True(ApiKeyMaterial.TryParse(wrong, out var prefix, out var wrongSecret));
+        Assert.Equal(plaintext.Substring(4, 8), prefix);
+        using var client = CreateExternalClient(f.Factory, wrong);
+
+        var response = await client.GetAsync(ExternalConnectionsUrl, Ct);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("external.auth.invalid_key", (await BodyAsync(response)).GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task TheFourBodiesAreEqualExceptForTheTraceId()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope);
         var bodies = new List<string>();
-        foreach (var key in new string?[] { null, "basura", InventedKey })
+        foreach (var key in new string?[] { null, "basura", InventedKey, WithWrongSecret(plaintext) })
         {
             using var client = CreateExternalClient(f.Factory, key);
-            bodies.Add(WithoutTraceId(await BodyAsync(await client.GetAsync(ExternalConnectionsUrl, Ct))));
+            var response = await client.GetAsync(ExternalConnectionsUrl, Ct);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            bodies.Add(WithoutTraceId(await BodyAsync(response)));
         }
 
         Assert.Single(bodies.Distinct());
