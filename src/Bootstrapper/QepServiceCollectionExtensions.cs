@@ -1145,6 +1145,10 @@ public static class QepServiceCollectionExtensions
         // miembros con el mismo adaptador que Messaging (una sola copia de «DisplayName ?? correo»). El único punto donde Pipeline
         // toca esos módulos.
         services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
+        services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
+        services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
+        // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).
+        services.AddScoped<IPipelineActiveMembers, PipelineActiveMembers>();
         // Observabilidad fase 2: profundidad y edad de las seis colas, para el muestreador (SQL crudo por nombre).
         services.AddScoped<Observability.IQueueMetricsSource, Observability.QueueMetricsSource>();
         // El muestreador y sus gauges son singleton; IClock está registrado scoped, así que los gauges llevan su propio reloj (SystemClock
@@ -1152,10 +1156,6 @@ public static class QepServiceCollectionExtensions
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
-        services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
-        services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
-        // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).
-        services.AddScoped<IPipelineActiveMembers, PipelineActiveMembers>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo

@@ -40,7 +40,7 @@ internal sealed class QueueMetricsSource(MessagingDbContext messaging) : IQueueM
                    COALESCE(EXTRACT(EPOCH FROM now() - min(m.created_at) FILTER (WHERE mm.attempts = 0 AND NOT m.imported))::float8, 0)
               FROM messaging.message_media AS mm
               JOIN messaging.messages AS m ON m.id = mm.message_id
-             WHERE mm.stored_at IS NULL AND mm.next_attempt_at < '9999-01-01'
+             WHERE mm.stored_at IS NULL AND mm.next_attempt_at < '9999-01-01+00'
             """,
         // Sin columna de edad: la tercera es NULL y el gauge no publica.
         [QueueNames.Campaign] = """
