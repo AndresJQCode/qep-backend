@@ -1,4 +1,4 @@
-﻿# QEP Backend
+# QEP Backend
 
 Backend de **QCode Enterprise Platform (QEP)** implementado como monolito
 modular sobre .NET 10.
@@ -151,6 +151,8 @@ local y por variable de entorno en k8s
 | `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
 | `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
 | `Messaging:Search:StatementTimeoutMs`                | `2000`                                                                                        | Tope de la búsqueda en el historial; al pasarlo responde 422 en `q` |
+| `ApiAccess:RateLimit:PerKeyPerMinute`                | `300`                                                          | API externa: peticiones por minuto por clave, después de autenticar. En memoria, ver «API externa». |
+| `ApiAccess:RateLimit:PerIpPerMinute`                 | `600`                                                          | API externa: peticiones por minuto por IP, antes de autenticar. En memoria, ver «API externa». |
 
 Ejemplo con variables de entorno:
 
@@ -840,11 +842,16 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations` y `suppliers`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing` y `developer`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; último de la lista, sin dependencias) tampoco viene con el signup y se prende igual. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; último de la lista, sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
+
+`developer` (las claves de API del tenant y la [API externa](#api-externa)) no viene con el signup: se prende por tenant desde la consola de
+operador. Apagarlo hace que la API externa responda `403 tenancy.module_not_enabled` en el request siguiente y que la pantalla de
+claves deje de estar disponible; las claves conservan su estado y vuelven a funcionar al prenderlo. Lo mismo vale para `messaging`, que
+la API externa exige además.
 
 Apagar un módulo descarta sus permisos en el request siguiente, por cookie y por el stub de
 desarrollo (este último sólo cuando el tenant existe en `tenancy.tenants`). No borra datos ni corta
@@ -4018,6 +4025,87 @@ cobro) y `ServiceContracts` `InitialBilling` (esquema `billing`). ServiceContrac
 **Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
 (3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la
 conexión en Configuración.
+
+### API externa
+
+Un sistema del tenant (un ERP, una tienda) envía plantillas de WhatsApp con una **clave de API** en lugar de una sesión. Las claves las crea
+y revoca un administrador con el permiso `developer.api_key.manage`, en `/api/v1/tenants/{tenantId}/api-keys`; la clave completa viaja
+**una sola vez**, en la respuesta de creación (`secret`). Diseño:
+[`docs/superpowers/specs/2026-10-30-api-keys-design.md`](docs/superpowers/specs/2026-10-30-api-keys-design.md).
+
+**Claves y scopes.** Formato `qep_<prefijo>_<secreto>`: prefijo de 8 caracteres base62 (público, la lista de claves lo muestra) y secreto de
+256 bits en base62. Se guarda solo el hash SHA-256 del secreto. Cada clave lleva sus scopes (hoy uno, `whatsapp.templates.send`), una
+lista opcional de números (`connectionIds`; sin lista, todos los del tenant) y un vencimiento opcional. Máximo 25 claves activas por tenant
+y nombre único entre las activas. Revocar es inmediato: el request siguiente da 401. Una clave **nunca** recibe permisos de sesión, así
+que no entra a ninguna ruta interna, y la cookie no entra a la API externa.
+
+**Autenticación.** Header `X-Api-Key` en cada petición. Ausente, malformada, desconocida, revocada, vencida o de un tenant no activo dan la
+misma respuesta: `401 external.auth.invalid_key`.
+
+**Endpoints** (todos bajo `/api/v1/external/whatsapp`):
+
+| Método y ruta | Devuelve |
+| --- | --- |
+| `GET /connections` | Los números que la clave puede usar: `id`, nombre y teléfono |
+| `GET /connections/{connectionId}/templates` | Las plantillas enviables: nombre, idioma, categoría y parámetros |
+| `POST /messages` | `201` al enviar, `200` si es un reintento de un envío ya hecho |
+
+Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas dobles al pasarlas a un `.exe`:
+
+```powershell
+@'
+{
+  "clientId": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
+  "to": "573001234567",
+  "template": { "name": "aviso_despacho", "language": "es_CO", "parameters": { "1": "Ana", "2": "4821" } }
+}
+'@ | Set-Content -Encoding utf8 cuerpo.json
+
+$env:QEP_API_KEY = "qep_xxxxxxxx_..."
+curl.exe -s https://<host>/api/v1/external/whatsapp/connections -H "X-Api-Key: $env:QEP_API_KEY"
+curl.exe -s https://<host>/api/v1/external/whatsapp/connections/<connectionId>/templates -H "X-Api-Key: $env:QEP_API_KEY"
+curl.exe -s -X POST https://<host>/api/v1/external/whatsapp/messages -H "X-Api-Key: $env:QEP_API_KEY" -H "Content-Type: application/json" -d "@cuerpo.json"
+```
+
+Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `clientId` es obligatorio, lo genera el sistema
+externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma y parámetros devuelve `200` con lo
+guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
+`422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
+una conversación bloqueada rechaza cualquier categoría.
+
+**Errores.** Todo es `ProblemDetails` con `code`, y los `code` son contrato público: cambiarlos rompe integraciones.
+
+| Status | `code` | Cuándo |
+| --- | --- | --- |
+| 401 | `external.auth.invalid_key` | Clave ausente, malformada, desconocida, revocada, vencida o de un tenant no activo |
+| 403 | `external.auth.scope_missing` | La clave no tiene el scope |
+| 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
+| 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
+| 409 | `external.client_id_reused` | Mismo `clientId` con otro destino o plantilla |
+| 422 | `validation.failed` | Con el mapa `errors` |
+| 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
+| 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
+| 422 | `messaging.connection_unavailable` | La conexión está pausada, necesita atención o Meta rechazó sus credenciales |
+| 422 | `messaging.templates.unavailable` | Meta no contestó la lista de plantillas; reintentar es seguro |
+| 422 | `messaging.channel_unsupported` | La conexión es de Instagram: no tiene plantillas |
+| 422 | `external.recipient_blocked` | Contacto bloqueado |
+| 422 | `external.recipient_opted_out` | Plantilla `MARKETING` a quien no la acepta |
+| 422 | `external.recipient_inactive` | Plantilla `MARKETING` a un cliente inactivo |
+| 422 | `external.message_rejected` | Meta rechazó con certeza; el mismo `clientId` reenvía |
+| 429 | `external.rate_limited` | Límite de QEP o de Meta, con `Retry-After` |
+| 502 | `external.send_unconfirmed` | No se sabe si salió |
+
+**`external.send_unconfirmed` significa «no sé si salió».** Meta pudo haber aceptado el mensaje aunque no lo confirmó. Repetir el mismo
+`clientId` repite el `502` y **no** reenvía; decidir si se manda otro exige un `clientId` nuevo, y esa decisión es del sistema externo.
+
+**Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
+`ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos
+viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
+
+**Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
+`sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
+se auditan (`api_access.key.created`, `api_access.key.revoked`).
 
 ## Verificación
 

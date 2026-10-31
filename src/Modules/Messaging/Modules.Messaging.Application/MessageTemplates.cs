@@ -29,6 +29,10 @@ public sealed record MessageTemplateDto(
     bool Sendable,
     string? UnsupportedReason);
 
+/// <summary>Lo que <see cref="TemplateDetailsJson.Serialize"/> guardó de un envío de plantilla: nombre, idioma y valores. Spec 2026-10-30 §6.3:
+/// un reintento con el mismo <c>clientId</c> compara contra esto.</summary>
+public sealed record StoredTemplateSend(string Name, string Language, IReadOnlyDictionary<string, string> Parameters);
+
 /// <summary>Spec 2026-10-11 §5.2: el <c>details</c> de un mensaje <c>Template</c>:
 /// <c>{ "template": { "name", "language", "category", "parameters": { clave: valor } } }</c>.</summary>
 public static class TemplateDetailsJson
@@ -64,6 +68,45 @@ public static class TemplateDetailsJson
                 && Text(template, "name") is { Length: > 0 } name && Text(template, "language") is { Length: > 0 } language
                 ? new MessageTemplateRefDto(name, language)
                 : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Nombre, idioma y valores de lo que se envió; <c>null</c> si el detalle falta, no parsea o no trae nombre e idioma. Los valores que no
+    /// son texto se ignoran.</summary>
+    public static StoredTemplateSend? ParseSend(string? detailsJson)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("template", out var template) || template.ValueKind != JsonValueKind.Object
+                || Text(template, "name") is not { Length: > 0 } name || Text(template, "language") is not { Length: > 0 } language)
+            {
+                return null;
+            }
+
+            var parameters = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (template.TryGetProperty("parameters", out var values) && values.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in values.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.String)
+                    {
+                        parameters[property.Name] = property.Value.GetString()!;
+                    }
+                }
+            }
+
+            return new StoredTemplateSend(name, language, parameters);
         }
         catch (JsonException)
         {

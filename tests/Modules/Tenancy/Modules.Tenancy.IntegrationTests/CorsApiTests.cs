@@ -118,6 +118,22 @@ public sealed class CorsApiTests
             "x-permissions", Values(response, "Access-Control-Allow-Headers"), StringComparer.OrdinalIgnoreCase);
     }
 
+    // Spec 2026-10-30 §4.3: X-Api-Key es de sistemas externos, no del navegador. Si entrara a la lista, una página de otro
+    // origen podría mandar una clave robada desde el navegador de un usuario.
+    [Fact]
+    public async Task ThePreflightDoesNotAllowXApiKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new CorsApiFactory(database.GetConnectionString(), SpaOrigin);
+        using var client = factory.CreateClient();
+
+        using var response = await SendPreflightAsync(
+            client, SpaOrigin, "/api/v1/external/whatsapp/connections", "GET", "x-qep-client, x-api-key");
+
+        Assert.DoesNotContain(
+            "x-api-key", Values(response, "Access-Control-Allow-Headers"), StringComparer.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task ActualRequestFromTheSpaOriginCarriesCorsHeadersAndOthersDoNot()
     {

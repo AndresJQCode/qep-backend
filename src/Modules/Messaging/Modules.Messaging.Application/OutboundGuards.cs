@@ -214,6 +214,7 @@ internal sealed class OutboundGuards(
             existing.Id, conversationId, MessageDirection.Outbound, existing.Kind, existing.Kind is MessageKind.Text or MessageKind.Template ? existing.Text : null, existing.Caption,
             isTemplate ? existing.DetailsJson : null,
             existing.Status, null, existing.OccurredAt, existing.SentByMemberId, clientId,
-            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId, existing.SentByChatbotId);
+            existing.MediaMimeType is { } mimeType ? new MessageMediaRow(mimeType, existing.MediaFileName) : null, existing.ReplyToMessageId, existing.SentByChatbotId,
+            SentByApiKeyId: existing.SentByApiKeyId, SentByApiKeyName: existing.SentByApiKeyName);
     }
 }

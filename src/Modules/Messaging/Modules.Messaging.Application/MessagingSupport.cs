@@ -242,7 +242,8 @@ internal static class MessageMapping
             row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null,
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
             row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null,
-            mediaState);
+            mediaState,
+            row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null);
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>

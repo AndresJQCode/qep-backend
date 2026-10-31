@@ -1,8 +1,10 @@
 using System.Data.Common;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Npgsql;
 
 namespace Modules.Messaging.Infrastructure.Persistence;
 
@@ -24,9 +26,9 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             var inserted = await dbContext.Database.SqlQuery<Guid>(
                 $"""
                 INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, caption, client_id, sent_by_member_id, created_at,
-                                                reply_to_message_id, reply_to_wamid, details, sent_by_kind, sent_by_chatbot_id)
+                                                reply_to_message_id, reply_to_wamid, details, sent_by_kind, sent_by_chatbot_id, sent_by_api_key_id, sent_by_api_key_name)
                 VALUES ({draft.MessageId}, {draft.ConversationId}, {draft.TenantId}, {draft.ConnectionId}, {draft.Now}, 2, {kind}, 1, {draft.Text}, {draft.Caption}, {draft.ClientId}, {draft.SentByMemberId}, {draft.Now},
-                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb, {authorKind}, {draft.SentByChatbotId})
+                        {draft.ReplyToMessageId}, {draft.ReplyToWamid}, {draft.DetailsJson}::jsonb, {authorKind}, {draft.SentByChatbotId}, {draft.SentByApiKey?.Id}, {draft.SentByApiKey?.Name})
                 ON CONFLICT (conversation_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
                 RETURNING id AS "Value"
                 """).ToListAsync(cancellationToken);
@@ -40,11 +42,20 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 $"""
                 SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId", coalesce(m.text, '') AS "Text",
                        m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
-                       mm.file_name AS "MediaFileName", m.caption AS "Caption"
+                       mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
+                       m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
                 FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
                 WHERE m.conversation_id = {draft.ConversationId} AND m.client_id = {draft.ClientId} FOR UPDATE OF m
                 """).ToListAsync(cancellationToken);
             return new Claim(dbContext, transaction, draft, ToExisting(rows.Single()));
+        }
+        catch (PostgresException exception) when (exception is { SqlState: "23505", ConstraintName: MessagingDbContext.ApiClientIndex })
+        {
+            // Spec 2026-10-30 §4.4: el mismo clientId de una clave ya salió en otra conversación del tenant. La del mismo
+            // (conversación, clientId) no llega aquí: la absorbe el ON CONFLICT de arriba.
+            await transaction.DisposeAsync();
+            throw new ResourceConflictException(
+                MessagingErrorCodes.ExternalClientIdReused, "The clientId was already used by this tenant in another conversation.", exception);
         }
         catch
         {
@@ -53,35 +64,53 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         }
     }
 
+    public async Task<ExistingApiMessage?> FindApiMessageAsync(Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Database.SqlQuery<ApiMessageRow>(
+            $"""
+            SELECT m.id AS "Id", m.conversation_id AS "ConversationId", m.connection_id AS "ConnectionId", c.wa_id AS "WaId", m.status AS "Status",
+                   m.failure_code AS "FailureCode", m.details::text AS "DetailsJson"
+            FROM messaging.messages m JOIN messaging.conversations c ON c.id = m.conversation_id
+            WHERE m.tenant_id = {tenantId} AND m.client_id = {clientId} AND m.sent_by_kind = 4
+            """).ToListAsync(cancellationToken);
+        return rows.Count == 1
+            ? new ExistingApiMessage(rows[0].Id, rows[0].ConversationId, rows[0].ConnectionId, rows[0].WaId, MessageColumnCodes.ToStatus(rows[0].Status), rows[0].FailureCode, rows[0].DetailsJson)
+            : null;
+    }
+
     public async Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken)
     {
         var rows = await dbContext.Database.SqlQuery<ExistingRow>(
             $"""
             SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId",
                    coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
-                   mm.file_name AS "MediaFileName", m.caption AS "Caption"
+                   mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
+                   m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
             FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
             WHERE m.conversation_id = {conversationId} AND m.client_id = {clientId}
             """).ToListAsync(cancellationToken);
         return rows.Count == 1 ? ToExisting(rows[0]) : null;
     }
 
-    /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5): <c>sent_by_kind = 2</c> si y sólo si hay chatbot, y entonces sin miembro.</summary>
+    /// <summary>Los CHECK de la tabla (spec 2026-10-21 §5.5 y 2026-10-30 §4.4): <c>sent_by_kind = 2</c> si y sólo si hay chatbot y <c>4</c> si y
+    /// sólo si hay clave de API, y en ambos casos sin miembro.</summary>
     private static short AuthorKindOf(OutboundDraft draft)
     {
-        // Exactamente un autor: con los dos, o con ninguno, los CHECK de la tarea 3 saltarían después (o se escribiría una fila
-        // kind 1 sin miembro); mejor fallar aquí, antes de abrir nada contra la tabla.
-        if ((draft.SentByMemberId is null) == (draft.SentByChatbotId is null))
+        // Exactamente un autor: con dos, o con ninguno, los CHECK saltarían después (o se escribiría una fila kind 1 sin miembro);
+        // mejor fallar aquí, antes de abrir nada contra la tabla.
+        var authors = (draft.SentByMemberId is null ? 0 : 1) + (draft.SentByChatbotId is null ? 0 : 1) + (draft.SentByApiKey is null ? 0 : 1);
+        if (authors != 1)
         {
-            throw new ArgumentException("A draft needs exactly one author: SentByMemberId or SentByChatbotId.", nameof(draft));
+            throw new ArgumentException("A draft needs exactly one author: SentByMemberId, SentByChatbotId or SentByApiKey.", nameof(draft));
         }
 
-        return (short)(draft.SentByChatbotId is null ? MessageAuthorKind.Member : MessageAuthorKind.Chatbot);
+        return (short)(draft.SentByChatbotId is not null ? MessageAuthorKind.Chatbot : draft.SentByApiKey is not null ? MessageAuthorKind.ApiKey : MessageAuthorKind.Member);
     }
 
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
-            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption, row.SentByChatbotId);
+            MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption, row.SentByChatbotId,
+            row.FailureCode, row.SentByApiKeyId, row.SentByApiKeyName);
 
     private sealed class ExistingRow
     {
@@ -108,6 +137,29 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public string? MediaFileName { get; set; }
 
         public string? Caption { get; set; }
+
+        public int? FailureCode { get; set; }
+
+        public Guid? SentByApiKeyId { get; set; }
+
+        public string? SentByApiKeyName { get; set; }
+    }
+
+    private sealed class ApiMessageRow
+    {
+        public Guid Id { get; set; }
+
+        public Guid ConversationId { get; set; }
+
+        public Guid ConnectionId { get; set; }
+
+        public string? WaId { get; set; }
+
+        public short Status { get; set; }
+
+        public int? FailureCode { get; set; }
+
+        public string? DetailsJson { get; set; }
     }
 
     private sealed class Claim(MessagingDbContext dbContext, IDbContextTransaction transaction, OutboundDraft draft, ExistingOutbound? existing) : IOutboundClaim
@@ -127,13 +179,14 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // Una imagen o un documento no tienen texto: la foto de la conversación muestra su pie (como la ingesta, Text ?? Caption).
             var preview = PreviewOf(draft.Text ?? draft.Caption);
             var kind = MessageColumnCodes.ToCode(draft.Kind);
-            // Reenviar un Failed puede cambiar de autor: kind, miembro y chatbot se reescriben juntos para no violar los CHECK.
+            // Reenviar un Failed puede cambiar de autor: kind, miembro, chatbot y clave se reescriben juntos para no violar los CHECK.
             var authorKind = AuthorKindOf(draft);
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.messages SET status = 1, wamid = {wamid}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     failure_code = NULL, failure_title = NULL, sent_by_member_id = {draft.SentByMemberId},
                     sent_by_kind = {authorKind}, sent_by_chatbot_id = {draft.SentByChatbotId},
+                    sent_by_api_key_id = {draft.SentByApiKey?.Id}, sent_by_api_key_name = {draft.SentByApiKey?.Name},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
                 """, cancellationToken);

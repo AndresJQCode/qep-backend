@@ -122,6 +122,9 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
         return new OpenedConversation(raced, false);
     }
 
+    public Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken) =>
+        FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken);
+
     /// <summary>Los pasos (2) y (4) de <see cref="FindAsync"/>: la conversación con BSUID de ese número y, si no, la fila vieja. Spec
     /// 2026-10-29: la importación del historial busca igual (<c>CoexistenceIngestion</c>).</summary>
     internal static async Task<Guid?> FindByPhoneAsync(

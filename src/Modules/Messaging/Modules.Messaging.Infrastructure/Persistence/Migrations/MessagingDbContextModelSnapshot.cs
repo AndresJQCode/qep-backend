@@ -1230,6 +1230,15 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnName("search_vector")
                         .HasComputedColumnSql("to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))", true);
 
+                    b.Property<Guid?>("SentByApiKeyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sent_by_api_key_id");
+
+                    b.Property<string>("SentByApiKeyName")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("sent_by_api_key_name");
+
                     b.Property<Guid?>("SentByChatbotId")
                         .HasColumnType("uuid")
                         .HasColumnName("sent_by_chatbot_id");
@@ -1272,6 +1281,11 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_messages_conversation_client")
                         .HasFilter("client_id IS NOT NULL");
 
+                    b.HasIndex("TenantId", "ClientId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_messages_tenant_api_client")
+                        .HasFilter("sent_by_kind = 4");
+
                     b.HasIndex("TenantId", "SearchVector")
                         .HasDatabaseName("IX_messages_tenant_search");
 
@@ -1298,11 +1312,13 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_messages_kind", "kind BETWEEN 1 AND 14");
 
+                            t.HasCheckConstraint("CK_messages_sent_by_api_key", "(sent_by_kind = 4) = (sent_by_api_key_id IS NOT NULL) AND (sent_by_api_key_id IS NULL) = (sent_by_api_key_name IS NULL)");
+
                             t.HasCheckConstraint("CK_messages_sent_by_chatbot", "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)");
 
-                            t.HasCheckConstraint("CK_messages_sent_by_kind", "sent_by_kind IN (1,2)");
+                            t.HasCheckConstraint("CK_messages_sent_by_kind", "sent_by_kind IN (1,2,4)");
 
-                            t.HasCheckConstraint("CK_messages_sent_by_one", "sent_by_kind <> 2 OR sent_by_member_id IS NULL");
+                            t.HasCheckConstraint("CK_messages_sent_by_one", "sent_by_kind NOT IN (2,4) OR sent_by_member_id IS NULL");
 
                             t.HasCheckConstraint("CK_messages_status", "status BETWEEN 1 AND 4");
 

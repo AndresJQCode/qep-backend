@@ -280,9 +280,9 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
   (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Los diecinueve módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
-  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. `Platform` también existe, pero sin
+  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
   `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
@@ -687,6 +687,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   de Meta, también un signup de QEP con la clave vacía o una re-suscripción desde lulo chat, y el síntoma es que los webhooks
   vuelven a la URL de la app sin ningún error. Lo único que dice el estado real es `GET /{wabaId}/subscribed_apps`; el procedimiento
   está en [README § Historial de coexistencia](README.md#historial-de-coexistencia).
+- **La API externa no usa `IExecutionContext` sino `IApiCaller`** (spec 2026-10-30). El tenant sale de la clave, no de la ruta ni de
+  un header, y una clave nunca recibe claims `permission`: ninguna política interna pasa con ella. Un scope nuevo se registra con
+  `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
+  el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
+  los integradores: no se renombran.
+- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 está reservado
+  para agentes IA). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
+  miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
+  es una respuesta de una persona.
 
 ## Verificación
 

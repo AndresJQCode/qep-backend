@@ -9,6 +9,9 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.ApiAccess.Api;
+using Modules.ApiAccess.Application;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Api;
@@ -75,6 +78,8 @@ builder.Services.AddMessagingRealtime();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Spec 2026-10-30 §6.1: solo la API externa lleva cuerpo y Retry-After en su 429 por IP; el resto queda como hoy.
+    options.OnRejected = ExternalRateLimitRejection.WriteAsync;
     static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
     {
         PermitLimit = 120,
@@ -132,6 +137,19 @@ builder.Services.AddRateLimiter(options =>
                     QueueLimit = webhook.QueueLimit,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 };
+            }));
+
+    // Spec 2026-10-30 §6.1: la API externa, 600 por minuto por IP y antes de autenticar, para frenar claves inventadas. El
+    // límite por clave (300) corre después, como filtro del grupo. Se particiona por IP y nunca por el header.
+    options.AddPolicy(
+        RateLimiterPolicies.External,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = httpContext.RequestServices.GetRequiredService<IOptions<ApiAccessOptions>>().Value.RateLimit.PerIpPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
             }));
 });
 
@@ -236,11 +254,15 @@ app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-15 §7: las rutas por tenant de Shopify: la configuración de la tienda, la bandeja y «Sincronizar ahora».
 app.MapShopifyEndpoints();
 app.MapMessagingEndpoints();
+// Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
+app.MapExternalApi();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
 app.MapSupplierEndpoints();
+// Spec 2026-10-30: administración de claves de API.
+app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
@@ -316,6 +338,11 @@ await app.Services.InitializeAutomationsDatabaseAsync(
 
 // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
 await app.Services.InitializeServiceContractsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
+// membresías son referencias blandas.
+await app.Services.InitializeApiAccessDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

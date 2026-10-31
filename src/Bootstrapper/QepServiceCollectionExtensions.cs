@@ -15,6 +15,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Bootstrapper.ApiKeys;
+using Modules.ApiAccess.Application;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
@@ -74,6 +77,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
+        services.AddScoped<IApiCaller, HttpApiCaller>();
+        // Límites de la API externa (spec 2026-10-30 §6.1): todo tiene valor por defecto y no hay
+        // configuración nueva en Backend-prod, pero un 0 o un negativo tumba el arranque (ApiAccessOptionsValidator). El limitador por clave es singleton: el estado de las ventanas vive en él.
+        services.AddOptions<ApiAccessOptions>()
+            .Bind(configuration.GetSection(ApiAccessOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
+        services.AddSingleton<ApiKeyRateLimiter>();
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,
@@ -289,6 +301,32 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
+        // ApiAccess, spec 2026-10-30: administración de claves de API. A mano, como los demás: un handler olvidado
+        // compila y responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
+            ListApiKeysHandler>();
+        services.AddScoped<
+            IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
+            ListApiScopesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateApiKeyCommand, CreatedApiKeyDto>,
+            CreateApiKeyHandler>();
+        services.AddScoped<
+            ICommandHandler<RevokeApiKeyCommand, ApiKeyDto>,
+            RevokeApiKeyHandler>();
+        // ApiAccess no ve a los módulos: cada uno registra aquí los scopes que ofrece, y el catálogo los filtra por
+        // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
+        services.AddScoped<ApiScopeCatalog>();
+        services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
+        services.AddSingleton(new ApiScopeDefinition(
+            MessagingScopes.TemplatesSend,
+            "Enviar plantillas",
+            "Incluye consultar las plantillas aprobadas.",
+            "WhatsApp",
+            ModuleKeys.Messaging.Value,
+            RestrictableByConnection: true));
         // ServiceContracts, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
         // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
         services.AddScoped<
@@ -810,6 +848,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
         services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
+        services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
@@ -951,6 +993,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
@@ -966,6 +1009,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
+        services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
@@ -1092,6 +1136,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
+        services.AddSingleton<IDialablePhoneNumbers, DialablePhoneNumbers>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
@@ -1438,7 +1483,9 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Manage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
-                ServiceContractsPermissions.Manage
+                ServiceContractsPermissions.Manage,
+                // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
+                ApiAccessPermissions.ApiKeyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -2054,6 +2101,14 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
+        // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
+        services.AddSingleton(new PermissionDefinition(
+            ApiAccessPermissions.ApiKeyManage,
+            "Administrar claves de API",
+            "Permite crear, ver y revocar las claves con las que tus sistemas se conectan a QEP.",
+            "Developer",
+            "high",
+            RequiredModules: [ModuleKeys.Developer]));
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
         // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
@@ -2099,7 +2154,8 @@ public static class QepServiceCollectionExtensions
                 .AddAuthentication(DevelopmentAuthenticationHandler.AuthenticationSchemeName)
                 .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
                     DevelopmentAuthenticationHandler.AuthenticationSchemeName,
-                    _ => { });
+                    _ => { })
+                .AddApiKeyScheme();
             return;
         }
 
@@ -2160,8 +2216,17 @@ public static class QepServiceCollectionExtensions
                     options.TokenValidationParameters.IssuerSigningKey =
                         new SymmetricSecurityKey(Convert.FromBase64String(testSigningKey));
                 }
-            });
+            })
+            .AddApiKeyScheme();
     }
+
+    // El esquema de la API externa (spec 2026-10-30 §4.3) se registra en las dos ramas de AddAuthentication, con stub y sin él: si
+    // quedara solo en la real, la API externa no existiría en local. No es el esquema por defecto en ninguna: solo lo piden las
+    // rutas de /api/v1/external, y por eso la cookie no entra allí ni X-Api-Key en las rutas internas.
+    private static AuthenticationBuilder AddApiKeyScheme(this AuthenticationBuilder builder) =>
+        builder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+            ApiKeyDefaults.AuthenticationScheme,
+            _ => { });
 
     // Devuelve el primer valor no vacío, tratando como ausente la configuración que sólo
     // tiene espacios (por ejemplo el placeholder "" de appsettings.json).
@@ -2441,7 +2506,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Read))
             .AddPolicy(
                 ServiceContractsPermissions.Manage,
-                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage));
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage))
+            // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                ApiAccessPermissions.ApiKeyManage,
+                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage));
     }
 
     private static void AddPermissionRequirement(

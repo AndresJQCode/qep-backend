@@ -153,6 +153,12 @@
     <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.UnitTests/Modules.ServiceContracts.UnitTests.csproj" />
     <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.IntegrationTests/Modules.ServiceContracts.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/ApiAccess/">
+    <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Api/Modules.ApiAccess.Api.csproj" />
+    <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Application/Modules.ApiAccess.Application.csproj" />
+    <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Domain/Modules.ApiAccess.Domain.csproj" />
+    <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Infrastructure/Modules.ApiAccess.Infrastructure.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/Suppliers/">
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Api/Modules.Suppliers.Api.csproj" />
     <Project Path="src/Modules/Suppliers/Modules.Suppliers.Application/Modules.Suppliers.Application.csproj" />
@@ -166,6 +172,10 @@
   <Folder Name="/tests/Modules/Companies/">
     <Project Path="tests/Modules/Companies/Modules.Companies.UnitTests/Modules.Companies.UnitTests.csproj" />
     <Project Path="tests/Modules/Companies/Modules.Companies.IntegrationTests/Modules.Companies.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/ApiAccess/">
+    <Project Path="tests/Modules/ApiAccess/Modules.ApiAccess.UnitTests/Modules.ApiAccess.UnitTests.csproj" />
+    <Project Path="tests/Modules/ApiAccess/Modules.ApiAccess.IntegrationTests/Modules.ApiAccess.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Suppliers/">
     <Project Path="tests/Modules/Suppliers/Modules.Suppliers.UnitTests/Modules.Suppliers.UnitTests.csproj" />

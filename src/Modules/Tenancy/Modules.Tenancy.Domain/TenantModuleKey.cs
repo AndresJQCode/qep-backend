@@ -68,8 +68,12 @@ public static class TenantModuleKeys
     /// <c>RequiredModules</c> de sus permisos y en el frontend, y cambiarla sería una migración de datos.</summary>
     public static readonly TenantModuleKey ServiceContracts = TenantModuleKey.Define("billing");
 
+    /// <summary>Spec 2026-10-30, D7: las claves de API de integración. Último de la lista, sin dependencias y fuera de
+    /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Developer = TenantModuleKey.Define("developer");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =

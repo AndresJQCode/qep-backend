@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
 using Modules.ServiceContracts.Application;
@@ -177,9 +178,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSixtyNineConstants()
+    public void PermissionDiscoveryFindsTheSeventyConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -189,8 +190,9 @@ public sealed class CompositionRootTests
         // + los dos de proveedores (suppliers, spec 2026-10-23) + el de fusionar clientes (spec 2026-10-24 D-F1)
         // + el de revocar la autorización de datos (spec 2026-10-26 D-9)
         // + los dos de ciudades del operador (spec 2026-10-26 §6)
-        // + los dos de cobros recurrentes (billing, spec 2026-10-29).
-        Assert.Equal(69, PermissionConstants().Length);
+        // + los dos de cobros recurrentes (billing, spec 2026-10-29)
+        // + el de claves de API (developer.api_key.manage, spec 2026-10-30).
+        Assert.Equal(70, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -704,6 +706,52 @@ public sealed class CompositionRootTests
 
         Assert.NotNull(provider.GetRequiredService<ModuleEntitlementMask>());
     }
+
+    /// <summary>Spec 2026-10-30: las claves de API las administra solo quien administra la empresa, y la pantalla solo existe con el módulo
+    /// <c>developer</c>. Sin la capacidad el permiso ni se ofrece en el editor de roles.</summary>
+    [Fact]
+    public void TheApiKeyPermissionRequiresTheDeveloperModuleAndGoesOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("developer.api_key.manage", ApiAccessPermissions.ApiKeyManage);
+        Assert.Contains(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("admin"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(ApiAccessPermissions.ApiKeyManage, catalog.PermissionsFor("cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == ApiAccessPermissions.ApiKeyManage);
+        Assert.Equal("Developer", definition.Category);
+        Assert.Equal([ModuleKeys.Developer], definition.RequiredModules);
+    }
+
+    /// <summary>Un scope que nombra un módulo que no existe nunca se ofrecería, y uno repetido se pisaría en el catálogo: las dos cosas
+    /// pasan en silencio, así que se amarran aquí.</summary>
+    [Fact]
+    public void EveryApiScopeDeclaresARealModule()
+    {
+        var scopes = RegisteredApiScopes();
+
+        Assert.NotEmpty(scopes);
+        Assert.All(scopes, scope => Modules.Tenancy.Domain.TenantModuleKey.Parse(scope.RequiredModule));
+        Assert.Equal(scopes.Length, scopes.Select(scope => scope.Key).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void TheTemplatesSendScopeIsRestrictableAndBelongsToMessaging()
+    {
+        var scope = Assert.Single(RegisteredApiScopes(), candidate => candidate.Key == MessagingScopes.TemplatesSend);
+
+        Assert.Equal("whatsapp.templates.send", scope.Key);
+        Assert.Equal(ModuleKeys.Messaging.Value, scope.RequiredModule);
+        Assert.True(scope.RestrictableByConnection);
+    }
+
+    private static ApiScopeDefinition[] RegisteredApiScopes() =>
+        BuildPlatformServices()
+            .Where(descriptor => descriptor.ServiceType == typeof(ApiScopeDefinition))
+            .Select(descriptor => (ApiScopeDefinition)descriptor.ImplementationInstance!)
+            .ToArray();
 
     private static PermissionDefinition[] RegisteredPermissionDefinitions() =>
         BuildPlatformServices()

@@ -16,4 +16,8 @@ public static class RateLimiterPolicies
 
     /// <summary>Lotes de tiempos del navegador: 600 por minuto por IP. Ver su registro en <c>Program.cs</c>.</summary>
     public const string Telemetry = "telemetry";
+    /// <summary>Spec 2026-10-30 §6.1: la API externa, ventana fija por IP antes de autenticar
+    /// (<c>ApiAccess:RateLimit:PerIpPerMinute</c>). Se particiona por IP y nunca por el header: una partición por clave
+    /// inventada sería memoria gratis para quien ataca.</summary>
+    public const string External = "external";
 }

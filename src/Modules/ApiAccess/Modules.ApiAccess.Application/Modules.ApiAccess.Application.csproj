@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- ApiAccessAuthorization es internal: no son API publica del modulo, y
+         las reglas que hacen cumplir se prueban unitariamente. Mismo patron que Catalog. -->
+    <InternalsVisibleTo Include="Modules.ApiAccess.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.ApiAccess.Domain\Modules.ApiAccess.Domain.csproj" />
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <!-- AuditActorType: la auditoría atómica va por un puerto propio, no por el IAuditRecorder de Tenancy. -->
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+  </ItemGroup>
+</Project>
