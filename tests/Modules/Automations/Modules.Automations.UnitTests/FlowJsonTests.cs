@@ -221,7 +221,7 @@ public sealed class FlowJsonTests
           "start": { "firstNodeId": "n7" },
           "variables": [],
           "nodes": [
-            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", "outputs": { "accepted": "n8", "rejected": "n9" } },
+            { "id": "n7", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre_contacto}, lee https://empresa.co/datos y dinos si aceptas.", "outputs": { "accepted": "n8", "rejected": "n9" } },
             { "id": "n8", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null },
             { "id": "n9", "kind": "resolve", "title": "Fin", "text": null, "reasonId": null }
           ]
@@ -234,7 +234,7 @@ public sealed class FlowJsonTests
         var flow = FlowJson.Parse(DataConsentJson);
         var consent = Assert.IsType<DataConsentNode>(flow.Nodes[0]);
 
-        Assert.Equal("Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.", consent.Text);
+        Assert.Equal("Hola {nombre_contacto}, lee https://empresa.co/datos y dinos si aceptas.", consent.Text);
         Assert.Equal("Política de datos", consent.Title);
         Assert.Equal("n8", consent.Outputs["accepted"]);
         Assert.Equal("n9", consent.Outputs["rejected"]);
@@ -254,7 +254,7 @@ public sealed class FlowJsonTests
     [Fact]
     public void ADataConsentWithoutTextReadsEmpty()
     {
-        var flow = FlowJson.Parse(DataConsentJson.Replace("\"text\": \"Hola {nombre}, lee https://empresa.co/datos y dinos si aceptas.\", ", string.Empty));
+        var flow = FlowJson.Parse(DataConsentJson.Replace("\"text\": \"Hola {nombre_contacto}, lee https://empresa.co/datos y dinos si aceptas.\", ", string.Empty));
 
         Assert.Equal(string.Empty, Assert.IsType<DataConsentNode>(flow.Nodes[0]).Text);
     }
@@ -338,7 +338,7 @@ public sealed class FlowJsonTests
           "start": { "firstNodeId": "m1" },
           "variables": [ { "name": "doc", "type": "text" }, { "name": "foto", "type": "attachment" } ],
           "nodes": [
-            { "id": "m1", "kind": "message", "title": "Hola", "text": "Hola {nombre}", "urlButton": { "label": "Ver", "url": "https://www.example.com" }, "outputs": { "next": "q1" } },
+            { "id": "m1", "kind": "message", "title": "Hola", "text": "Hola {nombre_contacto}", "urlButton": { "label": "Ver", "url": "https://www.example.com" }, "outputs": { "next": "q1" } },
             { "id": "q1", "kind": "openQuestion", "title": "Documento", "text": "¿Cuál es tu documento?", "saveTo": "doc", "validation": { "kind": "regex", "pattern": "^[0-9]{6,10}$", "keywords": null }, "maxAttempts": 2, "outputs": { "answered": "q2", "invalid": "h1" } },
             { "id": "q2", "kind": "openQuestion", "title": "Política", "text": "Escribe acepto", "saveTo": "acepta", "validation": { "kind": "keywords", "pattern": null, "keywords": [ "acepto", "sí" ] }, "maxAttempts": null, "outputs": { "answered": "b1", "invalid": "h1" } },
             { "id": "b1", "kind": "buttons", "title": "Motivo", "text": "¿Qué necesitas?", "buttons": [ { "id": "a", "label": "Uno" }, { "id": "b", "label": "Dos" } ], "saveTo": "motivo", "fallback": "otherOutput", "outputs": { "a": "l1", "b": "l1", "other": "h1" } },

@@ -7,7 +7,7 @@ namespace Modules.Automations.UnitTests;
 /// <summary>Spec 2026-10-26 D-2, D-4, D-6 y D-7: el bloque Política de datos en el motor.</summary>
 public sealed class FlowEngineDataConsentTests
 {
-    private const string ConsentText = "Hola {nombre}, lee https://e.co/d";
+    private const string ConsentText = "Hola {nombre_contacto}, lee https://e.co/d";
     private const string ShownToLaura = "Hola Laura, lee https://e.co/d";
 
     private static readonly DateTimeOffset Now = new(2026, 10, 26, 15, 0, 0, TimeSpan.Zero);
@@ -26,7 +26,7 @@ public sealed class FlowEngineDataConsentTests
             new MessageNode("no", "Mensaje no", Out((FlowOutputs.Next, null)), "Entendido", null),
         ]);
 
-    private static RunVariables Laura() => RunVariables.Parse("""{"nombre":"Laura"}""");
+    private static RunVariables Laura() => RunVariables.Parse("""{"nombre_contacto":"Laura"}""");
 
     private static StepResult Step(RunState state, EngineInput input, EngineSettings? settings = null) =>
         FlowEngine.Step(Flow, settings ?? Settings, state, input, Now);
@@ -137,7 +137,7 @@ public sealed class FlowEngineDataConsentTests
     [Fact]
     public void TheRecordedTextIsTheOneSentNotTheCurrentTemplate()
     {
-        var waiting = Asked().State with { Variables = RunVariables.Parse("""{"nombre":"Pedro"}""") };
+        var waiting = Asked().State with { Variables = RunVariables.Parse("""{"nombre_contacto":"Pedro"}""") };
 
         var result = Step(waiting, Tapped("accepted", "Acepto"));
 

@@ -9,7 +9,7 @@ namespace Modules.Automations.IntegrationTests;
 /// en <c>customers.data_consents</c> y no vuelve a preguntar al mismo cliente.</summary>
 public sealed partial class EngineEndToEndTests
 {
-    private const string ConsentPrompt = "Hola {nombre}, lee https://e.co/d y acepta.";
+    private const string ConsentPrompt = "Hola {nombre_contacto}, lee https://e.co/d y acepta.";
     private const string ConsentPromptSent = "Hola Laura, lee https://e.co/d y acepta.";
 
     private const string ConsentFlowJson = """
@@ -18,7 +18,7 @@ public sealed partial class EngineEndToEndTests
           "start": { "firstNodeId": "n1" },
           "variables": [],
           "nodes": [
-            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://e.co/d y acepta.", "outputs": { "accepted": "n2", "rejected": "n3" } },
+            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre_contacto}, lee https://e.co/d y acepta.", "outputs": { "accepted": "n2", "rejected": "n3" } },
             { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias.", "outputs": { "next": "n4" } },
             { "id": "n3", "kind": "message", "title": "Entendido", "text": "Entendido.", "outputs": { "next": "n5" } },
             { "id": "n4", "kind": "resolve", "title": "Listo" },
@@ -152,7 +152,7 @@ public sealed partial class EngineEndToEndTests
           "start": { "firstNodeId": "n1" },
           "variables": [],
           "nodes": [
-            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre}, lee https://e.co/d y acepta.", "onReject": "repeat", "maxAsks": 2, "onRejectMemberId": null, "outputs": { "accepted": "n2" } },
+            { "id": "n1", "kind": "dataConsent", "title": "Política de datos", "text": "Hola {nombre_contacto}, lee https://e.co/d y acepta.", "onReject": "repeat", "maxAsks": 2, "onRejectMemberId": null, "outputs": { "accepted": "n2" } },
             { "id": "n2", "kind": "message", "title": "Gracias", "text": "Gracias.", "outputs": { "next": "n3" } },
             { "id": "n3", "kind": "resolve", "title": "Listo" }
           ]

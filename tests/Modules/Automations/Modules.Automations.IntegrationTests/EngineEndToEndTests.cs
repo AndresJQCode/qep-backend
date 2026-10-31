@@ -33,7 +33,7 @@ public sealed partial class EngineEndToEndTests
           "start": { "firstNodeId": "n1" },
           "variables": [ { "name": "cedula", "type": "text" }, { "name": "motivo", "type": "text" } ],
           "nodes": [
-            { "id": "n1", "kind": "message", "title": "Bienvenida", "text": "Hola {nombre}, bienvenido a la línea de servicio.", "outputs": { "next": "n2" } },
+            { "id": "n1", "kind": "message", "title": "Bienvenida", "text": "Hola {nombre_contacto}, bienvenido a la línea de servicio.", "outputs": { "next": "n2" } },
             { "id": "n2", "kind": "buttons", "title": "¿Qué necesitas?", "text": "¿Qué necesitas para tu equipo?", "buttons": [ { "id": "tech", "label": "Servicio técnico" }, { "id": "maint", "label": "Mantenimiento" } ], "saveTo": "motivo", "fallback": "repeat", "outputs": { "tech": "n3", "maint": "n5", "other": null } },
             { "id": "n3", "kind": "openQuestion", "title": "Número de documento", "text": "¿Cuál es tu número de documento?", "saveTo": "cedula", "validation": { "kind": "digits" }, "outputs": { "answered": "n4", "invalid": null } },
             { "id": "n4", "kind": "resolve", "title": "Listo", "text": "Gracias, registramos el documento {cedula}." },
@@ -146,7 +146,7 @@ public sealed partial class EngineEndToEndTests
 
         var sends = f.Meta.Sends();
         Assert.Equal(2, sends.Count);
-        // D-M8: {nombre} es el nombre de perfil de WhatsApp.
+        // D-M8: {nombre_contacto} es el nombre de perfil de WhatsApp.
         Assert.Equal(["Hola Laura, bienvenido a la línea de servicio.", "[button] ¿Qué necesitas para tu equipo?"], sends);
         Assert.Equal(2L, await BotMessagesAsync(f));
         Assert.Equal($"Active|{f.ChatbotId}|¿Qué necesitas?|", await ConversationAsync(f,
@@ -510,7 +510,7 @@ public sealed partial class EngineEndToEndTests
         using (var admin = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions))
         {
             await RepublishChatbotAsync(admin, f.Tenant.TenantId, f.ChatbotId, FlowJson.Replace(
-                "Hola {nombre}, bienvenido a la línea de servicio.", "Hola {nombre}, esta es la versión 2.", StringComparison.Ordinal));
+                "Hola {nombre_contacto}, bienvenido a la línea de servicio.", "Hola {nombre_contacto}, esta es la versión 2.", StringComparison.Ordinal));
         }
 
         await InboundAsync(f, "w2", "REINICIAR");
