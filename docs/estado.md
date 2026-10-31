@@ -217,6 +217,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-30 — Mergeado a `develop` (`--no-ff`, sin push) **el arreglo de la dirección del historial de coexistencia**: Meta nunca manda `to` en
+  el historial, así que 795 mensajes de QCode entraron como recibidos; ahora la dirección sale de comparar `from` con el hilo. Script
+  `ops/2026-10-30-repair-history-direction.sql` para lo ya importado: se corre a mano después de desplegar y antes de que se purguen las entregas
+  (alrededor del 2026-11-06). Trae también lo que dejaba a `develop` sin compilar ni pasar `--locked-mode` tras el renombre a ServiceContracts.
 - 2026-10-30 — Mergeado a `develop` del frontend (`--no-ff`, con push) **la pantalla del gestor de plantillas de WhatsApp**
   (`feature/gestor-de-plantillas`, merge `30e7f3d`): lista por conexión en `/integrations/whatsapp/$connectionId/templates`
   con estados, motivos de rechazo, filtros, sincronización con Meta, ficha y borrado, tarjetas de la plantilla de cotización
