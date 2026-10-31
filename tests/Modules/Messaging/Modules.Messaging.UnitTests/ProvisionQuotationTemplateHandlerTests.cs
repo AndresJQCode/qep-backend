@@ -141,6 +141,33 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         Assert.Empty(rig.Bed.Meta.CreatedTemplates);
     }
 
+    // Sin cuerpo en el pedido sólo cuenta la forma: una externa sin encabezado de documento ni cuerpo no es adoptable.
+    [Fact]
+    public async Task AnExternalThatIsNotAdoptableIsAConflictEvenWithoutBody()
+    {
+        var rig = new Rig();
+        rig.External(MessageTemplateName.QuotationName);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ProvisionAsync());
+
+        Assert.Equal(MessagingErrorCodes.TemplateQuotationConflict, error.Code);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Bed.Meta.ExampleUploads);
+    }
+
+    // El cuerpo enviado se recorta antes de compararlo con el de Meta.
+    [Fact]
+    public async Task AnExternalIsAdoptedWhenTheSubmittedBodyOnlyDiffersByTheSurroundingSpaces()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.");
+
+        var dto = await rig.ProvisionAsync("  Hola {{nombre_contacto}}, gracias.  ");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
     // Review Focus 4: el borrador trae sus claves viejas y el POST las devuelve igual; el validador no puede frenarlo.
     [Fact]
     public async Task AnExternalWithTheOldKeysIsAdoptedWithItsOwnBody()

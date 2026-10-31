@@ -28,11 +28,11 @@ public sealed class QuotationTemplateProvisioningApiTests
     private const string QuarantineError =
         """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Message template language is being deleted","error_user_msg":"New es content can't be added while the existing es content is being deleted. Try again in 4 weeks or create a new message template.","fbtrace_id":"t"}}""";
 
-    private static string ExternalQuotation(string body = QuotationBody, string headerFormat = "DOCUMENT") =>
+    private static string ExternalQuotation(string headerFormat = "DOCUMENT") =>
         $$$"""
         {"data":[{"id":"42","name":"qep_cotizacion","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED",
           "components":[{"type":"HEADER","format":"{{{headerFormat}}}","example":{"header_handle":["x"]}},
-                        {"type":"BODY","text":"{{{body}}}","example":{"body_text_named_params":[{"param_name":"fullname","example":"Juan"}]}},
+                        {"type":"BODY","text":"{{{QuotationBody}}}","example":{"body_text_named_params":[{"param_name":"fullname","example":"Juan"}]}},
                         {"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]}]}
         """;
 

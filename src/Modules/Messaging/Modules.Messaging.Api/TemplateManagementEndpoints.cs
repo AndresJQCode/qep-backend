@@ -38,10 +38,11 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // El cuerpo es opcional: sin él se crea el texto base de la definición (spec §4.5) y se adopta una externa compatible.
+        // El cuerpo HTTP es opcional: sin él se crea el texto base de la definición (spec §4.5) y se adopta una externa compatible. Dejar
+        // que se infiera requerido responde 500 cuando un frontend viejo no manda nada (precedente: el envío de cotizaciones).
         group.MapPost("/quotation", ProvisionQuotationAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
-            .Accepts<ProvisionQuotationTemplateRequest>("application/json")
+            .Accepts<ProvisionQuotationTemplateRequest>(isOptional: true, "application/json")
             .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -113,8 +114,8 @@ public sealed record CreateTemplateRequest(
     List<TemplateButtonRequest>? Buttons,
     Dictionary<string, string?>? Examples);
 
-/// <summary>El cuerpo editado de la plantilla de cotización. Opcional, y el cuerpo entero también: sin él se crea el texto base (backend
-/// desplegado antes que el frontend).</summary>
+/// <summary>El cuerpo editado de la plantilla de cotización. Son opcionales la propiedad <c>Body</c> y también el cuerpo HTTP entero: sin
+/// ellos se crea el texto base (backend desplegado antes que el frontend).</summary>
 public sealed record ProvisionQuotationTemplateRequest(string? Body);
 
 /// <summary><c>type</c> es <c>QuickReply</c>, <c>Url</c> o <c>PhoneNumber</c>, como <c>TemplateButtonDto</c>.</summary>

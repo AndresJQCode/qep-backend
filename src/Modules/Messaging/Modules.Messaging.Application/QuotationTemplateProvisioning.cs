@@ -18,9 +18,8 @@ namespace Modules.Messaging.Application;
 /// <para>
 /// El nombre va por versiones: <c>qep_cotizacion</c> es la 1 y <c>qep_cotizacion_v2</c>, <c>_v3</c>… las siguientes. Las usa el reintento
 /// (enmienda del owner, 2026-10-15): Meta bloquea un tiempo el nombre de una plantilla borrada, así que reintentar crea la versión
-/// siguiente en vez de recrear la misma. Un cambio de texto algún día es otra definición que también crea la versión siguiente, aprobada
-/// antes de que el envío la use; el sender de Quotations lee el nombre vigente de la fila <c>Quotation</c> de la conexión, no de una
-/// constante, y cambia en el mismo commit que las variables.
+/// siguiente en vez de recrear la misma. El sender de Quotations lee el nombre vigente de la fila <c>Quotation</c> de la conexión, no de
+/// una constante, y cambia en el mismo commit que las variables.
 /// </para>
 /// </summary>
 public static class QuotationTemplateDefinition
@@ -289,7 +288,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateQuotationConflict,
-                $"A template named '{QuotationTemplateDefinition.Name}' already exists in Meta with another body; delete it from the templates screen first.");
+                $"A template named '{QuotationTemplateDefinition.Name}' already exists in Meta with another body or an incompatible shape; delete it from the templates screen first.");
         }
 
         external.AdoptAsQuotation(now);
