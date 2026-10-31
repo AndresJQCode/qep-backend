@@ -71,6 +71,15 @@ public sealed class CampaignValidatorsTests
         Assert.Empty(Keys(Bed.CreateCommand(parameters: new Dictionary<string, CampaignParameterInput?> { ["1"] = new(CampaignParameter.CustomerNameWire, "ignorado") })));
 
     [Fact]
+    public void TheGreetingNeedsNoValue() =>
+        Assert.Empty(Keys(Bed.CreateCommand(parameters: new Dictionary<string, CampaignParameterInput?> { ["1"] = new(CampaignParameter.GreetingWire, null) })));
+
+    // «Buenos días» lleva un espacio y rompería el enlace de un botón, igual que el nombre del cliente.
+    [Fact]
+    public void AButtonLinkCannotComeFromTheGreeting() =>
+        Assert.Equal(["parameters.button:0"], Keys(Bed.CreateCommand(parameters: new Dictionary<string, CampaignParameterInput?> { ["button:0"] = new(CampaignParameter.GreetingWire, null) })));
+
+    [Fact]
     public void AnEmptyAudienceIsOnAudience() =>
         Assert.Equal(["audience"], Keys(Bed.CreateCommand(tagIds: [], customerIds: [])));
 

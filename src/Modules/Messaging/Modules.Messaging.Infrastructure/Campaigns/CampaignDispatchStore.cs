@@ -246,12 +246,34 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         // siendo el dueño (R1): la misma guarda de abajo, sin insertar nada.
         if (recipient is { MessageId: { } existingMessage, ConversationId: { } existingConversation })
         {
+            await using var reuse = await dbContext.Database.BeginTransactionAsync(cancellationToken);
             var stillOwned = await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.campaign_recipients SET message_id = {existingMessage}, conversation_id = {existingConversation}
                  WHERE id = {recipient.Id} AND status = 'Sending' AND locked_until > {now} AND attempts = {recipient.Attempts}
                 """, cancellationToken);
-            return stillOwned == 1 ? new PreparedSend(existingMessage, existingConversation) : null;
+            if (stillOwned != 1)
+            {
+                await reuse.RollbackAsync(cancellationToken);
+                return null;
+            }
+
+            // Cada intento arma su texto: el saludo es el de la hora real, así que el chat guarda lo que sale en este intento y no lo del primero.
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE messaging.messages SET text = {text}, details = {detailsJson}::jsonb WHERE id = {existingMessage}
+                """, cancellationToken);
+
+            // Sólo si la conversación ya muestra este mensaje (Meta lo aceptó y avisó después que no lo entregó): SettleSentAsync no corre si
+            // este intento falla. Si muestra otro, se deja: escribir acá pisaría a un mensaje más nuevo.
+            await dbContext.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE messaging.conversations c SET last_message_preview = left(m.text, {Conversation.PreviewMaxLength})
+                  FROM messaging.messages m
+                 WHERE m.id = {existingMessage} AND c.id = m.conversation_id AND c.last_message_id = m.id
+                """, cancellationToken);
+            await reuse.CommitAsync(cancellationToken);
+            return new PreparedSend(existingMessage, existingConversation);
         }
 
         var contact = new MessagingCustomerContact(

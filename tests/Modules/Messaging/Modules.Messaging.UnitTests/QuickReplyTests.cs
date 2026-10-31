@@ -3,8 +3,8 @@ using Modules.Messaging.Domain;
 namespace Modules.Messaging.UnitTests;
 
 /// <summary>Spec 2026-10-12 §3.1, §3.2 y §3.7: el agregado <see cref="QuickReply"/>. El atajo se normaliza (recorte y minúsculas) y
-/// cumple <c>^[a-z0-9-]{2,32}$</c>; el cuerpo se recorta y lleva de 1 a 4096 caracteres; las únicas variables son <c>{nombre}</c>,
-/// <c>{asesor}</c> y <c>{empresa}</c>, y una llave suelta es texto.</summary>
+/// cumple <c>^[a-z0-9-]{2,32}$</c>; el cuerpo se recorta y lleva de 1 a 4096 caracteres; las únicas variables son <c>{nombre_contacto}</c>,
+/// <c>{asesor}</c>, <c>{empresa}</c> y <c>{saludo}</c>, más el heredado <c>{nombre}</c>, y una llave suelta es texto.</summary>
 public sealed class QuickReplyTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 12, 15, 0, 0, TimeSpan.Zero);
@@ -68,17 +68,29 @@ public sealed class QuickReplyTests
     [InlineData("Hola { nombre }")]
     [InlineData("Hola {}")]
     [InlineData("Total {precio} para {nombre}")]
+    [InlineData("Hola {Nombre_Contacto}")]
+    [InlineData("{Saludo}")]
     public void AnUnknownVariableIsRefused(string body) =>
         Assert.Equal(MessagingErrorCodes.QuickReplyUnknownVariable, CodeOf(() => Reply(body: body)));
 
     [Theory]
     [InlineData("Hola {nombre}, soy {asesor} de {empresa}.")]
+    [InlineData("{saludo} {nombre_contacto}, soy {asesor} de {empresa}.")]
     [InlineData("{nombre}{nombre}")]
     [InlineData("Precio {10% off")]
     [InlineData("Cierra } antes")]
     [InlineData("{{nombre}}")]
     [InlineData("Sin variables")]
     public void LooseBracesAreText(string body) => Assert.Equal(body, Reply(body: body).Body);
+
+    // {nombre} sigue entrando mientras dure el despliegue (un SPA viejo lo manda), pero el mensaje ya no lo ofrece.
+    [Fact]
+    public void TheMessageOfAnUnknownVariableOffersTheFourCurrentOnes()
+    {
+        var exception = Assert.Throws<MessagingDomainException>(() => Reply(body: "{precio}"));
+
+        Assert.Equal("'{precio}' is not a variable; use {nombre_contacto}, {asesor}, {empresa} or {saludo}.", exception.Message);
+    }
 
     [Fact]
     public void UpdateReplacesBothFieldsBumpsTheVersionAndKeepsTheCreation()

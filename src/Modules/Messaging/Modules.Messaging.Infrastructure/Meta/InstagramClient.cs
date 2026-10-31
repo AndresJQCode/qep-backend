@@ -95,6 +95,19 @@ internal sealed partial class InstagramClient(
         return response?.IsSuccessStatusCode == true;
     }
 
+    public async Task<bool> SendTypingOnAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
+        var payload = new JsonObject { ["recipient"] = new JsonObject { ["id"] = recipientId }, ["sender_action"] = "typing_on" };
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{Uri.EscapeDataString(sender.IgUserId)}/messages")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        var answer = await SendAsync("typing", request, sender.AccessToken, SeenTimeout, cancellationToken);
+        using var response = answer.Response;
+        return response?.IsSuccessStatusCode == true;
+    }
+
     public async Task<MessagingGraphResult<InstagramProfile>> GetProfileAsync(InstagramSender sender, string igsid, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(sender);

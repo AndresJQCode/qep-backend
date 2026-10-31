@@ -1,5 +1,7 @@
+using BuildingBlocks.Application;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.UnitTests;
 
@@ -183,6 +185,19 @@ internal sealed class FakeSendBudget : IConnectionSendBudget
     }
 }
 
+/// <summary>El huso del tenant, de mentira: Bogotá (UTC-5, sin horario de verano), para que la hora local nunca coincida con la del reloj en
+/// UTC. <see cref="Calls"/> cuenta las lecturas, porque una campaña sin saludo no tiene por qué ir a buscarlo.</summary>
+internal sealed class FakeTenantClock(IClock clock) : ITenantClock
+{
+    public int Calls { get; private set; }
+
+    public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult(new TenantCalendar(clock.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")));
+    }
+}
+
 /// <summary>El despachador sobre el banco de Messaging: el mismo tenant, conexión Active (111/token), catálogo con <c>promo</c>, clientes
 /// y reloj fijo, más un presupuesto de envío de mentira.</summary>
 internal sealed class DispatchBed
@@ -192,7 +207,8 @@ internal sealed class DispatchBed
         Bed = new MessagingTestBed();
         Bed.Templates.Catalog.Add(FakeMessageTemplates.Hello("promo", "es", "MARKETING"));
         Clock = new FakeClock(Bed.Now);
-        Dispatcher = new CampaignDispatcher(Store, Bed.Meta, Bed.Connections, Bed.Customers, Bed.Templates, Budget, Clock);
+        TenantClock = new FakeTenantClock(Clock);
+        Dispatcher = new CampaignDispatcher(Store, Bed.Meta, Bed.Connections, Bed.Customers, Bed.Templates, Budget, Clock, TenantClock);
     }
 
     public MessagingTestBed Bed { get; }
@@ -202,6 +218,8 @@ internal sealed class DispatchBed
     public FakeSendBudget Budget { get; } = new();
 
     public FakeClock Clock { get; }
+
+    public FakeTenantClock TenantClock { get; }
 
     public CampaignDispatcher Dispatcher { get; }
 

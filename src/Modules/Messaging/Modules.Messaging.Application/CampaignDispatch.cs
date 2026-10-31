@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
@@ -78,7 +79,8 @@ public interface ICampaignDispatchStore
     /// Paso 3.1 y 3.2: abre la conversación del cliente (sin asignar) e inserta el mensaje saliente <c>Template</c> con
     /// <c>sent_by_member_id</c> = el creador de la campaña, y guarda <c>message_id</c> en el destinatario en la misma transacción. El
     /// mensaje nace <c>Failed</c> sin confirmar: si el proceso cae con la llamada a Meta en vuelo, no hay una burbuja que diga «enviado».
-    /// En un reintento reutiliza el mensaje que ya tiene. <c>null</c> si la campaña ya no está <c>Sending</c> (se canceló o falló): el
+    /// En un reintento reutiliza el mensaje que ya tiene y le reescribe <paramref name="text"/> y <paramref name="detailsJson"/>: cada intento
+    /// arma los suyos (el saludo es el de ese momento). <c>null</c> si la campaña ya no está <c>Sending</c> (se canceló o falló): el
     /// destinatario queda <c>Skipped</c> y no hay nada que enviar. También <c>null</c> —sin tocar nada— si este worker dejó de ser el dueño
     /// del destinatario (R1): ata el mensaje con un compare-and-set sobre <c>status = Sending</c>, el lease vivo y el número de intento
     /// que reclamó <see cref="ClaimedRecipient.Attempts"/>. Todas las transiciones posteriores (liquidar, omitir, reintentar, diferir)
@@ -130,7 +132,8 @@ public sealed partial class CampaignDispatcher(
     IMessagingCustomerDirectory customers,
     IMessageTemplates templates,
     IConnectionSendBudget budget,
-    IClock clock)
+    IClock clock,
+    ITenantClock tenantClock)
 {
     /// <summary>§6.3: cinco intentos y después <c>Failed</c>.</summary>
     public const int MaxAttempts = 5;
@@ -269,7 +272,7 @@ public sealed partial class CampaignDispatcher(
             return;
         }
 
-        var built = TemplateCatalog.BuildSend(template, ResolveValues(recipient));
+        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken));
 
         var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)
@@ -430,16 +433,31 @@ public sealed partial class CampaignDispatcher(
     }
 
     /// <summary><c>text</c> tal cual; <c>customerName</c> es el nombre del cliente al congelar la audiencia, limpio según las reglas de Meta
-    /// (un nombre de perfil puede traer saltos de línea o espacios de más y Meta rechazaría la variable con 132018).</summary>
-    private static Dictionary<string, string> ResolveValues(ClaimedRecipient recipient)
+    /// (un nombre de perfil puede traer saltos de línea o espacios de más y Meta rechazaría la variable con 132018); <c>greeting</c> es el
+    /// saludo de este envío, no el de lanzar la campaña. Sólo una campaña con saludo lee el huso del tenant.</summary>
+    private async Task<Dictionary<string, string>> ResolveValuesAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)
     {
+        var greeting = recipient.Parameters.Values.Any(parameter => parameter.Source == CampaignParameterSource.Greeting)
+            ? await GreetingAsync(recipient.TenantId, cancellationToken)
+            : null;
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (key, parameter) in recipient.Parameters)
         {
-            values[key] = parameter.Source == CampaignParameterSource.Text ? parameter.Value! : CleanName(recipient.CustomerName);
+            values[key] = parameter.Source switch
+            {
+                CampaignParameterSource.Text => parameter.Value!,
+                CampaignParameterSource.Greeting => greeting!,
+                _ => CleanName(recipient.CustomerName),
+            };
         }
 
         return values;
+    }
+
+    private async Task<string> GreetingAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        return TimeOfDayGreeting.For(TimeOnly.FromDateTime(calendar.ToLocal(calendar.UtcNow).DateTime));
     }
 
     internal static string CleanName(string name)

@@ -22,27 +22,37 @@ public enum CampaignRecipientStatus
     Skipped,
 }
 
-/// <summary>De dónde sale el valor de una variable de la plantilla: un texto fijo para toda la audiencia, o el nombre de cada cliente.</summary>
+/// <summary>De dónde sale el valor de una variable de la plantilla: un texto fijo para toda la audiencia, el nombre de cada cliente, o el
+/// saludo de la hora en que sale cada envío.</summary>
 public enum CampaignParameterSource
 {
     Text,
     CustomerName,
+    Greeting,
 }
 
 /// <summary>
 /// Una variable de la plantilla, como viaja en la API y en <c>parameters jsonb</c>: <c>{ "source": "text", "value": "…" }</c> o
-/// <c>{ "source": "customerName" }</c>. <c>Value</c> sólo existe para <c>text</c>.
+/// <c>{ "source": "customerName" }</c> o <c>{ "source": "greeting" }</c>. <c>Value</c> sólo existe para <c>text</c>.
 /// </summary>
 public sealed record CampaignParameter(CampaignParameterSource Source, string? Value)
 {
     public static CampaignParameter CustomerName { get; } = new(CampaignParameterSource.CustomerName, null);
 
+    public static CampaignParameter Greeting { get; } = new(CampaignParameterSource.Greeting, null);
+
     public static CampaignParameter Text(string value) => new(CampaignParameterSource.Text, value);
 
     public const string TextWire = "text";
     public const string CustomerNameWire = "customerName";
+    public const string GreetingWire = "greeting";
 
-    public string SourceWire => Source == CampaignParameterSource.Text ? TextWire : CustomerNameWire;
+    public string SourceWire => Source switch
+    {
+        CampaignParameterSource.Text => TextWire,
+        CampaignParameterSource.Greeting => GreetingWire,
+        _ => CustomerNameWire,
+    };
 
     public static bool TryParseSource(string? wire, out CampaignParameterSource source)
     {
@@ -54,6 +64,9 @@ public sealed record CampaignParameter(CampaignParameterSource Source, string? V
                 return true;
             case CustomerNameWire:
                 source = CampaignParameterSource.CustomerName;
+                return true;
+            case GreetingWire:
+                source = CampaignParameterSource.Greeting;
                 return true;
             default:
                 return false;
