@@ -22,9 +22,7 @@ public static class ExternalSendFailure
 
         if (result.Outcome != SendOutcome.GraphError)
         {
-            return new UpstreamServiceException(
-                MessagingErrorCodes.ExternalSendUnconfirmed,
-                "WhatsApp no confirmó el envío. Revisa antes de reintentar: el mensaje pudo haber salido.");
+            return Unconfirmed();
         }
 
         if (result.Code == MetaErrorCodes.MarketingOptOut)
@@ -46,4 +44,8 @@ public static class ExternalSendFailure
             MessagingErrorCodes.ExternalMessageRejected,
             "WhatsApp rechazó el mensaje.");
     }
+
+    /// <summary>El 502: lo mismo en vivo que al repetir un <c>clientId</c> cuyo envío quedó sin confirmar.</summary>
+    public static UpstreamServiceException Unconfirmed() =>
+        new(MessagingErrorCodes.ExternalSendUnconfirmed, "WhatsApp no confirmó el envío. Revisa antes de reintentar: el mensaje pudo haber salido.");
 }

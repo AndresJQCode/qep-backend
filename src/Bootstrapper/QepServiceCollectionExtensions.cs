@@ -845,9 +845,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
         services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
-        // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas de la clave de API.
+        // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
         services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
         services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
