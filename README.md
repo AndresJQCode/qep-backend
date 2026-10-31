@@ -2887,6 +2887,8 @@ en `true`.
   responde (`messaging.conversation.assigned_to_other`); responder una conversación sin asignar la toma;
   resolver no libera. Una conversación nueva de un cliente con dueño hereda el asignado si todavía puede
   responder. `GET /messaging/assignees` lista a quién transferir. `assignedTo.isMe` lo calcula el servidor.
+- **Indicador de escritura.** `POST …/conversations/{id}/typing` (`.manage`, sin cuerpo, 204) le muestra «escribiendo» al contacto en WhatsApp e
+  Instagram, best effort. Es no-op si el asesor no podría contestar ya mismo, y no cambia la conversación ni la toma. Sólo sale hacia el contacto: Meta no avisa por webhook que el contacto esté escribiendo.
 - **Número compartido.** Dos clientes pueden tener el mismo WhatsApp (R3). Toda respuesta de **una** sola conversación (el detalle y las que devuelven su resumen) lleva
   `sharedPhoneCustomers: [{ id, name, isComplete, tags: [] }]` (hasta 10) con los otros clientes del mismo número; en el listado
   va siempre `[]`. Se lee por el puerto `IMessagingCustomerDirectory`, no por el esquema de Customers.

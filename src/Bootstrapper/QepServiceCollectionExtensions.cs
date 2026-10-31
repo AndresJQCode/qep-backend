@@ -914,6 +914,8 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
         services.AddScoped<ReadReceipts>();
         services.AddScoped<ICommandHandler<MarkConversationReadCommand, bool>, MarkConversationReadHandler>();
+        // El indicador «escribiendo» del asesor hacia WhatsApp e Instagram.
+        services.AddScoped<ICommandHandler<SendTypingIndicatorCommand, bool>, SendTypingIndicatorHandler>();
         // Spec 2026-10-14: marcar no leída, espejo del read.
         services.AddScoped<ICommandHandler<MarkConversationUnreadCommand, bool>, MarkConversationUnreadHandler>();
         services.AddScoped<ICommandHandler<MarkUnreadFromMessageCommand, bool>, MarkUnreadFromMessageHandler>();

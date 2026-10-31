@@ -696,6 +696,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   para agentes IA). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
   miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
   es una respuesta de una persona.
+- **El indicador de escritura de WhatsApp marca el mensaje como leído para el contacto** (decisión del owner, 2026-10-31). Cloud API lo
+  manda en la misma llamada que el leído (`status: "read"` + `typing_indicator`), así que el contacto ve el chulo azul aunque en QEP la
+  conversación siga sin leer. No es un bug: `POST …/typing` no toca `unread_count`, y no hay que «arreglar» la diferencia. Instagram no
+  tiene ese efecto: `typing_on` va solo.
 
 ## Verificación
 
