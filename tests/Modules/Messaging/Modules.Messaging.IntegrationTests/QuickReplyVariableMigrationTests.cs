@@ -95,6 +95,35 @@ public sealed class QuickReplyVariableMigrationTests
         Assert.Equal(SeededVersion, await VersionAsync(connectionString, "nocabe"));
     }
 
+    // QuickReply valida string.Length (unidades UTF-16): un emoji son dos unidades y un solo code point. Contar code points dejaría pasar un
+    // cuerpo que el agregado rechaza después con 422 invalid_body en el siguiente PUT.
+    [Fact]
+    public async Task ABodyWithEmojisIsMeasuredInTheUnitsTheAggregateValidates()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var scope = factory.Services.CreateScope();
+        var (migrator, _) = await RollBackToBeforeTheRenameAsync(scope);
+        const string Variable = "{nombre}";
+        const string Emoji = "\U0001F600";
+        const int Growth = 9;
+        var emojis = string.Concat(Enumerable.Repeat(Emoji, (QuickReply.BodyMaxLength - Growth - Variable.Length - 1) / Emoji.Length));
+        var justFits = "a" + emojis + Variable;
+        var oneTooMany = "aa" + emojis + Variable;
+        Assert.Equal((QuickReply.BodyMaxLength - Growth, QuickReply.BodyMaxLength - Growth + 1), (justFits.Length, oneTooMany.Length));
+        await SeedAsync(connectionString, "cabe", justFits);
+        await SeedAsync(connectionString, "nocabe", oneTooMany);
+
+        await migrator.MigrateAsync(null, Ct);
+
+        var fitted = await BodyAsync(connectionString, "cabe");
+        Assert.Equal(QuickReply.BodyMaxLength, fitted.Length);
+        Assert.EndsWith("{nombre_contacto}", fitted, StringComparison.Ordinal);
+        Assert.Equal(oneTooMany, await BodyAsync(connectionString, "nocabe"));
+        Assert.Equal(SeededVersion, await VersionAsync(connectionString, "nocabe"));
+    }
+
     // El Down deja los cuerpos que un SPA viejo sabe resolver, incluidos los que nacieron con {nombre_contacto} después del Up.
     [Fact]
     public async Task DownPutsTheOldVariableBack()
