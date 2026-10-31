@@ -15,6 +15,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Bootstrapper.ApiKeys;
+using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
@@ -290,6 +292,31 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
+        // ApiAccess, spec 2026-10-30: administración de claves de API. A mano, como los demás: un handler olvidado
+        // compila y responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
+            ListApiKeysHandler>();
+        services.AddScoped<
+            IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
+            ListApiScopesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateApiKeyCommand, CreatedApiKeyDto>,
+            CreateApiKeyHandler>();
+        services.AddScoped<
+            ICommandHandler<RevokeApiKeyCommand, ApiKeyDto>,
+            RevokeApiKeyHandler>();
+        // ApiAccess no ve a los módulos: cada uno registra aquí los scopes que ofrece, y el catálogo los filtra por
+        // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
+        services.AddScoped<ApiScopeCatalog>();
+        services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddSingleton(new ApiScopeDefinition(
+            MessagingScopes.TemplatesSend,
+            "Enviar plantillas",
+            "Incluye consultar las plantillas aprobadas.",
+            "WhatsApp",
+            ModuleKeys.Messaging.Value,
+            RestrictableByConnection: true));
         // ServiceContracts, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
         // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
         services.AddScoped<
@@ -952,6 +979,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
@@ -1433,7 +1461,9 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Manage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
-                ServiceContractsPermissions.Manage
+                ServiceContractsPermissions.Manage,
+                // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
+                ApiAccessPermissions.ApiKeyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -2049,6 +2079,14 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
+        // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
+        services.AddSingleton(new PermissionDefinition(
+            ApiAccessPermissions.ApiKeyManage,
+            "Administrar claves de API",
+            "Permite crear, ver y revocar las claves con las que tus sistemas se conectan a QEP.",
+            "Developer",
+            "high",
+            RequiredModules: [ModuleKeys.Developer]));
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
         // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
@@ -2436,7 +2474,11 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Read))
             .AddPolicy(
                 ServiceContractsPermissions.Manage,
-                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage));
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage))
+            // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                ApiAccessPermissions.ApiKeyManage,
+                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage));
     }
 
     private static void AddPermissionRequirement(

@@ -28,3 +28,13 @@ public interface IApiAccessUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Las conexiones <c>whatsapp-cloud</c> del tenant, activas o no. ApiAccess no ve Messaging ni
+/// Integrations: el adaptador vive en Bootstrapper.
+/// </summary>
+public interface IApiKeyConnectionDirectory
+{
+    /// <summary>Id y nombre de cada conexión del tenant. Una conexión borrada no aparece.</summary>
+    Task<IReadOnlyDictionary<Guid, string>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+}

@@ -9,6 +9,7 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
@@ -225,6 +226,8 @@ app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
 app.MapSupplierEndpoints();
+// Spec 2026-10-30: administración de claves de API.
+app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
