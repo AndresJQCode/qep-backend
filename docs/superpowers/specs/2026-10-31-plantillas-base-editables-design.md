@@ -45,28 +45,42 @@ Cotización (`Quotation`):
 
 | Etiqueta | Clave | Valor al enviar |
 | --- | --- | --- |
-| Nombre del cliente | `fullname` | El que se manda hoy |
-| Número de cotización | `order_number` | El que se manda hoy |
-| Valor total | `total` | El que se manda hoy |
-| Vigencia | `valid_until` | El que se manda hoy; enviar ya exige la fecha |
-| Asesor | `advisor` | Quien hizo clic en enviar (`SentByMemberId`), decisión del owner |
-| Empresa | `company` | Nombre del tenant (`IMessagingTenantNames`) |
+| Nombre del contacto | `nombre_contacto` | El nombre que se manda hoy como `fullname` |
+| Nombre del asesor | `asesor` | Quien hizo clic en enviar (`SentByMemberId`), decisión del owner |
+| Nombre de la empresa | `empresa` | Nombre del tenant (`IMessagingTenantNames`) |
+| Saludo según la hora | `saludo` | `TimeOfDayGreeting.For` con la hora local del tenant, como en campañas |
+| Número de cotización | `numero_cotizacion` | El que se manda hoy como `order_number` |
+| Valor total | `valor_total` | El que se manda hoy como `total` |
+| Vigencia | `vigencia` | El que se manda hoy como `valid_until`; enviar ya exige la fecha |
 
-Recordatorio de cobro (`BillingReminder`): `fullname`, `service`, `amount`, `due_date`, `advisor`, `company`.
+Recordatorio de cobro (`BillingReminder`): las cuatro fijas más `servicio` (Servicio), `valor` (Valor) y `vencimiento` (Vencimiento).
 
-Vencido (`BillingOverdue`): `fullname`, `overdue_count`, `overdue_total`, `advisor`, `company`.
+Vencido (`BillingOverdue`): las cuatro fijas más `cantidad_cobros` (Cantidad de cobros) y `total_vencido` (Total vencido).
 
-En cobros, `advisor` es el encargado del perfil de cobro, que ya es `SentByMemberId`: el envío es automático y no hay clic.
+**Regla del owner (2026-10-31): un solo nombre por variable, en español, en todas las pantallas.** Claves en español en `snake_case` sin
+tildes, porque Meta solo admite minúsculas, números y guion bajo. La misma clave y la misma etiqueta en el editor, el diseñador de plantillas,
+las campañas y las respuestas rápidas. Este trabajo cambia también lo que hoy dice otra cosa: la fuente `customerName` de campañas se muestra
+«Nombre del contacto» (no «Nombre del cliente»), la ayuda de `nombre_contacto` en respuestas rápidas dice lo mismo, y los ejemplos del
+diseñador (`first_name`, `{{order}}`) pasan a `nombre_contacto` y `numero_cotizacion`.
 
-`advisor` sale de `FindDisplayNameAsync`, nunca del correo, igual que `{asesor}` en respuestas rápidas. Las etiquetas Nombre, Asesor y
-Empresa son las que ya usa respuestas rápidas.
+**Las cuatro primeras son las variables fijas de `develop`** (`feature/variables-fijas`, 2026-10-31): mismos nombres, mismas etiquetas
+y mismo ejemplo que `FIXED_VARIABLE_NAMES` del frontend, con doble llave porque Meta lo exige. Esa lista es la autoridad: si crece, esta
+también. El frontend reutiliza sus etiquetas, no las copia. El saludo se resuelve en el backend también en cotizaciones, aunque el asesor
+esté en un navegador: el envío ocurre allá y `greetingAt` no participa.
+
+`fullname`, `order_number`, `total` y `valid_until` dejan de ofrecerse, pero las plantillas ya aprobadas los llevan y Meta no deja
+cambiarlas: el envío los sigue llenando, con el mismo valor de su clave en español. Son el único lugar donde sobreviven.
+
+En cobros, `asesor` es el encargado del perfil de cobro, que ya es `SentByMemberId`: el envío es automático y no hay clic.
+
+`asesor` sale de `FindDisplayNameAsync`, nunca del correo, igual que `{asesor}` en respuestas rápidas.
 
 ## Textos base
 
 Cotización:
 
-> ¡Hola, {{fullname}}! Te compartimos en este mensaje la cotización *{{order_number}}*, por un valor total de *{{total}}*. Esta cotización
-> estará vigente hasta el *{{valid_until}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.
+> ¡Hola, {{nombre_contacto}}! Te compartimos en este mensaje la cotización *{{numero_cotizacion}}*, por un valor total de *{{valor_total}}*.
+> Esta cotización estará vigente hasta el *{{vigencia}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.
 
 Cobro: el texto aprobado por el owner el 2026-10-29, con las mismas palabras y claves con nombre en lugar de `{{1}}`.
 
@@ -113,7 +127,7 @@ admin la cierra, vuelve al texto inicial. Un rechazo posterior, en la revisión 
 Las reglas de `TemplateParameterRules` se aplican solo a los valores que la fila usa.
 
 **Adopción.** Hoy `Matches` compara contra el texto fijo, y con texto libre eso deja de tener sentido. Una `External` con el nombre base
-se adopta si tiene encabezado de documento, sin botones, sus variables están en la lista y su cuerpo es igual al enviado, tenga pie o no. Si es
+se adopta si tiene encabezado de documento, sin botones, sus variables están en la lista o son claves viejas (`fullname`, `order_number`, `total`, `valid_until`) y su cuerpo es igual al enviado, tenga pie o no. Si es
 compatible, el borrador ya trae ese cuerpo, así que el camino normal la adopta. Si el admin lo cambió, responde `quotation_conflict`, como hoy.
 Cobros no adopta, como hoy.
 
@@ -128,7 +142,8 @@ está publicado.
 
 - La pantalla es la ventana propia (boceto A). El owner no eligió entre A y B.
 - Redacción del texto base de cotización.
-- Sin nombre visible del asesor, `advisor` usa el nombre de la empresa: Meta rechaza un valor vacío y un envío no debería caer por eso.
+- Sin nombre visible del asesor, `asesor` usa el nombre de la empresa: Meta rechaza un valor vacío y un envío no debería caer por eso.
+- `saludo` entra a las dos listas, por ser variable fija, aunque el owner no lo nombró para estas plantillas. No va en el texto base.
 - Lista de variables de cobro y sus nombres, derivados de los ejemplos actuales.
 - En cobros, guardar lo que Meta aceptó y parar en el primer rechazo, en vez de deshacer lo aceptado.
 - Un texto rechazado al crear no se guarda en el servidor; cerrar la ventana lo pierde.

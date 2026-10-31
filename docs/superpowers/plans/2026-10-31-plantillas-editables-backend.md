@@ -20,6 +20,8 @@
 - Archivos sin BOM. Nunca `Set-Content` para reescribir un `.cs`: rompe las tildes.
 - Regla del owner: variables siempre con nombre. Toda plantilla nueva sale `NAMED`; `POSITIONAL` sólo se lee.
 - Las plantillas nuevas de cotización no llevan pie. Una fila existente conserva el suyo.
+- Regla del owner: un solo nombre por variable, en español. Las fijas son `nombre_contacto`, `asesor`, `empresa` y `saludo`, los de `FIXED_VARIABLE_NAMES` del frontend. `fullname`, `order_number`, `total` y `valid_until` no se ofrecen ni pasan el validador, pero las filas viejas los llevan y el envío los sigue llenando.
+- Automatizaciones (`FixedVariables`, variable `nombre`) queda fuera de este trabajo: no se toca.
 - Pruebas de integración: `$env:Seed__Enabled = "false"` en línea aparte.
 - `Api.exe` o `dotnet Api.dll` corriendo bloquea el build: detenlo primero.
 - No tocar `docs/estado.md` en esta rama.
@@ -29,7 +31,7 @@
 1. Meta no devuelve `parameter_format` en el listado: el refresco deja `POSITIONAL` en una fila con claves con nombre, y el envío tiene que seguir nombrando las variables (hoy está fijo en `Named: true`). Prueba en Task 2.
 2. El nombre visible del asesor tiene un salto de línea o está vacío: el mensaje sale con el nombre de la empresa, no falla. Prueba en Task 2.
 3. Una plantilla sin variables: sale el PDF en el encabezado y ningún parámetro de cuerpo. Prueba en Task 3.
-4. El mismo `{{total}}` dos veces en el cuerpo: un solo ejemplo a Meta y un solo parámetro al enviar. Prueba en Task 5.
+4. Una cotización ya aprobada lleva `fullname`, `order_number`, `total` y `valid_until`, que salieron de la lista: el envío los llena con el valor de su clave en español, y una `External` con ese texto se sigue adoptando. Pruebas en Tasks 2 y 5.
 5. Meta rechaza el vencido después de aceptar el recordatorio y el admin reintenta: el recordatorio no se vuelve a crear ni queda huérfano. Prueba en Task 6.
 
 ---
@@ -45,7 +47,7 @@
 **Interfaces:**
 - Produces:
   - `public sealed record SystemTemplateVariable(string Key, string Label, string Example);`
-  - `public static class SystemTemplateVariables` con `Quotation`, `BillingReminder`, `BillingOverdue` (`IReadOnlyList<SystemTemplateVariable>`), constantes `Advisor = "advisor"`, `Company = "company"` y `IReadOnlySet<string> KeysOf(IReadOnlyList<SystemTemplateVariable> variables)`.
+  - `public static class SystemTemplateVariables` con `Quotation`, `BillingReminder`, `BillingOverdue` (`IReadOnlyList<SystemTemplateVariable>`), constantes `ContactName = "nombre_contacto"`, `Advisor = "asesor"`, `Company = "empresa"`, `Greeting = "saludo"`, `IReadOnlyDictionary<string, string> LegacyKeys` (`fullname` → `nombre_contacto`, `order_number` → `numero_cotizacion`, `total` → `valor_total`, `valid_until` → `vigencia`) y `IReadOnlySet<string> KeysOf(IReadOnlyList<SystemTemplateVariable> variables)`.
   - `internal static class TemplateBodyRules` con `string? Check(string? body, IReadOnlySet<string>? allowedKeys = null)`: el mensaje de error o `null`.
   - `TemplateMessages.BodyVariableNotAllowed = "Usa sólo las variables de la lista de esta plantilla."`
 
@@ -55,17 +57,22 @@
 [Fact]
 public void EachKindHasItsClosedListInOrder()
 {
-    Assert.Equal(["fullname", "order_number", "total", "valid_until", "advisor", "company"], SystemTemplateVariables.Quotation.Select(v => v.Key));
-    Assert.Equal(["fullname", "service", "amount", "due_date", "advisor", "company"], SystemTemplateVariables.BillingReminder.Select(v => v.Key));
-    Assert.Equal(["fullname", "overdue_count", "overdue_total", "advisor", "company"], SystemTemplateVariables.BillingOverdue.Select(v => v.Key));
-    Assert.Equal(["Nombre del cliente", "Número de cotización", "Valor total", "Vigencia", "Asesor", "Empresa"], SystemTemplateVariables.Quotation.Select(v => v.Label));
+    string[] fixedKeys = ["nombre_contacto", "asesor", "empresa", "saludo"];
+    Assert.Equal([.. fixedKeys, "numero_cotizacion", "valor_total", "vigencia"], SystemTemplateVariables.Quotation.Select(v => v.Key));
+    Assert.Equal([.. fixedKeys, "servicio", "valor", "vencimiento"], SystemTemplateVariables.BillingReminder.Select(v => v.Key));
+    Assert.Equal([.. fixedKeys, "cantidad_cobros", "total_vencido"], SystemTemplateVariables.BillingOverdue.Select(v => v.Key));
+    Assert.Equal(
+        ["Nombre del contacto", "Nombre del asesor", "Nombre de la empresa", "Saludo según la hora", "Número de cotización", "Valor total", "Vigencia"],
+        SystemTemplateVariables.Quotation.Select(v => v.Label));
+    Assert.Empty(SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation).Intersect(SystemTemplateVariables.LegacyKeys.Keys));
+    Assert.All(SystemTemplateVariables.LegacyKeys.Values, key => Assert.Contains(key, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation)));
 }
 
 [Theory]
-[InlineData("Hola {{fullname}}, gracias.", null)]
+[InlineData("Hola {{nombre_contacto}}, gracias.", null)]
 [InlineData("Hola {{otra}}, gracias.", TemplateMessages.BodyVariableNotAllowed)]
-[InlineData("Hola {{ fullname }}, gracias.", TemplateMessages.BodyVariable)]
-[InlineData("{{fullname}}", TemplateMessages.Body)]
+[InlineData("Hola {{ nombre_contacto }}, gracias.", TemplateMessages.BodyVariable)]
+[InlineData("{{nombre_contacto}}", TemplateMessages.Body)]
 [InlineData("   ", TemplateMessages.Body)]
 public void TheBodyRuleChecksShapeThenTheList(string body, string? expected) =>
     Assert.Equal(expected, TemplateBodyRules.Check(body, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation)));
@@ -89,19 +96,19 @@ Etiquetas y ejemplos, en el orden de la prueba:
 
 | Clave | Etiqueta | Ejemplo |
 | --- | --- | --- |
-| `fullname` | Nombre del cliente | Juan Perez |
-| `order_number` | Número de cotización | COT-000123 |
-| `total` | Valor total | 2.450.000 COP |
-| `valid_until` | Vigencia | 30 de septiembre de 2026 |
-| `service` | Servicio | Hosting plan pro |
-| `amount` | Valor | 150.000 COP |
-| `due_date` | Vencimiento | 10/03/2026 |
-| `overdue_count` | Cantidad de cobros | 2 |
-| `overdue_total` | Total adeudado | 450.000 COP |
-| `advisor` | Asesor | Ana Gomez |
-| `company` | Empresa | Comercial Andina |
-
-Sin `$`, `#` ni `%` en los ejemplos: Meta los rechaza. Mueve `LooseBrace` y `StrictVariable` de `CreateTemplateCommandValidator` a `TemplateBodyRules`, y deja que el `Custom` de `Body` llame a `Check(body)` y agregue su mensaje con la clave `body`.
+| `nombre_contacto` | Nombre del contacto | María González |
+| `asesor` | Nombre del asesor | Carlos Ramírez |
+| `empresa` | Nombre de la empresa | Mi Empresa |
+| `saludo` | Saludo según la hora | Buenos días |
+| `numero_cotizacion` | Número de cotización | COT-000123 |
+| `valor_total` | Valor total | 2.450.000 COP |
+| `vigencia` | Vigencia | 30 de septiembre de 2026 |
+| `servicio` | Servicio | Hosting plan pro |
+| `valor` | Valor | 150.000 COP |
+| `vencimiento` | Vencimiento | 10/03/2026 |
+| `cantidad_cobros` | Cantidad de cobros | 2 |
+| `total_vencido` | Total vencido | 450.000 COP |
+Las cuatro fijas van primero en las tres listas, y su etiqueta y ejemplo son los de `FIXED_VARIABLE_DETAILS` del frontend (`src/components/whatsapp-templates/message-template.ts`). Comenta en `SystemTemplateVariables` que esa lista es la autoridad y que aquí viven copiadas porque son dos repos. Sin `$`, `#` ni `%` en los ejemplos: Meta los rechaza. Mueve `LooseBrace` y `StrictVariable` de `CreateTemplateCommandValidator` a `TemplateBodyRules`, y deja que el `Custom` de `Body` llame a `Check(body)` y agregue su mensaje con la clave `body`.
 
 - [ ] **Step 4: Comprueba GREEN, incluida la validación de la creación libre**
 
@@ -126,11 +133,11 @@ git commit -m "feat(messaging): add the closed variable lists of system template
 - Test: `tests/Modules/Messaging/Modules.Messaging.UnitTests/SystemTemplateSendTests.cs`
 
 **Interfaces:**
-- Consumes: `SystemTemplateVariables` (Task 1), `TemplateCatalog.FromStored`, `TemplateCatalog.BuildSend`, `TemplateParameterRules.IsValid`.
+- Consumes: `SystemTemplateVariables` (Task 1), `TemplateCatalog.FromStored`, `TemplateCatalog.BuildSend`, `TemplateParameterRules.IsValid`, `ITenantClock.GetAsync`, `TimeOfDayGreeting.For`.
 - Produces:
   - `public sealed record ApprovedTemplate(string Name, string Language, string Category, string ParameterFormat, string ComponentsJson);` Reemplaza a `ApprovedQuotationTemplate` y `ApprovedBillingTemplate`; `FindApprovedAsync` de los dos puertos la devuelve.
   - `public static class SystemTemplateSend` con `IReadOnlyList<string> VariablesOf(ApprovedTemplate template)` y `BuiltTemplate? Build(ApprovedTemplate template, IReadOnlyDictionary<string, string> values, IReadOnlyList<string>? legacyPositionalKeys = null)`.
-  - `public sealed class TemplateSenderNames(IMessagingMemberNames memberNames, IMessagingTenantNames tenantNames)` con `Task AddAsync(Guid tenantId, Guid memberId, IReadOnlyCollection<string> usedKeys, IDictionary<string, string> values, CancellationToken cancellationToken)`.
+  - `public sealed class TemplateSenderValues(IMessagingMemberNames memberNames, IMessagingTenantNames tenantNames, ITenantClock tenantClock)` con `Task AddAsync(Guid tenantId, Guid memberId, IReadOnlyCollection<string> usedKeys, IDictionary<string, string> values, CancellationToken cancellationToken)`.
 
 - [ ] **Step 1: Escribe las pruebas que fallan**
 
@@ -138,11 +145,11 @@ git commit -m "feat(messaging): add the closed variable lists of system template
 [Fact]
 public void SendsOnlyTheVariablesTheRowUsesInItsOrder()
 {
-    var built = SystemTemplateSend.Build(Row("NAMED", "Hola {{fullname}}, de {{company}}, tu total: {{total}} hoy."), AllValues);
+    var built = SystemTemplateSend.Build(Row("NAMED", "Hola {{nombre_contacto}}, de {{empresa}}, tu total: {{valor_total}} hoy."), AllValues);
     Assert.True(built!.Send.Named);
-    Assert.Equal(["fullname", "company", "total"], built.Send.Parameters.Select(parameter => parameter.Key));
+    Assert.Equal(["nombre_contacto", "empresa", "valor_total"], built.Send.Parameters.Select(parameter => parameter.Key));
     Assert.Equal("Hola Laura, de Andina, tu total: 10 hoy.", built.Text);
-    Assert.DoesNotContain("valid_until", built.DetailsJson);
+    Assert.DoesNotContain("vigencia", built.DetailsJson);
 }
 
 [Fact]
@@ -155,7 +162,7 @@ public void ALegacyRowKeepsItsFooterInTheText()
 [Fact]
 public void APositionalRowTakesItsValuesInTheLegacyOrder()
 {
-    var built = SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{1}}, debes {{2}} hoy."), AllValues, ["fullname", "total"]);
+    var built = SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{1}}, debes {{2}} hoy."), AllValues, ["nombre_contacto", "valor_total"]);
     Assert.False(built!.Send.Named);
     Assert.Equal([("1", "Laura"), ("2", "10")], built.Send.Parameters.Select(parameter => (parameter.Key, parameter.Value)));
 }
@@ -163,20 +170,20 @@ public void APositionalRowTakesItsValuesInTheLegacyOrder()
 // Review Focus 1: si Meta no devuelve parameter_format, el refresco guarda POSITIONAL.
 [Fact]
 public void NamedKeysAreNamedWhateverTheStoredFormatSays() =>
-    Assert.True(SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{fullname}}, ya salió."), AllValues)!.Send.Named);
+    Assert.True(SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{nombre_contacto}}, ya salió."), AllValues)!.Send.Named);
 
 [Fact]
 public void AMissingOrInvalidValueBuildsNothing()
 {
-    Assert.Null(SystemTemplateSend.Build(Row("NAMED", "Hola {{service}}, ya salió."), AllValues));
-    Assert.Null(SystemTemplateSend.Build(Row("NAMED", "Hola {{fullname}}, ya salió."), new Dictionary<string, string> { ["fullname"] = "a\nb" }));
+    Assert.Null(SystemTemplateSend.Build(Row("NAMED", "Hola {{servicio}}, ya salió."), AllValues));
+    Assert.Null(SystemTemplateSend.Build(Row("NAMED", "Hola {{nombre_contacto}}, ya salió."), new Dictionary<string, string> { ["nombre_contacto"] = "a\nb" }));
 }
 
 [Fact]
 public async Task TheAdvisorIsTheSendersDisplayName()
 {
-    var values = await AddAsync(displayName: "Ana Gomez", tenantName: "Andina", ["advisor", "company"]);
-    Assert.Equal(("Ana Gomez", "Andina"), (values["advisor"], values["company"]));
+    var values = await AddAsync(displayName: "Ana Gomez", tenantName: "Andina", ["asesor", "empresa"]);
+    Assert.Equal(("Ana Gomez", "Andina"), (values["asesor"], values["empresa"]));
 }
 
 // Review Focus 2.
@@ -185,25 +192,47 @@ public async Task TheAdvisorIsTheSendersDisplayName()
 [InlineData("   ")]
 [InlineData("Ana\nGomez")]
 public async Task AnAdvisorWithoutAUsableNameFallsBackToTheCompany(string? displayName) =>
-    Assert.Equal("Andina", (await AddAsync(displayName, "Andina", ["advisor"]))["advisor"]);
+    Assert.Equal("Andina", (await AddAsync(displayName, "Andina", ["asesor"]))["asesor"]);
 
 [Fact]
-public async Task NamesTheRowDoesNotUseAreNotLookedUp() => Assert.Empty(await AddAsync("Ana", "Andina", ["fullname"], failIfCalled: true));
+public async Task NamesTheRowDoesNotUseAreNotLookedUp() => Assert.Empty(await AddAsync("Ana", "Andina", ["nombre_contacto"], failIfCalled: true));
+
+// Review Focus 4.
+[Fact]
+public void AnOldRowKeepsItsFourKeysWithTheValuesOfTheSpanishOnes()
+{
+    var row = Row("NAMED", "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*.");
+    var built = SystemTemplateSend.Build(row, new Dictionary<string, string>
+    {
+        ["nombre_contacto"] = "Laura", ["numero_cotizacion"] = "COT-1", ["valor_total"] = "10", ["vigencia"] = "1 de enero",
+    });
+    Assert.Equal(
+        [("fullname", "Laura"), ("order_number", "COT-1"), ("total", "10"), ("valid_until", "1 de enero")],
+        built!.Send.Parameters.Select(parameter => (parameter.Key, parameter.Value)));
+    Assert.Equal("¡Hola, Laura! Adjuntamos la cotización *COT-1* por *10*, vigente hasta el *1 de enero*.", built.Text);
+}
+
+[Theory]
+[InlineData(9, "Buenos días")]
+[InlineData(15, "Buenas tardes")]
+[InlineData(20, "Buenas noches")]
+public async Task TheGreetingFollowsTheTenantsLocalHour(int localHour, string expected) =>
+    Assert.Equal(expected, (await AddAsync("Ana", "Andina", ["saludo"], localHour: localHour))["saludo"]);
 ```
 
-`Row` arma un `ApprovedTemplate` con `Components(new TemplateDraft(...))` o JSON literal; `AllValues` trae `fullname = "Laura"`, `company = "Andina"`, `total = "10"`.
+`Row` arma un `ApprovedTemplate` con `Components(new TemplateDraft(...))` o JSON literal; `AllValues` trae `nombre_contacto = "Laura"`, `empresa = "Andina"`, `valor_total = "10"`. `AddAsync` usa un `ITenantClock` doble con esa hora local, en una zona distinta de UTC.
 
 - [ ] **Step 2: Córrelas y comprueba que fallan**
 
 Run: `dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests --filter "FullyQualifiedName~SystemTemplateSendTests" --nologo`
 Expected: error de compilación, `SystemTemplateSend` no existe.
 
-- [ ] **Step 3: Implementa `SystemTemplateSend` y `TemplateSenderNames`**
+- [ ] **Step 3: Implementa `SystemTemplateSend` y `TemplateSenderValues`**
 
-- `Build`: `FromStored(...)`, y `named = Parameters.Any(key => !key.All(char.IsAsciiDigit))`. Si es con nombre, cada clave lee `values[key]`; si no, `legacyPositionalKeys[int.Parse(key) - 1]`. Un valor ausente, una posición fuera de rango o un valor que no cumpla `TemplateParameterRules.IsValid` devuelve `null`. Llama a `BuildSend(described with { ParameterFormat = named ? TemplateCatalog.Named : TemplateCatalog.Positional }, resolved)` con el diccionario de las usadas, indexado por la clave de la fila, para que `details` sólo lleve esas.
+- `Build`: `FromStored(...)`, y `named = Parameters.Any(key => !key.All(char.IsAsciiDigit))`. Si es con nombre, cada clave lee `values[LegacyKeys.GetValueOrDefault(key, key)]`: las claves viejas sólo sobreviven ahí, y un comentario dice por qué. `details` guarda la clave de la fila, no la española. Si no, `legacyPositionalKeys[int.Parse(key) - 1]`. Un valor ausente, una posición fuera de rango o un valor que no cumpla `TemplateParameterRules.IsValid` devuelve `null`. Llama a `BuildSend(described with { ParameterFormat = named ? TemplateCatalog.Named : TemplateCatalog.Positional }, resolved)` con el diccionario de las usadas, indexado por la clave de la fila, para que `details` sólo lleve esas.
 - Comenta en el `named` por qué no lee la columna: el refresco guarda `POSITIONAL` si Meta no manda el campo.
-- `TemplateSenderNames.AddAsync`: `company` sale de `FindAsync`, y `advisor` de `FindDisplayNameAsync`. Si el nombre es nulo, en blanco o no cumple `IsValid`, usa la empresa. Sólo busca lo que esté en `usedKeys`. Sin empresa no escribe la clave, y `Build` devuelve `null`.
-- Registra `services.AddScoped<TemplateSenderNames>();` junto a `IQuotationTemplateOutbound` en `MessagingInfrastructureExtensions.cs`.
+- `TemplateSenderValues.AddAsync`: `empresa` sale de `FindAsync`, y `asesor` de `FindDisplayNameAsync`. Si el nombre es nulo, en blanco o no cumple `IsValid`, usa la empresa. `saludo` sale de `TimeOfDayGreeting.For`, con el patrón de `CampaignDispatcher.GreetingAsync`: `var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);` y `TimeOnly.FromDateTime(calendar.ToLocal(calendar.UtcNow).DateTime)`. Sólo busca lo que esté en `usedKeys`. Sin empresa no escribe la clave, y `Build` devuelve `null`.
+- Registra `services.AddScoped<TemplateSenderValues>();` junto a `IQuotationTemplateOutbound` en `MessagingInfrastructureExtensions.cs`.
 - Las dos lecturas de `FindApprovedAsync` proyectan los cinco campos.
 
 - [ ] **Step 4: Comprueba GREEN**
@@ -229,7 +258,7 @@ git commit -m "feat(messaging): build system template sends from the approved ro
 - Test: `tests/Modules/Messaging/Modules.Messaging.UnitTests/QuotationTemplateDefinitionTests.cs`
 
 **Interfaces:**
-- Consumes: `ApprovedTemplate`, `SystemTemplateSend`, `TemplateSenderNames` (Task 2).
+- Consumes: `ApprovedTemplate`, `SystemTemplateSend`, `TemplateSenderValues` (Task 2).
 - Produces:
   - `QuotationTemplateSend(Guid TenantId, Guid ConnectionId, Guid SentByMemberId, string WaId, Guid? CustomerId, string RecipientName, ApprovedTemplate Template, string FullName, string OrderNumber, string Total, string ValidUntil, ReadOnlyMemory<byte> Document, string DocumentFileName)`
   - `QuotationsMetaWhatsAppSender(IQuotationTemplateOutbound outbound, IObjectStorage storage, IQuotationTemplateReadiness readiness)`
@@ -242,15 +271,15 @@ git commit -m "feat(messaging): build system template sends from the approved ro
 [Fact]
 public async Task AnEditedTemplateSendsOnlyItsVariablesWithTheSendersNames()
 {
-    // Cuerpo: "Hola {{fullname}}, soy {{advisor}} de {{company}}. Te comparto {{order_number}}."
-    // Meta recibe, en orden, fullname, advisor, company y order_number con su parameter_name, y no recibe total ni valid_until.
+    // Cuerpo: "{{saludo}}, {{nombre_contacto}}, soy {{asesor}} de {{empresa}}. Te comparto {{numero_cotizacion}}."
+    // Meta recibe, en orden, saludo, nombre_contacto, asesor, empresa y numero_cotizacion con su parameter_name, y no recibe valor_total ni vigencia.
     // messaging.messages.text queda con el cuerpo sustituido.
 }
 
 [Fact]
 public async Task ALegacyApprovedTemplateStillSendsItsFourVariablesAndShowsItsFooter()
 {
-    // Cuerpo viejo y pie «Este mensaje fue generado automáticamente.»: los cuatro parámetros, y el texto termina en el pie.
+    // Cuerpo viejo, con {{fullname}}, {{order_number}}, {{total}} y {{valid_until}}, y pie «Este mensaje fue generado automáticamente.»: los cuatro parámetros con sus nombres de siempre, y el texto termina en el pie.
 }
 
 // Review Focus 3.
@@ -269,13 +298,13 @@ public async Task AReclassifiedTemplateStillSendsAndKeepsItsCategory()
 [Fact]
 public async Task AValueTheRowDoesNotUseCannotBlockTheSend()
 {
-    // Total con un salto de línea y cuerpo sin {{total}}: Sent.
+    // Total con un salto de línea y cuerpo sin {{valor_total}}: Sent.
 }
 
 [Fact]
 public async Task AValueTheRowUsesThatMetaWouldRejectFailsBeforeAnyCall()
 {
-    // FullName con un salto de línea y cuerpo con {{fullname}}: Failed(MessagingErrorCodes.MessageRejected) y ninguna llamada a Graph.
+    // FullName con un salto de línea y cuerpo con {{nombre_contacto}}: Failed(MessagingErrorCodes.MessageRejected) y ninguna llamada a Graph.
 }
 ```
 
@@ -290,8 +319,8 @@ Expected: error de compilación, `QuotationTemplateSend` no tiene `Template`.
 
 - [ ] **Step 3: Cambia el outbound y el sender**
 
-- Agrega `TemplateSenderNames senderNames` al constructor de `QuotationTemplateOutbound`.
-- En el paso 1, después de validar `WaId`: arma el diccionario con `fullname`, `order_number`, `total` y `valid_until`, llama a `senderNames.AddAsync(send.TenantId, send.SentByMemberId, SystemTemplateSend.VariablesOf(send.Template), values, cancellationToken)` y luego a `Build`. `null` devuelve `Failed(MessageRejected)`.
+- Agrega `TemplateSenderValues senderValues` al constructor de `QuotationTemplateOutbound`.
+- En el paso 1, después de validar `WaId`: arma el diccionario con `nombre_contacto`, `numero_cotizacion`, `valor_total` y `vigencia`, llama a `senderValues.AddAsync(send.TenantId, send.SentByMemberId, SystemTemplateSend.VariablesOf(send.Template), values, cancellationToken)` y luego a `Build`. `null` devuelve `Failed(MessageRejected)`.
 - Deja `IsAcceptable` sólo con la regla del `WaId`.
 - El `OutboundDraft` usa `built.Text` y `built.DetailsJson`. `SendTemplateAsync` recibe `built.Send with { HeaderDocument = new TemplateHeaderDocument(mediaId, send.DocumentFileName) }`.
 - El sender lee `readiness.FindApprovedAsync(tenantId, channel.ConnectionId, cancellationToken)`; con `null` lanza `quotation.whatsapp.send_failed` con motivo `template_not_approved`.
@@ -324,22 +353,22 @@ git commit -m "feat(messaging): send the quotation template from its approved ro
 - Test: `tests/Modules/Messaging/Modules.Messaging.IntegrationTests/BillingTemplateOutboundTests.cs`
 
 **Interfaces:**
-- Consumes: `ApprovedTemplate`, `SystemTemplateSend`, `TemplateSenderNames` (Task 2).
+- Consumes: `ApprovedTemplate`, `SystemTemplateSend`, `TemplateSenderValues` (Task 2).
 - Produces:
   - `BillingTemplateSend(Guid TenantId, Guid ConnectionId, Guid SentByMemberId, string WaId, Guid? CustomerId, string RecipientName, MessageTemplateKind Kind, ApprovedTemplate Template, IReadOnlyDictionary<string, string> Values)`
-  - `BillingTemplateDefinition.LegacyPositionalKeys`: `["fullname", "service", "amount", "due_date"]` en `Reminder`, `["fullname", "overdue_count", "overdue_total"]` en `Overdue`.
+  - `BillingTemplateDefinition.LegacyPositionalKeys`: `["nombre_contacto", "servicio", "valor", "vencimiento"]` en `Reminder`, `["nombre_contacto", "cantidad_cobros", "total_vencido"]` en `Overdue`.
 
 - [ ] **Step 1: Ajusta y escribe las pruebas**
 
 `ServiceContractsMetaWhatsAppSenderTests`:
 
 ```csharp
-Assert.Equal("Ana Pérez", send.Values["fullname"]);
-Assert.Equal("Hosting plan pro", send.Values["service"]);
-Assert.Equal("$ 150.000", send.Values["amount"]);
-Assert.Equal("10/03/2026", send.Values["due_date"]);
+Assert.Equal("Ana Pérez", send.Values["nombre_contacto"]);
+Assert.Equal("Hosting plan pro", send.Values["servicio"]);
+Assert.Equal("$ 150.000", send.Values["valor"]);
+Assert.Equal("10/03/2026", send.Values["vencimiento"]);
 // vencido
-Assert.Equal(("2", "$ 450.000"), (send.Values["overdue_count"], send.Values["overdue_total"]));
+Assert.Equal(("2", "$ 450.000"), (send.Values["cantidad_cobros"], send.Values["total_vencido"]));
 ```
 
 `BillingTemplateOutboundTests`:
@@ -354,7 +383,7 @@ public async Task ALegacyPositionalReminderSendsItsFourValuesInOrder()
 [Fact]
 public async Task ANamedReminderUsesTheEncargadoAsAdvisorAndSendsOnlyItsVariables()
 {
-    // "Hola {{fullname}}, {{advisor}} te recuerda {{service}} hoy.": tres parámetros con nombre; advisor es el nombre de SentByMemberId.
+    // "Hola {{nombre_contacto}}, {{asesor}} te recuerda {{servicio}} hoy.": tres parámetros con nombre; asesor es el nombre de SentByMemberId.
 }
 ```
 
@@ -367,7 +396,7 @@ Expected: error de compilación, `BillingTemplateSend` no tiene `Values`.
 
 - `Parameters(message)` pasa a `Values(message)`, un `Dictionary<string, string>` con las claves de arriba. `CustomerName`, `Joined` y `Fit` siguen igual.
 - El sender pasa `template` entero en `Template`.
-- `BillingTemplateOutbound` recibe `TemplateSenderNames`, llama a `AddAsync` y a `Build(send.Template, values, BillingTemplateDefinitions.For(send.Kind).LegacyPositionalKeys)`, y usa `built.Text`, `built.DetailsJson` y `built.Send`. `null` devuelve `Failed(MessageRejected)`. La regla del `WaId` sigue en `IsAcceptable`.
+- `BillingTemplateOutbound` recibe `TemplateSenderValues`, llama a `AddAsync` y a `Build(send.Template, values, BillingTemplateDefinitions.For(send.Kind).LegacyPositionalKeys)`, y usa `built.Text`, `built.DetailsJson` y `built.Send`. `null` devuelve `Failed(MessageRejected)`. La regla del `WaId` sigue en `IsAcceptable`.
 
 - [ ] **Step 4: Comprueba GREEN**
 
@@ -412,21 +441,21 @@ Definición:
 public void TheBaseTextIsTheSpecsAndNewTemplatesHaveNoFooter()
 {
     Assert.Equal(
-        "¡Hola, {{fullname}}! Te compartimos en este mensaje la cotización *{{order_number}}*, por un valor total de *{{total}}*. Esta cotización estará vigente hasta el *{{valid_until}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.",
+        "¡Hola, {{nombre_contacto}}! Te compartimos en este mensaje la cotización *{{numero_cotizacion}}*, por un valor total de *{{valor_total}}*. Esta cotización estará vigente hasta el *{{vigencia}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.",
         QuotationTemplateDefinition.BaseBody);
     Assert.Null(QuotationTemplateDefinition.Draft("qep_cotizacion", QuotationTemplateDefinition.BaseBody).Footer);
-    var components = QuotationTemplateDefinition.Payload("handle", "qep_cotizacion", "Hola {{fullname}}, gracias.")["components"]!.AsArray();
+    var components = QuotationTemplateDefinition.Payload("handle", "qep_cotizacion", "Hola {{nombre_contacto}}, gracias.")["components"]!.AsArray();
     Assert.DoesNotContain(components, component => component!["type"]!.GetValue<string>() == "FOOTER");
 }
 
 // El cuerpo y el pie viejos siguen siendo adoptables: el texto ya no decide.
 [Theory]
 [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{fullname}}, gracias."},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""", true)]
-[InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{fullname}}, gracias."}]""", true)]
-[InlineData("""[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola {{fullname}}, gracias."}]""", false)]
-[InlineData("""[{"type":"BODY","text":"Hola {{fullname}}, gracias."}]""", false)]
+[InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", true)]
+[InlineData("""[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", false)]
+[InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", false)]
 [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{otra}}, gracias."}]""", false)]
-[InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{fullname}}, gracias."},{"type":"BUTTONS","buttons":[{"type":"QUICK_REPLY","text":"Sí"}]}]""", false)]
+[InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."},{"type":"BUTTONS","buttons":[{"type":"QUICK_REPLY","text":"Sí"}]}]""", false)]
 public void AdoptionLooksAtTheShapeNotTheText(string components, bool expected) =>
     Assert.Equal(expected, QuotationTemplateDefinition.IsAdoptable(components));
 ```
@@ -438,17 +467,16 @@ Handler (`ProvisionAsync` recibe `string? body = null`):
 public async Task TheEditedBodyGoesToMetaAndToTheRowTrimmed()
 {
     var rig = new Rig();
-    var dto = await rig.ProvisionAsync("  Hola {{fullname}}, soy {{advisor}}.  ");
-    Assert.Equal("Hola {{fullname}}, soy {{advisor}}.", dto.Body);
+    var dto = await rig.ProvisionAsync("  Hola {{nombre_contacto}}, soy {{asesor}}.  ");
+    Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}}.", dto.Body);
     Assert.Null(dto.Footer);
     Assert.Equal("NAMED", rig.Repository.Rows.Single().ParameterFormat);
 }
 
-// Review Focus 4.
 [Fact]
 public async Task ARepeatedVariableTravelsWithOneExample()
 {
-    // "Total {{total}}, repito: {{total}} y gracias.": body_text_named_params tiene un solo elemento, con el ejemplo de total.
+    // "Total {{valor_total}}, repito: {{valor_total}} y gracias.": body_text_named_params tiene un solo elemento, con el ejemplo de valor_total.
 }
 
 [Fact]
@@ -469,6 +497,10 @@ public async Task AnExternalWithTheSubmittedBodyIsAdopted() { }
 
 [Fact]
 public async Task AnExternalWithAnotherBodyIsAConflict() { }
+
+// Review Focus 4: el borrador trae sus claves viejas y el POST las devuelve igual; el validador no puede frenarlo.
+[Fact]
+public async Task AnExternalWithTheOldKeysIsAdoptedWithItsOwnBody() { }
 
 // Compatibilidad: backend desplegado antes que el frontend.
 [Fact]
@@ -493,9 +525,9 @@ Expected: error de compilación, `BaseBody` no existe.
 - [ ] **Step 3: Implementa**
 
 - El validador omite `null` y aplica `TemplateBodyRules.Check(body, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation))` con `ValidationFailure("body", …)`.
-- El handler valida después de `EnsureAsync` y calcula `var body = (command.Body ?? QuotationTemplateDefinition.BaseBody).Trim();`.
+- El handler calcula `var body = (command.Body ?? QuotationTemplateDefinition.BaseBody).Trim();` después de `EnsureAsync`, y valida **después** de la adopción y justo antes de subir el PDF: una `External` adoptable puede llevar claves viejas, que el validador rechaza.
 - Adopción cuando `current is null` y hay `External` con el nombre base: si `IsAdoptable` y (`command.Body is null` o el cuerpo guardado es igual a `body`), `AdoptAsync`; si no, `quotation_conflict`.
-- `IsDocumentHeader` se conserva. `IsAdoptable` exige `described.Header is null`, `UnsupportedReason == MediaHeader`, sin botones, cuerpo no vacío y variables dentro de la lista.
+- `IsDocumentHeader` se conserva. `IsAdoptable` exige `described.Header is null`, `UnsupportedReason == MediaHeader`, sin botones, cuerpo no vacío y variables dentro de la lista más `LegacyKeys.Keys`.
 - Actualiza el resumen de la clase, el de `QuotationTemplateDefinition` y el comentario sobre Zenvia: el texto ya no es único ni igual al de Zenvia.
 - Endpoint: `ProvisionQuotationTemplateRequest? request` con `.Accepts<ProvisionQuotationTemplateRequest>("application/json")`. Cuerpo opcional, como `SaveQuickReplyOrderRequest?`. El comentario «Sin cuerpo» se reescribe.
 - Ajusta `Rig.Handler()` y `External` para pasar el validador y unos `components` válidos cuando la prueba lo pida.
@@ -538,17 +570,17 @@ git commit -m "feat(messaging): create the quotation template from an edited bod
 [Fact]
 public void TheBaseTextsAreTheOwnersWordsWithNamedVariables()
 {
-    Assert.Equal("Hola {{fullname}}, te recordamos que tu servicio {{service}} por {{amount}} vence el {{due_date}}. Si ya realizaste el pago, ignora este mensaje.", BillingTemplateDefinitions.Reminder.BaseBody);
-    Assert.Equal("Hola {{fullname}}, tienes {{overdue_count}} cobro(s) vencido(s) por un total de {{overdue_total}}. Escríbenos para ponerte al día. Si ya pagaste, ignora este mensaje.", BillingTemplateDefinitions.Overdue.BaseBody);
+    Assert.Equal("Hola {{nombre_contacto}}, te recordamos que tu servicio {{servicio}} por {{valor}} vence el {{vencimiento}}. Si ya realizaste el pago, ignora este mensaje.", BillingTemplateDefinitions.Reminder.BaseBody);
+    Assert.Equal("Hola {{nombre_contacto}}, tienes {{cantidad_cobros}} cobro(s) vencido(s) por un total de {{total_vencido}}. Escríbenos para ponerte al día. Si ya pagaste, ignora este mensaje.", BillingTemplateDefinitions.Overdue.BaseBody);
 }
 
 [Fact]
 public void ThePayloadIsNamedWithoutHeaderOrFooter()
 {
-    var payload = BillingTemplateDefinitions.Reminder.Payload("qep_cobro_recordatorio", "Hola {{fullname}}, gracias.");
+    var payload = BillingTemplateDefinitions.Reminder.Payload("qep_cobro_recordatorio", "Hola {{nombre_contacto}}, gracias.");
     Assert.Equal("NAMED", payload["parameter_format"]!.GetValue<string>());
     var body = Assert.Single(payload["components"]!.AsArray());
-    Assert.Equal("fullname", body!["example"]!["body_text_named_params"]![0]!["param_name"]!.GetValue<string>());
+    Assert.Equal("nombre_contacto", body!["example"]!["body_text_named_params"]![0]!["param_name"]!.GetValue<string>());
 }
 
 [Fact]
@@ -557,7 +589,7 @@ public async Task EachBodyGoesToItsTemplate() { }
 [Fact]
 public async Task AVariableOfTheOtherNoticeIsRejectedWithItsKey()
 {
-    // reminderBody con {{overdue_count}}: ValidationException con clave reminderBody y ninguna llamada a Meta.
+    // reminderBody con {{cantidad_cobros}}: ValidationException con clave reminderBody y ninguna llamada a Meta.
 }
 
 // Review Focus 5.
@@ -648,7 +680,7 @@ public async Task WithoutRowsTheDraftIsTheBaseTextWithItsList()
     Assert.Equal(QuotationTemplateDefinition.BaseBody, draft.Body);
     Assert.False(draft.Locked);
     Assert.Null(draft.RejectionReason);
-    Assert.Equal(6, draft.Variables.Count);
+    Assert.Equal(7, draft.Variables.Count);
 }
 
 [Fact]
@@ -659,6 +691,12 @@ public async Task ACompatibleExternalStartsFromItsBody() { }
 
 [Fact]
 public async Task AnIncompatibleExternalStartsFromTheBaseText() { }
+
+[Fact]
+public async Task ARejectedQuotationWithTheOldKeysStartsFromTheBaseText()
+{
+    // Fila Quotation REJECTED con {{fullname}}: Body = BaseBody, y conserva RejectionReason. Su texto no pasaría el validador.
+}
 
 [Fact]
 public async Task ARejectedPositionalBillingRowStartsFromTheBaseText()
@@ -726,7 +764,10 @@ Agrega `GET /quotation/draft`, `GET /billing/draft` y `POST /billing` a la tabla
   `SystemTemplateVariables` y en los valores de `QuotationTemplateOutbound` o `ServiceContractsMetaWhatsAppSender`, con su etiqueta; si falta en
   el segundo, `SystemTemplateSend.Build` devuelve `null` y el envío falla con `message_rejected`. `POSITIONAL` sólo existe en filas viejas, y
   `LegacyPositionalKeys` da su orden: no lo cambies. Nombrada o no se decide por las claves, no por la columna, porque el refresco guarda
-  `POSITIONAL` si Meta no manda el campo.
+  `POSITIONAL` si Meta no manda el campo. Las cuatro primeras variables son las fijas de `FIXED_VARIABLE_NAMES` del frontend: si esa lista
+  crece, `SystemTemplateVariables` también, y hay que darle valor en `TemplateSenderValues`. `fullname`, `order_number`, `total` y `valid_until`
+  salieron de la lista pero las cotizaciones aprobadas los llevan: `LegacyKeys` les da su valor en `SystemTemplateSend.Build` y `IsAdoptable` los acepta;
+  no los limpies.
 ```
 
 - [ ] **Step 3: Corre la suite completa una vez**
