@@ -18,6 +18,23 @@ public sealed class BillingTemplateOutboundTests
 
     private static readonly string[] Values = ["Ana Pérez", "Hosting plan pro", "$ 150.000", "10/03/2026"];
 
+    private static Dictionary<string, string> ValuesOf(IReadOnlyList<string> values) => new(StringComparer.Ordinal)
+    {
+        ["nombre_contacto"] = values[0],
+        ["servicio"] = values[1],
+        ["valor"] = values[2],
+        ["vencimiento"] = values[3],
+    };
+
+    /// <summary>La fila POSITIONAL que dejó el aprovisionamiento viejo: <c>{{1}}</c>…<c>{{4}}</c>, sin <c>asesor</c>, <c>empresa</c> ni <c>saludo</c>.</summary>
+    private static ApprovedTemplate LegacyPositional() => new(
+        TemplateName, "es", "UTILITY", "POSITIONAL", BillingTemplateDefinitions.Reminder.Components().ToJsonString());
+
+    private static ApprovedTemplate Named(string body) => new(
+        TemplateName, "es", "UTILITY", "NAMED",
+        TemplateComponentsBuilder.Components(
+            new TemplateDraft(TemplateName, "es", "UTILITY", null, body, null, [], new Dictionary<string, string>()), "4::handle").ToJsonString());
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private sealed record Fixture(QepApiFactory Factory, WebApplicationFactory<Program> Host, string ConnectionString, RegisteredTenant Tenant, Guid ConnectionId, Guid MemberId);
@@ -40,8 +57,10 @@ public sealed class BillingTemplateOutboundTests
     private static List<MetaRequest> MetaCalls(Fixture f) =>
         f.Factory.MetaHandler.Requests.Where(request => request.Uri!.AbsolutePath.StartsWith("/v24.0/111/", StringComparison.Ordinal) && !IsReadReceipt(request)).ToList();
 
-    private static BillingTemplateSend Send(Fixture f, string waId = Phone, Guid? customerId = null, IReadOnlyList<string>? values = null) =>
-        new(f.Tenant.TenantId, f.ConnectionId, f.MemberId, waId, customerId, "Ana Pérez", MessageTemplateKind.BillingReminder, TemplateName, "es", values ?? Values);
+    private static BillingTemplateSend Send(
+        Fixture f, string waId = Phone, Guid? customerId = null, IReadOnlyList<string>? values = null, ApprovedTemplate? template = null) =>
+        new(f.Tenant.TenantId, f.ConnectionId, f.MemberId, waId, customerId, "Ana Pérez", MessageTemplateKind.BillingReminder,
+            template ?? LegacyPositional(), ValuesOf(values ?? Values));
 
     private static async Task<BillingTemplateSendResult> SendAsync(Fixture f, BillingTemplateSend send)
     {
@@ -68,8 +87,8 @@ public sealed class BillingTemplateOutboundTests
             """,
             ("id", sent.ConversationId)));
         // Reclamo + DetailsJson + liquidación (status 1 = Sent) + el encargado como autor.
-        var definition = BillingTemplateDefinitions.For(MessageTemplateKind.BillingReminder);
-        var text = definition.Render(definition.ParametersFor(Values));
+        var text = "Hola Ana Pérez, te recordamos que tu servicio Hosting plan pro por $ 150.000 vence el 10/03/2026. "
+            + "Si ya realizaste el pago, ignora este mensaje.";
         Assert.Equal($"{sent.ConversationId}|{f.MemberId}|{TemplateName}|es|1|{text}", await ScalarAsync<string>(f.ConnectionString,
             """
             SELECT conversation_id || '|' || sent_by_member_id || '|' || (details->'template'->>'name') || '|' || (details->'template'->>'language')
@@ -178,5 +197,54 @@ public sealed class BillingTemplateOutboundTests
         Assert.Equal(new BillingTemplateSendResult.Failed("messaging.message.rejected"), result);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
         Assert.Empty(MetaCalls(f));
+    }
+
+    /// <summary>Lo que más importa de la tarea: una fila vieja no lleva <c>asesor</c>, <c>empresa</c> ni <c>saludo</c> y sigue saliendo igual.</summary>
+    [Fact]
+    public async Task ALegacyPositionalReminderSendsItsFourValuesInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f)));
+
+        var call = Assert.Single(MetaCalls(f));
+        using var body = JsonDocument.Parse(call.Body!);
+        var parameters = Assert.Single(body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray())
+            .GetProperty("parameters").EnumerateArray().ToArray();
+        Assert.Equal(Values, parameters.Select(item => item.GetProperty("text").GetString()));
+        Assert.All(parameters, item => Assert.False(item.TryGetProperty("parameter_name", out JsonElement ignored)));
+        var text = await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId));
+        Assert.Equal(
+            "Hola Ana Pérez, te recordamos que tu servicio Hosting plan pro por $ 150.000 vence el 10/03/2026. Si ya realizaste el pago, ignora este mensaje.",
+            text);
+    }
+
+    [Fact]
+    public async Task ANamedReminderUsesTheEncargadoAsAdvisorAndSendsOnlyItsVariables()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Named("Hola {{nombre_contacto}}, {{asesor}} te recuerda {{servicio}} hoy.");
+
+        var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
+
+        var call = Assert.Single(MetaCalls(f));
+        using var body = JsonDocument.Parse(call.Body!);
+        var parameters = Assert.Single(body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray())
+            .GetProperty("parameters").EnumerateArray().ToArray();
+        // asesor es el nombre visible del encargado (SentByMemberId); no se afirma cuál es, pero no puede ir vacío.
+        var advisorName = parameters[1].GetProperty("text").GetString()!;
+        Assert.False(string.IsNullOrWhiteSpace(advisorName));
+        Assert.Equal(
+            [("nombre_contacto", "Ana Pérez"), ("asesor", advisorName), ("servicio", "Hosting plan pro")],
+            parameters.Select(item => (item.GetProperty("parameter_name").GetString()!, item.GetProperty("text").GetString()!)));
+        Assert.Equal(
+            $"Hola Ana Pérez, {advisorName} te recuerda Hosting plan pro hoy.",
+            await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
     }
 }

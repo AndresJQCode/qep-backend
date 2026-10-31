@@ -11,8 +11,10 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Cobros recurrentes §5 (plantillas aprobadas por el owner, 2026-10-29): una de las dos plantillas de cobro. <c>Examples</c> son los
 /// ejemplos que Meta exige por variable, en orden: <c>{{1}}</c>, <c>{{2}}</c>… (posicionales; sin encabezado ni pie).
+/// <c>LegacyPositionalKeys</c> dice qué valor es cada una: una fila vieja POSITIONAL se sigue enviando en ese orden.
 /// </summary>
-public sealed record BillingTemplateDefinition(MessageTemplateKind Kind, string Name, string Body, IReadOnlyList<string> Examples)
+public sealed record BillingTemplateDefinition(
+    MessageTemplateKind Kind, string Name, string Body, IReadOnlyList<string> Examples, IReadOnlyList<string> LegacyPositionalKeys)
 {
     private string VersionPrefix => Name + "_v";
 
@@ -45,26 +47,6 @@ public sealed record BillingTemplateDefinition(MessageTemplateKind Kind, string 
         }
 
         return int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var version) && version >= 2 ? version : null;
-    }
-
-    /// <summary>Los valores del cuerpo con su clave posicional (<c>"1"</c>…), en orden.</summary>
-    public IReadOnlyList<TemplateParameter> ParametersFor(IReadOnlyList<string> values)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        if (values.Count != Examples.Count)
-        {
-            throw new ArgumentException($"The template {Name} takes {Examples.Count} values.", nameof(values));
-        }
-
-        return values.Select((value, index) => new TemplateParameter((index + 1).ToString(CultureInfo.InvariantCulture), value)).ToArray();
-    }
-
-    /// <summary>Lo que verá la persona en la bandeja: el cuerpo con las variables sustituidas. Mismo reemplazo que <see cref="TemplateCatalog"/>.</summary>
-    public string Render(IReadOnlyList<TemplateParameter> parameters)
-    {
-        ArgumentNullException.ThrowIfNull(parameters);
-        var values = parameters.ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.Ordinal);
-        return TemplateCatalog.Placeholder().Replace(Body, match => values.TryGetValue(match.Groups[1].Value, out var value) ? value : match.Value);
     }
 
     /// <summary>Los <c>components</c> de Meta: sólo el cuerpo, con <c>body_text</c> posicional (una fila con un ejemplo por variable).</summary>
@@ -109,13 +91,15 @@ public static class BillingTemplateDefinitions
         MessageTemplateKind.BillingReminder,
         "qep_cobro_recordatorio",
         "Hola {{1}}, te recordamos que tu servicio {{2}} por {{3}} vence el {{4}}. Si ya realizaste el pago, ignora este mensaje.",
-        ["Ana Pérez", "Hosting plan pro", "$ 150.000", "10/03/2026"]);
+        ["Ana Pérez", "Hosting plan pro", "$ 150.000", "10/03/2026"],
+        ["nombre_contacto", "servicio", "valor", "vencimiento"]);
 
     public static readonly BillingTemplateDefinition Overdue = new(
         MessageTemplateKind.BillingOverdue,
         "qep_cobro_vencido",
         "Hola {{1}}, tienes {{2}} cobro(s) vencido(s) por un total de {{3}}. Escríbenos para ponerte al día. Si ya pagaste, ignora este mensaje.",
-        ["Ana Pérez", "2", "$ 450.000"]);
+        ["Ana Pérez", "2", "$ 450.000"],
+        ["nombre_contacto", "cantidad_cobros", "total_vencido"]);
 
     public static readonly IReadOnlyList<BillingTemplateDefinition> All = [Reminder, Overdue];
 

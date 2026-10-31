@@ -44,8 +44,8 @@ internal sealed partial class ServiceContractsMetaWhatsAppSender(
                 context.CustomerId,
                 CustomerName(message),
                 kind,
-                template.Name, template.Language,
-                Parameters(message)),
+                template,
+                Values(message)),
             cancellationToken);
 
         return result switch
@@ -85,18 +85,30 @@ internal sealed partial class ServiceContractsMetaWhatsAppSender(
     // El `wa_id` de Meta son sólo dígitos con indicativo; el teléfono del cliente es E.164 («+573001234567»).
     private static string WaIdOf(string phoneE164) => new(phoneE164.Where(char.IsAsciiDigit).ToArray());
 
-    private static string[] Parameters(ServiceContractsCustomerMessage message)
+    // Las claves son las de BillingTemplateDefinition.LegacyPositionalKeys; asesor, empresa y saludo los pone Mensajería.
+    private static Dictionary<string, string> Values(ServiceContractsCustomerMessage message)
     {
         var name = CustomerName(message);
         var totals = Joined(message.TotalByCurrency.Select(total => WhatsAppTemplateValues.Total(total.Amount, total.Currency, message.Format.NumberFormat)));
         if (message.Kind == ServiceContractsMessageKind.Overdue)
         {
-            return [name, message.Lines.Count.ToString(CultureInfo.InvariantCulture), totals];
+            return new(StringComparer.Ordinal)
+            {
+                ["nombre_contacto"] = name,
+                ["cantidad_cobros"] = message.Lines.Count.ToString(CultureInfo.InvariantCulture),
+                ["total_vencido"] = totals,
+            };
         }
 
         var services = Joined(message.Lines.Select(line => line.ServiceName).Distinct(StringComparer.Ordinal));
         var dueDate = message.NearestDueDate.ToString(RegionalDateFormat.Pattern(message.Format.DateFormat), CultureInfo.InvariantCulture);
-        return [name, services, totals, dueDate];
+        return new(StringComparer.Ordinal)
+        {
+            ["nombre_contacto"] = name,
+            ["servicio"] = services,
+            ["valor"] = totals,
+            ["vencimiento"] = dueDate,
+        };
     }
 
     // Un cliente sin nombre no puede dejar la variable vacía (Meta la rechaza).

@@ -38,8 +38,11 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
 
         Assert.IsType<ServiceContractsSendResult.Sent>(result);
         var send = Assert.Single(rig.Outbound.Sent);
-        Assert.Equal(["Ana Pérez", "Hosting plan pro", "$ 150.000", "10/03/2026"], send.PositionalParameters);
-        Assert.Equal(("qep_cobro_recordatorio", "es"), (send.TemplateName, send.TemplateLanguage));
+        Assert.Equal("Ana Pérez", send.Values["nombre_contacto"]);
+        Assert.Equal("Hosting plan pro", send.Values["servicio"]);
+        Assert.Equal("$ 150.000", send.Values["valor"]);
+        Assert.Equal("10/03/2026", send.Values["vencimiento"]);
+        Assert.Equal(("qep_cobro_recordatorio", "es"), (send.Template.Name, send.Template.Language));
         Assert.Equal((TenantId, ConnectionId, "573001234567"), (send.TenantId, send.ConnectionId, send.WaId));
         Assert.Equal((CustomerId, MemberId, "Ana Pérez"), (send.CustomerId, send.SentByMemberId, send.RecipientName));
     }
@@ -57,8 +60,8 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
             ConnectionId, Ct);
 
         var send = Assert.Single(rig.Outbound.Sent);
-        Assert.Equal("Hosting plan pro y Dominio", send.PositionalParameters[1]);
-        Assert.Equal("$ 150.000 y US$ 20,00", send.PositionalParameters[2]);
+        Assert.Equal("Hosting plan pro y Dominio", send.Values["servicio"]);
+        Assert.Equal("$ 150.000 y US$ 20,00", send.Values["valor"]);
     }
 
     [Fact]
@@ -74,8 +77,8 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
         await rig.Sender.SendAsync(Context, message, ConnectionId, Ct);
 
         var send = Assert.Single(rig.Outbound.Sent);
-        Assert.Equal(("qep_cobro_vencido", "es"), (send.TemplateName, send.TemplateLanguage));
-        Assert.Equal(["Ana Pérez", "2", "$ 450.000"], send.PositionalParameters);
+        Assert.Equal(("qep_cobro_vencido", "es"), (send.Template.Name, send.Template.Language));
+        Assert.Equal(("2", "$ 450.000"), (send.Values["cantidad_cobros"], send.Values["total_vencido"]));
     }
 
     [Fact]
@@ -110,7 +113,7 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
         await rig.Sender.SendAsync(
             Context, Reminder([Line("Hosting", 150000m)], [new CurrencyAmountDto("COP", 150000m)], "Ana\r\n   Pérez      Gómez"), ConnectionId, Ct);
 
-        Assert.Equal("Ana Pérez Gómez", Assert.Single(rig.Outbound.Sent).PositionalParameters[0]);
+        Assert.Equal("Ana Pérez Gómez", Assert.Single(rig.Outbound.Sent).Values["nombre_contacto"]);
     }
 
     [Fact]
