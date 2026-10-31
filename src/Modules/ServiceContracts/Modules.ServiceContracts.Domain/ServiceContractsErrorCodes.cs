@@ -27,6 +27,9 @@ public static class ServiceContractsErrorCodes
     /// <summary>El precio o la moneda cambian y el cuerpo no trae <c>priceChangeReason</c>: el historial exige la justificación.</summary>
     public const string PriceChangeReasonRequired = "billing.service.price_reason_required";
 
+    /// <summary>The description exceeds <see cref="ServiceContract.DescriptionMaxLength"/>; the SPA maps this code to the field.</summary>
+    public const string ServiceDescriptionTooLong = "billing.service.description_too_long";
+
     public const string ProfileMissing = "billing.profile.missing";
 
     public const string ProfileNotFound = "billing.profile.not_found";

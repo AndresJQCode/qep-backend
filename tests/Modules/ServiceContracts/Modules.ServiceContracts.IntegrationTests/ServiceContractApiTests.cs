@@ -2,11 +2,13 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.ServiceContracts.Application;
 using Modules.ServiceContracts.Domain;
 using Modules.ServiceContracts.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
+using Npgsql;
 using static Modules.ServiceContracts.IntegrationTests.ServiceContractsApiHarness;
 
 namespace Modules.ServiceContracts.IntegrationTests;
@@ -59,7 +61,8 @@ public sealed class ServiceContractApiTests
         decimal price = Price,
         string? currency = null,
         string cycle = "Monthly",
-        DateOnly? firstDueDate = null) => new
+        DateOnly? firstDueDate = null,
+        string? description = null) => new
         {
             customerId,
             name,
@@ -68,6 +71,7 @@ public sealed class ServiceContractApiTests
             cycle,
             firstDueDate = Iso(firstDueDate ?? TenantToday.AddMonths(2)),
             profile,
+            description,
         };
 
     private static object ProfileBody(string channel, Guid assigneeMemberId) => new { channel, assigneeMemberId };
@@ -518,6 +522,159 @@ public sealed class ServiceContractApiTests
         Assert.Empty(renamed.PriceChanges);
         Assert.Equal("Hosting Max", renamedAgain.Service.Name);
         Assert.Empty(renamedAgain.PriceChanges);
+    }
+
+    private static async Task<string> ChangedFieldsOfAsync(QepApiFactory factory, string action, string resourceId)
+    {
+        var connectionString = factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var select = new NpgsqlCommand(
+            "SELECT changed_fields::text FROM audit.entries WHERE action = @action AND resource_id = @id ORDER BY occurred_at DESC LIMIT 1",
+            connection);
+        select.Parameters.AddWithValue("action", action);
+        select.Parameters.AddWithValue("id", resourceId);
+        return (string)(await select.ExecuteScalarAsync(Ct))!;
+    }
+
+    [Fact]
+    public async Task CreateTrimsTheDescriptionAndEveryReadReturnsIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var created = await CreateAsync(
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), description: "  Incluye dominio.\nSoporte 24/7.  "));
+
+        const string Expected = "Incluye dominio.\nSoporte 24/7.";
+        Assert.Equal(Expected, created.Service.Description);
+        var read = await manager.GetFromJsonAsync<ServiceDetailDto>(ServiceUrl(created.Service.Id), Ct);
+        Assert.Equal(Expected, read!.Service.Description);
+        var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
+        Assert.Equal(Expected, Assert.Single(list!.Items).Description);
+        Assert.Contains(
+            "description",
+            await ChangedFieldsOfAsync(factory, ServiceContractsAuditActions.ServiceCreated, created.Service.Id.ToString()));
+    }
+
+    // Optionals travel as null, never absent: the wire shape is what the SPA parser reads.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public async Task ADescriptionThatSaysNothingTravelsAsAnExplicitNull(string? description)
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin), description: description));
+
+        using var document = JsonDocument.Parse(await manager.GetStringAsync(ServiceUrl(created.Service.Id), Ct));
+        Assert.True(document.RootElement.GetProperty("service").TryGetProperty("description", out var wire));
+        Assert.Equal(JsonValueKind.Null, wire.ValueKind);
+    }
+
+    // A domain code and not validation.failed: the SPA maps it to the field by code, as with price_reason_required.
+    [Fact]
+    public async Task CreateWithADescriptionOverTheLimitAnswers422WithTheDomainCode()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+
+        var rejected = await manager.PostAsJsonAsync(
+            ServicesUrl(),
+            ServiceBody(customerId, ProfileBody("Email", admin), description: new string('a', ServiceContract.DescriptionMaxLength + 1)),
+            Ct);
+        var atTheLimit = await CreateAsync(
+            manager, ServiceBody(customerId, ProfileBody("Email", admin), description: new string('a', ServiceContract.DescriptionMaxLength)));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Equal("billing.service.description_too_long", await CodeOfAsync(rejected));
+        Assert.Equal(ServiceContract.DescriptionMaxLength, atTheLimit.Service.Description!.Length);
+        var list = await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}?status=all", Ct);
+        Assert.Equal(1, list!.Total);
+    }
+
+    [Fact]
+    public async Task EditingTheDescriptionNeedsNoReasonAndRecordsNoPriceChange()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin)));
+        var id = created.Service.Id;
+
+        var described = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(id), 1, new { name = "Hosting", price = Price, currency = "COP", description = "  Incluye dominio  " }), Ct));
+
+        Assert.Equal("Incluye dominio", described.Service.Description);
+        Assert.Empty(described.PriceChanges);
+        Assert.Equal(2, described.Service.Version);
+        Assert.Equal("[\"description\"]", await ChangedFieldsOfAsync(factory, ServiceContractsAuditActions.ServiceUpdated, id.ToString()));
+
+        var untouched = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(id), 2, new { name = "Hosting Pro", price = Price, currency = "COP", description = "Incluye dominio" }), Ct));
+
+        Assert.Equal("Incluye dominio", untouched.Service.Description);
+        Assert.Equal("[\"name\"]", await ChangedFieldsOfAsync(factory, ServiceContractsAuditActions.ServiceUpdated, id.ToString()));
+
+        var cleared = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(id), 3, new { name = "Hosting Pro", price = Price, currency = "COP", description = "   " }), Ct));
+
+        Assert.Null(cleared.Service.Description);
+    }
+
+    [Fact]
+    public async Task UpdateWithADescriptionOverTheLimitAnswers422AndChangesNothing()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin), description: "Antes"));
+
+        var response = await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1,
+                new { name = "Otro", price = Price, currency = "COP", description = new string('a', ServiceContract.DescriptionMaxLength + 1) }),
+            Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("billing.service.description_too_long", await CodeOfAsync(response));
+        var read = await manager.GetFromJsonAsync<ServiceDetailDto>(ServiceUrl(created.Service.Id), Ct);
+        Assert.Equal("Antes", read!.Service.Description);
+        Assert.Equal("Hosting", read.Service.Name);
+        Assert.Equal(1, read.Service.Version);
+    }
+
+    // The PUT replaces the editable fields and an absent key binds to null, so a client that predates the field clears it. Pinned
+    // here because it decides the deploy order: the backend ships first, while nobody can have written a description yet.
+    [Fact]
+    public async Task AClientThatOmitsTheDescriptionClearsIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var created = await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin), description: "Antes"));
+
+        var updated = await ReadDetailAsync(await manager.SendAsync(
+            WithVersion(HttpMethod.Put, ServiceUrl(created.Service.Id), 1, new { name = "Hosting", price = Price, currency = "COP" }), Ct));
+
+        Assert.Null(updated.Service.Description);
     }
 
     [Fact]

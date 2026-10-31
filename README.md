@@ -3915,9 +3915,9 @@ el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca 
 | --- | --- | --- | --- |
 | `GET` / `PUT` | `/customers/{customerId}/profile` | read / manage | Perfil de cobro: canal (`WhatsApp` o `Email`) y encargado. Sin `If-Match`: la última escritura gana |
 | `GET` | `/assignees` | manage | Miembros activos que pueden ser encargados |
-| `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene) |
+| `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene). `description` es opcional: se recorta, en blanco es `null`, tope 1000 (422 `billing.service.description_too_long`) |
 | `GET` | `/services/preview-charges` | manage | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir |
-| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros e historial de precios (`priceChanges`) / edita nombre, precio y moneda (`If-Match`). Cambiar el precio o la moneda exige `priceChangeReason` (422 `billing.service.price_reason_required` sin él) y deja una fila en `billing.service_price_changes` |
+| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros e historial de precios (`priceChanges`) / edita nombre, descripción, precio y moneda (`If-Match`). `description` reemplaza a la guardada: `null`, en blanco o ausente la borra, y nunca exige motivo. Cambiar el precio o la moneda exige `priceChangeReason` (422 `billing.service.price_reason_required` sin él) y deja una fila en `billing.service_price_changes` |
 | `POST` | `/services/{serviceId}/pause`, `/resume`, `/cancel` | manage | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending` |
 | `GET` | `/charges`, `/charges/{chargeId}` | read | Cobros con cliente, encargado y último aviso |
 | `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage | Marca pagado / corrige el pago |

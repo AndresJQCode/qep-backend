@@ -17,7 +17,7 @@ public sealed class CreateServiceValidatorTests
     }
 
     private static CreateServiceCommand Command(DateOnly firstDueDate, string cycle = "Monthly", decimal price = 100m, string name = "Hosting") =>
-        new(Guid.NewGuid(), Guid.NewGuid(), name, price, null, cycle, firstDueDate, null);
+        new(Guid.NewGuid(), Guid.NewGuid(), name, price, null, cycle, firstDueDate, null, null);
 
     private static bool Fails(CreateServiceCommand command, string property) =>
         new CreateServiceValidator(new FixedClock()).Validate(command).Errors.Any(error => error.PropertyName == property);

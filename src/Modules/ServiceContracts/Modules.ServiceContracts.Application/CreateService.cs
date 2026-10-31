@@ -17,7 +17,8 @@ public sealed record CreateServiceRequest(
     string? Currency,
     string? Cycle,
     DateOnly? FirstDueDate,
-    ProfileInput? Profile);
+    ProfileInput? Profile,
+    string? Description);
 
 /// <summary>
 /// <c>Currency</c> null o en blanco es la moneda del tenant. <c>Profile</c> sólo se usa si el cliente aún no tiene perfil (spec §4).
@@ -30,7 +31,8 @@ public sealed record CreateServiceCommand(
     string? Currency,
     string Cycle,
     DateOnly FirstDueDate,
-    ProfileInput? Profile)
+    ProfileInput? Profile,
+    string? Description)
     : ICommand<ServiceDetailDto>
 {
     public static CreateServiceCommand From(Guid tenantId, CreateServiceRequest request) => new(
@@ -41,7 +43,8 @@ public sealed record CreateServiceCommand(
         request.Currency,
         request.Cycle ?? string.Empty,
         request.FirstDueDate ?? default,
-        request.Profile);
+        request.Profile,
+        request.Description);
 }
 
 public sealed class CreateServiceValidator : AbstractValidator<CreateServiceCommand>
@@ -53,6 +56,8 @@ public sealed class CreateServiceValidator : AbstractValidator<CreateServiceComm
         RuleFor(command => command.Price).MustBeAServicePrice();
         RuleFor(command => command.Cycle).MustBeABillingCycle();
         RuleFor(command => command.FirstDueDate).MustBeAReasonableFirstDueDate(clock);
+        // No rule for Description on purpose: a length rule here would answer validation.failed and hide
+        // billing.service.description_too_long, the code the contract promises and the SPA maps to the field.
     }
 }
 
@@ -78,7 +83,7 @@ public sealed class CreateServiceHandler(
     IValidator<ProfileInput> profileValidator)
     : ICommandHandler<CreateServiceCommand, ServiceDetailDto>
 {
-    private static readonly string[] CreatedFields = ["customerId", "name", "price", "currency", "cycle", "firstDueDate"];
+    private static readonly string[] CreatedFields = ["customerId", "name", "description", "price", "currency", "cycle", "firstDueDate"];
 
     private static readonly string[] ProfileFields = ["channel", "assigneeMemberId"];
 
@@ -120,7 +125,8 @@ public sealed class CreateServiceHandler(
             currency,
             cycle,
             command.FirstDueDate,
-            now);
+            now,
+            command.Description);
         services.Add(service);
         // Crear siempre genera el primer cobro (el primero aunque caiga fuera de la ventana): por eso la reactivación nunca
         // se topa con un servicio que no generó nada.

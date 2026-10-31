@@ -8,8 +8,10 @@ namespace Modules.ServiceContracts.Application;
 /// <summary>
 /// El cuerpo de <c>PUT /services/{id}</c>; anulable por el mismo motivo que <see cref="CreateServiceRequest"/>.
 /// <paramref name="PriceChangeReason"/> es obligatorio sólo cuando el precio o la moneda cambian; si no, se ignora.
+/// <paramref name="Description"/> is a full replacement: null, blank or absent all clear it, because the record cannot tell an
+/// absent key from null. A client that predates the field therefore clears it.
 /// </summary>
-public sealed record UpdateServiceRequest(string? Name, decimal? Price, string? Currency, string? PriceChangeReason);
+public sealed record UpdateServiceRequest(string? Name, decimal? Price, string? Currency, string? PriceChangeReason, string? Description);
 
 /// <param name="ExpectedVersion">La versión que la pantalla cargó; llega por <c>If-Match</c>.</param>
 public sealed record UpdateServiceCommand(
@@ -19,6 +21,7 @@ public sealed record UpdateServiceCommand(
     decimal Price,
     string Currency,
     string? PriceChangeReason,
+    string? Description,
     long ExpectedVersion)
     : ICommand<ServiceDetailDto>
 {
@@ -29,6 +32,7 @@ public sealed record UpdateServiceCommand(
         request.Price ?? 0m,
         request.Currency ?? string.Empty,
         request.PriceChangeReason,
+        request.Description,
         expectedVersion);
 }
 
@@ -43,6 +47,7 @@ public sealed class UpdateServiceValidator : AbstractValidator<UpdateServiceComm
         // sólo el largo, para que el 422 nombre el campo.
         RuleFor(command => command.PriceChangeReason).MaximumLength(ServicePriceChange.ReasonMaxLength);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
+        // No rule for Description on purpose: see CreateServiceValidator.
     }
 }
 
@@ -77,7 +82,7 @@ public sealed class UpdateServiceHandler(
         var currency = ServiceRules.NormalizeCurrency(command.Currency);
 
         var name = command.Name.Trim();
-        var changedFields = new List<string>(3);
+        var changedFields = new List<string>(4);
         if (!string.Equals(service.Name, name, StringComparison.Ordinal))
         {
             changedFields.Add("name");
@@ -100,10 +105,17 @@ public sealed class UpdateServiceHandler(
             : null;
 
         var now = clock.UtcNow;
-        var priceChange = service.Update(name, command.Price, currency, command.PriceChangeReason, changedBy, now);
+        var previousDescription = service.Description;
+        var priceChange = service.Update(name, command.Description, command.Price, currency, command.PriceChangeReason, changedBy, now);
         if (priceChange is not null)
         {
             priceChanges.Add(priceChange);
+        }
+
+        // Compared after Update because the domain is what normalises it; the handler only trims the name for the same check.
+        if (!string.Equals(previousDescription, service.Description, StringComparison.Ordinal))
+        {
+            changedFields.Add("description");
         }
 
         auditPublisher.Publish(

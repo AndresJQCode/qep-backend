@@ -9,6 +9,8 @@ public sealed class ServiceContract
 {
     public const int NameMaxLength = 150;
 
+    public const int DescriptionMaxLength = 1000;
+
     // EF Core materializa por acá; Create es el único punto de entrada de código.
     private ServiceContract()
     {
@@ -24,6 +26,9 @@ public sealed class ServiceContract
     public Guid CustomerId { get; private set; }
 
     public string Name { get; private set; }
+
+    /// <summary>What the contract includes, as the tenant wrote it. Free text and internal: it never reaches a customer notice.</summary>
+    public string? Description { get; private set; }
 
     public decimal Price { get; private set; }
 
@@ -49,6 +54,7 @@ public sealed class ServiceContract
     /// <summary>Cuándo cambió <see cref="Status"/> por última vez; al crear vale lo mismo que <see cref="CreatedAt"/> (spec §2).</summary>
     public DateTimeOffset StatusChangedAt { get; private set; }
 
+    /// <param name="description">Optional, and last so the Excel import, which has no such column, can leave it out.</param>
     public static ServiceContract Create(
         ServiceContractId id,
         Guid tenantId,
@@ -58,15 +64,18 @@ public sealed class ServiceContract
         string currency,
         BillingCycle cycle,
         DateOnly firstDueDate,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? description = null)
     {
         var (cleanName, cleanCurrency) = Validate(name, price, currency);
+        var cleanDescription = CleanDescription(description);
         return new ServiceContract
         {
             Id = id,
             TenantId = tenantId,
             CustomerId = customerId,
             Name = cleanName,
+            Description = cleanDescription,
             Price = ToMoney(price),
             Currency = cleanCurrency,
             Cycle = cycle,
@@ -83,9 +92,11 @@ public sealed class ServiceContract
     /// Cambia nombre, precio y moneda. Si el precio o la moneda cambian de verdad (100 y 100.00 son el mismo precio) el cambio
     /// exige <paramref name="priceChangeReason"/> y devuelve la fila del historial, que quien llama persiste en la misma
     /// transacción; si no, el motivo se ignora y devuelve null. Un cambio rechazado no toca nada: ni el nombre ni la versión.
+    /// <paramref name="description"/> replaces the stored one (null clears it) and never counts as a price change.
     /// </summary>
     public ServicePriceChange? Update(
         string name,
+        string? description,
         decimal price,
         string currency,
         string? priceChangeReason,
@@ -98,6 +109,7 @@ public sealed class ServiceContract
         }
 
         var (cleanName, cleanCurrency) = Validate(name, price, currency);
+        var cleanDescription = CleanDescription(description);
         var cleanPrice = ToMoney(price);
         var priceChanged = cleanPrice != Price || !string.Equals(cleanCurrency, Currency, StringComparison.Ordinal);
         var reason = priceChanged ? ValidateReason(priceChangeReason) : null;
@@ -105,6 +117,7 @@ public sealed class ServiceContract
         var previousPrice = Price;
         var previousCurrency = Currency;
         Name = cleanName;
+        Description = cleanDescription;
         Price = cleanPrice;
         Currency = cleanCurrency;
         Touch(now);
@@ -203,6 +216,24 @@ public sealed class ServiceContract
         }
 
         return (cleanName, cleanCurrency);
+    }
+
+    /// <summary>Trimmed, with blank as null: the limit is measured on what gets stored, so padding never costs the user a 422.</summary>
+    private static string? CleanDescription(string? description)
+    {
+        var clean = description?.Trim();
+        if (string.IsNullOrEmpty(clean))
+        {
+            return null;
+        }
+
+        if (clean.Length > DescriptionMaxLength)
+        {
+            throw new ServiceContractsDomainException(
+                ServiceContractsErrorCodes.ServiceDescriptionTooLong, $"The description cannot exceed {DescriptionMaxLength} characters.");
+        }
+
+        return clean;
     }
 
     private static string ValidateReason(string? reason)

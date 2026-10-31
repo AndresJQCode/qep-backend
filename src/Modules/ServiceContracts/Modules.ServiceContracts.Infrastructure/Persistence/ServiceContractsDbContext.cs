@@ -86,6 +86,9 @@ public sealed class ServiceContractsDbContext(DbContextOptions<ServiceContractsD
         service.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(ServiceContract.NameMaxLength);
+        service.Property(value => value.Description)
+            .HasColumnName("description")
+            .HasMaxLength(ServiceContract.DescriptionMaxLength);
         service.Property(value => value.Price).HasColumnName("price").HasPrecision(18, 2);
         service.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
         // El valor numérico del enum son los meses (BillingCycle): `cycle_months` guarda 1, 6 o 12.
