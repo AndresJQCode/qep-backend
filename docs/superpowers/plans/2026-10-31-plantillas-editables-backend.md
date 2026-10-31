@@ -14,14 +14,14 @@
 
 - Worktree: `C:\Users\andre\OneDrive\Documentos2\repositories\QCode\templates\qep\qep-backend-worktrees\plantillas-editables`, rama `feature/plantillas-editables`. Rutas absolutas o `Set-Location` a ese worktree en cada llamada: el cwd se resetea al checkout principal, que no se toca.
 - TDD: RED y GREEN con evidencia literal en cada tarea.
-- Por tarea sólo las clases tocadas (`--filter`). La suite completa, una vez, en la Task 8.
+- Por tarea sólo las clases tocadas (`--filter`). La suite completa, una vez, en la Task 9.
 - Conventional commits, sin `Co-Authored-By` ni atribución de IA, aunque el harness lo sugiera.
 - Comentarios y textos para personas en español colombiano, tuteando. Contratos en inglés sin traducir.
 - Archivos sin BOM. Nunca `Set-Content` para reescribir un `.cs`: rompe las tildes.
 - Regla del owner: variables siempre con nombre. Toda plantilla nueva sale `NAMED`; `POSITIONAL` sólo se lee.
 - Las plantillas nuevas de cotización no llevan pie. Una fila existente conserva el suyo.
 - Regla del owner: un solo nombre por variable, en español. Las fijas son `nombre_contacto`, `asesor`, `empresa` y `saludo`, los de `FIXED_VARIABLE_NAMES` del frontend. `fullname`, `order_number`, `total` y `valid_until` no se ofrecen ni pasan el validador, pero las filas viejas los llevan y el envío los sigue llenando.
-- Automatizaciones (`FixedVariables`, variable `nombre`) queda fuera de este trabajo: no se toca.
+- Automatizaciones renombra `{nombre}` a `{nombre_contacto}` sin alias ni migración (owner, 2026-10-31: los flujos no están en producción). Antes de desplegar se confirma que ningún flujo publicado en producción use `{nombre}`: una versión publicada no se revalida y saldría vacío (Task 9, Step 4).
 - Pruebas de integración: `$env:Seed__Enabled = "false"` en línea aparte.
 - `Api.exe` o `dotnet Api.dll` corriendo bloquea el build: detenlo primero.
 - No tocar `docs/estado.md` en esta rama.
@@ -746,7 +746,118 @@ git add src tests
 git commit -m "feat(messaging): expose the editable drafts of system templates"
 ```
 
-### Task 8: Documentación y suite completa
+### Task 8: Automatizaciones habla de `nombre_contacto`
+
+**Files:**
+- Modify: `src/Modules/Automations/Modules.Automations.Domain/Flow/FlowDefinition.cs:140`
+- Modify: `src/Modules/Automations/Modules.Automations.Application/Engine/FixedVariables.cs:13`
+- Modify: `src/Modules/Automations/Modules.Automations.Domain/Flow/FlowValidator.cs:590` (`CheckName`)
+- Test: `tests/Modules/Automations/Modules.Automations.UnitTests/FlowValidatorTests.cs`
+- Test: `tests/Modules/Automations/Modules.Automations.UnitTests/FlowEngineWaitingTests.cs`
+- Test: las del barrido del Step 5
+
+**Interfaces:**
+- Consumes: nada de las tareas anteriores. Es independiente del resto del plan.
+- Produces: `FlowFixedVariables.Names == ["nombre_contacto", "telefono", "empresa", "conexion"]`, que el editor recibe en `variables`.
+
+- [ ] **Step 1: Escribe las pruebas nuevas**
+
+En `FlowValidatorTests.cs`:
+
+```csharp
+[Fact]
+public void AConditionOnTheContactNameIsValid()
+{
+    var condition = new ConditionNode(
+        "n1", "¿Tiene nombre?", Out(("yes", "end"), ("no", "end")), "all", [new ConditionRule("nombre_contacto", OPERADOR, VALOR)]);
+
+    Assert.DoesNotContain(FlowValidator.Validate(Flow(condition, End()), Ctx()), i => i.Code == "variable.name_invalid");
+}
+
+[Fact]
+public void AnOwnVariableStillCannotUseAnUnderscore()
+{
+    var question = new OpenQuestionNode(
+        "n1", "Dato", Out(("answered", "end"), ("invalid", null)), "¿Dato?", "otro_dato", new QuestionValidation("none", null, null), null);
+
+    Assert.Contains(FlowValidator.Validate(Flow(question, End()), Ctx()), i => i.Code == "variable.name_invalid");
+}
+
+[Fact]
+public void TheOldNameIsNoLongerAFixedVariable()
+{
+    var issue = Single(FlowValidator.Validate(Flow(Message("n1", "Hola {nombre}"), End()), Ctx()), "variable.never_set");
+
+    Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
+}
+
+[Fact]
+public void TheContactNameIsOfferedAndNeedsNoBlockToSetIt()
+{
+    var flow = Flow(Message("n1", "Hola {nombre_contacto}"), End());
+
+    Assert.Equal("nombre_contacto", FlowValidator.KnownVariables(flow)[0]);
+    Assert.DoesNotContain(FlowValidator.Validate(flow, Ctx()), i => i.Code == "variable.never_set");
+}
+```
+
+`OPERADOR` y `VALOR` son los de cualquier `ConditionRule` ya usada en ese archivo: la prueba mira el nombre, no el operador. En `FlowEngineWaitingTests.cs`:
+
+```csharp
+[Fact]
+public void ARestartKeepsTheContactNameAndNotTheOldKey()
+{
+    var kept = RunVariables.Parse("""{"nombre_contacto":"Ana","nombre":"Vieja","motivo":"Falla"}""").FixedOnly();
+
+    Assert.Equal(["nombre_contacto"], kept.Snapshot().Keys);
+}
+```
+
+- [ ] **Step 2: Corre y mira fallar**
+
+Run: `dotnet test tests/Modules/Automations/Modules.Automations.UnitTests --filter "FullyQualifiedName~FlowValidatorTests|FullyQualifiedName~FlowEngineWaitingTests" --nologo`
+Expected: FAIL. `AConditionOnTheContactNameIsValid`, `TheOldNameIsNoLongerAFixedVariable`, `TheContactNameIsOfferedAndNeedsNoBlockToSetIt` y `ARestartKeepsTheContactNameAndNotTheOldKey` en rojo. `AnOwnVariableStillCannotUseAnUnderscore` ya pasa y protege la regla.
+
+- [ ] **Step 3: Renombra en el dominio y el motor**
+
+`FlowFixedVariables.Names` y `FixedVariables.Build` escriben `nombre_contacto`. Sin alias: `nombre` deja de escribirse.
+
+- [ ] **Step 4: Exime a las fijas en `CheckName`**
+
+`else if (!FixedVariables.Contains(name) && !VariableName().IsMatch(name))`. No toques `VariableName()` ni la comprobación de variables declaradas de la línea 74: el admin sigue sin poder crear nombres con guion bajo. Un `saveTo` sobre una fija sigue valiendo, como pasaba con `nombre`.
+
+- [ ] **Step 5: Barrido de pruebas**
+
+Cambia `{nombre}` por `{nombre_contacto}` y la clave `"nombre"` de la variable fija por `"nombre_contacto"` en:
+
+- Unitarias: `FlowValidatorTests.cs:33,35,395,397,558`, `FlowEngineWaitingTests.cs:182,198,199,369,382`, `FlowEngineTests.cs:65,67,243,366`, `FlowEngineDataConsentTests.cs:10,29,140`, `FlowJsonTests.cs:224,237,257,341`, `RunProcessorTests.cs:74`, `SimulationRunnerTests.cs:121` y `Fixtures/annex-a.json`.
+- Integración: `ChatbotsApiTests.cs:110,332,486`, `EngineEndToEndTests.cs:36,149,513`, `EngineEndToEndTests.DataConsent.cs:12,21,155`, `SimulationsApiTests.cs:146`, `TemplatesApiTests.cs:77`.
+
+**No las toques:** ahí `nombre` es otro dato. `FlowValidatorTests.cs:70,537`, `HttpBlockRequestTests.cs:17,91` y `FlowEngineTests.cs:115` son campos de un objeto (`cliente.nombre`); `Fixtures/clasic.json` usa `nombres`, que es variable propia; `ConversationRunTests.cs` y `RunsPersistenceTests.cs` guardan una clave cualquiera en un JSON.
+
+En `AVariableNeverSetWarns` la prueba sigue esperando un solo aviso, por `{cliente.nombre}`.
+
+Comprueba con: `rg -n '\{nombre\}' tests/Modules/Automations src/Modules/Automations --glob '!**/Migrations/**'`
+Expected: sólo `Chatbots.cs:740` (el nombre de un chatbot, no una variable) y `TheOldNameIsNoLongerAFixedVariable`.
+
+- [ ] **Step 6: Corre y mira pasar**
+
+Run:
+```powershell
+$env:Seed__Enabled = "false"
+dotnet test tests/Modules/Automations/Modules.Automations.UnitTests --nologo
+dotnet test tests/Modules/Automations/Modules.Automations.IntegrationTests --nologo
+```
+Expected: PASS. Compara por nombre contra la base si hay rojas previas.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/Modules/Automations tests/Modules/Automations
+git commit -m "feat(automations)!: rename the contact variable to nombre_contacto"
+```
+
+### Task 9: Documentación, suite completa y comprobación de producción
 
 **Files:**
 - Modify: `README.md:3181` y § «La plantilla de cotización» (línea 3195). `README.md:2543` es Zenvia: no se toca.
@@ -781,10 +892,25 @@ dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --nologo
 dotnet test tests/Modules/Messaging/Modules.Messaging.UnitTests --nologo
 dotnet test tests/Modules/Messaging/Modules.Messaging.IntegrationTests --nologo
 dotnet test tests/Modules/ServiceContracts --nologo
+dotnet test tests/Modules/Automations --nologo
 ```
 Expected: 0 errores y 0 pruebas rojas nuevas. Compara por nombre contra la base y deja el resultado literal en el reporte. `docs/estado.md` registra 17 fallas previas. Si faltan puertos, corre por proyecto y repite por nombre.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Deja la comprobación de producción en el reporte**
+
+El agente no tiene permiso para leer la base de producción: no lo intentes. Entrega esta consulta para que el owner la corra antes de desplegar, y anótala en el reporte final como pendiente suyo:
+
+```sql
+SELECT 'version' AS origen, id::text FROM automations.chatbot_versions
+WHERE flow::text ~ '\{nombre[.\[}]' OR flow::text ~ '"variable": *"nombre[.\["]'
+UNION ALL
+SELECT 'borrador', id::text FROM automations.chatbots
+WHERE draft_flow::text ~ '\{nombre[.\[}]' OR draft_flow::text ~ '"variable": *"nombre[.\["]';
+```
+
+Expected: 0 filas. Si devuelve alguna, ese flujo se corrige antes de desplegar.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add README.md CLAUDE.md

@@ -88,6 +88,19 @@ Encabezado de documento (PDF) y categoría `UTILITY` siguen fijos. **Sin pie:** 
 mensaje fue generado automáticamente.» (owner, 2026-10-31). Una fila existente conserva el suyo, porque Meta no deja editarla; la bandeja
 lo dibuja si la fila lo tiene.
 
+## Automatizaciones
+
+El owner incluyó aquí el renombre (2026-10-31): `{nombre}` de los flujos pasa a `{nombre_contacto}`. Es el mismo dato, el nombre del cliente de
+la conversación (`FixedVariables.Build`). `{empresa}` ya coincide. `{telefono}` y `{conexion}` solo existen en flujos y se quedan.
+
+- **El guion bajo no pasa `VariableName`** (`^[a-z][a-zA-Z0-9]{0,39}`), que `CheckName` aplica a `saveTo` y a la raíz de una condición. Las
+  variables fijas quedan exentas de esa regla, para que una condición sobre `nombre_contacto` valide. El admin sigue sin poder crear
+  variables propias con guion bajo.
+- **Sin migración ni alias** (owner, 2026-10-31: los flujos no están en producción). El motor llena solo `nombre_contacto` y `nombre` deja de
+  ser variable fija: un `{nombre}` que quede en un borrador da el aviso `variable.never_set` al validar. Es aviso, no error, y una versión ya
+  publicada no se revalida: ahí saldría vacío. En `dev_qep` ninguna de las 6 versiones ni los 2 borradores lo usa. El módulo sí está en
+  `origin/main`, pero el dato de producción no se verificó: antes de desplegar se confirma que ningún flujo publicado use `{nombre}`.
+
 ## Cómo funciona
 
 **Contrato HTTP (BFF).**
