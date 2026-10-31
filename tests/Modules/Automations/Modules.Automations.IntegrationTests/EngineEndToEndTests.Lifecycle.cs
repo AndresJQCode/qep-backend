@@ -94,7 +94,7 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(5, sends.Count);
         Assert.Equal(sends[..2], sends[3..]);
         Assert.Equal("Waiting|n2|0|false|false|Laura", await RunAsync(f,
-            "status || '|' || current_node_id || '|' || attempts || '|' || (variables ? 'cedula')::text || '|' || (variables ? 'motivo')::text || '|' || (variables->>'nombre')"));
+            "status || '|' || current_node_id || '|' || attempts || '|' || (variables ? 'cedula')::text || '|' || (variables ? 'motivo')::text || '|' || (variables->>'nombre_contacto')"));
         Assert.Equal("started,advanced,advanced", await OutcomesAsync(f));
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.conversation_runs"));
     }
