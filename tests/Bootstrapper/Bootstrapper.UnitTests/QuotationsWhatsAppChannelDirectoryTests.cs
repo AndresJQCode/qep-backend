@@ -103,18 +103,18 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
     }
 
     [Fact]
-    public async Task MapsAMetaConnectionWithAnApprovedQuotationTemplate()
+    public async Task MapsAMetaConnectionWithAnApprovedTemplate()
     {
         var id = Guid.CreateVersion7();
         var connections = new StubConnections().WithMeta(id, "Cuenta de Meta", "+57 300 123 4567");
-        var readiness = new StubReadiness().Approve(id, new ApprovedQuotationTemplate("qep_cotizacion_v2", "es"));
+        var readiness = new StubReadiness().Approve(id, new ApprovedTemplate("qep_cotizacion_v2", "es", "UTILITY", "NAMED", "[]"));
 
         var channel = Assert.IsType<MetaWhatsAppChannel>(
             Assert.Single(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal(
-            (id, "Cuenta de Meta", "+57 300 123 4567", "qep_cotizacion_v2", "es"),
-            (channel.ConnectionId, channel.Name, channel.Phone, channel.TemplateName, channel.TemplateLanguage));
+            (id, "Cuenta de Meta", "+57 300 123 4567"),
+            (channel.ConnectionId, channel.Name, channel.Phone));
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
     {
         var id = Guid.CreateVersion7();
         var connections = new StubConnections().WithMeta(id, "Cuenta de Meta", "+57 300 123 4567", resolves: false);
-        var readiness = new StubReadiness().Approve(id, new ApprovedQuotationTemplate("qep_cotizacion", "es"));
+        var readiness = new StubReadiness().Approve(id, new ApprovedTemplate("qep_cotizacion", "es", "UTILITY", "NAMED", "[]"));
 
         Assert.Empty(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct));
     }
@@ -143,7 +143,7 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
         var connections = new StubConnections()
             .With(zenvia, Fields("573001234567", TemplateId))
             .WithMeta(meta, "Cuenta de Meta", null);
-        var readiness = new StubReadiness().Approve(meta, new ApprovedQuotationTemplate("qep_cotizacion", "es"));
+        var readiness = new StubReadiness().Approve(meta, new ApprovedTemplate("qep_cotizacion", "es", "UTILITY", "NAMED", "[]"));
 
         var channels = await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct);
 
@@ -167,15 +167,15 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
 
     private sealed class StubReadiness : IQuotationTemplateReadiness
     {
-        private readonly Dictionary<Guid, ApprovedQuotationTemplate> approved = [];
+        private readonly Dictionary<Guid, ApprovedTemplate> approved = [];
 
-        public StubReadiness Approve(Guid connectionId, ApprovedQuotationTemplate template)
+        public StubReadiness Approve(Guid connectionId, ApprovedTemplate template)
         {
             approved[connectionId] = template;
             return this;
         }
 
-        public Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult(tenantId == TenantId ? approved.GetValueOrDefault(connectionId) : null);
     }
 

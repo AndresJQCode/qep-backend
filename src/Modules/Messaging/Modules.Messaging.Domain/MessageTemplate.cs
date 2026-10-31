@@ -214,7 +214,7 @@ public sealed class MessageTemplate
         UpdatedAt = now;
     }
 
-    /// <summary>§4.5: una <c>qep_cotizacion</c> creada en la consola de Meta cuyo cuerpo coincide con la definición pasa a ser la de QEP.</summary>
+    /// <summary>§4.5: una <c>qep_cotizacion</c> creada en la consola de Meta cuyo cuerpo coincide con el que el admin envió (o, sin cuerpo, con una forma compatible) pasa a ser la de QEP.</summary>
     public void AdoptAsQuotation(DateTimeOffset now)
     {
         if (Kind != MessageTemplateKind.External)

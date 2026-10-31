@@ -25,16 +25,16 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     {
         var outbound = new RecordingOutbound();
         var storage = new StubStorage(StorageKey, Pdf);
-        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567", "qep_cotizacion_v2", "es");
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
         var message = Message();
 
-        await new QuotationsMetaWhatsAppSender(outbound, storage).SendQuotationAsync(channel, "573001234567", message, Ct);
+        await new QuotationsMetaWhatsAppSender(outbound, storage, new StubReadiness(Approved)).SendQuotationAsync(channel, "573001234567", message, Ct);
 
         var send = Assert.Single(outbound.Sends);
         Assert.Equal(
             (TenantId, channel.ConnectionId, MemberId, "573001234567", (Guid?)CustomerId, "Ana Pérez"),
             (send.TenantId, send.ConnectionId, send.SentByMemberId, send.WaId, send.CustomerId, send.RecipientName));
-        Assert.Equal(("qep_cotizacion_v2", "es"), (send.TemplateName, send.TemplateLanguage));
+        Assert.Same(Approved, send.Template);
         Assert.Equal(("Ana Pérez", "COT-000123"), (send.FullName, send.OrderNumber));
         Assert.Equal(WhatsAppTemplateValues.Total(2450000m, "COP", null), send.Total);
         Assert.Equal(WhatsAppTemplateValues.ValidUntil(new DateOnly(2026, 9, 30)), send.ValidUntil);
@@ -46,13 +46,28 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     [MemberData(nameof(NotSentResults))]
     public async Task AnythingButSentIsSendFailed(QuotationTemplateSendResult result)
     {
-        var sender = new QuotationsMetaWhatsAppSender(new RecordingOutbound(result), new StubStorage(StorageKey, Pdf));
-        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null, "qep_cotizacion", "es");
+        var sender = new QuotationsMetaWhatsAppSender(new RecordingOutbound(result), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved));
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
 
         var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
             () => sender.SendQuotationAsync(channel, "573001234567", Message(), Ct));
 
         Assert.Equal("quotation.whatsapp.send_failed", exception.Code);
+    }
+
+    [Fact]
+    public async Task ATemplateNoLongerApprovedIsSendFailed()
+    {
+        var outbound = new RecordingOutbound();
+        var sender = new QuotationsMetaWhatsAppSender(outbound, new StubStorage(StorageKey, Pdf), new StubReadiness(null));
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
+
+        var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
+            () => sender.SendQuotationAsync(channel, "573001234567", Message(), Ct));
+
+        Assert.Equal("quotation.whatsapp.send_failed", exception.Code);
+        Assert.Contains("template_not_approved", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(outbound.Sends);
     }
 
     public static TheoryData<QuotationTemplateSendResult> NotSentResults() => new()
@@ -74,6 +89,14 @@ public sealed class QuotationsMetaWhatsAppSenderTests
             SentByMemberId: MemberId,
             CustomerId: CustomerId,
             TenantId: TenantId);
+
+    private static readonly ApprovedTemplate Approved = new("qep_cotizacion_v2", "es", "UTILITY", "NAMED", "[]");
+
+    private sealed class StubReadiness(ApprovedTemplate? template) : IQuotationTemplateReadiness
+    {
+        public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(template);
+    }
 
     private sealed class RecordingOutbound(QuotationTemplateSendResult? result = null) : IQuotationTemplateOutbound
     {

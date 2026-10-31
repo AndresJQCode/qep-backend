@@ -145,6 +145,7 @@ public static class TemplateMessages
     public const string Footer = "El pie lleva hasta 60 caracteres.";
     public const string Body = "Escribe un cuerpo de 1 a 1024 caracteres con algo más que variables.";
     public const string BodyVariable = "Las variables van entre llaves dobles, en minúsculas, con números o guiones bajos y sin espacios: {{nombre}}.";
+    public const string BodyVariableNotAllowed = "Usa sólo las variables de la lista de esta plantilla.";
     public const string Examples = "Escribe un ejemplo para cada variable del cuerpo, ni una más ni una menos.";
     public const string Buttons = "Hasta diez botones; los de respuesta rápida van todos juntos, al principio o al final.";
     public const string ButtonType = "El tipo de botón es QuickReply, Url o PhoneNumber.";
@@ -196,21 +197,9 @@ public sealed partial class CreateTemplateCommandValidator : AbstractValidator<C
         // Custom con ValidationFailure a mano: los mensajes llevan {{nombre}} literal y WithMessage lo trataría como placeholder.
         RuleFor(command => command.Body).Custom((body, context) =>
         {
-            if (string.IsNullOrWhiteSpace(body) || body.Length > 1024)
+            if (TemplateBodyRules.Check(body) is { } error)
             {
-                context.AddFailure(new ValidationFailure("body", TemplateMessages.Body));
-                return;
-            }
-
-            if (LooseBrace().Matches(body).Any(match => !StrictVariable().IsMatch(match.Value)))
-            {
-                context.AddFailure(new ValidationFailure("body", TemplateMessages.BodyVariable));
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(StrictVariable().Replace(body, string.Empty)))
-            {
-                context.AddFailure(new ValidationFailure("body", TemplateMessages.Body));
+                context.AddFailure(new ValidationFailure("body", error));
             }
         });
         RuleFor(command => command.Examples).Custom((given, context) =>
@@ -286,13 +275,6 @@ public sealed partial class CreateTemplateCommandValidator : AbstractValidator<C
 
     [GeneratedRegex(@"^\+?[0-9]{7,20}\z", RegexOptions.CultureInvariant)]
     private static partial Regex PhonePattern();
-
-    // Cualquier par de llaves dobles, con lo que sea adentro: lo que no cumpla la forma estricta se marca.
-    [GeneratedRegex(@"\{\{[^{}]*\}\}", RegexOptions.CultureInvariant)]
-    private static partial Regex LooseBrace();
-
-    [GeneratedRegex(@"\{\{[a-z0-9_]+\}\}", RegexOptions.CultureInvariant)]
-    private static partial Regex StrictVariable();
 }
 
 /// <summary>§4.3 «CreateTemplateCommand»: valida, comprueba el nombre en el espejo sin llamar a Meta, crea en Meta, inserta <c>PENDING</c>

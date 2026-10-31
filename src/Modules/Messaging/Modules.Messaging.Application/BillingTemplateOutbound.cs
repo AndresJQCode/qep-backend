@@ -6,9 +6,9 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Cobros recurrentes §5: lo que Billing manda por la conexión de WhatsApp Business elegida. <c>WaId</c> son sólo dígitos, con indicativo.
 /// <c>SentByMemberId</c> es el encargado del perfil de cobro (la fila exige un autor). <c>CustomerId</c> liga la conversación nueva al
-/// cliente. <c>TemplateName</c> y <c>TemplateLanguage</c> salen de <see cref="IBillingTemplateReadiness"/>, nunca de la constante: tras un
-/// reintento la vigente puede ser <c>qep_cobro_recordatorio_v2</c>. <c>PositionalParameters</c> ya vienen formateados, en el orden de
-/// <c>{{1}}</c>…
+/// cliente. <c>Template</c> es la fila aprobada que devuelve <see cref="IBillingTemplateReadiness"/>, nunca la constante: tras un reintento la
+/// vigente puede ser <c>qep_cobro_recordatorio_v2</c>, y su cuerpo puede ser el que editó el tenant. <c>Values</c> ya vienen formateados y por
+/// clave (<c>nombre_contacto</c>, <c>servicio</c>…); sólo viajan los que la fila usa.
 /// </summary>
 public sealed record BillingTemplateSend(
     Guid TenantId, Guid ConnectionId, Guid SentByMemberId,
@@ -16,8 +16,8 @@ public sealed record BillingTemplateSend(
     Guid? CustomerId,
     string RecipientName,
     MessageTemplateKind Kind,
-    string TemplateName, string TemplateLanguage,
-    IReadOnlyList<string> PositionalParameters);
+    ApprovedTemplate Template,
+    IReadOnlyDictionary<string, string> Values);
 
 public abstract record BillingTemplateSendResult
 {
@@ -36,7 +36,7 @@ public interface IBillingTemplateOutbound
 }
 
 /// <summary>
-/// Cobros recurrentes §5: la plantilla de cobro, posicional y sin encabezado de documento, al hilo del número en esa conexión. Es
+/// Cobros recurrentes §5: la plantilla de cobro (con variables con nombre; las filas viejas POSITIONAL siguen saliendo) y sin encabezado de documento, al hilo del número en esa conexión. Es
 /// <see cref="QuotationTemplateOutbound"/> sin documento ni R2 y por la misma razón no usa <see cref="OutboundGuards"/>: el envío lo autoriza
 /// Billing, no se rechaza si la conversación está resuelta o asignada a otra persona y no cambia su estado ni su asignación. Tampoco resta el
 /// no leído (<c>seen: 0</c>): nadie leyó el hilo para enviar. Una falla tardía (Meta rechazando la credencial al enviar) puede dejar una
@@ -51,15 +51,23 @@ public sealed class BillingTemplateOutbound(
     IMessagingNotifier notifier,
     ReadReceipts receipts,
     IClock clock,
-    IConversationOpener opener) : IBillingTemplateOutbound
+    IConversationOpener opener,
+    TemplateSenderValues senderValues) : IBillingTemplateOutbound
 {
     public async Task<BillingTemplateSendResult> SendAsync(BillingTemplateSend send, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(send);
-        var definition = BillingTemplateDefinitions.For(send.Kind);
 
-        // 1. Las reglas de Meta sobre cada valor (error 132018), antes de tocar nada.
-        if (!IsAcceptable(send, definition))
+        // 1. El teléfono, y después las reglas de Meta sobre cada valor que la fila usa (error 132018), antes de tocar nada. Un valor que la
+        // fila no usa no la bloquea: no viaja. Una fila vieja POSITIONAL se arma en el orden de LegacyPositionalKeys.
+        if (!IsAcceptable(send))
+        {
+            return new BillingTemplateSendResult.Failed(MessagingErrorCodes.MessageRejected);
+        }
+
+        var values = new Dictionary<string, string>(send.Values, StringComparer.Ordinal);
+        await senderValues.AddAsync(send.TenantId, send.SentByMemberId, SystemTemplateSend.VariablesOf(send.Template), values, cancellationToken);
+        if (SystemTemplateSend.Build(send.Template, values, BillingTemplateDefinitions.For(send.Kind).LegacyPositionalKeys) is not { } built)
         {
             return new BillingTemplateSendResult.Failed(MessagingErrorCodes.MessageRejected);
         }
@@ -78,12 +86,10 @@ public sealed class BillingTemplateOutbound(
             ?? throw new InvalidOperationException("The conversation that was just opened could not be read.");
 
         // 4. Un clientId nuevo: cada aviso es un mensaje propio, no un reintento.
-        var parameters = definition.ParametersFor(send.PositionalParameters);
-        var values = parameters.ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.Ordinal);
         var draft = new OutboundDraft(
-            Guid.CreateVersion7(), conversation.Id, send.TenantId, send.ConnectionId, Guid.CreateVersion7(), definition.Render(parameters),
+            Guid.CreateVersion7(), conversation.Id, send.TenantId, send.ConnectionId, Guid.CreateVersion7(), built.Text,
             send.SentByMemberId, now, Kind: MessageKind.Template,
-            DetailsJson: TemplateDetailsJson.Serialize(send.TemplateName, send.TemplateLanguage, BillingTemplateDefinitions.Category, values));
+            DetailsJson: built.DetailsJson);
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
 
         // 5 y 6. Desde acá todo va con CancellationToken.None, como en el envío del asesor: si Meta ya aceptó, cancelar no puede borrar la fila.
@@ -91,7 +97,7 @@ public sealed class BillingTemplateOutbound(
         {
             var result = await meta.SendTemplateAsync(
                 sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId),
-                new TemplateSend(send.TemplateName, send.TemplateLanguage, Named: false, parameters),
+                built.Send,
                 SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
                 CancellationToken.None);
             await new OutboundSettlement(repository, connections, notifier, receipts, clock)
@@ -111,9 +117,7 @@ public sealed class BillingTemplateOutbound(
         return new BillingTemplateSendResult.Sent(claim.MessageId, conversation.Id);
     }
 
-    private static bool IsAcceptable(BillingTemplateSend send, BillingTemplateDefinition definition) =>
+    private static bool IsAcceptable(BillingTemplateSend send) =>
         // El teléfono es la clave de la conversación: con otra forma, el opener no podría usarlo.
-        send.WaId is { Length: > 0 and <= Conversation.WaIdMaxLength } waId && waId.All(char.IsAsciiDigit)
-        && send.PositionalParameters.Count == definition.Examples.Count
-        && send.PositionalParameters.All(TemplateParameterRules.IsValid);
+        send.WaId is { Length: > 0 and <= Conversation.WaIdMaxLength } waId && waId.All(char.IsAsciiDigit);
 }

@@ -107,7 +107,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal((setup.WhatsAppId, "Servicio", "WhatsApp", "+57 300 123 4567"), (connection.Id, connection.Name, connection.Channel, connection.Handle));
         var selectable = Assert.Single(editor.Connections);
         Assert.Equal((setup.WhatsAppId, "Active", (ServedByDto?)null), (selectable.Id, selectable.Status, selectable.ServedBy));
-        Assert.Equal(["nombre", "telefono", "empresa", "conexion"], editor.Variables);
+        Assert.Equal(["nombre_contacto", "telefono", "empresa", "conexion"], editor.Variables);
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.created'", ("id", editor.Chatbot.Id.ToString())));
     }
@@ -329,7 +329,7 @@ public sealed class ChatbotsApiTests
         Assert.Equal([AnnexA.CustomersApi, AnnexA.ServiceOrdersApi], reloaded.ExternalApis.Select(api => api.Id));
         // Las fijas, las declaradas y las que escriben los bloques.
         Assert.Equal(
-            ["nombre", "telefono", "empresa", "conexion", "cedula", "equipos", "cliente", "equipo", "motivo", "factura", "direccion", "orden"],
+            ["nombre_contacto", "telefono", "empresa", "conexion", "cedula", "equipos", "cliente", "equipo", "motivo", "factura", "direccion", "orden"],
             reloaded.Variables);
         Assert.Equal(1L, await CountAsync(connectionString,
             "SELECT count(*) FROM audit.entries WHERE resource_id = @id AND action = 'automations.chatbot.draft_saved'", ("id", editor.Chatbot.Id.ToString())));
@@ -483,7 +483,7 @@ public sealed class ChatbotsApiTests
 
         var issue = Assert.Single(reloaded.Issues);
         Assert.Equal(("Error", FlowFormatException.Malformed, (string?)null), (issue.Severity, issue.Code, issue.NodeId));
-        Assert.Equal(["nombre", "telefono", "empresa", "conexion"], reloaded.Variables);
+        Assert.Equal(["nombre_contacto", "telefono", "empresa", "conexion"], reloaded.Variables);
         Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
         Assert.Equal(reloaded.Issues, (await validate.Content.ReadFromJsonAsync<List<FlowIssueDto>>(Ct))!);
     }

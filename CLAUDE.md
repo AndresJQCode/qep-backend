@@ -648,6 +648,16 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   aunque el cliente vea el 500. El recorrido (`POST backfill`) no lee este adaptador. Lo amarra `CityCorrectionInsightsTests`
   (en el proyecto de Shopify, que es el que sabe armar pedidos, clientes y huellas reales): una tabla o columna nueva que lea el
   adaptador entra ahí.
+- **Una plantilla del sistema se envía desde su fila, no desde una definición** (spec 2026-10-31). `QuotationTemplateDefinition.BaseBody` y
+  `BillingTemplateDefinition.BaseBody` son sólo el texto inicial: cada tenant lo cambia. Un dato nuevo disponible para el texto entra en
+  `SystemTemplateVariables` y en los valores de `QuotationTemplateOutbound` o `ServiceContractsMetaWhatsAppSender`, con su etiqueta; si falta en
+  el segundo, `SystemTemplateSend.Build` devuelve `null` y el envío falla con `message_rejected`. `POSITIONAL` sólo existe en filas viejas, y
+  `LegacyPositionalKeys` da su orden: no lo cambies. Nombrada o no se decide por las claves, no por la columna, porque el refresco guarda
+  `POSITIONAL` si Meta no manda el campo. Las claves son en español (`numero_cotizacion`, `valor_total`, `vigencia`…). Las cuatro primeras
+  variables son las fijas de `FIXED_VARIABLE_NAMES` del frontend: si esa lista crece, `SystemTemplateVariables` también, y hay que darle valor
+  en `TemplateSenderValues`; llevan guion bajo, por eso `FlowValidator.CheckName` las exime de la regla de nombres propios. `fullname`,
+  `order_number`, `total` y `valid_until` salieron de la lista pero las cotizaciones aprobadas los llevan: `LegacyKeys` les da su valor en
+  `SystemTemplateSend.Build` y `IsAdoptable` los acepta; no los limpies.
 - **El payload de `geography.city_synonym.*` es contrato con Shopify y vive literal en dos pruebas.** `GeographyEventPublisher`
   lo escribe y `CitySynonymEventPayloads` lo lee por nombre: renombrar un campo compila, pasa las pruebas de cada lado por
   separado y deja el mensaje marcado como procesado sin trabajos sembrados. Se cambia en los dos lados y en las dos pruebas con el

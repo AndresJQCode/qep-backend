@@ -23,13 +23,14 @@ internal sealed class QuotationsWhatsAppChannelDirectory(
         {
             var resolved = (await connections.ResolveAsync(tenantId, summary.Id, cancellationToken)).Connection;
             if (resolved is null
-                || await templateReadiness.FindApprovedAsync(tenantId, resolved.Id, cancellationToken) is not { } template)
+                || await templateReadiness.FindApprovedAsync(tenantId, resolved.Id, cancellationToken) is null)
             {
                 continue;
             }
 
+            // La plantilla no viaja: el sender lee la fila vigente al enviar.
             channels.Add(new MetaWhatsAppChannel(
-                resolved.Id, resolved.Name, Value(resolved.Fields, WhatsAppCloudFieldKeys.DisplayPhoneNumber), template.Name, template.Language));
+                resolved.Id, resolved.Name, Value(resolved.Fields, WhatsAppCloudFieldKeys.DisplayPhoneNumber)));
         }
 
         foreach (var summary in await connections.ListActiveAsync(tenantId, IntegrationProviders.Zenvia.Key, cancellationToken))

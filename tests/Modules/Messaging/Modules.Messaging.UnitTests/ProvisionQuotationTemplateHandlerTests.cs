@@ -33,10 +33,19 @@ public sealed class ProvisionQuotationTemplateHandlerTests
             var executionContext = new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, MessagingPermissions.TemplateManage);
             return new ProvisionQuotationTemplateHandler(
                 Repository, Bed.Meta, Bed.Connections, new FakeMemberNames(Bed.MemberId), new CallerMembership(membership, executionContext), UnitOfWork, Audit,
-                Bed.TenantModules, executionContext, new FakeClock(Bed.Now), Logger);
+                Bed.TenantModules, executionContext, new FakeClock(Bed.Now), Logger, new ProvisionQuotationTemplateCommandValidator());
         }
 
-        public Task<ManagedTemplateDto> ProvisionAsync() => Handler().HandleAsync(new ProvisionQuotationTemplateCommand(Bed.TenantId, Bed.ConnectionId), Ct);
+        public Task<ManagedTemplateDto> ProvisionAsync() => ProvisionAsync(null);
+
+        public Task<ManagedTemplateDto> ProvisionAsync(string? body) =>
+            Handler().HandleAsync(new ProvisionQuotationTemplateCommand(Bed.TenantId, Bed.ConnectionId, body), Ct);
+
+        /// <summary>Los <c>components</c> de una externa adoptable: encabezado de documento y el cuerpo dado.</summary>
+        public static string DocumentComponents(string body) =>
+            $$"""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"{{body}}"}]""";
+
+        public void ExternalWithBody(string body) => External(MessageTemplateName.QuotationName, components: DocumentComponents(body));
 
         /// <summary>La <c>Quotation</c> que Meta rechazó: lo que el admin reintenta.</summary>
         public MessageTemplate RejectedQuotation(string name = MessageTemplateName.QuotationName, string metaId = "771")
@@ -49,8 +58,154 @@ public sealed class ProvisionQuotationTemplateHandlerTests
             return row;
         }
 
-        public void External(string name, string language = "es", string metaId = "900") =>
-            Repository.Rows.Add(MessageTemplate.Mirrored(Bed.TenantId, Bed.ConnectionId, metaId, name, language, "UTILITY", "NAMED", "APPROVED", null, "[]", Bed.Now.AddDays(-2)));
+        public void External(string name, string language = "es", string metaId = "900", string components = "[]") =>
+            Repository.Rows.Add(MessageTemplate.Mirrored(Bed.TenantId, Bed.ConnectionId, metaId, name, language, "UTILITY", "NAMED", "APPROVED", null, components, Bed.Now.AddDays(-2)));
+    }
+
+    [Fact]
+    public async Task TheEditedBodyGoesToMetaAndToTheRowTrimmed()
+    {
+        var rig = new Rig();
+
+        var dto = await rig.ProvisionAsync("  Hola {{nombre_contacto}}, soy {{asesor}}.  ");
+
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}}.", dto.Body);
+        Assert.Null(dto.Footer);
+        Assert.Equal("NAMED", rig.Repository.Rows.Single().ParameterFormat);
+        var sent = rig.Bed.Meta.CreatedTemplates.Single()["components"]!.AsArray();
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}}.", sent.Single(component => component!["type"]!.GetValue<string>() == "BODY")!["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ARepeatedVariableTravelsWithOneExample()
+    {
+        var rig = new Rig();
+
+        await rig.ProvisionAsync("Total {{valor_total}}, repito: {{valor_total}} y gracias.");
+
+        var body = rig.Bed.Meta.CreatedTemplates.Single()["components"]!.AsArray().Single(component => component!["type"]!.GetValue<string>() == "BODY")!;
+        var example = Assert.Single(body["example"]!["body_text_named_params"]!.AsArray())!;
+        Assert.Equal(("valor_total", "2.450.000 COP"), (example["param_name"]!.GetValue<string>(), example["example"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task EveryVersionOfARetryCarriesTheEditedBody()
+    {
+        var rig = new Rig();
+        rig.Bed.Meta.CreateResults.Enqueue(new(null, NameTaken));
+        rig.Bed.Meta.CreateResults.Enqueue(new(new CreatedTemplate("772", "PENDING", "UTILITY"), null));
+
+        await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias por escribirnos.");
+
+        Assert.Equal(2, rig.Bed.Meta.CreatedTemplates.Count);
+        Assert.All(rig.Bed.Meta.CreatedTemplates, payload =>
+            Assert.Equal("Hola {{nombre_contacto}}, gracias por escribirnos.", payload["components"]!.AsArray()
+                .Single(component => component!["type"]!.GetValue<string>() == "BODY")!["text"]!.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task AVariableOutsideTheListIsAValidationErrorWithoutTouchingMeta()
+    {
+        var rig = new Rig();
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => rig.ProvisionAsync("Hola {{otra}}, gracias."));
+
+        Assert.Equal("body", Assert.Single(error.Errors).PropertyName);
+        Assert.Empty(rig.Bed.Meta.ExampleUploads);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Repository.Rows);
+    }
+
+    [Fact]
+    public async Task AnExternalWithTheSubmittedBodyIsAdopted()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.");
+
+        var dto = await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias.");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Bed.Meta.ExampleUploads);
+    }
+
+    [Fact]
+    public async Task AnExternalWithAnotherBodyIsAConflict()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.");
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ProvisionAsync("Otro texto {{nombre_contacto}}."));
+
+        Assert.Equal(MessagingErrorCodes.TemplateQuotationConflict, error.Code);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
+    // Sin cuerpo en el pedido sólo cuenta la forma: una externa sin encabezado de documento ni cuerpo no es adoptable.
+    [Fact]
+    public async Task AnExternalThatIsNotAdoptableIsAConflictEvenWithoutBody()
+    {
+        var rig = new Rig();
+        rig.External(MessageTemplateName.QuotationName);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ProvisionAsync());
+
+        Assert.Equal(MessagingErrorCodes.TemplateQuotationConflict, error.Code);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+        Assert.Empty(rig.Bed.Meta.ExampleUploads);
+    }
+
+    // El cuerpo enviado se recorta antes de compararlo con el de Meta.
+    [Fact]
+    public async Task AnExternalIsAdoptedWhenTheSubmittedBodyOnlyDiffersByTheSurroundingSpaces()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.");
+
+        var dto = await rig.ProvisionAsync("  Hola {{nombre_contacto}}, gracias.  ");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
+    // Los espacios de la externa tampoco cuentan: Meta guarda el cuerpo como se lo mandaron y el enviado ya va recortado.
+    [Fact]
+    public async Task AnExternalWhoseStoredBodyHasSurroundingSpacesIsAdoptedWithTheSameBody()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("  Hola {{nombre_contacto}}, gracias.  ");
+
+        var dto = await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias.");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
+    // Review Focus 4: el borrador trae sus claves viejas y el POST las devuelve igual; el validador no puede frenarlo.
+    [Fact]
+    public async Task AnExternalWithTheOldKeysIsAdoptedWithItsOwnBody()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{fullname}}, gracias.");
+
+        var dto = await rig.ProvisionAsync("Hola {{fullname}}, gracias.");
+
+        Assert.Equal("Hola {{fullname}}, gracias.", dto.Body);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
+    // Compatibilidad: backend desplegado antes que el frontend.
+    [Fact]
+    public async Task WithoutBodyACompatibleExternalIsAdoptedAndWithoutExternalTheBaseTextIsCreated()
+    {
+        var adopting = new Rig();
+        adopting.ExternalWithBody("Hola {{fullname}}, gracias.");
+        await adopting.ProvisionAsync();
+        Assert.Empty(adopting.Bed.Meta.CreatedTemplates);
+
+        var creating = new Rig();
+        var dto = await creating.ProvisionAsync();
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, dto.Body);
     }
 
     [Fact]

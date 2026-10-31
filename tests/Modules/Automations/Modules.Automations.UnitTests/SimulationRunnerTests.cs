@@ -118,7 +118,7 @@ public sealed class SimulationRunnerTests
 
         var call = Assert.Single(http.Calls);
         Assert.Equal(new HttpCallContext(TenantId, RunId: null, SimulationId, "n3"), call.Context);
-        Assert.Equal("Cliente de prueba", call.Variables.TextOf("nombre"));
+        Assert.Equal("Cliente de prueba", call.Variables.TextOf("nombre_contacto"));
         Assert.Equal("9", state.Variables.TextOf("cliente.id"));
         Assert.Equal("Cliente 9", Assert.Single(transcript, entry => entry.From == "bot").Text);
     }

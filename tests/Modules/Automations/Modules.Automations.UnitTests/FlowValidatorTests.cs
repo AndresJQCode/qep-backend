@@ -30,9 +30,9 @@ public sealed class FlowValidatorTests
         var flow = new FlowDefinition(
             1, new FlowStart("n1"), [new FlowVariable("cedula", "text"), new FlowVariable("equipos", "list")], [question, blank, Http(), End()]);
 
-        Assert.Equal(["nombre", "telefono", "empresa", "conexion", "cedula", "equipos"], FlowValidator.KnownVariables(flow));
+        Assert.Equal(["nombre_contacto", "telefono", "empresa", "conexion", "cedula", "equipos"], FlowValidator.KnownVariables(flow));
         Assert.Equal(
-            ["nombre", "telefono", "empresa", "conexion", "cedula", "equipos", "cliente", "equipo", "motivo", "factura", "direccion", "orden"],
+            ["nombre_contacto", "telefono", "empresa", "conexion", "cedula", "equipos", "cliente", "equipo", "motivo", "factura", "direccion", "orden"],
             FlowValidator.KnownVariables(AnnexAFlow.Parse()));
     }
 
@@ -380,6 +380,41 @@ public sealed class FlowValidatorTests
     }
 
     [Fact]
+    public void AConditionOnTheContactNameIsValid()
+    {
+        var condition = new ConditionNode(
+            "n1", "¿Tiene nombre?", Out(("yes", "end"), ("no", "end")), "all", [new ConditionRule("nombre_contacto", "isNotEmpty", null)]);
+
+        Assert.DoesNotContain(FlowValidator.Validate(Flow(condition, End()), Ctx()), i => i.Code == "variable.name_invalid");
+    }
+
+    [Fact]
+    public void AnOwnVariableStillCannotUseAnUnderscore()
+    {
+        var question = new OpenQuestionNode(
+            "n1", "Dato", Out(("answered", "end"), ("invalid", null)), "¿Dato?", "otro_dato", new QuestionValidation("none", null, null), null);
+
+        Assert.Contains(FlowValidator.Validate(Flow(question, End()), Ctx()), i => i.Code == "variable.name_invalid");
+    }
+
+    [Fact]
+    public void TheOldNameIsNoLongerAFixedVariable()
+    {
+        var issue = Single(FlowValidator.Validate(Flow(Message("n1", "Hola {nombre}"), End()), Ctx()), "variable.never_set");
+
+        Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
+    }
+
+    [Fact]
+    public void TheContactNameIsOfferedAndNeedsNoBlockToSetIt()
+    {
+        var flow = Flow(Message("n1", "Hola {nombre_contacto}"), End());
+
+        Assert.Equal("nombre_contacto", FlowValidator.KnownVariables(flow)[0]);
+        Assert.DoesNotContain(FlowValidator.Validate(flow, Ctx()), i => i.Code == "variable.never_set");
+    }
+
+    [Fact]
     public void ConditionWithoutRulesFails()
     {
         var condition = new ConditionNode("n1", "¿Cliente?", Out(("yes", "end"), ("no", "end")), "all", []);
@@ -392,9 +427,9 @@ public sealed class FlowValidatorTests
     [Fact]
     public void AVariableNeverSetWarns()
     {
-        var issues = FlowValidator.Validate(Flow(Message("n1", "Hola {nombre}, tu cliente es {cliente.nombre}"), End()), Ctx());
+        var issues = FlowValidator.Validate(Flow(Message("n1", "Hola {nombre_contacto}, tu cliente es {cliente.nombre}"), End()), Ctx());
 
-        // {nombre} es fija (D-M8); {cliente.nombre} no la escribe ningún bloque.
+        // {nombre_contacto} es fija (D-M8); {cliente.nombre} no la escribe ningún bloque.
         var issue = Single(issues, "variable.never_set");
         Assert.Equal(FlowIssueSeverity.Warning, issue.Severity);
         Assert.Equal("n1", issue.NodeId);
@@ -555,7 +590,7 @@ public sealed class FlowValidatorTests
 
     [Theory]
     [InlineData("https://qcode.co/catalogo")]
-    [InlineData("https://qcode.co/pedido/{nombre}")]
+    [InlineData("https://qcode.co/pedido/{nombre_contacto}")]
     public void AnHttpsUrlButtonIsValid(string url)
     {
         var message = new MessageNode("n1", "Saludo", Out(("next", "end")), "Hola", new UrlButton("Ver", url));

@@ -10,7 +10,7 @@ public static class FixedVariables
     public static RunVariables Build(string? customerName, string? phone, string? tenantName, string connectionName)
     {
         var variables = RunVariables.Empty();
-        variables.Set("nombre", JsonValue.Create(customerName ?? string.Empty));
+        variables.Set("nombre_contacto", JsonValue.Create(customerName ?? string.Empty));
         variables.Set("telefono", JsonValue.Create(phone ?? string.Empty));
         variables.Set("empresa", JsonValue.Create(tenantName ?? string.Empty));
         variables.Set("conexion", JsonValue.Create(connectionName ?? string.Empty));
