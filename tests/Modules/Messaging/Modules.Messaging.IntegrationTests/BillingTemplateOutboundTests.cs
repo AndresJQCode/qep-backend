@@ -230,6 +230,9 @@ public sealed class BillingTemplateOutboundTests
         using var _ = f.Factory;
         ScriptMetaOk(f.Factory.MetaHandler);
         var template = Named("Hola {{nombre_contacto}}, {{asesor}} te recuerda {{servicio}} hoy.");
+        // Nombres distintos para el miembro y el tenant: con el mismo, un memberId equivocado se taparía con el respaldo (la empresa).
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.memberships SET display_name = 'Ana Asesora' WHERE id = @id", ("id", f.MemberId));
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.tenants SET display_name = 'Andina Ltda' WHERE id = @id", ("id", f.Tenant.TenantId));
 
         var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
 
@@ -237,14 +240,12 @@ public sealed class BillingTemplateOutboundTests
         using var body = JsonDocument.Parse(call.Body!);
         var parameters = Assert.Single(body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray())
             .GetProperty("parameters").EnumerateArray().ToArray();
-        // asesor es el nombre visible del encargado (SentByMemberId); no se afirma cuál es, pero no puede ir vacío.
-        var advisorName = parameters[1].GetProperty("text").GetString()!;
-        Assert.False(string.IsNullOrWhiteSpace(advisorName));
+        // asesor es el nombre visible del encargado (SentByMemberId), no el del tenant.
         Assert.Equal(
-            [("nombre_contacto", "Ana Pérez"), ("asesor", advisorName), ("servicio", "Hosting plan pro")],
+            [("nombre_contacto", "Ana Pérez"), ("asesor", "Ana Asesora"), ("servicio", "Hosting plan pro")],
             parameters.Select(item => (item.GetProperty("parameter_name").GetString()!, item.GetProperty("text").GetString()!)));
         Assert.Equal(
-            $"Hola Ana Pérez, {advisorName} te recuerda Hosting plan pro hoy.",
+            "Hola Ana Pérez, Ana Asesora te recuerda Hosting plan pro hoy.",
             await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
     }
 }
