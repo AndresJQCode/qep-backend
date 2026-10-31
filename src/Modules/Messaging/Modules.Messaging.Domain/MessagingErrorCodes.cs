@@ -16,6 +16,21 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-30 §4.4: el mismo <c>clientId</c> de una clave de API ya salió en otra conversación del tenant (409).</summary>
     public const string ExternalClientIdReused = "external.client_id_reused";
 
+    /// <summary>Spec 2026-10-30 §6.3.1: la conversación del número está bloqueada; no sale ninguna categoría (422).</summary>
+    public const string ExternalRecipientBlocked = "external.recipient_blocked";
+
+    /// <summary>Spec 2026-10-30 §6.3.1: la persona apagó el marketing; una plantilla de marketing no sale (422).</summary>
+    public const string ExternalRecipientOptedOut = "external.recipient_opted_out";
+
+    /// <summary>Spec 2026-10-30 §6.3.1: el cliente del número está inactivo; una plantilla de marketing no sale (422).</summary>
+    public const string ExternalRecipientInactive = "external.recipient_inactive";
+
+    /// <summary>Spec 2026-10-30 §6.3.2: Meta rechazó el mensaje (422).</summary>
+    public const string ExternalMessageRejected = "external.message_rejected";
+
+    /// <summary>Spec 2026-10-30 §6.3.2: Meta no confirmó el envío (502).</summary>
+    public const string ExternalSendUnconfirmed = "external.send_unconfirmed";
+
     /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
     public const string ChannelUnsupported = "messaging.channel_unsupported";
 
