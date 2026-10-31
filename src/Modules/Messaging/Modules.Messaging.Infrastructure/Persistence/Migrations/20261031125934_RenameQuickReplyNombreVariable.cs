@@ -5,14 +5,13 @@
 namespace Modules.Messaging.Infrastructure.Persistence.Migrations
 {
     /// <summary>
-    /// Sólo datos: <c>{nombre}</c> pasa a <c>{nombre_contacto}</c> en los cuerpos de las respuestas rápidas. Se despliega después del frontend
-    /// que resuelve el nombre nuevo: antes de eso, un SPA viejo insertaría <c>{nombre_contacto}</c> literal en el chat.
+    /// Sólo datos: <c>{nombre}</c> pasa a <c>{nombre_contacto}</c> en los cuerpos de las respuestas rápidas.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Compuerta: esta migración NO se mergea a develop hasta que el SPA nuevo lleve en producción el tiempo acordado, al menos un día
-    /// hábil.</b> <c>MigrateAsync</c> corre al arrancar la API, así que mergear es migrar en el siguiente despliegue, y las pestañas abiertas
-    /// con el SPA viejo no resuelven <c>{nombre_contacto}</c>.
+    /// <b>Backend y frontend salen en la misma ventana (decisión del owner, 2026-10-31).</b> <c>MigrateAsync</c> corre al arrancar la API, y
+    /// un SPA que no resuelve <c>{nombre_contacto}</c> lo inserta literal en el chat: mientras falte el frontend nuevo, y en las pestañas
+    /// viejas que sigan abiertas después.
     /// </para>
     /// <para>
     /// <c>body</c> es <c>varchar(4096)</c> y el reemplazo suma 9 caracteres por aparición. Una fila que no quepa conserva <c>{nombre}</c>,
