@@ -2231,6 +2231,50 @@ Los logs van a stdout en JSON (`AddQepLogging` en `Program.cs`, formateador
 para que la infraestructura los indexe y Grafana pueda enlazar traza → log sin
 un enricher aparte (no se usa Serilog).
 
+#### Métricas de fluidez del navegador
+
+Todo meter propio cuelga del prefijo `Qep.` y sale por OTLP sin tocar la lista de `QepObservability`. El meter
+`Qep.Web` lo alimenta la SPA, que mide la navegación entre pantallas y los Web Vitals y los manda por lotes a:
+
+```
+POST /api/v1/tenants/{tenantId}/telemetry/web-vitals   → 204
+{ "samples": [ { "metric": "navigation"|"lcp"|"inp"|"ttfb"|"fcp"|"cls", "route": "/quotations/$id", "value": 1.2 } ] }
+```
+
+Pide sesión del tenant (sin permiso propio) y el header `X-Qep-Client`. Hasta 50 muestras por lote; `value` entre 0 y 120
+(segundos, salvo `cls`, que es un puntaje); `route` es obligatoria sólo en `navigation` y es la **plantilla** de la ruta
+del router, nunca la URL (con ids saldría una serie por registro). Un lote inválido responde 422 `validation.failed` con
+`errors`. Límite: 600 lotes por minuto por IP (política `telemetry`). La etiqueta `route` admite 256 valores distintos
+por proceso: las primeras 256 rutas distintas que ve un proceso se quedan con su nombre y el resto sale como `other`.
+El cuerpo pesa como máximo 16 KB; uno ilegible, mal tipado o más grande responde 422 con el error en `Samples`.
+
+| Métrica                       | Unidad | Etiqueta | Qué mide                                            |
+| ----------------------------- | ------ | -------- | --------------------------------------------------- |
+| `qep.web.navigation.duration` | s      | `route`  | Lo que tarda una pantalla en mostrarse tras pedirla |
+| `qep.web.vital`               | s      | `name`   | `lcp`, `inp`, `ttfb` y `fcp`                        |
+| `qep.web.cls`                 | —      | —        | Cumulative Layout Shift                             |
+
+Las colas asíncronas y el rezago de la mensajería salen de los meters `Qep.Platform` y `Qep.Messaging`.
+`QueueSamplerWorker` lee cada 15 s, una por una, las seis colas (`webhook`, `automation`, `media`, `campaign`, `outbox` y
+`shopify_webhook`) con SQL crudo y las publica como gauges. Una cola que falla se loguea y se salta; una lectura de más de
+60 s deja de publicarse, así que un hueco en el panel significa que el muestreador (o esa cola) no está respondiendo, no que
+la cola esté vacía.
+
+| Métrica                     | Unidad | Etiqueta  | Qué mide                                                                                              |
+| --------------------------- | ------ | --------- | ----------------------------------------------------------------------------------------------------- |
+| `qep.queue.backlog`         | —      | `queue`   | Filas pendientes de la cola                                                                           |
+| `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
+| `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
+| `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+
+`oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
+`automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
+historial y los abandonados. `campaign` no tiene columna de edad, así que sólo publica `backlog` y `retrying`. En
+`qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
+
+Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
+`migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
+
 ### Infraestructura local
 
 `compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis

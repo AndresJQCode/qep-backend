@@ -627,6 +627,26 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Observabilidad fase 2: sin el muestreador registrado los gauges de cola no publican nada y nadie se entera; y como los gauges
+    /// son singleton, ValidateScopes caza que dependan de un servicio scoped (IClock lo es).
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheQueueSampler()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Bootstrapper.Observability.QueueSamplerWorker");
+        Assert.NotNull(provider.GetRequiredService<Bootstrapper.Observability.QueueGauges>());
+    }
+
+    /// <summary>
     /// Fallo P2-R31 (el mismo amarre que <c>ExternalApiUrlPolicyTests.TheNamedClientIsBoundToThePolicyHandler</c> de la tarea 10): el
     /// cliente del bloque HTTP del chatbot se registra en el composition root con el handler de la política anti-SSRF. Sin él, el handler
     /// por defecto sigue redirecciones con la clave, usa el proxy del sistema y conecta a 10/8 o a 169.254.169.254 sin que nada se ponga

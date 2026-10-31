@@ -61,6 +61,7 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 builder.Services.AddScoped<SessionEstablisher>();
+builder.Services.AddWebTelemetry();
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
@@ -95,6 +96,21 @@ builder.Services.AddRateLimiter(options =>
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    // Telemetría del navegador: 600 por minuto por IP. UseRateLimiter corre antes de UseAuthentication (más abajo),
+    // así que acá no hay usuario ni tenant con qué particionar: lo único que se ve es la IP del cliente. 600 sobra para
+    // una oficina entera detrás de una IP (la SPA manda por lotes, uno por cambio de pestaña o cada tanto), y acota a
+    // quien quiera inflar las métricas. Sin IP (TestServer) todos comparten la partición "unknown", como en Public.
+    options.AddPolicy(
+        RateLimiterPolicies.Telemetry,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
@@ -180,6 +196,7 @@ app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
 app.MapPasswordAuthEndpoints();
 app.MapAuthorizationCatalogEndpoints();
+app.MapWebTelemetryEndpoints();
 app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();

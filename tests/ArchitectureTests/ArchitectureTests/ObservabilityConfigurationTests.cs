@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -75,6 +76,61 @@ public sealed class ObservabilityConfigurationTests
             ServiceVersionWith(null));
     }
 
+    // Todo meter bajo el prefijo Qep. sale por OTLP sin registrarlo uno por uno: los de Messaging y
+    // Web los declara cada módulo, y uno que se olvide de la lista sería una métrica que nunca llega.
+    [Fact]
+    public void AMeterUnderTheQepPrefixIsExported()
+    {
+        var exporter = new RecordingMetricExporter();
+        using var provider = BuildProviderWith(exporter);
+        using var meter = new Meter("Qep.Example");
+        var counter = meter.CreateCounter<long>("qep.example.count");
+
+        counter.Add(1);
+        provider.GetRequiredService<MeterProvider>().ForceFlush();
+
+        Assert.Contains("qep.example.count", exporter.MetricNames);
+        Assert.Contains("Qep.Example", exporter.MeterNames);
+    }
+
+    // La meta de «Enviar mensaje» es 2 s y los límites por defecto saltan de 1 a 2,5: sin un límite
+    // en 2 el histograma no distingue 1,5 s (dentro de la meta) de 2,4 s (fuera).
+    [Fact]
+    public void HttpServerDurationHasTheTwoSecondBucket()
+    {
+        var exporter = new RecordingMetricExporter();
+        using var provider = BuildProviderWith(exporter);
+        using var meter = new Meter("Microsoft.AspNetCore.Hosting");
+        var histogram = meter.CreateHistogram<double>("http.server.request.duration", unit: "s");
+
+        histogram.Record(1.5);
+        provider.GetRequiredService<MeterProvider>().ForceFlush();
+
+        Assert.Equal(
+            [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2, 2.5, 5, 7.5, 10],
+            exporter.BoundariesOf("http.server.request.duration"));
+    }
+
+    private static ServiceProvider BuildProviderWith(RecordingMetricExporter exporter)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OTEL_EXPORTER_OTLP_ENDPOINT"] = CollectorEndpoint,
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddQepObservability(configuration, new ProductionEnvironment());
+        services.ConfigureOpenTelemetryMeterProvider(
+            builder => builder.AddReader(new BaseExportingMetricReader(exporter)));
+
+        var provider = services.BuildServiceProvider();
+        // El MeterProvider se construye al resolverlo, y un valor registrado antes de eso se pierde.
+        _ = provider.GetRequiredService<MeterProvider>();
+        return provider;
+    }
+
     private static object? ServiceVersionWith(string? serviceVersion)
     {
         var configuration = new ConfigurationBuilder()
@@ -148,6 +204,49 @@ public sealed class ObservabilityConfigurationTests
             var options = inner.Create(name);
             recorded.Add(options);
             return options;
+        }
+    }
+
+    // El SDK reutiliza los objetos Metric entre exportaciones, así que se copia lo que importa
+    // dentro de Export en vez de guardar la referencia.
+    private sealed class RecordingMetricExporter : BaseExporter<Metric>
+    {
+        private readonly Dictionary<string, double[]> boundaries = [];
+
+        public List<string> MetricNames { get; } = [];
+
+        public List<string> MeterNames { get; } = [];
+
+        public double[] BoundariesOf(string metricName) => boundaries[metricName];
+
+        public override ExportResult Export(in Batch<Metric> batch)
+        {
+            foreach (var metric in batch)
+            {
+                MetricNames.Add(metric.Name);
+                MeterNames.Add(metric.MeterName);
+                foreach (var point in metric.GetMetricPoints())
+                {
+                    if (metric.MetricType != MetricType.Histogram)
+                    {
+                        continue;
+                    }
+
+                    var bounds = new List<double>();
+                    foreach (var bucket in point.GetHistogramBuckets())
+                    {
+                        // El último cubo es el de +infinito: no es un límite configurado.
+                        if (!double.IsPositiveInfinity(bucket.ExplicitBound))
+                        {
+                            bounds.Add(bucket.ExplicitBound);
+                        }
+                    }
+
+                    boundaries[metric.Name] = [.. bounds];
+                }
+            }
+
+            return ExportResult.Success;
         }
     }
 
