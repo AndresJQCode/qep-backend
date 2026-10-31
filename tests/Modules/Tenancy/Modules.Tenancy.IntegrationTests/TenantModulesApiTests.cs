@@ -102,15 +102,15 @@ public sealed class TenantModulesApiTests
         Assert.Equal(tenantId, modules.TenantId);
         // Spec 2026-10-09 §6.2 y spec 2026-10-13 D3: messaging y pipeline van al final y, como pos, no vienen con el signup.
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer"],
             modules.Modules.Select(module => module.Key));
-        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing")), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is not ("pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer")), module =>
         {
             Assert.True(module.Enabled);
             Assert.True(module.Contracted);
             Assert.Empty(module.MissingDependencies);
         });
-        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing"), module =>
+        Assert.All(modules.Modules.Where(module => module.Key is "pos" or "messaging" or "pipeline" or "automations" or "suppliers" or "billing" or "developer"), module =>
         {
             Assert.False(module.Enabled);
             Assert.False(module.Contracted);
@@ -148,7 +148,7 @@ public sealed class TenantModulesApiTests
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(13, modules.Modules.Count);
+        Assert.Equal(14, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);

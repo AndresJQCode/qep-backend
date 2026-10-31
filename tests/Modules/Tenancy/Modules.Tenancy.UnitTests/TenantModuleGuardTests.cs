@@ -58,4 +58,42 @@ public sealed class TenantModuleGuardTests
 
         Assert.Equal([TenantId], modules.Asked);
     }
+
+    // Fail closed: sin fila del tenant el guard normal deja pasar (stub); el de las claves de API, no.
+    [Fact]
+    public async Task FailClosedDeniesAnUnknownTenant()
+    {
+        var modules = new FixedTenantModules(null);
+
+        var denied = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            TenantModuleGuard.EnsureEnabledFailClosedAsync(
+                modules, TenantId, TenantModuleKeys.Developer, TestContext.Current.CancellationToken));
+
+        Assert.Equal(TenantModuleGuard.ModuleNotEnabledCode, denied.Code);
+        Assert.Equal([TenantId], modules.Asked);
+    }
+
+    [Fact]
+    public async Task FailClosedDeniesADisabledModule()
+    {
+        var modules = new FixedTenantModules(
+            TenantModuleSet.FromStored(TenantModuleKeys.All.Except([TenantModuleKeys.Developer])));
+
+        var denied = await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            TenantModuleGuard.EnsureEnabledFailClosedAsync(
+                modules, TenantId, TenantModuleKeys.Developer, TestContext.Current.CancellationToken));
+
+        Assert.Equal(TenantModuleGuard.ModuleNotEnabledCode, denied.Code);
+    }
+
+    [Fact]
+    public async Task FailClosedLetsAnEnabledModuleThrough()
+    {
+        var modules = FixedTenantModules.AllEnabled();
+
+        await TenantModuleGuard.EnsureEnabledFailClosedAsync(
+            modules, TenantId, TenantModuleKeys.Developer, TestContext.Current.CancellationToken);
+
+        Assert.Equal([TenantId], modules.Asked);
+    }
 }
