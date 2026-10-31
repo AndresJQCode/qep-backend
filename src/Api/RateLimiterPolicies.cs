@@ -13,4 +13,7 @@ public static class RateLimiterPolicies
     /// <summary>Endpoints de credenciales (login, registro, reset, aceptar invitación): 10 por minuto
     /// por IP y por endpoint, cada uno con su contador.</summary>
     public const string Credentials = "credentials";
+
+    /// <summary>Lotes de tiempos del navegador: 600 por minuto por IP. Ver su registro en <c>Program.cs</c>.</summary>
+    public const string Telemetry = "telemetry";
 }

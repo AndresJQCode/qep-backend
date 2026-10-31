@@ -2231,6 +2231,31 @@ Los logs van a stdout en JSON (`AddQepLogging` en `Program.cs`, formateador
 para que la infraestructura los indexe y Grafana pueda enlazar traza → log sin
 un enricher aparte (no se usa Serilog).
 
+#### Métricas de fluidez del navegador
+
+Todo meter propio cuelga del prefijo `Qep.` y sale por OTLP sin tocar la lista de `QepObservability`. El meter
+`Qep.Web` lo alimenta la SPA, que mide la navegación entre pantallas y los Web Vitals y los manda por lotes a:
+
+```
+POST /api/v1/tenants/{tenantId}/telemetry/web-vitals   → 204
+{ "samples": [ { "metric": "navigation"|"lcp"|"inp"|"ttfb"|"fcp"|"cls", "route": "/quotations/$id", "value": 1.2 } ] }
+```
+
+Pide sesión del tenant (sin permiso propio) y el header `X-Qep-Client`. Hasta 50 muestras por lote; `value` entre 0 y 120
+(segundos, salvo `cls`, que es un puntaje); `route` es obligatoria sólo en `navigation` y es la **plantilla** de la ruta
+del router, nunca la URL (con ids saldría una serie por registro). Un lote inválido responde 422 `validation.failed` con
+`errors`. Límite: 600 lotes por minuto por IP (política `telemetry`). La etiqueta `route` admite 256 valores distintos
+por proceso; el resto sale como `other`.
+
+| Métrica                       | Unidad | Etiqueta | Qué mide                                            |
+| ----------------------------- | ------ | -------- | --------------------------------------------------- |
+| `qep.web.navigation.duration` | s      | `route`  | Lo que tarda una pantalla en mostrarse tras pedirla |
+| `qep.web.vital`               | s      | `name`   | `lcp`, `inp`, `ttfb` y `fcp`                        |
+| `qep.web.cls`                 | —      | —        | Cumulative Layout Shift                             |
+
+Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
+`migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
+
 ### Infraestructura local
 
 `compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis
