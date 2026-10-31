@@ -55,6 +55,19 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Los borradores que abren la ventana de edición: el texto inicial y si se puede editar ya vienen resueltos (BFF).
+        group.MapGet("/quotation/draft", GetQuotationDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<SystemTemplateDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/billing/draft", GetBillingDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<BillingTemplatesDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapDelete("/templates/{templateId:guid}", DeleteAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
             .Produces(StatusCodes.Status204NoContent)
@@ -94,6 +107,12 @@ internal static class TemplateManagementEndpoints
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
             await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId, request?.ReminderBody, request?.OverdueBody), cancellationToken));
+
+    private static async Task<IResult> GetQuotationDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetQuotationTemplateDraftQuery(tenantId, connectionId), cancellationToken));
+
+    private static async Task<IResult> GetBillingDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetBillingTemplatesDraftQuery(tenantId, connectionId), cancellationToken));
 
     // Sin cuerpo en la respuesta: el frontend quita la fila de su lista y no necesita nada más.
     private static async Task<IResult> DeleteAsync(Guid tenantId, Guid connectionId, Guid templateId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)

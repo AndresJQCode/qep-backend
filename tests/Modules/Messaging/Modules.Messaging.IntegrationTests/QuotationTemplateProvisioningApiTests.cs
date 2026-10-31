@@ -287,6 +287,51 @@ public sealed class QuotationTemplateProvisioningApiTests
     }
 
     [Fact]
+    public async Task TheDraftRouteAnswersTheBaseTextAndABillingDraftWithoutModuleIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var baseUrl = TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId);
+
+        var quotation = await f.Admin.GetAsync($"{baseUrl}/quotation/draft", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, quotation.StatusCode);
+        var draft = await quotation.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, draft.GetProperty("body").GetString());
+        Assert.False(draft.GetProperty("locked").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, draft.GetProperty("rejectionReason").ValueKind);
+        Assert.Equal(7, draft.GetProperty("variables").GetArrayLength());
+        Assert.Equal(["key", "label", "example"], draft.GetProperty("variables")[0].EnumerateObject().Select(property => property.Name));
+
+        await ExecuteAsync(
+            f.ConnectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, status)
+            VALUES (@tenantId, 'billing', now(), 'manual', 'inactive')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'inactive', status_changed_at = now()
+            """,
+            ("tenantId", f.Tenant.TenantId));
+        var billing = await f.Admin.GetAsync($"{baseUrl}/billing/draft", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, billing.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(billing)).Code);
+    }
+
+    [Fact]
+    public async Task TheDraftRoutesWithoutThePermissionAre403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var baseUrl = TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await manager.GetAsync($"{baseUrl}/quotation/draft", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await manager.GetAsync($"{baseUrl}/billing/draft", Ct)).StatusCode);
+    }
+
+    [Fact]
     public async Task AVariableOutsideTheListIs422WithTheBodyKey()
     {
         await using var database = await StartDatabaseAsync();
