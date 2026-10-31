@@ -175,6 +175,7 @@
   </Folder>
   <Folder Name="/tests/Modules/ApiAccess/">
     <Project Path="tests/Modules/ApiAccess/Modules.ApiAccess.UnitTests/Modules.ApiAccess.UnitTests.csproj" />
+    <Project Path="tests/Modules/ApiAccess/Modules.ApiAccess.IntegrationTests/Modules.ApiAccess.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/tests/Modules/Suppliers/">
     <Project Path="tests/Modules/Suppliers/Modules.Suppliers.UnitTests/Modules.Suppliers.UnitTests.csproj" />
