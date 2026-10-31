@@ -9,11 +9,11 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// enviar por Meta.</summary>
 internal sealed class QuotationTemplateReadiness(MessagingDbContext dbContext) : IQuotationTemplateReadiness
 {
-    public Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+    public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         dbContext.MessageTemplates.AsNoTracking()
             .Where(template => template.TenantId == tenantId && template.ConnectionId == connectionId
                 && template.Kind == MessageTemplateKind.Quotation && template.Status == MessageTemplateStatuses.Approved)
-            .Select(template => new ApprovedQuotationTemplate(template.Name, template.Language))
+            .Select(template => new ApprovedTemplate(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson))
             .FirstOrDefaultAsync(cancellationToken);
 }
 
@@ -21,10 +21,10 @@ internal sealed class QuotationTemplateReadiness(MessagingDbContext dbContext) :
 /// parcial <c>UX_message_templates_billing</c> (a lo sumo una fila por tipo de aviso y conexión).</summary>
 internal sealed class BillingTemplateReadiness(MessagingDbContext dbContext) : IBillingTemplateReadiness
 {
-    public Task<ApprovedBillingTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken) =>
+    public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken) =>
         dbContext.MessageTemplates.AsNoTracking()
             .Where(template => template.TenantId == tenantId && template.ConnectionId == connectionId
                 && template.Kind == kind && template.Status == MessageTemplateStatuses.Approved)
-            .Select(template => new ApprovedBillingTemplate(template.Name, template.Language))
+            .Select(template => new ApprovedTemplate(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson))
             .FirstOrDefaultAsync(cancellationToken);
 }

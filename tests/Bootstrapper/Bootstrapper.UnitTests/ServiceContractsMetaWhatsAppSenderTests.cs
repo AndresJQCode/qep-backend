@@ -178,12 +178,12 @@ public sealed class ServiceContractsMetaWhatsAppSenderTests
 
         public void Approve(Guid connectionId, MessageTemplateKind kind) => approved.Add((connectionId, kind));
 
-        public Task<ApprovedBillingTemplate?> FindApprovedAsync(
+        public Task<ApprovedTemplate?> FindApprovedAsync(
             Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken)
         {
             var isApproved = approved.Count == 0 ? rig.ApproveByDefault : approved.Contains((connectionId, kind));
             var template = isApproved && tenantId == TenantId
-                ? new ApprovedBillingTemplate(BillingTemplateDefinitions.For(kind).Name, BillingTemplateDefinitions.Language)
+                ? new ApprovedTemplate(BillingTemplateDefinitions.For(kind).Name, BillingTemplateDefinitions.Language, "UTILITY", "NAMED", "[]")
                 : null;
             return Task.FromResult(template);
         }

@@ -146,7 +146,7 @@ public static class TemplateMessages
     public const string Body = "Escribe un cuerpo de 1 a 1024 caracteres con algo más que variables.";
     public const string BodyVariable = "Las variables van entre llaves dobles, en minúsculas, con números o guiones bajos y sin espacios: {{nombre}}.";
     public const string BodyVariableNotAllowed = "Usa sólo las variables de la lista de esta plantilla.";
-    public const string Examples ="Escribe un ejemplo para cada variable del cuerpo, ni una más ni una menos.";
+    public const string Examples = "Escribe un ejemplo para cada variable del cuerpo, ni una más ni una menos.";
     public const string Buttons = "Hasta diez botones; los de respuesta rápida van todos juntos, al principio o al final.";
     public const string ButtonType = "El tipo de botón es QuickReply, Url o PhoneNumber.";
     public const string ButtonText = "El texto del botón lleva de 1 a 25 caracteres.";

@@ -341,12 +341,14 @@ public sealed class QuotationTemplateProvisioningApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
 
-        async Task<ApprovedQuotationTemplate?> ApprovedAsync(Guid connectionId)
+        async Task<ApprovedTemplate?> ApprovedAsync(Guid connectionId)
         {
             using var scope = f.Factory.Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<IQuotationTemplateReadiness>()
                 .FindApprovedAsync(f.Tenant.TenantId, connectionId, Ct);
         }
+
+        static (string?, string?) NameAndLanguage(ApprovedTemplate? template) => (template?.Name, template?.Language);
 
         Task ApproveAsync() =>
             ExecuteAsync(f.ConnectionString, "UPDATE messaging.message_templates SET status = 'APPROVED' WHERE kind = 'Quotation' AND tenant_id = @t", ("t", f.Tenant.TenantId));
@@ -355,7 +357,7 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
         Assert.Null(await ApprovedAsync(f.ConnectionId));
         await ApproveAsync();
-        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion", "es"), await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(("qep_cotizacion", "es"), NameAndLanguage(await ApprovedAsync(f.ConnectionId)));
         // Otra conexión del mismo tenant no está lista.
         Assert.Null(await ApprovedAsync(Guid.CreateVersion7()));
 
@@ -365,6 +367,6 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
         Assert.Null(await ApprovedAsync(f.ConnectionId));
         await ApproveAsync();
-        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion_v2", "es"), await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(("qep_cotizacion_v2", "es"), NameAndLanguage(await ApprovedAsync(f.ConnectionId)));
     }
 }
