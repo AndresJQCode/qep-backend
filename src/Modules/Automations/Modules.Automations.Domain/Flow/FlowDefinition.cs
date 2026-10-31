@@ -137,7 +137,7 @@ public static class FlowVariableTypes
 /// el validador (son conocidas en todo flujo) y el motor (son lo único que sobrevive a un reinicio): una sola lista para los dos.</summary>
 public static class FlowFixedVariables
 {
-    public static readonly IReadOnlyList<string> Names = ["nombre", "telefono", "empresa", "conexion"];
+    public static readonly IReadOnlyList<string> Names = ["nombre_contacto", "telefono", "empresa", "conexion"];
 }
 
 public static class QuestionValidationKinds

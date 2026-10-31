@@ -74,7 +74,7 @@ public sealed class TemplatesApiTests
     private const string SimpleFlow = """
         { "schema": 1, "start": { "firstNodeId": "n1" }, "variables": [],
           "nodes": [
-            { "id": "n1", "kind": "message", "title": "Bienvenida", "text": "Hola {nombre}", "urlButton": null, "outputs": { "next": "n2" } },
+            { "id": "n1", "kind": "message", "title": "Bienvenida", "text": "Hola {nombre_contacto}", "urlButton": null, "outputs": { "next": "n2" } },
             { "id": "n2", "kind": "resolve", "title": "Listo", "text": "Gracias.", "reasonId": null } ] }
         """;
 

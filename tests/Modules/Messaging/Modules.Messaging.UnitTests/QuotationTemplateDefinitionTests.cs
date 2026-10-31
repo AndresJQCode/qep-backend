@@ -6,66 +6,82 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.UnitTests;
 
-/// <summary>Spec 2026-10-14 §4.5: la única fuente del texto de la plantilla de cotización. Mismo cuerpo que la de Zenvia, encabezado de
-/// documento con el handle, cuatro variables con ejemplo, <c>Matches</c> reconoce su propio resultado y rechaza otro cuerpo, y las versiones
-/// del nombre (<c>qep_cotizacion</c>, <c>qep_cotizacion_v2</c>…) que usa el reintento.</summary>
+/// <summary>Spec 2026-10-14 §4.5 y plantillas editables: la definición de la plantilla de cotización. Texto base del spec con las claves
+/// nuevas y sin pie, encabezado de documento con el handle, ejemplos de <see cref="SystemTemplateVariables"/> en orden de aparición,
+/// <c>IsAdoptable</c> mira la forma y no el texto, y las versiones del nombre (<c>qep_cotizacion</c>, <c>qep_cotizacion_v2</c>…) que usa el
+/// reintento.</summary>
 public sealed class QuotationTemplateDefinitionTests
 {
     [Fact]
     public void TheDefinitionIsTheReservedNameInSpanishUtility()
     {
         Assert.Equal((MessageTemplateName.QuotationName, "es", "UTILITY"), (QuotationTemplateDefinition.Name, QuotationTemplateDefinition.Language, QuotationTemplateDefinition.Category));
-        Assert.Equal(["fullname", "order_number", "total", "valid_until"], QuotationTemplateDefinition.Variables);
-        Assert.Equal(QuotationTemplateDefinition.Variables, TemplateComponentsBuilder.VariablesOf(QuotationTemplateDefinition.Body));
-        Assert.Equal(QuotationTemplateDefinition.Variables.Order(StringComparer.Ordinal), QuotationTemplateDefinition.Examples.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["nombre_contacto", "numero_cotizacion", "valor_total", "vigencia"], TemplateComponentsBuilder.VariablesOf(QuotationTemplateDefinition.BaseBody));
+        Assert.Equal(
+            SystemTemplateVariables.Quotation.ToDictionary(variable => variable.Key, variable => variable.Example), QuotationTemplateDefinition.Examples);
     }
 
     [Fact]
-    public void ThePayloadCarriesADocumentHeaderWithTheHandleTheBodyWithExamplesAndTheFooter()
+    public void TheBaseTextIsTheSpecsAndNewTemplatesHaveNoFooter()
     {
-        using var payload = JsonDocument.Parse(QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name).ToJsonString());
+        Assert.Equal(
+            "¡Hola, {{nombre_contacto}}! Te compartimos en este mensaje la cotización *{{numero_cotizacion}}*, por un valor total de *{{valor_total}}*. Esta cotización estará vigente hasta el *{{vigencia}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.",
+            QuotationTemplateDefinition.BaseBody);
+        Assert.Null(QuotationTemplateDefinition.Draft("qep_cotizacion", QuotationTemplateDefinition.BaseBody).Footer);
+        var components = QuotationTemplateDefinition.Payload("handle", "qep_cotizacion", "Hola {{nombre_contacto}}, gracias.")["components"]!.AsArray();
+        Assert.DoesNotContain(components, component => component!["type"]!.GetValue<string>() == "FOOTER");
+    }
+
+    [Fact]
+    public void ThePayloadCarriesADocumentHeaderWithTheHandleAndTheBodyWithExamplesOnly()
+    {
+        using var payload = JsonDocument.Parse(
+            QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name, QuotationTemplateDefinition.BaseBody).ToJsonString());
         var root = payload.RootElement;
 
         Assert.Equal(("qep_cotizacion", "es", "UTILITY", "NAMED"), (
             root.GetProperty("name").GetString(), root.GetProperty("language").GetString(), root.GetProperty("category").GetString(), root.GetProperty("parameter_format").GetString()));
         var components = root.GetProperty("components").EnumerateArray().ToArray();
-        Assert.Equal(["HEADER", "BODY", "FOOTER"], components.Select(component => component.GetProperty("type").GetString()));
+        Assert.Equal(["HEADER", "BODY"], components.Select(component => component.GetProperty("type").GetString()));
         Assert.Equal("DOCUMENT", components[0].GetProperty("format").GetString());
         Assert.Equal(["4::handle"], components[0].GetProperty("example").GetProperty("header_handle").EnumerateArray().Select(handle => handle.GetString()));
-        Assert.Equal(QuotationTemplateDefinition.Body, components[1].GetProperty("text").GetString());
-        Assert.Equal(["fullname|Juan Perez", "order_number|COT-000123", "total|2.450.000 COP", "valid_until|30 de septiembre de 2026"],
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, components[1].GetProperty("text").GetString());
+        Assert.Equal(["nombre_contacto|María González", "numero_cotizacion|COT-000123", "valor_total|2.450.000 COP", "vigencia|30 de septiembre de 2026"],
             components[1].GetProperty("example").GetProperty("body_text_named_params").EnumerateArray().Select(example => $"{example.GetProperty("param_name").GetString()}|{example.GetProperty("example").GetString()}"));
-        Assert.Equal(QuotationTemplateDefinition.Footer, components[2].GetProperty("text").GetString());
     }
 
     [Fact]
     public void ThePayloadTakesTheVersionedNameAndKeepsTheSameText()
     {
-        var first = QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name);
-        var third = QuotationTemplateDefinition.Payload("4::handle", "qep_cotizacion_v3");
+        var first = QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name, QuotationTemplateDefinition.BaseBody);
+        var third = QuotationTemplateDefinition.Payload("4::handle", "qep_cotizacion_v3", QuotationTemplateDefinition.BaseBody);
 
         Assert.Equal("qep_cotizacion_v3", third["name"]!.GetValue<string>());
         Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(first["components"], third["components"]));
-        Assert.Equal("qep_cotizacion_v3", QuotationTemplateDefinition.Draft("qep_cotizacion_v3").Name);
+        Assert.Equal("qep_cotizacion_v3", QuotationTemplateDefinition.Draft("qep_cotizacion_v3", QuotationTemplateDefinition.BaseBody).Name);
     }
 
     [Fact]
-    public void MatchesAcceptsItsOwnComponentsAsMetaWouldReturnThem()
+    public void IsAdoptableAcceptsItsOwnComponentsAsMetaWouldReturnThem()
     {
-        // Meta devuelve el encabezado con su example y el cuerpo con el suyo; Matches mira cuerpo, pie, formato y variables.
-        var components = QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name)["components"]!.ToJsonString();
+        var components = QuotationTemplateDefinition.Payload("4::handle", QuotationTemplateDefinition.Name, QuotationTemplateDefinition.BaseBody)["components"]!.ToJsonString();
 
-        Assert.True(QuotationTemplateDefinition.Matches(components));
+        Assert.True(QuotationTemplateDefinition.IsAdoptable(components));
     }
 
+    // El cuerpo y el pie viejos siguen siendo adoptables: el texto ya no decide.
     [Theory]
-    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Otro cuerpo {{fullname}} {{order_number}} {{total}} {{valid_until}}"},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""")]
-    [InlineData("""[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*."},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""")]
-    [InlineData("""[{"type":"BODY","text":"¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*."},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""")]
-    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*."}]""")]
-    [InlineData("""[{"type":"HEADER","format":42},{"type":"BODY","text":"¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*."},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""")]
-    [InlineData("no es json")]
-    public void MatchesRejectsAnotherBodyHeaderFormatOrFooter(string components) => Assert.False(QuotationTemplateDefinition.Matches(components));
+    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{fullname}}, gracias."},{"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]""", true)]
+    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", true)]
+    [InlineData("""[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", false)]
+    [InlineData("""[{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", false)]
+    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{otra}}, gracias."}]""", false)]
+    [InlineData("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."},{"type":"BUTTONS","buttons":[{"type":"QUICK_REPLY","text":"Sí"}]}]""", false)]
+    [InlineData("""[{"type":"HEADER","format":42},{"type":"BODY","text":"Hola {{nombre_contacto}}, gracias."}]""", false)]
+    [InlineData("no es json", false)]
+    public void AdoptionLooksAtTheShapeNotTheText(string components, bool expected) =>
+        Assert.Equal(expected, QuotationTemplateDefinition.IsAdoptable(components));
 
     [Theory]
     [InlineData(1, "qep_cotizacion")]
@@ -120,25 +136,6 @@ public sealed class QuotationTemplateDefinitionTests
         {
             Assert.StartsWith($"{index + 1} 0 obj", text[entries[index]..], StringComparison.Ordinal);
         }
-    }
-
-    [Fact]
-    public void ParametersFollowTheVariablesOrder()
-    {
-        var parameters = QuotationTemplateDefinition.ParametersFor("Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026");
-
-        Assert.Equal(["fullname", "order_number", "total", "valid_until"], parameters.Select(parameter => parameter.Key));
-        Assert.Equal(["Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026"], parameters.Select(parameter => parameter.Value));
-    }
-
-    [Fact]
-    public void RenderFillsTheFourVariablesAndAppendsTheFooter()
-    {
-        var parameters = QuotationTemplateDefinition.ParametersFor("Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026");
-
-        Assert.Equal(
-            "¡Hola, Juan Perez! Adjuntamos la cotización *COT-000123* por *$ 2.450.000*, vigente hasta el *30 de septiembre de 2026*.\n\nEste mensaje fue generado automáticamente.",
-            QuotationTemplateDefinition.Render(parameters));
     }
 
     [Fact]

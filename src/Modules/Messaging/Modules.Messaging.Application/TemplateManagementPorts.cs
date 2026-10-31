@@ -48,19 +48,18 @@ public interface IMessageTemplateRepository
 /// una constante. El adaptador hacia Quotations va en Bootstrapper cuando ese spec llegue.</summary>
 public interface IQuotationTemplateReadiness
 {
-    Task<ApprovedQuotationTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
-
-/// <summary>Lo que el sender de Meta necesita para mandar la cotización: el nombre vigente de la plantilla y su idioma.</summary>
-public sealed record ApprovedQuotationTemplate(string Name, string Language);
 
 /// <summary>Cobros recurrentes §5: la señal para el consumidor Billing, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la fila de ese
 /// <paramref name="kind"/> (<c>BillingReminder</c> o <c>BillingOverdue</c>) en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>. Devuelve
 /// nombre e idioma y no un <c>bool</c> porque el reintento versiona el nombre (<c>qep_cobro_recordatorio_v2</c>…).</summary>
 public interface IBillingTemplateReadiness
 {
-    Task<ApprovedBillingTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken);
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, MessageTemplateKind kind, CancellationToken cancellationToken);
 }
 
-/// <summary>Lo que el sender de cobros necesita: el nombre vigente de la plantilla y su idioma.</summary>
-public sealed record ApprovedBillingTemplate(string Name, string Language);
+/// <summary>La fila aprobada de una plantilla del sistema, con lo que hace falta para armar su envío: el nombre vigente, el idioma, la
+/// categoría, el formato guardado y los <c>components</c> crudos. Reemplaza a las dos de antes (cotización y cobros), que sólo llevaban
+/// nombre e idioma y obligaban a que las variables fueran una lista fija.</summary>
+public sealed record ApprovedTemplate(string Name, string Language, string Category, string ParameterFormat, string ComponentsJson);

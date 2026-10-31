@@ -28,11 +28,11 @@ public sealed class QuotationTemplateProvisioningApiTests
     private const string QuarantineError =
         """{"error":{"message":"(#100) Invalid parameter","type":"OAuthException","code":100,"error_user_title":"Message template language is being deleted","error_user_msg":"New es content can't be added while the existing es content is being deleted. Try again in 4 weeks or create a new message template.","fbtrace_id":"t"}}""";
 
-    private static string ExternalQuotation(string body = QuotationBody, string headerFormat = "DOCUMENT") =>
+    private static string ExternalQuotation(string headerFormat = "DOCUMENT") =>
         $$$"""
         {"data":[{"id":"42","name":"qep_cotizacion","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED",
           "components":[{"type":"HEADER","format":"{{{headerFormat}}}","example":{"header_handle":["x"]}},
-                        {"type":"BODY","text":"{{{body}}}","example":{"body_text_named_params":[{"param_name":"fullname","example":"Juan"}]}},
+                        {"type":"BODY","text":"{{{QuotationBody}}}","example":{"body_text_named_params":[{"param_name":"fullname","example":"Juan"}]}},
                         {"type":"FOOTER","text":"Este mensaje fue generado automáticamente."}]}]}
         """;
 
@@ -96,7 +96,7 @@ public sealed class QuotationTemplateProvisioningApiTests
             created.GetProperty("name").GetString(), created.GetProperty("language").GetString(), created.GetProperty("category").GetString(),
             created.GetProperty("status").GetString(), created.GetProperty("kind").GetString(), created.GetProperty("metaTemplateId").GetString(),
             created.GetProperty("sendable").GetBoolean(), created.GetProperty("unsupportedReason").GetString()));
-        Assert.Equal(["fullname", "order_number", "total", "valid_until"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(["nombre_contacto", "numero_cotizacion", "valor_total", "vigencia"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal(await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant), created.GetProperty("createdBy").GetProperty("memberId").GetGuid());
         var calls = MetaCalls(f).Where(call => call.Method == HttpMethod.Post).ToArray();
         Assert.Equal(["/v24.0/100200300/uploads", "/v24.0/upload:MTph", "/v24.0/222/message_templates"], calls.Select(call => call.Uri!.AbsolutePath));
@@ -252,15 +252,98 @@ public sealed class QuotationTemplateProvisioningApiTests
     public async Task AnExternalTemplateWithAnotherBodyIs422QuotationConflict()
     {
         await using var database = await StartDatabaseAsync();
-        var f = await ArrangeAsync(database, ExternalQuotation(body: "Otro texto {{fullname}} {{order_number}} {{total}} {{valid_until}}"));
+        var f = await ArrangeAsync(database, ExternalQuotation());
         using var host = f.Factory;
         await f.Admin.GetAsync(TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId), Ct);
 
-        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "Otro texto {{nombre_contacto}}." });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("messaging.template.quotation_conflict", (await ProblemAsync(response)).Code);
         Assert.Equal("External", await ScalarAsync<string>(f.ConnectionString, "SELECT kind FROM messaging.message_templates WHERE name = 'qep_cotizacion' AND tenant_id = @t", ("t", f.Tenant.TenantId)));
+    }
+
+    [Fact]
+    public async Task ThePostAcceptsABodyAndWorksWithoutOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var edited = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "  Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.  " });
+
+        Assert.Equal(HttpStatusCode.Created, edited.StatusCode);
+        var created = await edited.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.", created.GetProperty("body").GetString());
+        using var payload = JsonDocument.Parse(MetaCalls(f).Single(IsCreate).Body!);
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.",
+            payload.RootElement.GetProperty("components").EnumerateArray().Single(component => component.GetProperty("type").GetString() == "BODY").GetProperty("text").GetString());
+
+        // Sin cuerpo (backend desplegado antes que el frontend): el texto base.
+        await ExecuteAsync(f.ConnectionString, "DELETE FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId));
+        var plain = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+        Assert.Equal(HttpStatusCode.Created, plain.StatusCode);
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, (await plain.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("body").GetString());
+    }
+
+    [Fact]
+    public async Task TheDraftRouteAnswersTheBaseTextAndABillingDraftWithoutModuleIs403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var baseUrl = TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId);
+
+        var quotation = await f.Admin.GetAsync($"{baseUrl}/quotation/draft", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, quotation.StatusCode);
+        var draft = await quotation.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, draft.GetProperty("body").GetString());
+        Assert.False(draft.GetProperty("locked").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, draft.GetProperty("rejectionReason").ValueKind);
+        Assert.Equal(7, draft.GetProperty("variables").GetArrayLength());
+        Assert.Equal(["key", "label", "example"], draft.GetProperty("variables")[0].EnumerateObject().Select(property => property.Name));
+
+        await ExecuteAsync(
+            f.ConnectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source, status)
+            VALUES (@tenantId, 'billing', now(), 'manual', 'inactive')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'inactive', status_changed_at = now()
+            """,
+            ("tenantId", f.Tenant.TenantId));
+        var billing = await f.Admin.GetAsync($"{baseUrl}/billing/draft", Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, billing.StatusCode);
+        Assert.Equal("tenancy.module_not_enabled", (await ProblemAsync(billing)).Code);
+    }
+
+    [Fact]
+    public async Task TheDraftRoutesWithoutThePermissionAre403()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        using var manager = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var baseUrl = TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await manager.GetAsync($"{baseUrl}/quotation/draft", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await manager.GetAsync($"{baseUrl}/billing/draft", Ct)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AVariableOutsideTheListIs422WithTheBodyKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "Hola {{otra}}, gracias." });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal(("validation.failed", "body"), (code, Assert.Single(keys)));
+        Assert.DoesNotContain(MetaCalls(f), IsCreate);
     }
 
     [Fact]
@@ -341,12 +424,14 @@ public sealed class QuotationTemplateProvisioningApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
 
-        async Task<ApprovedQuotationTemplate?> ApprovedAsync(Guid connectionId)
+        async Task<ApprovedTemplate?> ApprovedAsync(Guid connectionId)
         {
             using var scope = f.Factory.Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<IQuotationTemplateReadiness>()
                 .FindApprovedAsync(f.Tenant.TenantId, connectionId, Ct);
         }
+
+        static (string?, string?) NameAndLanguage(ApprovedTemplate? template) => (template?.Name, template?.Language);
 
         Task ApproveAsync() =>
             ExecuteAsync(f.ConnectionString, "UPDATE messaging.message_templates SET status = 'APPROVED' WHERE kind = 'Quotation' AND tenant_id = @t", ("t", f.Tenant.TenantId));
@@ -355,7 +440,7 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
         Assert.Null(await ApprovedAsync(f.ConnectionId));
         await ApproveAsync();
-        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion", "es"), await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(("qep_cotizacion", "es"), NameAndLanguage(await ApprovedAsync(f.ConnectionId)));
         // Otra conexión del mismo tenant no está lista.
         Assert.Null(await ApprovedAsync(Guid.CreateVersion7()));
 
@@ -365,6 +450,6 @@ public sealed class QuotationTemplateProvisioningApiTests
         Assert.Equal(HttpStatusCode.Created, (await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f))).StatusCode);
         Assert.Null(await ApprovedAsync(f.ConnectionId));
         await ApproveAsync();
-        Assert.Equal(new ApprovedQuotationTemplate("qep_cotizacion_v2", "es"), await ApprovedAsync(f.ConnectionId));
+        Assert.Equal(("qep_cotizacion_v2", "es"), NameAndLanguage(await ApprovedAsync(f.ConnectionId)));
     }
 }

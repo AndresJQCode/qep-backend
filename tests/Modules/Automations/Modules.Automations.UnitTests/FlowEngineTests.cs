@@ -62,9 +62,9 @@ public sealed class FlowEngineTests
     [Fact]
     public void AMessageWithUrlButtonIsACtaUrl()
     {
-        var flow = Flow(Message("n1", "Hola {nombre}", urlButton: new UrlButton("Ver orden", "https://www.example.com/ordenes/{orden.id}")));
+        var flow = Flow(Message("n1", "Hola {nombre_contacto}", urlButton: new UrlButton("Ver orden", "https://www.example.com/ordenes/{orden.id}")));
 
-        var result = Start(flow, Variables("""{ "nombre": "Ana", "orden": { "id": 42 } }"""));
+        var result = Start(flow, Variables("""{ "nombre_contacto": "Ana", "orden": { "id": 42 } }"""));
 
         var send = Assert.IsType<Effect.SendInteractive>(result.Effects[0]);
         Assert.Equal(new InteractiveMessage.CtaUrl("Hola Ana", "Ver orden", "https://www.example.com/ordenes/42"), send.Message);
@@ -240,7 +240,7 @@ public sealed class FlowEngineTests
     [Fact]
     public void HandoffSendsTheOptionalTextAndEnds()
     {
-        var withText = Start(Flow(new HandoffNode("n1", "Asesor", Out(), "Te paso con {nombre}.")), Variables("""{ "nombre": "un asesor" }"""));
+        var withText = Start(Flow(new HandoffNode("n1", "Asesor", Out(), "Te paso con {nombre_contacto}.")), Variables("""{ "nombre_contacto": "un asesor" }"""));
 
         Assert.Equal<Effect>([new Effect.SendText("n1", "Te paso con un asesor."), new Effect.Handoff("n1")], withText.Effects);
         Assert.Equal(RunStatus.HandedOff, withText.State.Status);
@@ -363,7 +363,7 @@ public sealed class FlowEngineTests
     public void TheAnnexAFlowStartsWithTheWelcomeAndWaitsForTheDocument()
     {
         var variables = RunVariables.Empty();
-        variables.Set("nombre", JsonValue.Create("Ana"));
+        variables.Set("nombre_contacto", JsonValue.Create("Ana"));
 
         var result = Start(AnnexAFlow.Parse(), variables);
 

@@ -179,7 +179,7 @@ public sealed class FlowEngineWaitingTests
     [Fact]
     public void ThreeInvalidAnswersRestartWhenNotConnected()
     {
-        var fixedVariables = Variables("""{ "nombre": "Ana", "telefono": "573001112233", "empresa": "Clasic", "conexion": "Línea de servicio" }""");
+        var fixedVariables = Variables("""{ "nombre_contacto": "Ana", "telefono": "573001112233", "empresa": "Clasic", "conexion": "Línea de servicio" }""");
         var flow = Flow(Question("q0", saveTo: "motivo", answered: "q1"), Question("q1", "digits", invalid: null));
         var waiting = Reply(flow, Start(flow, fixedVariables), Typed("Tengo una falla"));
 
@@ -195,8 +195,8 @@ public sealed class FlowEngineWaitingTests
         Assert.Equal(RunStatus.Waiting, result.State.Status);
         Assert.Equal("q0", result.State.CurrentNodeId);
         Assert.Equal(0, result.State.Attempts);
-        Assert.Equal(["conexion", "empresa", "nombre", "telefono"], result.State.Variables.Snapshot().Keys.Order(StringComparer.Ordinal));
-        Assert.Equal("Ana", result.State.Variables.Get("nombre")!.GetValue<string>());
+        Assert.Equal(["conexion", "empresa", "nombre_contacto", "telefono"], result.State.Variables.Snapshot().Keys.Order(StringComparer.Ordinal));
+        Assert.Equal("Ana", result.State.Variables.Get("nombre_contacto")!.GetValue<string>());
         Assert.Contains(result.State.Trace, entry => entry is { NodeId: "q1", Outcome: "restart" });
     }
 
@@ -363,10 +363,18 @@ public sealed class FlowEngineWaitingTests
     }
 
     [Fact]
+    public void ARestartKeepsTheContactNameAndNotTheOldKey()
+    {
+        var kept = RunVariables.Parse("""{"nombre_contacto":"Ana","nombre":"Vieja","motivo":"Falla"}""").FixedOnly();
+
+        Assert.Equal(["nombre_contacto"], kept.Snapshot().Keys);
+    }
+
+    [Fact]
     public void TheRestartKeywordRestartsFromTheFirstNode()
     {
         var flow = Flow(Question("q0", saveTo: "motivo", answered: "b"), Buttons("b"), Message("t", "Técnico"), Message("s", "Ventas"));
-        var started = Start(flow, Variables("""{ "nombre": "Ana" }"""));
+        var started = Start(flow, Variables("""{ "nombre_contacto": "Ana" }"""));
         var atButtons = Replies(flow, started, Typed("Tengo una falla"), Typed("no sé"));
 
         Assert.Equal(1, atButtons.State.Attempts);
@@ -379,7 +387,7 @@ public sealed class FlowEngineWaitingTests
         Assert.Equal("q0", restarted.State.CurrentNodeId);
         Assert.Equal(0, restarted.State.Attempts);
         Assert.False(restarted.State.Variables.Has("motivo"));
-        Assert.Equal("Ana", restarted.State.Variables.Get("nombre")!.GetValue<string>());
+        Assert.Equal("Ana", restarted.State.Variables.Get("nombre_contacto")!.GetValue<string>());
         Assert.Equal(new TraceEntry(Now, "b", FlowNodeKinds.Buttons, "restart"), restarted.State.Trace[^2]);
 
         // En el primer bloque también reinicia (no se guarda como respuesta) y volver a entrar en él no es un ciclo.

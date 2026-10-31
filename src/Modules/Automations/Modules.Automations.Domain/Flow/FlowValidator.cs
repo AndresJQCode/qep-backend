@@ -587,13 +587,14 @@ public static partial class FlowValidator
         }
     }
 
+    // Las variables fijas (nombre_contacto) llevan guion bajo y no pasarían la regla de nombres propios: se eximen.
     private static void CheckName(FlowNode node, string name, List<FlowIssue> issues)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
             issues.Add(Error(FlowIssueCodes.VariableNameInvalid, node.Id, $"Falta el nombre de una variable en «{node.Title}»."));
         }
-        else if (!VariableName().IsMatch(name))
+        else if (!FixedVariables.Contains(name) && !VariableName().IsMatch(name))
         {
             issues.Add(Error(
                 FlowIssueCodes.VariableNameInvalid, node.Id,

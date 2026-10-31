@@ -3180,6 +3180,9 @@ bajo `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-m
 | `GET /` | La pantalla: conexión, estado de la plantilla de cotización, última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
 | `POST /templates` | Crea una plantilla libre (texto, variables con nombre, pie, botones) y la manda a aprobar. |
 | `POST /quotation` | Aprovisiona la plantilla de cotización con su PDF de ejemplo; reintenta si la anterior fue rechazada; adopta una `qep_cotizacion` igual creada a mano en Meta. |
+| `POST /billing` | Aprovisiona las dos plantillas de cobro (recordatorio y mora). Igual que `POST /quotation`, el cuerpo HTTP es **opcional**: sin él se crea el texto base de la definición; con él, el tenant manda su propio texto. |
+| `GET /quotation/draft` | Borrador que abre la ventana de edición de la plantilla de cotización: texto inicial, variables disponibles con su etiqueta y si ya se puede editar. |
+| `GET /billing/draft` | Lo mismo para las dos plantillas de cobro. |
 | `DELETE /templates/{templateId}` | Borra en Meta (sólo ese idioma) y en el espejo; 422 `messaging.template.in_use_by_campaign` si una campaña programada o enviándose la usa. |
 | `POST /sync` | Sincroniza el espejo contra Meta. |
 
@@ -3204,6 +3207,14 @@ calcular `qep_cotizacion`, que Meta tiene en cuarentena: **la recuperación depe
 `name_taken`. `TemplateGraphErrors` lo hace cuando `error_user_title` o `error_user_msg` dicen «already exist»,
 «being deleted», o «deleted» junto a «language» o «template»; el cuerpo real está a confirmar (handoff de Meta). Si
 no lo reconoce, sale `rejected_by_meta` y cada intento recalcula la versión 1.
+
+**El texto lo elige el tenant** (spec 2026-10-31). `QuotationTemplateDefinition.BaseBody` y `BillingTemplateDefinition.BaseBody` son
+sólo el texto inicial que ofrece el borrador; el tenant lo edita y lo que se envía sale de su fila, no de la definición. Las variables
+llevan claves en español (`nombre_contacto`, `asesor`, `empresa`, `saludo`, `numero_cotizacion`, `valor_total`, `vigencia`, y en cobros
+`servicio`, `valor`, `vencimiento`, `cantidad_cobros`, `total_vencido`). Sin pie, sólo salen las variables nuevas: las claves viejas
+(`fullname`, `order_number`, `total`, `valid_until`) siguen valiendo para las plantillas ya aprobadas. En Automatizaciones,
+`FlowValidator.CheckName` exime las variables fijas (`nombre_contacto`, `telefono`, `empresa`, `conexion`) de la regla de nombres propios,
+porque llevan guion bajo.
 
 **Versiones huérfanas.** Tres casos dejan una plantilla en Meta sin su fila, y el siguiente refresco la trae como
 `External` para que el admin la borre desde la pantalla: el que pierde dos aprovisionamientos simultáneos (recibe
@@ -4006,8 +4017,9 @@ aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_e
 `SweepMinutes > 0` y `SendHourLocal` entre 0 y 23; si no, la API no arranca. No hay secretos propios: el correo sale por el canal de
 Notifications y WhatsApp por la conexión `whatsapp-cloud` del tenant.
 
-**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con parámetros posicionales: `qep_cobro_recordatorio` y
-`qep_cobro_vencido` (texto literal en la spec, §5). QEP las crea en la cuenta de Meta del tenant con
+**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con variables con nombre (`{{nombre_contacto}}`, `{{servicio}}`…): `qep_cobro_recordatorio` y
+`qep_cobro_vencido`. El texto base está en la spec (§5) y el admin lo edita antes de enviarlo a Meta; las filas viejas con parámetros
+posicionales (`{{1}}`…) siguen saliendo. QEP las crea en la cuenta de Meta del tenant con
 `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/billing` (exige el módulo `billing`;
 reintenta si quedó a medias). **Meta debe aprobarlas** antes de enviar: sin aprobación el aviso falla con
 `template_not_approved`. Una vez aprobadas, el tenant elige la conexión en `PUT /billing/settings`.
@@ -4079,7 +4091,9 @@ guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de pa
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
 una conversación bloqueada rechaza cualquier categoría.
 
-**Errores.** Todo es `ProblemDetails` con `code`, y los `code` son contrato público: cambiarlos rompe integraciones.
+**Errores.** Todo es `ProblemDetails` con `code`, y los `code` son contrato público: cambiarlos rompe integraciones. `title` y `detail` son
+texto para personas y pueden cambiar: decide por `code`. En un `422 validation.failed`, `detail` es un texto fijo y lo que hay que corregir
+viene por campo en `errors`.
 
 | Status | `code` | Cuándo |
 | --- | --- | --- |

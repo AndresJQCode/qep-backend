@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BuildingBlocks.Application;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -23,6 +25,8 @@ namespace Modules.Messaging.IntegrationTests;
 public sealed class ExternalApiSurfaceTests
 {
     private const string ProbeUrl = "/api/v1/external/probe";
+
+    private const string InternalInvalidUrl = "/api/v1/probe/invalid";
 
     private const string InventedKey = "qep_abcd1234_inventada" + "0000000000000000000000000000000000";
 
@@ -193,7 +197,64 @@ public sealed class ExternalApiSurfaceTests
                 ("path", ProbeUrl + "/forbidden")));
     }
 
-    /// <summary>Monta, sobre el grupo real de la API externa, un <c>POST</c> que responde 200 y otro que lanza un 403 de scope.</summary>
+    [Theory]
+    [InlineData("/unauthorized", HttpStatusCode.Unauthorized, "Autenticación requerida", "probe.unauthorized")]
+    [InlineData("/forbidden", HttpStatusCode.Forbidden, "Acceso denegado", ExternalApiErrorCodes.ScopeMissing)]
+    public async Task TheCentralHandlerTitlesA401AndA403InSpanish(string path, HttpStatusCode status, string title, string code)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.TenantId, f.MemberId, SendScope);
+        using var client = CreateExternalClient(f.Factory, plaintext);
+
+        var response = await PostProbeAsync(client, ProbeUrl + path);
+
+        Assert.Equal(status, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(title, body.GetProperty("title").GetString());
+        Assert.Equal(code, body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task AnInternalRouteAnswersTheSameValidationText()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var client = f.Factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Qep-Client", "web");
+
+        var response = await PostProbeAsync(client, InternalInvalidUrl);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal("Datos no válidos", body.GetProperty("title").GetString());
+        Assert.Equal("Algunos datos no son válidos. Revisa cada campo e intenta de nuevo.", body.GetProperty("detail").GetString());
+        Assert.Equal("""{"name":["Escribe un nombre."]}""", body.GetProperty("errors").GetRawText());
+    }
+
+    [Fact]
+    public async Task TheFailureLogKeepsTheRawValidationText()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var client = f.Factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Qep-Client", "web");
+
+        await PostProbeAsync(client, InternalInvalidUrl);
+
+        Assert.Equal(
+            1L,
+            await CountAsync(
+                f.ConnectionString,
+                "SELECT count(*) FROM platform.request_failures WHERE path = @path AND detail LIKE '%name: Escribe un nombre.%'",
+                ("path", InternalInvalidUrl)));
+    }
+
+    /// <summary>Monta, sobre el grupo real de la API externa, un <c>POST</c> que responde 200 y otros que lanzan un 401 y un 403 por el
+    /// manejador central. Fuera del grupo, una ruta interna que lanza un 422 de validación.</summary>
     private sealed class ProbeStartupFilter : IStartupFilter
     {
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -203,9 +264,17 @@ public sealed class ExternalApiSurfaceTests
             var group = ExternalApiEndpoints.MapExternalGroup(routes);
             group.MapPost("/probe", () => Results.Ok());
             group.MapPost("/probe/forbidden", Forbidden);
+            group.MapPost("/probe/unauthorized", Unauthorized);
+            routes.MapPost(InternalInvalidUrl, Invalid).AllowAnonymous();
         };
 
         private static IResult Forbidden() =>
             throw new RequestForbiddenException(ExternalApiErrorCodes.ScopeMissing, "Sonda.");
+
+        private static IResult Unauthorized() =>
+            throw new RequestUnauthorizedException("probe.unauthorized", "Sonda.");
+
+        private static IResult Invalid() =>
+            throw new ValidationException([new ValidationFailure("name", "Escribe un nombre.")]);
     }
 }

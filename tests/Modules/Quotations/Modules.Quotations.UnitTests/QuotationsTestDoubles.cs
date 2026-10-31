@@ -71,7 +71,7 @@ internal static class WhatsAppChannels
             "d0e79149-ed61-4784-9883-d86807f46ce5", orderTemplateId);
 
     public static MetaWhatsAppChannel Meta(Guid? connectionId = null) =>
-        new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
+        new(connectionId ?? Guid.CreateVersion7(), "Meta de prueba", "573001112233");
 }
 
 /// <summary>Lo que el router le entregó a Zenvia.</summary>

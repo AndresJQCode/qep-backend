@@ -38,17 +38,33 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Sin cuerpo: la definición de la plantilla de cotización vive en el backend (spec §4.5).
+        // El cuerpo HTTP es opcional: sin él se crea el texto base de la definición (spec §4.5) y se adopta una externa compatible. Dejar
+        // que se infiera requerido responde 500 cuando un frontend viejo no manda nada (precedente: el envío de cotizaciones).
         group.MapPost("/quotation", ProvisionQuotationAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionQuotationTemplateRequest>(isOptional: true, "application/json")
             .Produces<ManagedTemplateDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Cobros recurrentes §5: las dos plantillas de cobro, también sin cuerpo (su definición vive en el backend).
+        // Cobros recurrentes §5: las dos plantillas de cobro, también con el cuerpo HTTP opcional (el texto base vive en el backend).
         group.MapPost("/billing", ProvisionBillingAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionBillingTemplatesRequest>(isOptional: true, "application/json")
             .Produces<IReadOnlyList<ManagedTemplateDto>>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Los borradores que abren la ventana de edición: el texto inicial y si se puede editar ya vienen resueltos (BFF).
+        group.MapGet("/quotation/draft", GetQuotationDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<SystemTemplateDraftDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/billing/draft", GetBillingDraftAsync)
+            .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Produces<BillingTemplatesDraftDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -79,16 +95,24 @@ internal static class TemplateManagementEndpoints
                 cancellationToken));
 
     // Location = la pantalla, como al crear una libre.
-    private static async Task<IResult> ProvisionQuotationAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+    private static async Task<IResult> ProvisionQuotationAsync(
+        Guid tenantId, Guid connectionId, ProvisionQuotationTemplateRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
-            await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId), cancellationToken));
+            await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
 
     // Location = la pantalla, como al provisionar la de cotización.
-    private static async Task<IResult> ProvisionBillingAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+    private static async Task<IResult> ProvisionBillingAsync(
+        Guid tenantId, Guid connectionId, ProvisionBillingTemplatesRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
-            await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId), cancellationToken));
+            await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId, request?.ReminderBody, request?.OverdueBody), cancellationToken));
+
+    private static async Task<IResult> GetQuotationDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetQuotationTemplateDraftQuery(tenantId, connectionId), cancellationToken));
+
+    private static async Task<IResult> GetBillingDraftAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetBillingTemplatesDraftQuery(tenantId, connectionId), cancellationToken));
 
     // Sin cuerpo en la respuesta: el frontend quita la fila de su lista y no necesita nada más.
     private static async Task<IResult> DeleteAsync(Guid tenantId, Guid connectionId, Guid templateId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -110,6 +134,14 @@ public sealed record CreateTemplateRequest(
     string? Footer,
     List<TemplateButtonRequest>? Buttons,
     Dictionary<string, string?>? Examples);
+
+/// <summary>El cuerpo editado de la plantilla de cotización. Son opcionales la propiedad <c>Body</c> y también el cuerpo HTTP entero: sin
+/// ellos se crea el texto base (backend desplegado antes que el frontend).</summary>
+public sealed record ProvisionQuotationTemplateRequest(string? Body);
+
+/// <summary>Los cuerpos editados de las dos plantillas de cobro. Son opcionales cada propiedad y también el cuerpo HTTP entero: lo que falte
+/// se crea con el texto base de su aviso (backend desplegado antes que el frontend).</summary>
+public sealed record ProvisionBillingTemplatesRequest(string? ReminderBody, string? OverdueBody);
 
 /// <summary><c>type</c> es <c>QuickReply</c>, <c>Url</c> o <c>PhoneNumber</c>, como <c>TemplateButtonDto</c>.</summary>
 public sealed record TemplateButtonRequest(string? Type, string? Text, string? Url, string? PhoneNumber);

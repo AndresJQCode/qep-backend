@@ -28,6 +28,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IBotOutbound, BotOutbound>();
         // Spec 2026-10-21 D16: la plantilla de cotización al hilo del número, sin las guardas de la bandeja.
         services.AddScoped<IQuotationTemplateOutbound, QuotationTemplateOutbound>();
+        services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();

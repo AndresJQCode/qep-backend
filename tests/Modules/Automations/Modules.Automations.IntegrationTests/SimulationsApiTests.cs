@@ -143,7 +143,7 @@ public sealed class SimulationsApiTests
         Assert.Equal(["Bienvenida", "Número de documento"], simulation.Transcript.Select(entry => entry.NodeTitle));
         Assert.Equal("n2", simulation.CurrentNodeId);
         Assert.Equal(("Waiting", false), (simulation.Status, simulation.Ended));
-        Assert.Equal("Cliente de prueba", simulation.Variables.GetProperty("nombre").GetString());
+        Assert.Equal("Cliente de prueba", simulation.Variables.GetProperty("nombre_contacto").GetString());
         Assert.Equal("3000000000", simulation.Variables.GetProperty("telefono").GetString());
         Assert.Equal("Automations Test Org", simulation.Variables.GetProperty("empresa").GetString());
         // Sin conexiones en el chatbot, «Simulador».
