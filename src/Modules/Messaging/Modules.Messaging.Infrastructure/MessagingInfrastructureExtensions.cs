@@ -54,6 +54,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IWebhookDeliveries, WebhookDeliveries>();
         // §8.2: rutas con caché por pod, procesador por entrega y el worker que reclama.
         services.AddMemoryCache();
+        services.AddSingleton<MessagingMetrics>();
         services.AddScoped<WebhookRouting>();
         services.AddScoped<WebhookDeliveryProcessor>();
         services.AddHostedService<WebhookDeliveryWorker>();

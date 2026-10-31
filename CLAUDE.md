@@ -267,10 +267,22 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
   liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
+- **El módulo de cobros recurrentes se llama `ServiceContracts` en el código y `billing` en todo lo desplegado** (owner,
+  2026-10-30). Carpeta `src/Modules/ServiceContracts/`, namespaces `Modules.ServiceContracts.*`, agregado `ServiceContract`
+  (antes `BillingService`), tipos `ServiceContracts*` (`ServiceContractsDbContext`, `ServiceContractsPermissions`,
+  `IServiceContractsAuditPublisher`…), en pantalla «Contratos de servicio». **No cambiaron, y no se cambian sin migración de
+  datos ni despliegue conjunto con el frontend:** el esquema `billing`, la clave de módulo `billing` (`TenantModuleKey.ServiceContracts`),
+  los permisos `billing.service.read|manage`, las rutas `/api/v1/tenants/{id}/billing` y `/billing` del SPA, las acciones de
+  auditoría y los códigos de error `billing.*`, la sección `Billing` de configuración (`ServiceContractsOptions.SectionName`) y el id
+  de la migración `20261029180546_InitialBilling`. Conservan «Billing» a propósito porque nombran el cobro y no el módulo, o son de
+  otro módulo: `BillingCycle`, `BillingChannel`, `CustomerBillingProfile`; `MessageTemplateKind.BillingReminder|BillingOverdue`
+  (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
+  (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
+  (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Los diecinueve módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
-  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/`. `Platform` también existe, pero sin
+  uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,
   `IMessagingCustomerDirectory` e `IMessagingMediaStore`, con adaptadores en Bootstrapper.
@@ -286,6 +298,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
   sin cambio le da un 412 al asesor.
+- **Un mensaje del historial no trae `to`: la dirección sale de comparar `from` con el id del hilo** (producción, 2026-10-30).
+  Los ecos sí traen `to`, y un fixture de historial que también lo llevaba pasó en verde y escondió el bug: 795 mensajes del
+  negocio entraron como del contacto. Un fixture de Meta se copia de la forma real (`messaging.webhook_deliveries`), no de otro
+  campo del webhook.
 - **Un eco (`smb_message_echoes`) a un número desconocido crea la conversación `Resolved`, no `Open`** (P-5, owner
   2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
   abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
@@ -505,6 +521,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `PosSaleStatus` u `OrderStatus` que no sea venta tiene que entrar en `is_void`, o empieza a sumar en el resumen sin
   error. Y un filtro opcional nuevo se omite del texto cuando no viene, no se manda como parámetro nulo: PostgreSQL no
   tipa un `NULL` suelto (`could not determine data type of parameter`).
+- **`QueueMetricsSource` lee seis tablas por nombre** (observabilidad fase 2, 2026-10-30): `messaging.webhook_deliveries`,
+  `automation_inbox`, `message_media` (unida a `messages`), `campaign_recipients` (unida a `campaigns`),
+  `platform.outbox_messages` y `shopify.webhook_deliveries`. Es SQL crudo en `src/Bootstrapper/Observability/`. Renombrar una
+  columna compila y deja esa cola sin dato; si es `webhook`, dispara `QepQueueMetricsMissing`. Una cola nueva entra en
+  `QueueNames`, en `QueueMetricsSourceTests`, en el dashboard y en las reglas de alerta. La edad mira sólo `attempts = 0`, y la de
+  `automation` repite el `NOT EXISTS` de `AutomationInbox.ClaimAsync`: si cambias el reclamo, cambia también la lectura. En una
+  prueba, el registro del tenant deja eventos sin despachar en `platform.outbox_messages`: ciérralos antes de esperar una cola vacía.
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
@@ -664,6 +687,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   de Meta, también un signup de QEP con la clave vacía o una re-suscripción desde lulo chat, y el síntoma es que los webhooks
   vuelven a la URL de la app sin ningún error. Lo único que dice el estado real es `GET /{wabaId}/subscribed_apps`; el procedimiento
   está en [README § Historial de coexistencia](README.md#historial-de-coexistencia).
+- **La API externa no usa `IExecutionContext` sino `IApiCaller`** (spec 2026-10-30). El tenant sale de la clave, no de la ruta ni de
+  un header, y una clave nunca recibe claims `permission`: ninguna política interna pasa con ella. Un scope nuevo se registra con
+  `ApiScopeDefinition` en DI (la constante vive en el módulo dueño) y sus rutas cuelgan del grupo de `ExternalApiEndpoints`, que fija
+  el esquema `ApiKey`; una ruta externa fuera de ese grupo no recibe ese esquema. Los `code` `external.*` son contrato público con
+  los integradores: no se renombran.
+- **Un camino nuevo que lea autores de `messaging.messages` tiene que tratar `sent_by_kind = 4`** (clave de API; el 3 está reservado
+  para agentes IA). Ese autor no tiene `sent_by_member_id`: lleva `sent_by_api_key_id` y `sent_by_api_key_name`, así que un join al
+  miembro lo pierde en silencio. Y uno que muestre «primera respuesta» debe excluirlo: un envío automático de un sistema externo no
+  es una respuesta de una persona.
 
 ## Verificación
 

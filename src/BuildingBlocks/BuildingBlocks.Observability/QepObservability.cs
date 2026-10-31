@@ -17,7 +17,18 @@ public static class QepObservability
     public const string ServiceName = "qep-api";
     public const string ActivitySourceName = "Qep.Platform";
     public const string MeterName = "Qep.Platform";
+    /// <summary>
+    /// Todo meter propio cuelga de este prefijo (<c>Qep.Messaging</c>, <c>Qep.Web</c>…): un meter
+    /// nuevo sale por OTLP sin tocar esta lista.
+    /// </summary>
+    public const string MeterWildcard = "Qep.*";
     public const string NpgsqlMeterName = "Npgsql";
+
+    /// <summary>
+    /// Los límites por defecto de OpenTelemetry para <c>http.server.request.duration</c> más el de 2 s.
+    /// </summary>
+    public static readonly double[] HttpServerDurationBoundaries =
+        [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2, 2.5, 5, 7.5, 10];
 
     public static readonly ActivitySource ActivitySource = new(ActivitySourceName);
     public static readonly Meter Meter = new(MeterName);
@@ -72,8 +83,13 @@ public static class QepObservability
             .WithMetrics(metrics =>
             {
                 metrics
-                    .AddMeter(MeterName)
+                    .AddMeter(MeterWildcard)
                     .AddMeter(NpgsqlMeterName)
+                    // La meta de «Enviar mensaje» es 2 s y los límites por defecto saltan de 1 a
+                    // 2,5: sin un límite en 2 el histograma no distingue 1,5 s de 2,4 s.
+                    .AddView(
+                        "http.server.request.duration",
+                        new ExplicitBucketHistogramConfiguration { Boundaries = HttpServerDurationBoundaries })
                     .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();

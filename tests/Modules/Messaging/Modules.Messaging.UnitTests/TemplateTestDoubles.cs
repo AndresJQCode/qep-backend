@@ -166,6 +166,12 @@ internal sealed class FakeConversationOpener(MessagingTestBed bed) : IConversati
         Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    /// <summary>La misma búsqueda del real, sobre las conversaciones del banco: por teléfono, la de actividad más reciente.</summary>
+    public Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken) =>
+        Task.FromResult<Guid?>(bed.Conversations.Rows
+            .Where(row => row.TenantId == tenantId && row.ConnectionId == connectionId && row.WaId == waId)
+            .OrderByDescending(row => row.LastActivityAt).Select(row => (Guid?)row.Id).FirstOrDefault());
 }
 
 /// <summary>Spec 2026-10-14 §4.3: el espejo en memoria. Filtra por tenant y conexión como el real; el orden es ordinal.</summary>

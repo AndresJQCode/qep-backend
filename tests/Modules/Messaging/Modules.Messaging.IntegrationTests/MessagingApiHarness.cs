@@ -779,6 +779,86 @@ internal static class MessagingApiHarness
             services.AddSingleton<IClock>(clock);
         }));
 
+    // API externa (spec 2026-10-30 §5.2).
+    public const string ExternalConnectionsUrl = "/api/v1/external/whatsapp/connections";
+
+    public const string ExternalMessagesUrl = "/api/v1/external/whatsapp/messages";
+
+    public static string ExternalTemplatesUrl(Guid connectionId) => $"{ExternalConnectionsUrl}/{connectionId}/templates";
+
+    /// <summary><c>developer</c> no viene con el signup: se prende con su fila, como <see cref="EnableMessagingAsync"/>.</summary>
+    public static Task<int> EnableDeveloperAsync(string connectionString, Guid tenantId) =>
+        ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO tenancy.tenant_modules (tenant_id, module_key, enabled_at, source)
+            VALUES (@tenantId, 'developer', now(), 'manual')
+            ON CONFLICT (tenant_id, module_key) DO UPDATE SET status = 'active', status_changed_at = now()
+            """,
+            ("tenantId", tenantId));
+
+    /// <summary>Una clave de API escrita directo, con el material que genera el dominio. Devuelve la clave completa: es la única vez
+    /// que existe fuera de la memoria de la prueba.</summary>
+    public static async Task<(Guid Id, string Plaintext)> SeedApiKeyAsync(
+        string connectionString,
+        Guid tenantId,
+        Guid memberId,
+        string[] scopes,
+        Guid[]? connectionIds = null,
+        DateTimeOffset? expiresAt = null,
+        string name = "ERP Contable")
+    {
+        var material = Modules.ApiAccess.Domain.ApiKeyMaterial.Generate();
+        var id = Guid.CreateVersion7();
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO api_access.api_keys
+                (id, tenant_id, name, key_prefix, secret_hash, scopes, connection_ids, expires_at, created_at, created_by_member_id, version)
+            VALUES
+                (@id, @tenantId, @name, @prefix, @hash, @scopes, @connections, @expiresAt, now(), @memberId, 1)
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("tenantId", tenantId);
+        command.Parameters.AddWithValue("name", name);
+        command.Parameters.AddWithValue("prefix", material.Prefix);
+        command.Parameters.AddWithValue("hash", material.SecretHash);
+        command.Parameters.AddWithValue("memberId", memberId);
+        command.Parameters.AddWithValue("scopes", scopes);
+        command.Parameters.Add(new NpgsqlParameter("connections", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid)
+        {
+            Value = connectionIds is null ? DBNull.Value : connectionIds,
+        });
+        command.Parameters.Add(new NpgsqlParameter("expiresAt", NpgsqlTypes.NpgsqlDbType.TimestampTz)
+        {
+            Value = expiresAt is null ? DBNull.Value : expiresAt.Value,
+        });
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return (id, material.Plaintext);
+    }
+
+    /// <summary>Un cliente que llama como un sistema externo: solo <c>X-Api-Key</c> (si se da), ningún header <c>X-*</c> del stub.</summary>
+    public static HttpClient CreateExternalClient(WebApplicationFactory<Program> factory, string? plaintext)
+    {
+        var client = factory.CreateClient();
+        if (plaintext is not null)
+        {
+            client.DefaultRequestHeaders.Add("X-Api-Key", plaintext);
+        }
+
+        return client;
+    }
+
+    /// <summary>Auth real con el stub apagado, como corre producción (copia de <c>ShopifyApiHarness.WithRealAuthentication</c>).</summary>
+    public static WebApplicationFactory<Program> WithRealAuthentication(this WebApplicationFactory<Program> factory) =>
+        factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Authentication:UseDevelopmentStub", "false");
+            builder.UseSetting("Authentication:Audience", "qep-messaging-tests");
+        });
+
     private sealed record RegisterTenantResponseDto(Guid TenantId, Guid OwnerUserId);
 }
 
@@ -792,21 +872,25 @@ internal sealed class CapturedLogs : ILoggerProvider
 {
     private readonly ConcurrentQueue<string> _entries = new();
     private readonly ConcurrentQueue<string> _categories = new();
+    private readonly ConcurrentQueue<LogLevel> _levels = new();
 
     public IReadOnlyCollection<string> Entries => _entries;
 
     public IReadOnlyCollection<string> Categories => _categories;
 
+    /// <summary>El nivel de cada entrada: el control positivo de que el host de verdad registra desde Trace.</summary>
+    public IReadOnlyCollection<LogLevel> Levels => _levels;
+
     public string AllText => string.Join('\n', _entries);
 
-    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries, _categories);
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries, _categories, _levels);
 
     public void Dispose()
     {
     }
 
     private sealed class CapturingLogger(
-        string categoryName, ConcurrentQueue<string> entries, ConcurrentQueue<string> categories) : ILogger
+        string categoryName, ConcurrentQueue<string> entries, ConcurrentQueue<string> categories, ConcurrentQueue<LogLevel> levels) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -821,6 +905,7 @@ internal sealed class CapturedLogs : ILoggerProvider
             Func<TState, Exception?, string> formatter)
         {
             categories.Enqueue(categoryName);
+            levels.Enqueue(logLevel);
             entries.Enqueue(formatter(state, exception) + (exception is null ? string.Empty : "\n" + exception));
         }
     }

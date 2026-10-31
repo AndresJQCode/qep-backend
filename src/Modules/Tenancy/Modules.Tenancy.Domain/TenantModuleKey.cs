@@ -62,12 +62,18 @@ public static class TenantModuleKeys
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Suppliers = TenantModuleKey.Define("suppliers");
 
-    /// <summary>Spec 2026-10-29: cobros recurrentes. Depende de <see cref="Customers"/> (cobra a un cliente) y queda
-    /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
-    public static readonly TenantModuleKey Billing = TenantModuleKey.Define("billing");
+    /// <summary>Spec 2026-10-29: contratos de servicio (cobros recurrentes). Depende de <see cref="Customers"/> (cobra a un
+    /// cliente) y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant. La clave sigue siendo <c>billing</c>
+    /// aunque el módulo se llame <c>ServiceContracts</c> desde 2026-10-30: está en <c>tenant_modules</c>, en los
+    /// <c>RequiredModules</c> de sus permisos y en el frontend, y cambiarla sería una migración de datos.</summary>
+    public static readonly TenantModuleKey ServiceContracts = TenantModuleKey.Define("billing");
+
+    /// <summary>Spec 2026-10-30, D7: las claves de API de integración. Último de la lista, sin dependencias y fuera de
+    /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Developer = TenantModuleKey.Define("developer");
 
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, Billing];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -85,7 +91,7 @@ public static class TenantModuleKeys
         // Spec 2026-10-21 D-C11: un chatbot responde por la bandeja; sin messaging no hay conversaciones.
         [Automations] = [Messaging],
         // Spec 2026-10-29: un cobro recurrente se emite a un cliente.
-        [Billing] = [Customers],
+        [ServiceContracts] = [Customers],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>

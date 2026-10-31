@@ -17,12 +17,23 @@ public sealed class WebhookPayloadParserCoexistenceTests
     private static string HistoryValue(string chunkMetadata, string threads, string chunkExtra = "") =>
         $$$"""{"messaging_product":"whatsapp","metadata":{"display_phone_number":"15550001111","phone_number_id":"PNID"},"history":[{"metadata":{{{chunkMetadata}}},"threads":{{{threads}}}{{{chunkExtra}}}}]}""";
 
+    private static MessageDirection DirectionOf(string threadId, string messageFields)
+    {
+        var json = Payload("history", HistoryValue(
+            """{"phase":0,"chunk_order":1,"progress":10}""",
+            $$$"""[{"id":"{{{threadId}}}","messages":[{{{{messageFields}}},"id":"wamid.D","timestamp":"1761700000","type":"text","text":{"body":"x"}}]}]"""));
+
+        return Assert.Single(Assert.Single(Assert.Single(Assert.IsType<HistoryChange>(Assert.Single(WebhookPayloadParser.Parse(json))).Chunks).Threads).Messages).Direction;
+    }
+
+    // La forma salió de messaging.webhook_deliveries en producción el 2026-10-30: un mensaje del historial nunca trae `to`, y el del
+    // negocio se reconoce porque su `from` no es el id del hilo.
     [Fact]
     public void AHistoryChunkCarriesPhaseOrderProgressAndThreads()
     {
         var json = Payload("history", HistoryValue(
             """{"phase":1,"chunk_order":2,"progress":40}""",
-            """[{"id":"573001112233","messages":[{"from":"573001112233","id":"wamid.IN","timestamp":"1761700000","type":"text","text":{"body":"hola"}},{"from":"15550001111","to":"573001112233","id":"wamid.OUT","timestamp":"1761700060","type":"text","text":{"body":"buenas"}}]}]"""));
+            """[{"id":"573001112233","messages":[{"from":"573001112233","id":"wamid.IN","timestamp":"1761700000","type":"text","text":{"body":"hola"},"history_context":{"status":"pending"}},{"from":"15550001111","id":"wamid.OUT","timestamp":"1761700060","type":"text","text":{"body":"buenas"},"history_context":{"status":"delivered"}}]}]"""));
 
         var change = Assert.IsType<HistoryChange>(Assert.Single(WebhookPayloadParser.Parse(json)));
 
@@ -41,6 +52,30 @@ public sealed class WebhookPayloadParserCoexistenceTests
             },
             outbound => Assert.Equal(("wamid.OUT", MessageDirection.Outbound, MessageKind.Text, "buenas"), (outbound.Wamid, outbound.Direction, outbound.Kind, outbound.Text)));
     }
+
+    [Theory]
+    [InlineData("573001112233", "\"from\":\"573001112233\"", MessageDirection.Inbound)]
+    [InlineData("573001112233", "\"from\":\"+57 300 111 2233\"", MessageDirection.Inbound)]
+    [InlineData("+57 300 111 2233", "\"from\":\"573001112233\"", MessageDirection.Inbound)]
+    [InlineData("573001112233", "\"from\":\"15550001111\"", MessageDirection.Outbound)]
+    [InlineData("573001112233", "\"from\":\"negocio\"", MessageDirection.Outbound)]
+    public void AHistoryMessageIsFromTheContactOnlyWhenItsFromIsTheThread(string threadId, string fromField, MessageDirection expected) =>
+        Assert.Equal(expected, DirectionOf(threadId, fromField));
+
+    // `to` no aparece en producción, pero si Meta lo llega a mandar sólo puede ir hacia el contacto.
+    [Fact]
+    public void AHistoryMessageWithToIsOutboundWhateverItsFrom() =>
+        Assert.Equal(MessageDirection.Outbound, DirectionOf("573001112233", "\"from\":\"573001112233\",\"to\":\"573001112233\""));
+
+    // Los 10 casos de producción del 2026-10-30 (8 pending y 2 read) no se pueden atribuir a nadie: quedan como entrantes.
+    [Theory]
+    [InlineData("\"messaging_product\":\"whatsapp\"")]
+    [InlineData("\"from\":null")]
+    [InlineData("\"from\":\"\"")]
+    [InlineData("\"from\":\"   \"")]
+    [InlineData("\"from\":573001112233")]
+    public void AHistoryMessageWithoutFromStaysInbound(string fields) =>
+        Assert.Equal(MessageDirection.Inbound, DirectionOf("573001112233", fields));
 
     [Fact]
     public void ADeclinedHistoryCarriesTheErrorCode()

@@ -27,6 +27,7 @@ internal sealed partial class WebhookDeliveryProcessor(
     IClock clock,
     MarketingOptOutButtons optOutButtons,
     IMessagingNotifier notifier,
+    MessagingMetrics metrics,
     IOptions<MessagingAutomationOptions> automationOptions,
     ILogger<WebhookDeliveryProcessor> logger)
 {
@@ -170,6 +171,9 @@ internal sealed partial class WebhookDeliveryProcessor(
                 var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, automationOptions.Value.Enqueue, cancellationToken, position: position++);
                 if (ingested is not null)
                 {
+                    // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar; el reloj se toma aquí
+                    // porque `now` es de antes del bucle.
+                    metrics.RecordInboundLag("whatsapp", message.OccurredAt, clock.UtcNow);
                     // Spec 2026-10-14: ya commiteado; un reenvío de Meta (null) no avisa nada.
                     await NotifyAsync(deliveryId, ingested.ConversationId,
                         () => notifier.InboundMessageAsync(route.TenantId, ingested.ConversationId, ingested.MessageId, ingested.AssignedMemberId, cancellationToken));

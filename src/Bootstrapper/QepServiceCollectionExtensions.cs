@@ -15,6 +15,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Bootstrapper.ApiKeys;
+using Modules.ApiAccess.Application;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
@@ -53,12 +56,12 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
-using Modules.Billing.Infrastructure;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
-using BillingPermissions = Modules.Billing.Application.BillingPermissions;
+using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace Bootstrapper;
@@ -74,6 +77,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
+        services.AddScoped<IApiCaller, HttpApiCaller>();
+        // Límites de la API externa (spec 2026-10-30 §6.1): todo tiene valor por defecto y no hay
+        // configuración nueva en Backend-prod, pero un 0 o un negativo tumba el arranque (ApiAccessOptionsValidator). El limitador por clave es singleton: el estado de las ventanas vive en él.
+        services.AddOptions<ApiAccessOptions>()
+            .Bind(configuration.GetSection(ApiAccessOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
+        services.AddSingleton<ApiKeyRateLimiter>();
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,
@@ -289,67 +301,93 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ExportSuppliersCommand, ExportSuppliersResult>,
             ExportSuppliersHandler>();
-        // Billing, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
+        // ApiAccess, spec 2026-10-30: administración de claves de API. A mano, como los demás: un handler olvidado
+        // compila y responde 500 en runtime.
+        services.AddScoped<
+            IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
+            ListApiKeysHandler>();
+        services.AddScoped<
+            IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
+            ListApiScopesHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateApiKeyCommand, CreatedApiKeyDto>,
+            CreateApiKeyHandler>();
+        services.AddScoped<
+            ICommandHandler<RevokeApiKeyCommand, ApiKeyDto>,
+            RevokeApiKeyHandler>();
+        // ApiAccess no ve a los módulos: cada uno registra aquí los scopes que ofrece, y el catálogo los filtra por
+        // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
+        services.AddScoped<ApiScopeCatalog>();
+        services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
+        services.AddSingleton(new ApiScopeDefinition(
+            MessagingScopes.TemplatesSend,
+            "Enviar plantillas",
+            "Incluye consultar las plantillas aprobadas.",
+            "WhatsApp",
+            ModuleKeys.Messaging.Value,
+            RestrictableByConnection: true));
+        // ServiceContracts, spec cobros-recurrentes 2026-10-29. A mano y con ruta completa: importar el namespace
         // choca con Messaging (AssigneesDto, entre otros). Un handler olvidado compila y responde 500.
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetCustomerProfileQuery, Modules.Billing.Application.ProfileDto>,
-            Modules.Billing.Application.GetCustomerProfileHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetCustomerProfileQuery, Modules.ServiceContracts.Application.ProfileDto>,
+            Modules.ServiceContracts.Application.GetCustomerProfileHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpsertCustomerProfileCommand, Modules.Billing.Application.ProfileDto>,
-            Modules.Billing.Application.UpsertCustomerProfileHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpsertCustomerProfileCommand, Modules.ServiceContracts.Application.ProfileDto>,
+            Modules.ServiceContracts.Application.UpsertCustomerProfileHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListAssigneesQuery, Modules.Billing.Application.AssigneesDto>,
-            Modules.Billing.Application.ListAssigneesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListAssigneesQuery, Modules.ServiceContracts.Application.AssigneesDto>,
+            Modules.ServiceContracts.Application.ListAssigneesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListServicesQuery, Modules.Billing.Application.ServicePageDto>,
-            Modules.Billing.Application.ListServicesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListServicesQuery, Modules.ServiceContracts.Application.ServicePageDto>,
+            Modules.ServiceContracts.Application.ListServicesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetServiceQuery, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.GetServiceHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceQuery, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.GetServiceHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.PreviewServiceChargesQuery, Modules.Billing.Application.ChargesPreviewDto>,
-            Modules.Billing.Application.PreviewServiceChargesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.PreviewServiceChargesQuery, Modules.ServiceContracts.Application.ChargesPreviewDto>,
+            Modules.ServiceContracts.Application.PreviewServiceChargesHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.CreateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.CreateServiceHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.CreateServiceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.CreateServiceHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateServiceCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.UpdateServiceHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateServiceCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.UpdateServiceHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.ChangeServiceStatusCommand, Modules.Billing.Application.ServiceDetailDto>,
-            Modules.Billing.Application.ChangeServiceStatusHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.ChangeServiceStatusCommand, Modules.ServiceContracts.Application.ServiceDetailDto>,
+            Modules.ServiceContracts.Application.ChangeServiceStatusHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.ListChargesQuery, Modules.Billing.Application.ChargePageDto>,
-            Modules.Billing.Application.ListChargesHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.ListChargesQuery, Modules.ServiceContracts.Application.ChargePageDto>,
+            Modules.ServiceContracts.Application.ListChargesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetChargeQuery, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.GetChargeHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetChargeQuery, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.GetChargeHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.PayChargeCommand, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.PayChargeHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.PayChargeCommand, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.PayChargeHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateChargePaymentCommand, Modules.Billing.Application.ChargeDto>,
-            Modules.Billing.Application.UpdateChargePaymentHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateChargePaymentCommand, Modules.ServiceContracts.Application.ChargeDto>,
+            Modules.ServiceContracts.Application.UpdateChargePaymentHandler>();
         // Los armadores de DTO que comparten los handlers de servicios y (Tarea 8) los de cobros.
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetBillingSettingsQuery, Modules.Billing.Application.BillingSettingsDto>,
-            Modules.Billing.Application.GetBillingSettingsHandler>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceContractsSettingsQuery, Modules.ServiceContracts.Application.ServiceContractsSettingsDto>,
+            Modules.ServiceContracts.Application.GetServiceContractsSettingsHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.UpdateBillingSettingsCommand, Modules.Billing.Application.BillingSettingsDto>,
-            Modules.Billing.Application.UpdateBillingSettingsHandler>();
-        services.AddScoped<Modules.Billing.Application.ChargeDtoComposer>();
-        services.AddScoped<Modules.Billing.Application.ServiceDetailComposer>();
+            ICommandHandler<Modules.ServiceContracts.Application.UpdateServiceContractsSettingsCommand, Modules.ServiceContracts.Application.ServiceContractsSettingsDto>,
+            Modules.ServiceContracts.Application.UpdateServiceContractsSettingsHandler>();
+        services.AddScoped<Modules.ServiceContracts.Application.ChargeDtoComposer>();
+        services.AddScoped<Modules.ServiceContracts.Application.ServiceDetailComposer>();
         // Importación desde Excel (§3.2b): la vista previa y la importación comparten el analizador.
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.PreviewBillingImportCommand, Modules.Billing.Application.ImportPreviewDto>,
-            Modules.Billing.Application.PreviewBillingImportHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.PreviewServiceContractsImportCommand, Modules.ServiceContracts.Application.ImportPreviewDto>,
+            Modules.ServiceContracts.Application.PreviewServiceContractsImportHandler>();
         services.AddScoped<
-            ICommandHandler<Modules.Billing.Application.ImportBillingServicesCommand, Modules.Billing.Application.ImportResultDto>,
-            Modules.Billing.Application.ImportBillingServicesHandler>();
+            ICommandHandler<Modules.ServiceContracts.Application.ImportServiceContractsCommand, Modules.ServiceContracts.Application.ImportResultDto>,
+            Modules.ServiceContracts.Application.ImportServiceContractsHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Billing.Application.GetBillingImportTemplateQuery, Modules.Billing.Application.BillingImportTemplateFile>,
-            Modules.Billing.Application.GetBillingImportTemplateHandler>();
-        services.AddScoped<Modules.Billing.Application.BillingImportAnalyzer>();
+            IQueryHandler<Modules.ServiceContracts.Application.GetServiceContractsImportTemplateQuery, Modules.ServiceContracts.Application.ServiceContractsImportTemplateFile>,
+            Modules.ServiceContracts.Application.GetServiceContractsImportTemplateHandler>();
+        services.AddScoped<Modules.ServiceContracts.Application.ServiceContractsImportAnalyzer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -810,6 +848,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
         services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
+        services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
@@ -951,7 +993,8 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateCompanyValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateCustomerValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
-        services.AddValidatorsFromAssemblyContaining<Modules.Billing.Application.UpsertCustomerProfileValidator>();
+        services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -966,7 +1009,8 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
-        services.AddBillingInfrastructure(configuration);
+        services.AddApiAccessInfrastructure(configuration);
+        services.AddServiceContractsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1092,6 +1136,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingConnectionDirectory, MessagingConnectionDirectory>();
         // Messaging (spec 2026-10-09 §6.4): clientes por teléfono y nombres de miembros, por adaptadores.
         services.AddScoped<IMessagingCustomerDirectory, MessagingCustomerDirectory>();
+        services.AddSingleton<IDialablePhoneNumbers, DialablePhoneNumbers>();
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
@@ -1149,6 +1194,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
         // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).
         services.AddScoped<IPipelineActiveMembers, PipelineActiveMembers>();
+        // Observabilidad fase 2: profundidad y edad de las seis colas, para el muestreador (SQL crudo por nombre).
+        services.AddScoped<Observability.IQueueMetricsSource, Observability.QueueMetricsSource>();
+        // El muestreador y sus gauges son singleton; IClock está registrado scoped, así que los gauges llevan su propio reloj (SystemClock
+        // no guarda estado) y el IMeterFactory es el del host, el mismo que lee el exportador.
+        services.AddSingleton(provider => new Observability.QueueGauges(
+            provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
+        services.AddHostedService<Observability.QueueSamplerWorker>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -1189,17 +1241,17 @@ public static class QepServiceCollectionExtensions
         // Mismo patrón para `billing` (spec cobros-recurrentes §3.3): guarda clientes y encargados como ids sueltos y el
         // composition root cablea sus puertos contra Customers, Tenancy, Identity y Authorization. Con ruta completa porque
         // importar el namespace choca con Messaging (AssigneesDto, entre otros).
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerLookup, BillingCustomerLookup>();
-        services.AddScoped<Modules.Billing.Application.IBillingMemberDirectory, BillingMemberDirectory>();
-        services.AddSingleton<Modules.Billing.Application.IBillingConsentGate, BillingConsentGate>();
-        services.AddSingleton<Modules.Billing.Application.IBillingPhoneNormalizer, BillingPhoneNormalizer>();
-        services.AddSingleton<Modules.Billing.Application.IBillingIdentificationTypes, BillingIdentificationTypes>();
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerProvisioning, BillingCustomerProvisioning>();
-        services.AddScoped<BillingEmailSender>();
-        services.AddScoped<Modules.Billing.Application.IBillingCustomerEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
-        services.AddScoped<Modules.Billing.Application.IBillingStaffEmail>(provider => provider.GetRequiredService<BillingEmailSender>());
-        services.AddScoped<Modules.Billing.Application.IBillingWhatsAppOutbound, BillingMetaWhatsAppSender>();
-        services.AddScoped<IUserReferenceProbe, BillingUserReferenceProbe>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerLookup, ServiceContractsCustomerLookup>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsMemberDirectory, ServiceContractsMemberDirectory>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsConsentGate, ServiceContractsConsentGate>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsPhoneNormalizer, ServiceContractsPhoneNormalizer>();
+        services.AddSingleton<Modules.ServiceContracts.Application.IServiceContractsIdentificationTypes, ServiceContractsIdentificationTypes>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerProvisioning, ServiceContractsCustomerProvisioning>();
+        services.AddScoped<ServiceContractsEmailSender>();
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsCustomerEmail>(provider => provider.GetRequiredService<ServiceContractsEmailSender>());
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsStaffEmail>(provider => provider.GetRequiredService<ServiceContractsEmailSender>());
+        services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
+        services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1430,8 +1482,10 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
-                BillingPermissions.Read,
-                BillingPermissions.Manage
+                ServiceContractsPermissions.Read,
+                ServiceContractsPermissions.Manage,
+                // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
+                ApiAccessPermissions.ApiKeyManage
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1522,8 +1576,8 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
                 // Facturación cobra los servicios recurrentes: ve «Por cobrar» y marca los pagos (owner, 2026-10-29).
-                BillingPermissions.Read,
-                BillingPermissions.Manage
+                ServiceContractsPermissions.Read,
+                ServiceContractsPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -2047,23 +2101,31 @@ public static class QepServiceCollectionExtensions
             "Suppliers",
             "medium",
             RequiredModules: [ModuleKeys.Suppliers]));
+        // Spec 2026-10-30: las claves de API exigen el módulo developer; sin él el permiso ni se ofrece en el editor de roles.
+        services.AddSingleton(new PermissionDefinition(
+            ApiAccessPermissions.ApiKeyManage,
+            "Administrar claves de API",
+            "Permite crear, ver y revocar las claves con las que tus sistemas se conectan a QEP.",
+            "Developer",
+            "high",
+            RequiredModules: [ModuleKeys.Developer]));
         // Spec cobros-recurrentes (owner, 2026-10-29): nunca se muestran opciones ni permisos que el tenant no tiene. Con
         // [billing], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de roles no lo ofrece; la API
-        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de BillingAuthorization queda de respaldo).
+        // responde un 403 pelado, sin tenancy.module_not_enabled (la revisión de ServiceContractsAuthorization queda de respaldo).
         services.AddSingleton(new PermissionDefinition(
-            BillingPermissions.Read,
-            "Ver cobros recurrentes",
-            "Permite ver los servicios recurrentes, los cobros por cobrar y los encargados.",
-            "Billing",
+            ServiceContractsPermissions.Read,
+            "Ver contratos de servicio",
+            "Permite ver los contratos de servicio, los cobros por cobrar y los encargados.",
+            "Contratos de servicio",
             "low",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: [ModuleKeys.ServiceContracts]));
         services.AddSingleton(new PermissionDefinition(
-            BillingPermissions.Manage,
-            "Gestionar cobros recurrentes",
-            "Permite crear y editar servicios, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
-            "Billing",
+            ServiceContractsPermissions.Manage,
+            "Gestionar contratos de servicio",
+            "Permite crear y editar contratos, marcar pagos, definir el perfil de cobro, importar y configurar los avisos.",
+            "Contratos de servicio",
             "medium",
-            RequiredModules: [ModuleKeys.Billing]));
+            RequiredModules: [ModuleKeys.ServiceContracts]));
     }
 
     private static void AddAuthentication(
@@ -2092,7 +2154,8 @@ public static class QepServiceCollectionExtensions
                 .AddAuthentication(DevelopmentAuthenticationHandler.AuthenticationSchemeName)
                 .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
                     DevelopmentAuthenticationHandler.AuthenticationSchemeName,
-                    _ => { });
+                    _ => { })
+                .AddApiKeyScheme();
             return;
         }
 
@@ -2153,8 +2216,17 @@ public static class QepServiceCollectionExtensions
                     options.TokenValidationParameters.IssuerSigningKey =
                         new SymmetricSecurityKey(Convert.FromBase64String(testSigningKey));
                 }
-            });
+            })
+            .AddApiKeyScheme();
     }
+
+    // El esquema de la API externa (spec 2026-10-30 §4.3) se registra en las dos ramas de AddAuthentication, con stub y sin él: si
+    // quedara solo en la real, la API externa no existiría en local. No es el esquema por defecto en ninguna: solo lo piden las
+    // rutas de /api/v1/external, y por eso la cookie no entra allí ni X-Api-Key en las rutas internas.
+    private static AuthenticationBuilder AddApiKeyScheme(this AuthenticationBuilder builder) =>
+        builder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+            ApiKeyDefaults.AuthenticationScheme,
+            _ => { });
 
     // Devuelve el primer valor no vacío, tratando como ausente la configuración que sólo
     // tiene espacios (por ejemplo el placeholder "" de appsettings.json).
@@ -2430,11 +2502,15 @@ public static class QepServiceCollectionExtensions
                 policy => AddPermissionRequirement(policy, SuppliersPermissions.Manage))
             // Spec cobros-recurrentes: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
-                BillingPermissions.Read,
-                policy => AddPermissionRequirement(policy, BillingPermissions.Read))
+                ServiceContractsPermissions.Read,
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Read))
             .AddPolicy(
-                BillingPermissions.Manage,
-                policy => AddPermissionRequirement(policy, BillingPermissions.Manage));
+                ServiceContractsPermissions.Manage,
+                policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage))
+            // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                ApiAccessPermissions.ApiKeyManage,
+                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage));
     }
 
     private static void AddPermissionRequirement(

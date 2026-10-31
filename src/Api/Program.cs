@@ -9,6 +9,9 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.ApiAccess.Api;
+using Modules.ApiAccess.Application;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Api;
@@ -42,8 +45,8 @@ using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
-using Modules.Billing.Api;
-using Modules.Billing.Infrastructure;
+using Modules.ServiceContracts.Api;
+using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -61,6 +64,7 @@ builder.Services.AddQepPlatform(
     builder.Configuration,
     builder.Environment);
 builder.Services.AddScoped<SessionEstablisher>();
+builder.Services.AddWebTelemetry();
 builder.Services.AddQepHealthChecks(builder.Configuration);
 builder.Services.AddQepForwardedHeaders(builder.Configuration);
 builder.Services.AddQepCors(builder.Configuration);
@@ -74,6 +78,8 @@ builder.Services.AddMessagingRealtime();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Spec 2026-10-30 §6.1: solo la API externa lleva cuerpo y Retry-After en su 429 por IP; el resto queda como hoy.
+    options.OnRejected = ExternalRateLimitRejection.WriteAsync;
     static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
     {
         PermitLimit = 120,
@@ -99,6 +105,21 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
             }));
 
+    // Telemetría del navegador: 600 por minuto por IP. UseRateLimiter corre antes de UseAuthentication (más abajo),
+    // así que acá no hay usuario ni tenant con qué particionar: lo único que se ve es la IP del cliente. 600 sobra para
+    // una oficina entera detrás de una IP (la SPA manda por lotes, uno por cambio de pestaña o cada tanto), y acota a
+    // quien quiera inflar las métricas. Sin IP (TestServer) todos comparten la partición "unknown", como en Public.
+    options.AddPolicy(
+        RateLimiterPolicies.Telemetry,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
     // Spec 2026-10-09 §6.7 y §8.2: Meta manda desde pocas IPs compartidas y en ráfagas; con Public un
     // 429 la haría reintentar hasta 7 días. Una sola partición: lo que se protege es el pod. Los valores
     // salen de MessagingWebhookOptions ya bindeadas y validadas al arrancar (> 0); la fábrica de la
@@ -116,6 +137,19 @@ builder.Services.AddRateLimiter(options =>
                     QueueLimit = webhook.QueueLimit,
                     QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 };
+            }));
+
+    // Spec 2026-10-30 §6.1: la API externa, 600 por minuto por IP y antes de autenticar, para frenar claves inventadas. El
+    // límite por clave (300) corre después, como filtro del grupo. Se particiona por IP y nunca por el header.
+    options.AddPolicy(
+        RateLimiterPolicies.External,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = httpContext.RequestServices.GetRequiredService<IOptions<ApiAccessOptions>>().Value.RateLimit.PerIpPerMinute,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
             }));
 });
 
@@ -180,6 +214,7 @@ app.MapAuthPreferenceEndpoints();
 app.MapRegistrationEndpoints();
 app.MapPasswordAuthEndpoints();
 app.MapAuthorizationCatalogEndpoints();
+app.MapWebTelemetryEndpoints();
 app.MapTenantModulesEndpoints();
 app.MapRoleEndpoints();
 app.MapTenantSettingsEndpoints();
@@ -219,12 +254,16 @@ app.MapShopifyWebhook(RateLimiterPolicies.Webhook);
 // Spec 2026-10-15 §7: las rutas por tenant de Shopify: la configuración de la tienda, la bandeja y «Sincronizar ahora».
 app.MapShopifyEndpoints();
 app.MapMessagingEndpoints();
+// Spec 2026-10-30 §5.2: la API externa, autenticada con X-Api-Key. Después de Messaging, de cuyos handlers depende.
+app.MapExternalApi();
 app.MapMessagingHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
 app.MapSupplierEndpoints();
-app.MapBillingEndpoints();
+// Spec 2026-10-30: administración de claves de API.
+app.MapApiKeyEndpoints();
+app.MapServiceContractsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -297,8 +336,13 @@ await app.Services.InitializeShopifyDatabaseAsync(
 await app.Services.InitializeAutomationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
-// Billing (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
-await app.Services.InitializeBillingDatabaseAsync(
+// ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
+await app.Services.InitializeServiceContractsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
+// membresías son referencias blandas.
+await app.Services.InitializeApiAccessDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

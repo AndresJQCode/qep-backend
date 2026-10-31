@@ -170,6 +170,27 @@ public sealed class HistoryIngestionTests
         Assert.Equal("Resolved|0", await ConversationRowAsync(f));
     }
 
+    // Producción, 2026-10-30: el historial no trae `to`, y con el parser viejo este hilo entraba abierto con dos no leídos y el
+    // mensaje del negocio pintado como del contacto.
+    [Fact]
+    public async Task AThreadWhoseLastMessageIsFromTheBusinessEntersClosedWithoutUnread()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var json = History(50,
+            ("wamid.i", "¿Tienen talla M?", HoursBefore(f, 3), false),
+            ("wamid.o", "Sí señora, te la separo", HoursBefore(f, 1), true));
+        Assert.DoesNotContain("\"to\"", json, StringComparison.Ordinal);
+
+        await PostAsync(f, json);
+
+        Assert.Equal("Resolved|0", await ConversationRowAsync(f));
+        Assert.Equal("wamid.i:1:2,wamid.o:2:1", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT string_agg(wamid || ':' || direction || ':' || status, ',' ORDER BY occurred_at) FROM messaging.messages"));
+        Assert.Equal("Sí señora, te la separo|2|1", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT last_message_preview || '|' || last_message_direction || '|' || last_message_status FROM messaging.conversations"));
+    }
+
     [Fact]
     public async Task LastFromTheContactOlderThan24HoursStaysClosed()
     {

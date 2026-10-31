@@ -27,4 +27,23 @@ public static class TenantModuleGuard
                 $"The '{key.Value}' module is not enabled for this tenant.");
         }
     }
+
+    /// <summary>
+    /// Igual que <see cref="EnsureEnabledAsync"/> pero un tenant sin fila (<c>FindAsync</c> en <c>null</c>) también se
+    /// niega: lo usan los caminos que no pueden confiar en el stub de desarrollo, como las claves de API.
+    /// </summary>
+    public static async Task EnsureEnabledFailClosedAsync(
+        ITenantModules modules,
+        Guid tenantId,
+        TenantModuleKey key,
+        CancellationToken cancellationToken)
+    {
+        var set = await modules.FindAsync(tenantId, cancellationToken);
+        if (set is null || !set.IsEnabled(key))
+        {
+            throw new RequestForbiddenException(
+                ModuleNotEnabledCode,
+                $"The '{key.Value}' module is not enabled for this tenant.");
+        }
+    }
 }

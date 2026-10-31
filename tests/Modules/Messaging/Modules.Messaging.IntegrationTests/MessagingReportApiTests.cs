@@ -74,17 +74,19 @@ public sealed class MessagingReportApiTests
         Guid? member = null, short status = 1, string? details = null, bool instagram = false)
     {
         var id = Guid.CreateVersion7();
+        var apiKey = sentByKind == 4;
         var chatbot = sentByKind == 2 ? Guid.CreateVersion7() : (object)DBNull.Value;
         await ExecuteAsync(f.ConnectionString,
             """
             INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details,
-                                            sent_by_member_id, sent_by_kind, sent_by_chatbot_id, created_at)
-            VALUES (@id, @conv, @t, @c, @occurred, @direction, @kind, @status, 'hola', @details::jsonb, @member, @sentByKind, @chatbot, @at)
+                                            sent_by_member_id, sent_by_kind, sent_by_chatbot_id, created_at, sent_by_api_key_id, sent_by_api_key_name)
+            VALUES (@id, @conv, @t, @c, @occurred, @direction, @kind, @status, 'hola', @details::jsonb, @member, @sentByKind, @chatbot, @at, @keyId, @keyName)
             """,
             ("id", id), ("conv", conversationId), ("t", f.Tenant.TenantId), ("c", instagram ? f.InstagramConnection : f.Connection),
             ("occurred", at.AddDays(-2).ToUniversalTime()), ("direction", direction), ("kind", kind), ("status", status),
             ("details", (object?)details ?? DBNull.Value), ("member", (object?)member ?? DBNull.Value),
-            ("sentByKind", sentByKind), ("chatbot", chatbot), ("at", at.ToUniversalTime()));
+            ("sentByKind", sentByKind), ("chatbot", chatbot), ("at", at.ToUniversalTime()),
+            ("keyId", apiKey ? (object)Guid.CreateVersion7() : DBNull.Value), ("keyName", apiKey ? (object)"ERP" : DBNull.Value));
         return id;
     }
 
@@ -235,6 +237,31 @@ public sealed class MessagingReportApiTests
         var weekly = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=week");
         Assert.Equal(1, weekly.GetProperty("series").GetArrayLength());
         Assert.Equal(7, weekly.GetProperty("series")[0].GetProperty("conversations").GetInt32());
+    }
+
+    [Fact]
+    public async Task AnApiMessageIsNotAFirstResponseButItsConversationIsASession()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var (laura, _) = await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Laura Gómez", "advisor");
+
+        // A: entrante, mensaje de una clave a 1 min y respuesta de Laura a 10 min: la primera respuesta es la de Laura.
+        var a = await ConversationAsync(f, "573000000001", Bog(10, 5, 9));
+        await InboundAsync(f, a, Bog(10, 5, 9));
+        await MessageAsync(f, a, Bog(10, 5, 9, 1), 2, sentByKind: 4);
+        await MessageAsync(f, a, Bog(10, 5, 9, 10), 2, member: laura);
+
+        // B: sólo un mensaje de una clave, sin entrante: es una sesión (D13) sin reloj.
+        var b = await ConversationAsync(f, "573000000002", Bog(10, 5, 10));
+        await MessageAsync(f, b, Bog(10, 5, 10, 1), 2, sentByKind: 4);
+
+        var report = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day");
+
+        Assert.Equal(2, report.GetProperty("totals").GetProperty("current").GetProperty("conversations").GetInt32());
+        var first = report.GetProperty("firstResponse");
+        Assert.Equal(1, first.GetProperty("answeredSessions").GetInt32());
+        Assert.Equal(600, first.GetProperty("medianSeconds").GetInt64());
     }
 
     private static string[] Channels(JsonElement report) =>

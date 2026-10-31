@@ -88,6 +88,12 @@ internal sealed class ApiExceptionHandler(
         await RecordAsync(httpContext, exception, status, code);
 
         httpContext.Response.StatusCode = status;
+        if (exception is RequestRateLimitedException { RetryAfter: { } retryAfter })
+        {
+            httpContext.Response.Headers.RetryAfter =
+                ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
@@ -115,7 +121,7 @@ internal sealed class ApiExceptionHandler(
         int status,
         string code)
     {
-        if (!RequestFailureCapture.ShouldCapture(httpContext))
+        if (!RequestFailureCapture.ShouldCapture(httpContext, status))
         {
             return;
         }
@@ -163,6 +169,8 @@ internal sealed class ApiExceptionHandler(
                 (StatusCodes.Status412PreconditionFailed, "Concurrency conflict", value.Code),
             PreconditionRequiredException value =>
                 (StatusCodes.Status428PreconditionRequired, "Precondition required", value.Code),
+            RequestRateLimitedException value =>
+                (StatusCodes.Status429TooManyRequests, "Too many requests", value.Code),
             ServiceUnavailableException value =>
                 (StatusCodes.Status503ServiceUnavailable, "Service unavailable", value.Code),
             UpstreamServiceException value =>

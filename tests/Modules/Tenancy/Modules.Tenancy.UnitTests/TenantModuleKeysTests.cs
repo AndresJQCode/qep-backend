@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -76,11 +76,19 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-29: cobros recurrentes; se prende por tenant y exige customers.
     [Fact]
-    public void BillingIsLastDependsOnCustomersAndIsOutsideTheDefaults()
+    public void ServiceContractsDependsOnCustomersAndIsOutsideTheDefaults()
     {
-        Assert.Equal(TenantModuleKeys.Billing, TenantModuleKeys.All[^1]);
-        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Billing));
-        Assert.DoesNotContain(TenantModuleKeys.Billing, TenantModuleKeys.DefaultForNewTenants);
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.ServiceContracts));
+        Assert.DoesNotContain(TenantModuleKeys.ServiceContracts, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-10-30, D7: las claves de API de integración; se prende por tenant.
+    [Fact]
+    public void DeveloperIsLastHasNoDependenciesAndIsOffForNewTenants()
+    {
+        Assert.Equal("developer", TenantModuleKeys.All[^1].Value);
+        Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Developer));
+        Assert.DoesNotContain(TenantModuleKeys.Developer, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

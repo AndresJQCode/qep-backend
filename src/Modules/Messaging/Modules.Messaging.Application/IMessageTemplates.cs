@@ -88,4 +88,8 @@ public interface IConversationOpener
     Task<OpenedConversation> OpenByPhoneAsync(
         Guid tenantId, Guid connectionId, string waId, Guid? customerId, string profileName, DateTimeOffset now,
         CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-30 §4.4: la misma búsqueda de <see cref="OpenByPhoneAsync"/> (BSUID con ese <c>wa_id</c> y si no la fila vieja), sin
+    /// escribir nada; <c>null</c> si no hay conversación.</summary>
+    Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken);
 }

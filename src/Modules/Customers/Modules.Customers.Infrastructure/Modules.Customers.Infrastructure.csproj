@@ -8,6 +8,8 @@
     <!-- CustomerPhoneDirectoryTests resuelve CustomerPhoneBackfillWorker del host y corre
          RunOnceAsync a mano: el worker es internal y no es API pública del módulo. -->
     <InternalsVisibleTo Include="Modules.Customers.IntegrationTests" />
+    <!-- DialablePhoneNumbersTests ejerce el adaptador de Bootstrapper contra el LibPhoneNumberNormalizer real, no contra un doble. -->
+    <InternalsVisibleTo Include="Bootstrapper.UnitTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Modules.Customers.Application\Modules.Customers.Application.csproj" />

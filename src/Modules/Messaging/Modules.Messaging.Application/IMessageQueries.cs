@@ -20,7 +20,9 @@ public sealed record MessageRow(
     MessageMediaRow? Media,
     Guid? ReplyToMessageId = null,
     Guid? SentByChatbotId = null,
-    DateTimeOffset CreatedAt = default);
+    DateTimeOffset CreatedAt = default,
+    Guid? SentByApiKeyId = null,
+    string? SentByApiKeyName = null);
 
 public sealed record MessageMediaRow(string MimeType, string? FileName);
 
