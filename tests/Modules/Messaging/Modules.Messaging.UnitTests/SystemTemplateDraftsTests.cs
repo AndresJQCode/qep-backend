@@ -41,9 +41,9 @@ public sealed class SystemTemplateDraftsTests
             return row;
         }
 
-        public void External(string components) =>
+        public void External(string components, string status = MessageTemplateStatuses.Approved) =>
             Repository.Rows.Add(MessageTemplate.Mirrored(
-                Bed.TenantId, Bed.ConnectionId, "900", QuotationTemplateDefinition.Name, "es", "UTILITY", "NAMED", "APPROVED", null, components, Bed.Now.AddDays(-2)));
+                Bed.TenantId, Bed.ConnectionId, "900", QuotationTemplateDefinition.Name, "es", "UTILITY", "NAMED", status, null, components, Bed.Now.AddDays(-2)));
     }
 
     [Fact]
@@ -80,6 +80,22 @@ public sealed class SystemTemplateDraftsTests
         var draft = await rig.QuotationAsync();
 
         Assert.Equal("Hola {{nombre_contacto}}, adjunto.", draft.Body);
+        Assert.False(draft.Locked);
+        Assert.Null(draft.RejectionReason);
+    }
+
+    // Misma regla que el aprovisionamiento: una externa muerta no se adopta, así que su texto tampoco es el punto de partida.
+    [Fact]
+    public async Task ADeadExternalStartsFromTheBaseText()
+    {
+        var rig = new Rig();
+        rig.External(
+            """[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Hola {{nombre_contacto}}, adjunto."}]""",
+            MessageTemplateStatuses.PendingDeletion);
+
+        var draft = await rig.QuotationAsync();
+
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, draft.Body);
         Assert.False(draft.Locked);
         Assert.Null(draft.RejectionReason);
     }

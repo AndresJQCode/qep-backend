@@ -3199,14 +3199,18 @@ a listar.
 **La plantilla de cotización.** Se llama `qep_cotizacion` y su nombre va por versiones: un reintento sobre una
 rechazada (o pausada, o deshabilitada) no recrea el mismo nombre —Meta lo bloquea un tiempo después de borrarlo—, sino
 que crea `qep_cotizacion_v2`, `_v3`… **antes** de borrar la vieja, y si Meta dice que el nombre ya existe salta a la
-versión siguiente con el mismo PDF, hasta cinco creaciones. El prefijo `qep_cotizacion_` está reservado: ninguna libre
+versión siguiente con el mismo PDF, hasta veinte creaciones. El prefijo `qep_cotizacion_` está reservado: ninguna libre
 lo puede usar. Hay a lo sumo una fila `Quotation` por conexión (`UX_message_templates_quotation`); el nombre vigente es
 el de esa fila, no una constante. El PDF de ejemplo lo genera el backend (`QuotationTemplateDefinition.ExamplePdf()`).
 Si el admin borra la `Quotation` desde la pantalla, la fila desaparece y el siguiente aprovisionamiento vuelve a
 calcular `qep_cotizacion`, que Meta tiene en cuarentena: **la recuperación depende de reconocer ese error** como
 `name_taken`. `TemplateGraphErrors` lo hace cuando `error_user_title` o `error_user_msg` dicen «already exist»,
 «being deleted», o «deleted» junto a «language» o «template»; el cuerpo real está a confirmar (handoff de Meta). Si
-no lo reconoce, sale `rejected_by_meta` y cada intento recalcula la versión 1.
+no lo reconoce, sale `rejected_by_meta` y cada intento recalcula la versión 1. El tope de veinte es por esto mismo: sin
+fila, el recorrido vuelve a empezar en la 1 y atraviesa otra vez cada nombre borrado en los últimos 30 días, más o menos lo
+que dura el bloqueo; vale igual para las dos plantillas de cobro. Si un refresco trae de vuelta la plantilla borrada, llega como
+`External` en `PENDING_DELETION`: una `External` que no esté viva no se adopta, no da `quotation_conflict` y no le presta el texto
+al borrador. Su nombre sí cuenta para la versión siguiente.
 
 **El texto lo elige el tenant** (spec 2026-10-31). `QuotationTemplateDefinition.BaseBody` y `BillingTemplateDefinition.BaseBody` son
 sólo el texto inicial que ofrece el borrador; el tenant lo edita y lo que se envía sale de su fila, no de la definición. Las variables
