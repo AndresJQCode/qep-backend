@@ -4017,8 +4017,9 @@ aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_e
 `SweepMinutes > 0` y `SendHourLocal` entre 0 y 23; si no, la API no arranca. No hay secretos propios: el correo sale por el canal de
 Notifications y WhatsApp por la conexión `whatsapp-cloud` del tenant.
 
-**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con parámetros posicionales: `qep_cobro_recordatorio` y
-`qep_cobro_vencido` (texto literal en la spec, §5). QEP las crea en la cuenta de Meta del tenant con
+**Plantillas de WhatsApp.** Son dos, de categoría `UTILITY`, idioma `es`, con variables con nombre (`{{nombre_contacto}}`, `{{servicio}}`…): `qep_cobro_recordatorio` y
+`qep_cobro_vencido`. El texto base está en la spec (§5) y el admin lo edita antes de enviarlo a Meta; las filas viejas con parámetros
+posicionales (`{{1}}`…) siguen saliendo. QEP las crea en la cuenta de Meta del tenant con
 `POST /api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management/billing` (exige el módulo `billing`;
 reintenta si quedó a medias). **Meta debe aprobarlas** antes de enviar: sin aprobación el aviso falla con
 `template_not_approved`. Una vez aprobadas, el tenant elige la conexión en `PUT /billing/settings`.

@@ -13,7 +13,7 @@ namespace Bootstrapper;
 /// <summary>
 /// Cobros recurrentes §5: el adaptador de <see cref="IServiceContractsWhatsAppOutbound"/> hacia Mensajería y el directorio de conexiones
 /// <c>whatsapp-cloud</c> de Integrations (como <see cref="QuotationsWhatsAppChannelDirectory"/>). Elige la plantilla por tipo de aviso,
-/// arma <c>{{1}}</c>…<c>{{4}}</c> ya formateados y traduce el resultado a los <c>failure_code</c> de spec §3.4. Sólo aquí se tocan ServiceContracts,
+/// arma los valores de las variables (<c>nombre_contacto</c>, <c>servicio</c>, <c>valor</c>…) ya formateados y traduce el resultado a los <c>failure_code</c> de spec §3.4. Sólo aquí se tocan ServiceContracts,
 /// Mensajería e Integrations: ServiceContracts no referencia ninguno.
 /// </summary>
 internal sealed partial class ServiceContractsMetaWhatsAppSender(

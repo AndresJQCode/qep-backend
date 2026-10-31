@@ -36,7 +36,7 @@ public interface IBillingTemplateOutbound
 }
 
 /// <summary>
-/// Cobros recurrentes §5: la plantilla de cobro, posicional y sin encabezado de documento, al hilo del número en esa conexión. Es
+/// Cobros recurrentes §5: la plantilla de cobro (con variables con nombre; las filas viejas POSITIONAL siguen saliendo) y sin encabezado de documento, al hilo del número en esa conexión. Es
 /// <see cref="QuotationTemplateOutbound"/> sin documento ni R2 y por la misma razón no usa <see cref="OutboundGuards"/>: el envío lo autoriza
 /// Billing, no se rechaza si la conversación está resuelta o asignada a otra persona y no cambia su estado ni su asignación. Tampoco resta el
 /// no leído (<c>seen: 0</c>): nadie leyó el hilo para enviar. Una falla tardía (Meta rechazando la credencial al enviar) puede dejar una

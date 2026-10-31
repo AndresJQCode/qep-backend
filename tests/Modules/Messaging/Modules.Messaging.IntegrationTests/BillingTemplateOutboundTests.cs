@@ -223,6 +223,38 @@ public sealed class BillingTemplateOutboundTests
             text);
     }
 
+    /// <summary>La fila vieja de «vencido» tiene tres valores: el orden de <c>LegacyPositionalKeys</c> es el que Meta aprobó, y cambiarlo
+    /// mandaría el total donde iba la cantidad sin ningún error.</summary>
+    [Fact]
+    public async Task ALegacyPositionalOverdueSendsNameCountAndTotalInOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = new ApprovedTemplate(
+            "qep_cobro_vencido", "es", "UTILITY", "POSITIONAL",
+            """[{"type":"BODY","text":"Hola {{1}}, tienes {{2}} cobro(s) vencido(s) por un total de {{3}}. Escríbenos para ponerte al día.","example":{"body_text":[["Ana Pérez","2","300.000"]]}}]""");
+        var send = new BillingTemplateSend(
+            f.Tenant.TenantId, f.ConnectionId, f.MemberId, Phone, null, "Ana Pérez", MessageTemplateKind.BillingOverdue, template,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["nombre_contacto"] = "Ana Pérez",
+                ["cantidad_cobros"] = "2",
+                ["total_vencido"] = "$ 300.000",
+            });
+
+        var sent = Assert.IsType<BillingTemplateSendResult.Sent>(await SendAsync(f, send));
+
+        var call = Assert.Single(MetaCalls(f));
+        using var body = JsonDocument.Parse(call.Body!);
+        var parameters = Assert.Single(body.RootElement.GetProperty("template").GetProperty("components").EnumerateArray())
+            .GetProperty("parameters").EnumerateArray().ToArray();
+        Assert.Equal(["Ana Pérez", "2", "$ 300.000"], parameters.Select(item => item.GetProperty("text").GetString()));
+        var text = await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId));
+        Assert.Equal("Hola Ana Pérez, tienes 2 cobro(s) vencido(s) por un total de $ 300.000. Escríbenos para ponerte al día.", text);
+    }
+
     [Fact]
     public async Task ANamedReminderUsesTheEncargadoAsAdvisorAndSendsOnlyItsVariables()
     {

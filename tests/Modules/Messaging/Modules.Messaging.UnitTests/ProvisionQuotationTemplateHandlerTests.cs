@@ -168,6 +168,19 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         Assert.Empty(rig.Bed.Meta.CreatedTemplates);
     }
 
+    // Los espacios de la externa tampoco cuentan: Meta guarda el cuerpo como se lo mandaron y el enviado ya va recortado.
+    [Fact]
+    public async Task AnExternalWhoseStoredBodyHasSurroundingSpacesIsAdoptedWithTheSameBody()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("  Hola {{nombre_contacto}}, gracias.  ");
+
+        var dto = await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias.");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
     // Review Focus 4: el borrador trae sus claves viejas y el POST las devuelve igual; el validador no puede frenarlo.
     [Fact]
     public async Task AnExternalWithTheOldKeysIsAdoptedWithItsOwnBody()

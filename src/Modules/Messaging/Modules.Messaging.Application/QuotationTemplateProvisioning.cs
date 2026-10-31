@@ -92,9 +92,9 @@ public static class QuotationTemplateDefinition
             && IsDocumentHeader(componentsJson);
     }
 
-    /// <summary>El cuerpo que Meta tiene guardado en unos <c>components</c>, normalizado como en la adopción.</summary>
+    /// <summary>El cuerpo que Meta tiene guardado en unos <c>components</c>, normalizado como en la adopción (recortado, igual que el enviado).</summary>
     internal static string? StoredBody(string componentsJson) =>
-        TemplateCatalog.FromStored(Name, Language, Category, TemplateComponentsBuilder.Named, componentsJson).Body;
+        TemplateCatalog.FromStored(Name, Language, Category, TemplateComponentsBuilder.Named, componentsJson).Body?.Trim();
 
     /// <summary>El PDF de ejemplo que Meta exige para aprobar un encabezado de documento. Se genera, no se embebe: una página con una línea.</summary>
     public static byte[] ExamplePdf() => MinimalPdf.Build("Cotizacion de ejemplo - QEP");
