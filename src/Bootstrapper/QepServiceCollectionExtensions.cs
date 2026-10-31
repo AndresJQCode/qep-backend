@@ -77,6 +77,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IClaimsTransformation, ExternalClaimsTransformation>();
         services.AddScoped<IClock, BuildingBlocks.Infrastructure.SystemClock>();
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
+        // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
+        services.AddScoped<IApiCaller, HttpApiCaller>();
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,
@@ -310,6 +312,7 @@ public static class QepServiceCollectionExtensions
         // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
         services.AddScoped<ApiScopeCatalog>();
         services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
         services.AddSingleton(new ApiScopeDefinition(
             MessagingScopes.TemplatesSend,
             "Enviar plantillas",
@@ -838,6 +841,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetConversationQuery, ConversationSummary>, GetConversationHandler>();
         services.AddScoped<IQueryHandler<GetConversationAutomationQuery, ConversationAutomationDetailsDto>, GetConversationAutomationHandler>();
         services.AddScoped<IQueryHandler<ListMessagesQuery, MessagePageDto>, ListMessagesHandler>();
+        // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas de la clave de API.
+        services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
+        services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
         // Messaging (spec 2026-10-09 §8.3): envío de texto idempotente por clientId.
@@ -2132,7 +2138,8 @@ public static class QepServiceCollectionExtensions
                 .AddAuthentication(DevelopmentAuthenticationHandler.AuthenticationSchemeName)
                 .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
                     DevelopmentAuthenticationHandler.AuthenticationSchemeName,
-                    _ => { });
+                    _ => { })
+                .AddApiKeyScheme();
             return;
         }
 
@@ -2193,8 +2200,17 @@ public static class QepServiceCollectionExtensions
                     options.TokenValidationParameters.IssuerSigningKey =
                         new SymmetricSecurityKey(Convert.FromBase64String(testSigningKey));
                 }
-            });
+            })
+            .AddApiKeyScheme();
     }
+
+    // El esquema de la API externa (spec 2026-10-30 §4.3) se registra en las dos ramas de AddAuthentication, con stub y sin él: si
+    // quedara solo en la real, la API externa no existiría en local. No es el esquema por defecto en ninguna: solo lo piden las
+    // rutas de /api/v1/external, y por eso la cookie no entra allí ni X-Api-Key en las rutas internas.
+    private static AuthenticationBuilder AddApiKeyScheme(this AuthenticationBuilder builder) =>
+        builder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+            ApiKeyDefaults.AuthenticationScheme,
+            _ => { });
 
     // Devuelve el primer valor no vacío, tratando como ausente la configuración que sólo
     // tiene espacios (por ejemplo el placeholder "" de appsettings.json).

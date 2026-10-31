@@ -921,6 +921,8 @@
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.ApiAccess.Application": "[1.0.0, )",
           "Modules.ApiAccess.Domain": "[1.0.0, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },

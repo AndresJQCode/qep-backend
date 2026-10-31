@@ -82,6 +82,21 @@ public sealed class MessagingLayerTests
         }
     }
 
+    // Spec 2026-10-30 §4.3: los handlers externos leen quién llama del puerto IApiCaller, no de IExecutionContext: este último
+    // describe a una persona con sesión y una clave de API no lo es. SendExternalTemplateHandler entra a esta lista en la Tarea 9.
+    [Fact]
+    public void ExternalHandlersReadTheCallerNotTheExecutionContext()
+    {
+        Type[] handlers = [typeof(ListExternalConnectionsHandler), typeof(ListExternalTemplatesHandler)];
+
+        foreach (var handler in handlers)
+        {
+            var parameters = handler.GetConstructors().Single().GetParameters().Select(parameter => parameter.ParameterType);
+            Assert.DoesNotContain(typeof(Modules.Tenancy.Application.IExecutionContext), parameters);
+            Assert.Contains(typeof(BuildingBlocks.Application.IApiCaller), parameters);
+        }
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)

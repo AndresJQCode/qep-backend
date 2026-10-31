@@ -139,6 +139,58 @@ public sealed class RealAuthenticationApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // Spec 2026-10-30 §5.2: la cookie no entra a la API externa, ni X-Api-Key a una ruta interna. Con el stub apagado, que es
+    // como corre producción: en modo stub el esquema por defecto es otro y la prueba no probaría nada.
+    [Fact]
+    public async Task AValidSessionCookieCannotEnterTheExternalApi()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (owner, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        Assert.Equal(HttpStatusCode.OK, (await GetSettingsAsync(owner, tenantId)).StatusCode);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/external/whatsapp/connections");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        var response = await owner.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("external.auth.invalid_key", body.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task AnApiKeyCannotEnterAnInternalRoute()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (_, tenantId) = await RegisterOwnerAndTenantAsync(factory);
+        var material = Modules.ApiAccess.Domain.ApiKeyMaterial.Generate();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<Modules.ApiAccess.Application.IApiKeyRepository>().Add(
+                Modules.ApiAccess.Domain.ApiKey.Create(
+                    tenantId, "ERP", material, ["whatsapp.templates.send"], null, null, Guid.CreateVersion7(), DateTimeOffset.UtcNow));
+            await scope.ServiceProvider.GetRequiredService<Modules.ApiAccess.Application.IApiAccessUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        // La clave es buena: el verificador la acepta. Aun así una ruta interna no la lee.
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var verification = await scope.ServiceProvider.GetRequiredService<Modules.ApiAccess.Application.IApiKeyVerifier>()
+                .VerifyAsync(material.Plaintext, TestContext.Current.CancellationToken);
+            Assert.NotNull(verification.Key);
+        }
+
+        using var anonymous = CreateClient(factory);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/settings");
+        request.Headers.Add("X-Tenant-Id", tenantId.ToString());
+        request.Headers.Add("X-Api-Key", material.Plaintext);
+        var response = await anonymous.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     private static async Task<HttpResponseMessage> GetSettingsAsync(HttpClient client, Guid tenantId)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/tenants/{tenantId}/settings");
