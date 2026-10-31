@@ -227,6 +227,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` (`--no-ff`, sin push) **el arreglo del falso tope de plantillas** (merge `d91471fe`): el subcódigo 2388293 de
+  Meta (demasiadas variables para el texto) dice «limit» en el título y salía como `limit_reached` en cuentas sin plantillas. Ahora es
+  `rejected_by_meta` con el texto de Meta. La plantilla de cotización sigue rechazada en producción hasta el spec 2026-10-31 de plantillas editables.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **el indicador de escritura del asesor** (backend `2b5d66ac`,
   frontend `022806ac`). En WhatsApp marca leído para el contacto aunque en QEP siga sin leer; decisión del owner, en CLAUDE.md. Verificado
   con las pruebas de las clases tocadas, `ArchitectureTests`, `Bootstrapper.UnitTests` y las de mensajería del frontend, no con la suite
