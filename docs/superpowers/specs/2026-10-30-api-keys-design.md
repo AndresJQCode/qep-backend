@@ -225,8 +225,9 @@ El primer endpoint existe porque sin él el integrador no tiene de dónde sacar 
 ```
 
 - `clientId` es obligatorio, UUID y lo genera el sistema externo.
-- `to` lleva indicativo de país. Se aceptan `+`, espacios y guiones; se normaliza a dígitos, de 8 a 15. No se adivina el país: un
-  número sin indicativo le llegaría a otra persona.
+- `to` lleva indicativo de país. Se aceptan `+`, espacios y guiones; se normaliza a dígitos, de 8 a 15, y se valida con
+  `libphonenumber` (el que ya usa Customers, por un puerto). No se adivina el país: `3001234567` sin indicativo se leería como +30 y
+  le llegaría a otra persona, así que responde 422.
 
 ### 5.3 Errores
 
