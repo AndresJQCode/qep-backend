@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>QEP · Desarrolladores (mockup)</title>
+<style>
+  :root{--bg:#f7f6f1;--fg:#1d2925;--card:#fff;--primary:#a65331;--muted:#f6f1e8;--mutedfg:#636e69;--accent:#dceae3;
+    --danger:#a4384c;--success:#2f8a5b;--border:#e8e7e1;--side:#064c40;--sideacc:#4c7b6f;--r:12px;
+    --warn:#8a5a00;--warnbg:#fdf3dc;--warnbd:#f0dcae}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font-family:Manrope,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--fg);font-size:14px;line-height:1.5}
+  h1,h2,h3{font-family:"Space Grotesk","Segoe UI",system-ui,sans-serif;margin:0;letter-spacing:-.01em}
+  code,.mono{font-family:"JetBrains Mono",Consolas,monospace;font-size:12.5px}
+
+  .guide{position:sticky;top:0;z-index:30;display:flex;gap:8px;align-items:center;padding:8px 16px;background:#1d2925;color:#fff;font-size:12.5px;flex-wrap:wrap}
+  .guide b{margin-right:6px;opacity:.75;font-weight:600}
+  .guide button{background:transparent;border:1px solid rgba(255,255,255,.28);color:#fff;border-radius:999px;padding:4px 12px;font:inherit;cursor:pointer}
+  .guide button.on{background:#fff;color:#1d2925;border-color:#fff}
+
+  .app{display:flex;min-height:calc(100vh - 42px)}
+  .side{width:224px;flex:none;background:var(--side);color:#fff;padding:18px 12px}
+  .brand{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:18px;padding:0 10px 16px}
+  .nav{display:block;padding:8px 10px;border-radius:9px;color:#fff;opacity:.86;font-size:13.5px;margin-bottom:2px}
+  .nav.on{background:var(--sideacc);opacity:1;font-weight:600}
+  .group{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.6;padding:14px 10px 6px}
+
+  .main{flex:1;min-width:0;padding:28px 36px 60px;max-width:1040px}
+  .head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px}
+  .head h1{font-size:25px}
+  .sub{color:var(--mutedfg);margin-top:3px;max-width:600px}
+
+  .btn{border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:9px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;white-space:nowrap}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  .btn.ghost{border-color:transparent;background:transparent;color:var(--danger);padding:5px 8px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);margin-bottom:18px}
+  .card-h{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11.5px;color:var(--mutedfg);font-weight:600;padding:9px 18px;border-bottom:1px solid var(--border)}
+  td{padding:12px 18px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  tr.revoked td{color:var(--mutedfg)}
+  .name{font-weight:700;color:var(--fg)}
+  .small{font-size:12.5px;color:var(--mutedfg)}
+  .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:700}
+  .ok{background:var(--accent);color:#0b5a48}
+  .off{background:var(--muted);color:var(--mutedfg)}
+  .exp{background:var(--warnbg);color:var(--warn)}
+
+  .steps{padding:16px 18px}
+  .steps pre{background:#1d2925;color:#eaf1ee;border-radius:9px;padding:13px 14px;margin:8px 0 0;overflow:auto;font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;line-height:1.55}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .cols h3{font-size:13.5px}
+
+  .veil{display:none;position:fixed;inset:0;background:rgba(29,41,37,.45);z-index:40;align-items:center;justify-content:center;padding:20px}
+  .veil.show{display:flex}
+  .dlg{background:var(--card);border-radius:14px;width:520px;max-width:100%;max-height:88vh;overflow:auto;padding:22px}
+  .dlg h2{font-size:18.5px}
+  .field{margin-top:15px}
+  .field label.t{display:block;font-weight:600;margin-bottom:5px}
+  .field input[type=text],.field input[type=date]{width:100%;border:1px solid var(--border);border-radius:9px;padding:9px 11px;font:inherit;background:#fff}
+  .hint{font-size:12.5px;color:var(--mutedfg);margin-top:4px}
+  .check{display:flex;gap:9px;padding:8px 2px;align-items:flex-start}
+  .check input{margin-top:3px;accent-color:var(--primary)}
+  .row{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}
+  .notice{background:var(--warnbg);border:1px solid var(--warnbd);color:var(--warn);border-radius:9px;padding:10px 12px;margin-top:14px;font-size:13px}
+  .keybox{display:flex;gap:8px;align-items:center;background:var(--muted);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-top:12px}
+  .keybox code{flex:1;word-break:break-all}
+
+  .thread{background:#efece3;border-radius:var(--r);padding:20px;max-width:560px}
+  .day{text-align:center;font-size:11.5px;color:var(--mutedfg);margin-bottom:12px}
+  .bubble{background:#dceae3;border-radius:11px 11px 3px 11px;padding:10px 12px;margin-left:auto;max-width:85%}
+  .bubble .tpl{font-size:11px;color:var(--mutedfg);margin-bottom:4px}
+  .meta{display:flex;gap:7px;justify-content:flex-end;align-items:center;font-size:11.5px;color:var(--mutedfg);margin-top:5px}
+  .author{display:inline-block;font-weight:700;color:#0b5a48}
+  .inb{background:#fff;border-radius:11px 11px 11px 3px;padding:9px 12px;max-width:70%;margin-top:10px}
+  .view{display:none}.view.on{display:block}
+  .chip{display:inline-block;background:var(--muted);border:1px solid var(--border);border-radius:7px;padding:1px 8px;font-size:12px;font-weight:600}
+  .group-t{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mutedfg);font-weight:700;margin-top:13px;padding-top:11px;border-top:1px solid var(--border)}
+  .soon{opacity:.65}
+  .note{color:var(--mutedfg);margin:14px 0 0;max-width:560px}
+</style>
+</head>
+<body>
+<div class="guide">
+  <b>Mockup, datos de ejemplo:</b>
+  <button data-go="list" class="on">1. Lista de claves</button>
+  <button data-go="create">2. Crear clave</button>
+  <button data-go="reveal">3. Clave creada</button>
+  <button data-go="revoke">4. Revocar</button>
+  <button data-go="thread">5. Cómo se ve en la bandeja</button>
+</div>
+
+<div class="app">
+  <aside class="side">
+    <div class="brand">QEP</div>
+    <span class="nav">Inicio</span>
+    <span class="nav">Bandeja</span>
+    <span class="nav">Clientes</span>
+    <span class="nav">Cotizaciones</span>
+    <div class="group">Configuración</div>
+    <span class="nav">Integraciones</span>
+    <span class="nav">Equipo y roles</span>
+    <span class="nav on" id="navDev">Desarrolladores</span>
+  </aside>
+
+  <main class="main">
+    <section class="view on" id="v-keys">
+      <div class="head">
+        <div>
+          <h1>Desarrolladores</h1>
+          <div class="sub">Conecta tu propio software con QEP. Cada clave de API puede hacer solo lo que le permitas.</div>
+        </div>
+        <button class="btn primary" data-go="create">Crear clave</button>
+      </div>
+
+      <div class="card">
+        <div class="card-h">Claves de API</div>
+        <table>
+          <thead><tr><th>Nombre</th><th>Clave</th><th>Puede</th><th>Último uso</th><th>Vence</th><th>Estado</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="name">ERP Contable</td>
+              <td class="mono">qep_live_8fK2…</td>
+              <td><span class="chip">Enviar plantillas</span><div class="small">Todos los números</div></td>
+              <td>Hace 12 minutos</td>
+              <td>Sin vencimiento</td>
+              <td><span class="badge ok">Activa</span></td>
+              <td><button class="btn ghost" data-go="revoke">Revocar</button></td>
+            </tr>
+            <tr id="rowLog">
+              <td class="name">Sistema de despachos</td>
+              <td class="mono">qep_live_Zq71…</td>
+              <td><span class="chip">Enviar plantillas</span><div class="small">Línea Bogotá</div></td>
+              <td>Ayer, 6:40 p. m.</td>
+              <td>15 ene 2027</td>
+              <td><span class="badge exp">Vence pronto</span></td>
+              <td><button class="btn ghost" data-go="revoke">Revocar</button></td>
+            </tr>
+            <tr class="revoked">
+              <td class="name" style="color:inherit">Integración anterior</td>
+              <td class="mono">qep_live_c3Ra…</td>
+              <td><span class="chip">Enviar plantillas</span></td>
+              <td>2 sep 2026</td>
+              <td>—</td>
+              <td><span class="badge off">Revocada</span></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-h">Cómo enviar una plantilla</div>
+        <div class="steps cols">
+          <div>
+            <h3>1. Consulta tus números y sus plantillas</h3>
+            <pre>GET /api/v1/external/whatsapp/connections
+X-Api-Key: tu_clave
+
+GET /api/v1/external/whatsapp/connections/{id}/templates
+X-Api-Key: tu_clave</pre>
+          </div>
+          <div>
+            <h3>2. Envía</h3>
+            <pre>POST /api/v1/external/whatsapp/messages
+X-Api-Key: tu_clave
+
+{
+  "clientId": "uuid-de-tu-sistema",
+  "connectionId": "uuid-del-numero",
+  "to": "573001234567",
+  "template": {
+    "name": "aviso_despacho",
+    "language": "es_CO",
+    "parameters": { "1": "Ana", "2": "4821" }
+  }
+}</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="v-thread">
+      <div class="head"><div><h1>Bandeja</h1><div class="sub">El mensaje queda en el hilo del número. Si el cliente responde, le contesta un asesor o el bot, como siempre.</div></div></div>
+      <div class="thread">
+        <div class="day">Hoy</div>
+        <div class="bubble">
+          <div class="tpl">Plantilla: aviso_despacho</div>
+          Hola Ana, tu pedido 4821 salió hoy de nuestra bodega. Te avisaremos cuando llegue.
+          <div class="meta"><span class="author">Enviado por API · ERP Contable</span><span>10:42 a. m.</span></div>
+        </div>
+        <div class="inb">Gracias, ¿a qué hora llega más o menos?<div class="meta" style="justify-content:flex-start"><span>10:51 a. m.</span></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Crear -->
+<div class="veil" id="d-create"><div class="dlg">
+  <h2>Crear clave de API</h2>
+  <div class="field">
+    <label class="t" for="kname">Nombre</label>
+    <input id="kname" type="text" value="ERP Contable">
+    <div class="hint">Así aparecerá en la bandeja como autor de los mensajes.</div>
+  </div>
+  <div class="field">
+    <span class="t" style="font-weight:600;display:block">Qué puede hacer esta clave</span>
+    <div class="hint">Marca solo lo que tu sistema necesita.</div>
+    <div class="group-t">WhatsApp</div>
+    <label class="check"><input type="checkbox" checked><span>Enviar plantillas<br><span class="small">Incluye consultar las plantillas aprobadas. <code>whatsapp.templates.send</code></span></span></label>
+    <div style="padding-left:24px">
+      <span class="small">Números que puede usar</span>
+      <label class="check"><input type="radio" name="scope" checked data-all="1"><span>Todos los números de WhatsApp</span></label>
+      <label class="check"><input type="radio" name="scope"><span>Solo los que elija</span></label>
+      <div id="numbers" style="display:none;padding-left:24px">
+        <label class="check"><input type="checkbox" checked><span>Línea Bogotá · +57 300 000 0001</span></label>
+        <label class="check"><input type="checkbox"><span>Línea Medellín · +57 300 000 0002</span></label>
+      </div>
+    </div>
+    <div class="group-t">Cotizaciones</div>
+    <label class="check soon"><input type="checkbox" disabled><span>Crear cotizaciones <span class="badge off">Próximamente</span><br><span class="small"><code>quotations.create</code></span></span></label>
+  </div>
+  <div class="field">
+    <label class="t" for="kexp">Vencimiento (opcional)</label>
+    <input id="kexp" type="date">
+    <div class="hint">Sin fecha, la clave funciona hasta que la revoques.</div>
+  </div>
+  <div class="row"><button class="btn" data-go="list">Cancelar</button><button class="btn primary" data-go="reveal">Crear clave</button></div>
+</div></div>
+
+<!-- Clave creada -->
+<div class="veil" id="d-reveal"><div class="dlg">
+  <h2>Copia tu clave ahora</h2>
+  <p class="sub" style="margin-bottom:0">Clave creada: <b>ERP Contable</b></p>
+  <div class="keybox"><code id="key">qep_live_8fK2mW0xT7pLq9VbN4sRy6Jd1cHzE3uA</code><button class="btn" id="copy">Copiar</button></div>
+  <div class="notice">Es la única vez que la vas a ver. QEP no la guarda: si la pierdes, tienes que revocarla y crear otra.</div>
+  <label class="check" style="margin-top:12px"><input type="checkbox" id="saved"><span>Ya la guardé en un lugar seguro</span></label>
+  <div class="row"><button class="btn primary" id="done" data-go="list" disabled>Listo</button></div>
+</div></div>
+
+<!-- Revocar -->
+<div class="veil" id="d-revoke"><div class="dlg">
+  <h2>¿Revocar ERP Contable?</h2>
+  <p class="sub">El sistema que la usa dejará de enviar mensajes de inmediato. Esto no se puede deshacer: si la necesitas de nuevo, tendrás que crear otra clave.</p>
+  <p class="small">Los mensajes ya enviados siguen en la bandeja con su nombre.</p>
+  <div class="row"><button class="btn" data-go="list">Cancelar</button><button class="btn danger" data-go="list">Revocar clave</button></div>
+</div></div>
+
+<script>
+  const veils = {create:'d-create', reveal:'d-reveal', revoke:'d-revoke'};
+  function go(name){
+    document.querySelectorAll('.veil').forEach(v => v.classList.remove('show'));
+    document.getElementById('v-keys').classList.toggle('on', name !== 'thread');
+    document.getElementById('v-thread').classList.toggle('on', name === 'thread');
+    document.getElementById('navDev').classList.toggle('on', name !== 'thread');
+    if (veils[name]) document.getElementById(veils[name]).classList.add('show');
+    document.querySelectorAll('.guide button').forEach(b => b.classList.toggle('on', b.dataset.go === name));
+    if (name === 'reveal') { saved.checked = false; done.disabled = true; }
+  }
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-go]');
+    if (t && !t.disabled) go(t.dataset.go);
+  });
+  const saved = document.getElementById('saved'), done = document.getElementById('done');
+  saved.addEventListener('change', () => done.disabled = !saved.checked);
+  const copy = document.getElementById('copy');
+  copy.addEventListener('click', () => { copy.textContent = 'Copiada'; setTimeout(() => copy.textContent = 'Copiar', 1400); });
+  document.querySelectorAll('input[name=scope]').forEach(r => r.addEventListener('change', () => {
+    document.getElementById('numbers').style.display = document.querySelector('input[name=scope]:checked').dataset.all ? 'none' : 'block';
+  }));
+</script>
+</body>
+</html>
