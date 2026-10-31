@@ -166,7 +166,7 @@ public sealed partial class WebTelemetryRequestValidator : AbstractValidator<Web
     private static readonly string[] Metrics = [Navigation, "lcp", "inp", "ttfb", "fcp", Cls];
 
     // Barra inicial, hasta 160 caracteres, sólo los de una plantilla de ruta: sin espacios, query ni "?" ni "#".
-    [GeneratedRegex(@"^/[A-Za-z0-9_$./-]{0,159}$")]
+    [GeneratedRegex(@"^/[A-Za-z0-9_$./-]{0,159}\z")]
     private static partial Regex RoutePattern();
 
     public WebTelemetryRequestValidator()

@@ -167,6 +167,8 @@ public sealed class WebTelemetryApiTests
             Batch(("foo", null, 1)),
             Batch(("navigation", null, 1)),
             Batch(("navigation", "bad route", 1)),
+            // Un salto de línea final: `$` lo aceptaría, `\z` no.
+            Batch(("navigation", "/quotations/$id\n", 1)),
             "{}",
             "{",
             """{"samples":"x"}""",
