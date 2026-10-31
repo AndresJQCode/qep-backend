@@ -98,6 +98,35 @@ public sealed class CampaignDispatchTests
     private static (string Name, string Phone)[] ThreeCustomers() =>
         [("Ana Ruiz", "300 111 2222"), ("Beto Díaz", "310 222 3333"), ("Carla Sol", "320 333 4444")];
 
+    private static readonly string[] Greetings = ["Buenos días", "Buenas tardes", "Buenas noches"];
+
+    // De punta a punta: la fuente pasa por la API y por parameters jsonb, y el worker resuelve ITenantClock en su propio scope. Las franjas y
+    // el huso se prueban en TimeOfDayGreetingTests y CampaignDispatcherTests; acá la hora es la real, así que basta con que sea un saludo.
+    [Fact]
+    public async Task AGreetingVariableReachesMetaWorkedOutByTheWorker()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var pod = f.Pod;
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, [("Ana Ruiz", "300 111 2222")]);
+        var id = await LaunchAsync(f, new
+        {
+            name = "Promo",
+            connectionId = f.ConnectionId,
+            template = new { name = "promo", language = "es" },
+            parameters = new Dictionary<string, object> { ["1"] = new { source = "greeting" }, ["2"] = new { source = "text", value = "A1234" } },
+            audience = new { tagIds = Array.Empty<Guid>(), customerIds = customers.ToArray() },
+        });
+
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal("Completed", await CampaignStatusAsync(f, id));
+        var send = Assert.Single(f.Pod.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        using var payload = JsonDocument.Parse(send.Body!);
+        var parameters = payload.RootElement.GetProperty("template").GetProperty("components")[0].GetProperty("parameters");
+        Assert.Contains(parameters[0].GetProperty("text").GetString(), Greetings);
+    }
+
     [Fact]
     public async Task ALaunchedCampaignFreezesItsAudienceSendsTheTemplateAndCompletes()
     {

@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using BuildingBlocks.Application;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
@@ -130,7 +131,8 @@ public sealed partial class CampaignDispatcher(
     IMessagingCustomerDirectory customers,
     IMessageTemplates templates,
     IConnectionSendBudget budget,
-    IClock clock)
+    IClock clock,
+    ITenantClock tenantClock)
 {
     /// <summary>§6.3: cinco intentos y después <c>Failed</c>.</summary>
     public const int MaxAttempts = 5;
@@ -269,7 +271,7 @@ public sealed partial class CampaignDispatcher(
             return;
         }
 
-        var built = TemplateCatalog.BuildSend(template, ResolveValues(recipient));
+        var built = TemplateCatalog.BuildSend(template, await ResolveValuesAsync(recipient, cancellationToken));
 
         var prepared = await store.PrepareAsync(recipient, built.Text, built.DetailsJson, clock.UtcNow, cancellationToken);
         if (prepared is null)
@@ -430,16 +432,31 @@ public sealed partial class CampaignDispatcher(
     }
 
     /// <summary><c>text</c> tal cual; <c>customerName</c> es el nombre del cliente al congelar la audiencia, limpio según las reglas de Meta
-    /// (un nombre de perfil puede traer saltos de línea o espacios de más y Meta rechazaría la variable con 132018).</summary>
-    private static Dictionary<string, string> ResolveValues(ClaimedRecipient recipient)
+    /// (un nombre de perfil puede traer saltos de línea o espacios de más y Meta rechazaría la variable con 132018); <c>greeting</c> es el
+    /// saludo de este envío, no el de lanzar la campaña. Sólo una campaña con saludo lee el huso del tenant.</summary>
+    private async Task<Dictionary<string, string>> ResolveValuesAsync(ClaimedRecipient recipient, CancellationToken cancellationToken)
     {
+        var greeting = recipient.Parameters.Values.Any(parameter => parameter.Source == CampaignParameterSource.Greeting)
+            ? await GreetingAsync(recipient.TenantId, cancellationToken)
+            : null;
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (key, parameter) in recipient.Parameters)
         {
-            values[key] = parameter.Source == CampaignParameterSource.Text ? parameter.Value! : CleanName(recipient.CustomerName);
+            values[key] = parameter.Source switch
+            {
+                CampaignParameterSource.Text => parameter.Value!,
+                CampaignParameterSource.Greeting => greeting!,
+                _ => CleanName(recipient.CustomerName),
+            };
         }
 
         return values;
+    }
+
+    private async Task<string> GreetingAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var calendar = await tenantClock.GetAsync(tenantId, cancellationToken);
+        return TimeOfDayGreeting.For(TimeOnly.FromDateTime(calendar.ToLocal(calendar.UtcNow).DateTime));
     }
 
     internal static string CleanName(string name)

@@ -100,7 +100,7 @@ public static class MessagingErrorCodes
     /// <summary>§3.2: el cuerpo, recortado, está vacío o pasa de 4096 caracteres.</summary>
     public const string QuickReplyInvalidBody = "messaging.quick_reply.invalid_body";
 
-    /// <summary>§3.2 y D-Q3: un <c>{…}</c> que no es <c>{nombre}</c>, <c>{asesor}</c> ni <c>{empresa}</c>.</summary>
+    /// <summary>§3.2 y D-Q3: un <c>{…}</c> que no es <c>{nombre_contacto}</c>, <c>{asesor}</c>, <c>{empresa}</c> ni <c>{saludo}</c>.</summary>
     public const string QuickReplyUnknownVariable = "messaging.quick_reply.unknown_variable";
 
     /// <summary>§3.4: otra respuesta del tenant ya usa ese atajo (<c>IX_quick_replies_tenant_shortcut</c>). 422, como
