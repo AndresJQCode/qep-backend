@@ -15,6 +15,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Application;
 using Modules.Authorization.Infrastructure;
@@ -966,6 +967,7 @@ public static class QepServiceCollectionExtensions
         services.AddCatalogInfrastructure(configuration);
         services.AddCompaniesInfrastructure(configuration);
         services.AddSuppliersInfrastructure(configuration);
+        services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);

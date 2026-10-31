@@ -3,6 +3,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\Modules.ApiAccess.Domain\Modules.ApiAccess.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
+    <ProjectReference Include="..\..\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -15,5 +17,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.ApiAccess.UnitTests" />
+    <InternalsVisibleTo Include="Modules.ApiAccess.IntegrationTests" />
   </ItemGroup>
 </Project>

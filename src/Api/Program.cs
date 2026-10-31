@@ -9,6 +9,7 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
 using Modules.Authorization.Infrastructure;
 using Modules.Automations.Api;
@@ -299,6 +300,11 @@ await app.Services.InitializeAutomationsDatabaseAsync(
 
 // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
 await app.Services.InitializeServiceContractsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
+// membresías son referencias blandas.
+await app.Services.InitializeApiAccessDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
