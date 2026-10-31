@@ -50,6 +50,18 @@ public sealed class TemplateGraphErrorsTests
         Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, exception.Code);
     }
 
+    /// <summary>Producción, 2026-10-31: el subcódigo 2388293 (demasiadas variables para el texto) dice «limit» en el título y salía como
+    /// tope de plantillas en una cuenta sin ninguna. Un «limit» del contenido es un rechazo, con el texto de Meta.</summary>
+    [Theory]
+    [InlineData("Parameters Words Ratio Exceeds Limit", "This template has too many variables for its length.")]
+    [InlineData("Message Template Character Limit Exceeded", "The body is too long.")]
+    public void ALimitOnTheContentIsARejectionWithMetasText(string title, string message)
+    {
+        var exception = TemplateGraphErrors.Translate(new MessagingGraphFailure(400, 100, "http_400", title, message));
+        Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, exception.Code);
+        Assert.Contains(message, exception.Message, StringComparison.Ordinal);
+    }
+
     // §4.8 «token vencido o permiso faltante»: los códigos de permiso de Graph son el 10 y el rango 200–299.
     [Theory]
     [InlineData(401, null, true)]
