@@ -67,7 +67,7 @@ public static class ExternalWhatsAppEndpoints
         var body = await ReadBodyAsync(request, cancellationToken);
         var template = body.Template;
         var result = await dispatcher.SendAsync(
-            new SendExternalTemplateCommand(body.ClientId, body.ConnectionId, body.To, template?.Name, template?.Language, template?.Parameters),
+            new SendExternalTemplateCommand(body.IdempotencyKey, body.ConnectionId, body.To, template?.Name, template?.Language, template?.Parameters),
             cancellationToken);
         var response = new ExternalSendMessageResponse(result.MessageId, result.ConversationId, result.Status);
         return result.Replayed ? Results.Ok(response) : Results.Json(response, statusCode: StatusCodes.Status201Created);
@@ -92,7 +92,7 @@ public static class ExternalWhatsAppEndpoints
 }
 
 /// <summary>Spec 2026-10-30 §5.2. Todo es nullable y texto: el validador responde campo por campo.</summary>
-public sealed record ExternalSendMessageRequest(string? ClientId, string? ConnectionId, string? To, ExternalTemplateRequest? Template);
+public sealed record ExternalSendMessageRequest(string? IdempotencyKey, string? ConnectionId, string? To, ExternalTemplateRequest? Template);
 
 public sealed record ExternalTemplateRequest(string? Name, string? Language, IReadOnlyDictionary<string, string?>? Parameters);
 
