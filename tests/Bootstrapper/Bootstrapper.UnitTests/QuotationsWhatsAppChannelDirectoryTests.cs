@@ -113,8 +113,8 @@ public sealed class QuotationsWhatsAppChannelDirectoryTests
             Assert.Single(await NewDirectory(connections, readiness).ListAvailableAsync(TenantId, Ct)));
 
         Assert.Equal(
-            (id, "Cuenta de Meta", "+57 300 123 4567", "qep_cotizacion_v2", "es"),
-            (channel.ConnectionId, channel.Name, channel.Phone, channel.TemplateName, channel.TemplateLanguage));
+            (id, "Cuenta de Meta", "+57 300 123 4567"),
+            (channel.ConnectionId, channel.Name, channel.Phone));
     }
 
     [Fact]

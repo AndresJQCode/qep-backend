@@ -40,14 +40,13 @@ public sealed record ZenviaWhatsAppChannel(
 
 /// <summary>
 /// La conexión de WhatsApp Business (Meta) del tenant. Sin secretos: el envío lo hace Mensajería con la conexión, y
-/// aquí sólo viajan la plantilla de la cotización y su idioma. Los pedidos no salen por Meta (spec 2026-10-21 D12).
+/// aquí sólo viaja qué conexión es. La plantilla no: el sender de Meta lee la fila aprobada vigente al enviar. Los pedidos no salen
+/// por Meta (spec 2026-10-21 D12).
 /// </summary>
 public sealed record MetaWhatsAppChannel(
     Guid ConnectionId,
     string Name,
-    string? Phone,
-    string TemplateName,
-    string TemplateLanguage)
+    string? Phone)
     : WhatsAppChannel(ConnectionId, Name, Phone)
 {
     public override string Provider => WhatsAppChannelProviders.Meta;

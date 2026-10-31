@@ -25,7 +25,7 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     {
         var outbound = new RecordingOutbound();
         var storage = new StubStorage(StorageKey, Pdf);
-        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567", "qep_cotizacion_v2", "es");
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
         var message = Message();
 
         await new QuotationsMetaWhatsAppSender(outbound, storage, new StubReadiness(Approved)).SendQuotationAsync(channel, "573001234567", message, Ct);
@@ -47,7 +47,7 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     public async Task AnythingButSentIsSendFailed(QuotationTemplateSendResult result)
     {
         var sender = new QuotationsMetaWhatsAppSender(new RecordingOutbound(result), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved));
-        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null, "qep_cotizacion", "es");
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
 
         var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
             () => sender.SendQuotationAsync(channel, "573001234567", Message(), Ct));
@@ -60,12 +60,13 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     {
         var outbound = new RecordingOutbound();
         var sender = new QuotationsMetaWhatsAppSender(outbound, new StubStorage(StorageKey, Pdf), new StubReadiness(null));
-        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null, "qep_cotizacion", "es");
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
 
         var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
             () => sender.SendQuotationAsync(channel, "573001234567", Message(), Ct));
 
         Assert.Equal("quotation.whatsapp.send_failed", exception.Code);
+        Assert.Contains("template_not_approved", exception.Message, StringComparison.Ordinal);
         Assert.Empty(outbound.Sends);
     }
 

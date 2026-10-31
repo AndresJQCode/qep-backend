@@ -347,6 +347,8 @@ public sealed class QuotationTemplateOutboundTests
         Assert.Empty(MetaCalls(f));
     }
 
+    private static readonly string[] Greetings = ["Buenos días", "Buenas tardes", "Buenas noches"];
+
     /// <summary>Los componentes de la plantilla tal como llegaron a Meta.</summary>
     private static JsonElement SentComponents(Fixture f, out JsonDocument owner)
     {
@@ -363,6 +365,9 @@ public sealed class QuotationTemplateOutboundTests
         using var __ = f.Host;
         ScriptMetaOk(f.Factory.MetaHandler);
         var template = Approved("{{saludo}}, {{nombre_contacto}}, soy {{asesor}} de {{empresa}}. Te comparto {{numero_cotizacion}}.");
+        // Nombres distintos para el miembro y el tenant: con el mismo, un memberId equivocado se taparía con el respaldo (la empresa).
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.memberships SET display_name = 'Ana Asesora' WHERE id = @id", ("id", f.MemberId));
+        await ExecuteAsync(f.ConnectionString, "UPDATE tenancy.tenants SET display_name = 'Andina Ltda' WHERE id = @id", ("id", f.Tenant.TenantId));
 
         var sent = Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
 
@@ -373,8 +378,8 @@ public sealed class QuotationTemplateOutboundTests
             ["saludo", "nombre_contacto", "asesor", "empresa", "numero_cotizacion"],
             parameters.Select(parameter => parameter.GetProperty("parameter_name").GetString()));
         var values = parameters.Select(parameter => parameter.GetProperty("text").GetString()!).ToList();
-        Assert.Equal(("Laura Gómez", "COT-1"), (values[1], values[4]));
-        Assert.All(values, value => Assert.False(string.IsNullOrWhiteSpace(value)));
+        Assert.Equal(("Laura Gómez", "Ana Asesora", "Andina Ltda", "COT-1"), (values[1], values[2], values[3], values[4]));
+        Assert.Contains(values[0], Greetings);
         Assert.Equal($"{values[0]}, {values[1]}, soy {values[2]} de {values[3]}. Te comparto {values[4]}.", await ScalarAsync<string>(
             f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
     }

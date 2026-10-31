@@ -15,7 +15,7 @@ public sealed class RecordingWhatsAppChannelDirectory : IWhatsAppChannelDirector
 
     /// <summary>La conexión de Meta del tenant, para las pruebas que eligen entre dos canales.</summary>
     public static readonly MetaWhatsAppChannel Meta = new(
-        Guid.Parse("01900000-0000-7000-8000-00000000be7a"), "Meta de prueba", "573001112233", "cotizacion_qep", "es_CO");
+        Guid.Parse("01900000-0000-7000-8000-00000000be7a"), "Meta de prueba", "573001112233");
 
     public List<WhatsAppChannel> Channels { get; } = [Default];
 

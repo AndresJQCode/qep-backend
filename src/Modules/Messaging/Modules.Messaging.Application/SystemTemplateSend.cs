@@ -25,6 +25,12 @@ public static class SystemTemplateSend
         ArgumentNullException.ThrowIfNull(values);
         var described = Describe(template);
 
+        // Unos components vacíos o ilegibles darían un envío válido con el texto vacío.
+        if (string.IsNullOrWhiteSpace(described.Body))
+        {
+            return null;
+        }
+
         // No se lee la columna: el refresco guarda POSITIONAL cuando Meta no manda parameter_format, y mandar con nombre unas claves con
         // nombre como si fueran posicionales es un 400 de Meta. Lo que manda es la forma de las claves.
         var named = described.Parameters.Any(key => !IsPositional(key));

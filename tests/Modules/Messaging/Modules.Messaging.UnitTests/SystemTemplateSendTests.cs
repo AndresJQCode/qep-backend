@@ -52,6 +52,14 @@ public sealed class SystemTemplateSendTests
     public void AnOversizedPositionalKeyBuildsNothingInsteadOfThrowing() =>
         Assert.Null(SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{99999999999999999999}}."), AllValues, ["nombre_contacto"]));
 
+    // Una fila sin cuerpo legible no es un envío: saldría un mensaje vacío.
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("not json")]
+    [InlineData("")]
+    public void ARowWithoutAReadableBodyBuildsNothing(string componentsJson) =>
+        Assert.Null(SystemTemplateSend.Build(new ApprovedTemplate("qep_test", "es", "UTILITY", "NAMED", componentsJson), AllValues));
+
     // Review Focus 1: si Meta no devuelve parameter_format, el refresco guarda POSITIONAL.
     [Fact]
     public void NamedKeysAreNamedWhateverTheStoredFormatSays() =>
