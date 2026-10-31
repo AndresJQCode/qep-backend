@@ -98,6 +98,9 @@ public interface IConversationQueries
     /// <summary>Una conversación del tenant; <c>null</c> si no existe o es de otro tenant.</summary>
     Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-10-26 D-12b: ¿tiene el hilo un evento <c>Resolved</c> con <c>occurred_at</c> posterior a <paramref name="since"/>?</summary>
+    Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
+
     /// <summary>Las conversaciones de una página de resultados de búsqueda (§8.8), en una consulta.</summary>
     Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 }

@@ -361,7 +361,10 @@ public sealed partial class Conversation
     }
 
     /// <summary>Spec 2026-10-21 §4.2: arranca el asistente. Sólo sobre una conversación abierta, sin asesor y sin asistente previo:
-    /// el motor no reactiva lo que un humano pausó (eso es <see cref="ResumeAutomation"/>).</summary>
+    /// el motor no reactiva lo que un humano pausó a propósito (<c>Manual</c>, <c>Handoff</c>; eso es <see cref="ResumeAutomation"/>).
+    /// Spec 2026-10-26 D-3b: una pausa automática (<c>AdvisorTook</c>, <c>AdvisorReplied</c>, <c>AdvisorTransferred</c>) sin asesor, que
+    /// es lo que deja un asesor que la tomó y la liberó, sí se puede arrancar: la pausa se borra. No toca <c>AutomationResumedAt</c>:
+    /// el motor lo compara con el arranque de la corrida (P2-R25) y una hora posterior mataría la corrida nueva.</summary>
     public void StartAutomation(Guid chatbotId, DateTimeOffset now)
     {
         EnsureOpenForAutomation();
@@ -374,13 +377,18 @@ public sealed partial class Conversation
         {
             case ConversationAutomationStatus.Active:
                 throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyActive, "The assistant is already attending the conversation.");
-            case ConversationAutomationStatus.Paused:
+            case ConversationAutomationStatus.Paused
+                when AutomationPauseReason is not (Domain.AutomationPauseReason.AdvisorTook or Domain.AutomationPauseReason.AdvisorReplied
+                    or Domain.AutomationPauseReason.AdvisorTransferred):
                 throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The assistant was paused; resume it instead of starting it.");
         }
 
         AutomationStatus = ConversationAutomationStatus.Active;
         AutomationStartedAt = now;
         AutomationChatbotId = chatbotId;
+        AutomationPausedAt = null;
+        AutomationPausedByMemberId = null;
+        AutomationPauseReason = null;
         Touch(now);
     }
 

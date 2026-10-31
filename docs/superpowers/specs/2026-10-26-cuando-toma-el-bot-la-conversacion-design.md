@@ -4,6 +4,8 @@
 **Módulos:** Automations (disparador, procesador), Messaging (ingesta, agregado `Conversation`, constraint de la base, pausa al
 responder), Bootstrapper (adaptadores). **Frontend:** `qep-frontend`, `features/messaging/` (bandeja e hilo) y
 `features/automations/` (texto del disparador).
+**Construido (parte en horario, 2026-10-31):** D-1, D-1b, D-2, D-3b, D-12 y D-12b, sin migración. Compila; sus pruebas se escribieron pero
+no se corrieron al entregar. Pendiente: cobertura fuera de horario (D-5 a D-11, D-14, D-16\*), el CHECK, D-15 y el frontend.
 **Estado:** borrador para el owner. Las decisiones «del owner» vienen de la conversación del 2026-10-26; las «del redactor» las tomé
 yo y se pueden discutir; las DECISIÓN-PENDIENTE (§8) las decide el owner. **No se escribe código hasta que el developer lo diga.**
 **Es un delta sobre** `2026-10-21-constructor-de-chatbots-design.md` (D-C6, D-M3, D-M15, D-M16) y

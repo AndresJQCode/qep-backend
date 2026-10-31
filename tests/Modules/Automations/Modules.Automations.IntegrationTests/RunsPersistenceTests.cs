@@ -363,6 +363,9 @@ public sealed class RunsPersistenceTests
                 : Task.CompletedTask;
         }
 
+        public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
