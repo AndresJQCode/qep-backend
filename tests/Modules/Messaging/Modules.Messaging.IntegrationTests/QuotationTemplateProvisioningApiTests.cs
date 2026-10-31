@@ -96,7 +96,7 @@ public sealed class QuotationTemplateProvisioningApiTests
             created.GetProperty("name").GetString(), created.GetProperty("language").GetString(), created.GetProperty("category").GetString(),
             created.GetProperty("status").GetString(), created.GetProperty("kind").GetString(), created.GetProperty("metaTemplateId").GetString(),
             created.GetProperty("sendable").GetBoolean(), created.GetProperty("unsupportedReason").GetString()));
-        Assert.Equal(["fullname", "order_number", "total", "valid_until"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(["nombre_contacto", "numero_cotizacion", "valor_total", "vigencia"], created.GetProperty("parameters").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal(await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant), created.GetProperty("createdBy").GetProperty("memberId").GetGuid());
         var calls = MetaCalls(f).Where(call => call.Method == HttpMethod.Post).ToArray();
         Assert.Equal(["/v24.0/100200300/uploads", "/v24.0/upload:MTph", "/v24.0/222/message_templates"], calls.Select(call => call.Uri!.AbsolutePath));
@@ -252,15 +252,53 @@ public sealed class QuotationTemplateProvisioningApiTests
     public async Task AnExternalTemplateWithAnotherBodyIs422QuotationConflict()
     {
         await using var database = await StartDatabaseAsync();
-        var f = await ArrangeAsync(database, ExternalQuotation(body: "Otro texto {{fullname}} {{order_number}} {{total}} {{valid_until}}"));
+        var f = await ArrangeAsync(database, ExternalQuotation());
         using var host = f.Factory;
         await f.Admin.GetAsync(TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId), Ct);
 
-        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "Otro texto {{nombre_contacto}}." });
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("messaging.template.quotation_conflict", (await ProblemAsync(response)).Code);
         Assert.Equal("External", await ScalarAsync<string>(f.ConnectionString, "SELECT kind FROM messaging.message_templates WHERE name = 'qep_cotizacion' AND tenant_id = @t", ("t", f.Tenant.TenantId)));
+    }
+
+    [Fact]
+    public async Task ThePostAcceptsABodyAndWorksWithoutOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var edited = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "  Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.  " });
+
+        Assert.Equal(HttpStatusCode.Created, edited.StatusCode);
+        var created = await edited.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.", created.GetProperty("body").GetString());
+        using var payload = JsonDocument.Parse(MetaCalls(f).Single(IsCreate).Body!);
+        Assert.Equal("Hola {{nombre_contacto}}, soy {{asesor}} de {{empresa}}.",
+            payload.RootElement.GetProperty("components").EnumerateArray().Single(component => component.GetProperty("type").GetString() == "BODY").GetProperty("text").GetString());
+
+        // Sin cuerpo (backend desplegado antes que el frontend): el texto base.
+        await ExecuteAsync(f.ConnectionString, "DELETE FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.Tenant.TenantId));
+        var plain = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f));
+        Assert.Equal(HttpStatusCode.Created, plain.StatusCode);
+        Assert.Equal(QuotationTemplateDefinition.BaseBody, (await plain.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("body").GetString());
+    }
+
+    [Fact]
+    public async Task AVariableOutsideTheListIs422WithTheBodyKey()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var response = await SendAsync(f.Admin, HttpMethod.Post, QuotationUrl(f), new { body = "Hola {{otra}}, gracias." });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal(("validation.failed", "body"), (code, Assert.Single(keys)));
+        Assert.DoesNotContain(MetaCalls(f), IsCreate);
     }
 
     [Fact]

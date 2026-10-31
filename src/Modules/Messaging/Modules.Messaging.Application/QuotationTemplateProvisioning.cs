@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
+using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.Extensions.Logging;
 using Modules.Messaging.Domain;
 using Modules.Tenancy.Application;
@@ -10,8 +12,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Messaging.Application;
 
 /// <summary>
-/// Spec 2026-10-14 §4.5: la **única** fuente del nombre, idioma, categoría, texto, variables y ejemplos de la plantilla de cotización. Es el
-/// mismo texto que la plantilla de Zenvia (README § Plantilla de WhatsApp) para que el cliente final no note el cambio de canal.
+/// Spec 2026-10-14 §4.5: la **única** fuente del nombre, idioma, categoría, texto base y ejemplos de la plantilla de cotización. El texto
+/// ya no es único ni igual al de Zenvia: el admin puede editarlo al crearla, con las variables de <see cref="SystemTemplateVariables.Quotation"/>,
+/// y <see cref="BaseBody"/> es el que se usa si no manda otro.
 /// <para>
 /// El nombre va por versiones: <c>qep_cotizacion</c> es la 1 y <c>qep_cotizacion_v2</c>, <c>_v3</c>… las siguientes. Las usa el reintento
 /// (enmienda del owner, 2026-10-15): Meta bloquea un tiempo el nombre de una plantilla borrada, así que reintentar crea la versión
@@ -25,23 +28,17 @@ public static class QuotationTemplateDefinition
     public const string Name = MessageTemplateName.QuotationName;
     public const string Language = "es";
     public const string Category = "UTILITY";
-    public const string Body = "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*.";
-    public const string Footer = "Este mensaje fue generado automáticamente.";
+    /// <summary>El texto del spec, el que se crea si el admin no manda otro. Tiene las palabras suficientes para que Meta no lo rechace por
+    /// pocas palabras frente a sus variables (el defecto que originó las plantillas editables).</summary>
+    public const string BaseBody = "¡Hola, {{nombre_contacto}}! Te compartimos en este mensaje la cotización *{{numero_cotizacion}}*, por un valor total de *{{valor_total}}*. Esta cotización estará vigente hasta el *{{vigencia}}*. Si tienes alguna pregunta, responde este mensaje y con gusto te ayudamos.";
     public const string ExampleFileName = "cotizacion-ejemplo.pdf";
     public const string ExampleMimeType = "application/pdf";
 
     // «qep_cotizacion_v»: dentro del prefijo reservado, así que ninguna libre puede tomar una versión.
     private const string VersionPrefix = MessageTemplateName.QuotationPrefix + "v";
 
-    public static readonly IReadOnlyList<string> Variables = ["fullname", "order_number", "total", "valid_until"];
-
-    public static readonly IReadOnlyDictionary<string, string> Examples = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["fullname"] = "Juan Perez",
-        ["order_number"] = "COT-000123",
-        ["total"] = "2.450.000 COP",
-        ["valid_until"] = "30 de septiembre de 2026",
-    };
+    public static readonly IReadOnlyDictionary<string, string> Examples =
+        SystemTemplateVariables.Quotation.ToDictionary(variable => variable.Key, variable => variable.Example, StringComparer.Ordinal);
 
     /// <summary>El nombre de la versión <paramref name="version"/>: la 1 es <see cref="Name"/>; de la 2 en adelante, <c>qep_cotizacion_v{n}</c>.</summary>
     public static string NameFor(int version)
@@ -73,27 +70,32 @@ public static class QuotationTemplateDefinition
         return int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var version) && version >= 2 ? version : null;
     }
 
-    public static TemplateDraft Draft(string name) => new(name, Language, Category, null, Body, Footer, [], Examples);
+    /// <summary>Una plantilla nueva no lleva pie: el texto editable ya dice todo lo que hace falta.</summary>
+    public static TemplateDraft Draft(string name, string body) => new(name, Language, Category, null, body, null, [], Examples);
 
-    /// <summary>El payload de creación de la versión <paramref name="name"/>, con el encabezado de documento apuntando al
-    /// <paramref name="handle"/> de la Resumable Upload.</summary>
-    public static JsonObject Payload(string handle, string name) => TemplateComponentsBuilder.CreatePayload(Draft(name), handle);
+    /// <summary>El payload de creación de la versión <paramref name="name"/> con el cuerpo <paramref name="body"/>, con el encabezado de
+    /// documento apuntando al <paramref name="handle"/> de la Resumable Upload.</summary>
+    public static JsonObject Payload(string handle, string name, string body) => TemplateComponentsBuilder.CreatePayload(Draft(name, body), handle);
 
-    /// <summary>§4.5, adopción: unos <c>components</c> de Meta son esta plantilla si el cuerpo y el pie coinciden, el encabezado es
-    /// documento y las variables son exactamente las cuatro. No mira el nombre. Se compara lo normalizado por <see cref="TemplateCatalog"/>,
-    /// no el JSON crudo: Meta agrega <c>example</c> y otros campos que no cambian la plantilla.</summary>
-    public static bool Matches(string componentsJson)
+    /// <summary>§4.5, adopción: unos <c>components</c> de Meta son adoptables por su forma, no por su texto: encabezado de documento, sin
+    /// botones, cuerpo no vacío y variables dentro de la lista de la cotización más las claves viejas. No mira el nombre ni el pie. Se
+    /// compara lo normalizado por <see cref="TemplateCatalog"/>, no el JSON crudo: Meta agrega <c>example</c> y otros campos.</summary>
+    public static bool IsAdoptable(string componentsJson)
     {
         ArgumentNullException.ThrowIfNull(componentsJson);
         var described = TemplateCatalog.FromStored(Name, Language, Category, TemplateComponentsBuilder.Named, componentsJson);
-        return string.Equals(described.Body, Body, StringComparison.Ordinal)
-            && string.Equals(described.Footer, Footer, StringComparison.Ordinal)
+        var allowed = SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation);
+        return !string.IsNullOrWhiteSpace(described.Body)
             && described.Header is null
             && described.UnsupportedReason == TemplateUnsupportedReasons.MediaHeader
-            && described.Parameters.ToHashSet(StringComparer.Ordinal).SetEquals(Variables)
+            && described.Parameters.All(key => allowed.Contains(key) || SystemTemplateVariables.LegacyKeys.ContainsKey(key))
             && described.Buttons.Count == 0
             && IsDocumentHeader(componentsJson);
     }
+
+    /// <summary>El cuerpo que Meta tiene guardado en unos <c>components</c>, normalizado como en la adopción.</summary>
+    internal static string? StoredBody(string componentsJson) =>
+        TemplateCatalog.FromStored(Name, Language, Category, TemplateComponentsBuilder.Named, componentsJson).Body;
 
     /// <summary>El PDF de ejemplo que Meta exige para aprobar un encabezado de documento. Se genera, no se embebe: una página con una línea.</summary>
     public static byte[] ExamplePdf() => MinimalPdf.Build("Cotizacion de ejemplo - QEP");
@@ -155,14 +157,32 @@ internal static class MinimalPdf
 }
 
 /// <summary>§4.7 <c>POST …/template-management/quotation</c>: aprovisiona (o adopta, o reintenta) la plantilla de cotización de la conexión.</summary>
-public sealed record ProvisionQuotationTemplateCommand(Guid TenantId, Guid ConnectionId) : ICommand<ManagedTemplateDto>;
+/// <param name="Body">El cuerpo editado, o <c>null</c> para el texto base (backend desplegado antes que el frontend).</param>
+public sealed record ProvisionQuotationTemplateCommand(Guid TenantId, Guid ConnectionId, string? Body = null) : ICommand<ManagedTemplateDto>;
+
+/// <summary>El cuerpo, si viene, usa sólo las variables de la cotización. Con <c>ValidationFailure</c> a mano: los mensajes llevan
+/// <c>{{nombre}}</c> literal y <c>WithMessage</c> lo trataría como placeholder.</summary>
+public sealed class ProvisionQuotationTemplateCommandValidator : AbstractValidator<ProvisionQuotationTemplateCommand>
+{
+    public ProvisionQuotationTemplateCommandValidator() =>
+        RuleFor(command => command.Body).Custom((body, context) =>
+        {
+            if (body is not null && TemplateBodyRules.Check(body, SystemTemplateVariables.KeysOf(SystemTemplateVariables.Quotation)) is { } error)
+            {
+                context.AddFailure(new ValidationFailure("body", error));
+            }
+        });
+}
 
 /// <summary>
 /// §4.5 con el reintento versionado (enmienda del owner, 2026-10-15), en orden:
 /// <list type="number">
 /// <item>Si la conexión ya tiene su <c>Quotation</c> viva (pendiente, aprobada o en apelación), <c>quotation_exists</c>.</item>
-/// <item>Sin <c>Quotation</c>, una <c>External</c> <c>qep_cotizacion</c> en <c>es</c> se adopta sin tocar Meta si su cuerpo coincide
-/// (auditada con <c>changed_fields = ["kind"]</c>, la marca de «adoptada»); si no coincide, <c>quotation_conflict</c>.</item>
+/// <item>Sin <c>Quotation</c>, una <c>External</c> <c>qep_cotizacion</c> en <c>es</c> se adopta sin tocar Meta si tiene la forma esperada
+/// (<see cref="QuotationTemplateDefinition.IsAdoptable"/>) y, con cuerpo en el pedido, el suyo es igual; sin cuerpo en el pedido (backend
+/// desplegado antes que el frontend) basta la forma. Se audita con <c>changed_fields = ["kind"]</c>, la marca de «adoptada»; si no
+/// cuadra, <c>quotation_conflict</c>. El cuerpo se valida <b>después</b> de la adopción: una externa adoptable puede traer claves viejas
+/// que el validador rechaza.</item>
 /// <item>El nombre a crear es la versión siguiente a la mayor del espejo (cualquier kind, idioma <c>es</c>); sin ninguna, la 1.</item>
 /// <item>Sube el PDF de ejemplo y crea con ese handle. Si Meta dice que el nombre ya existe (uno en cuarentena que el espejo ya no
 /// conoce), prueba la versión siguiente con el mismo handle, hasta <see cref="MaxCreateAttempts"/> creaciones.</item>
@@ -192,7 +212,8 @@ public sealed partial class ProvisionQuotationTemplateHandler(
     ITenantModules tenantModules,
     IExecutionContext executionContext,
     IClock clock,
-    ILogger<ProvisionQuotationTemplateHandler> logger)
+    ILogger<ProvisionQuotationTemplateHandler> logger,
+    IValidator<ProvisionQuotationTemplateCommand> validator)
     : ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>
 {
     /// <summary>Creaciones por intento, contando la primera: un tope para no recorrer versiones sin fin si Meta responde «ya existe» a todo.</summary>
@@ -208,6 +229,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
         var now = clock.UtcNow;
+        var body = (command.Body ?? QuotationTemplateDefinition.BaseBody).Trim();
 
         var current = await repository.FindQuotationAsync(command.TenantId, command.ConnectionId, cancellationToken);
         if (current is { IsLive: true })
@@ -218,8 +240,10 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         if (current is null
             && await repository.FindByNameAsync(command.TenantId, command.ConnectionId, QuotationTemplateDefinition.Name, QuotationTemplateDefinition.Language, cancellationToken) is { } external)
         {
-            return await AdoptAsync(command, external, now, cancellationToken);
+            return await AdoptAsync(command, external, body, now, cancellationToken);
         }
+
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var mirror = await repository.ListAsync(command.TenantId, command.ConnectionId, cancellationToken);
         var nextVersion = (mirror
@@ -228,7 +252,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
             .Max() ?? 0) + 1;
 
         var handle = await UploadExampleAsync(command, source, cancellationToken);
-        var (created, name) = await CreateAsync(command, source, handle, nextVersion, cancellationToken);
+        var (created, name) = await CreateAsync(command, source, handle, body, nextVersion, cancellationToken);
 
         if (current is not null)
         {
@@ -249,7 +273,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
         var template = MessageTemplate.Pending(
             command.TenantId, command.ConnectionId, created.Id, name, QuotationTemplateDefinition.Language, created.Category, TemplateComponentsBuilder.Named,
-            created.Status, TemplateComponentsBuilder.Components(QuotationTemplateDefinition.Draft(name), handle).ToJsonString(), MessageTemplateKind.Quotation,
+            created.Status, TemplateComponentsBuilder.Components(QuotationTemplateDefinition.Draft(name, body), handle).ToJsonString(), MessageTemplateKind.Quotation,
             memberId, now);
         repository.Add(template);
         audit.RecordTemplate(command.TenantId, executionContext.SubjectId, MessagingAuditActions.TemplateQuotationProvisioned, template.Id, now);
@@ -257,9 +281,11 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         return ManagedTemplateMapping.ToDto(template, await NamesOfAsync(command.TenantId, template, cancellationToken));
     }
 
-    private async Task<ManagedTemplateDto> AdoptAsync(ProvisionQuotationTemplateCommand command, MessageTemplate external, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<ManagedTemplateDto> AdoptAsync(
+        ProvisionQuotationTemplateCommand command, MessageTemplate external, string body, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (!QuotationTemplateDefinition.Matches(external.ComponentsJson))
+        if (!QuotationTemplateDefinition.IsAdoptable(external.ComponentsJson)
+            || (command.Body is not null && !string.Equals(QuotationTemplateDefinition.StoredBody(external.ComponentsJson), body, StringComparison.Ordinal)))
         {
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateQuotationConflict,
@@ -292,12 +318,12 @@ public sealed partial class ProvisionQuotationTemplateHandler(
 
     // Una sola subida para todas las versiones: el handle no está atado al nombre.
     private async Task<(CreatedTemplate Created, string Name)> CreateAsync(
-        ProvisionQuotationTemplateCommand command, MessagingTemplateSource source, string handle, int firstVersion, CancellationToken cancellationToken)
+        ProvisionQuotationTemplateCommand command, MessagingTemplateSource source, string handle, string body, int firstVersion, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)
         {
             var name = QuotationTemplateDefinition.NameFor(firstVersion + attempt - 1);
-            var created = await meta.CreateTemplateAsync(source, QuotationTemplateDefinition.Payload(handle, name), cancellationToken);
+            var created = await meta.CreateTemplateAsync(source, QuotationTemplateDefinition.Payload(handle, name, body), cancellationToken);
             if (created.Succeeded && created.Value is { } value)
             {
                 return (value, name);

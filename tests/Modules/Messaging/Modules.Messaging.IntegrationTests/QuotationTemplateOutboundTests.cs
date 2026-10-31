@@ -78,7 +78,10 @@ public sealed class QuotationTemplateOutboundTests
     private static ApprovedTemplate Approved(string? body = null, string? footer = null, string category = "UTILITY")
     {
         var draft = body is null
-            ? QuotationTemplateDefinition.Draft("qep_cotizacion_v2")
+            ? new TemplateDraft(
+                "qep_cotizacion_v2", "es", category, null,
+                "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*.",
+                "Este mensaje fue generado automáticamente.", [], new Dictionary<string, string>())
             : new TemplateDraft("qep_cotizacion_v2", "es", category, null, body, footer, [], new Dictionary<string, string>());
         return new ApprovedTemplate(
             "qep_cotizacion_v2", "es", category, "NAMED", TemplateComponentsBuilder.Components(draft, "4::handle").ToJsonString());
