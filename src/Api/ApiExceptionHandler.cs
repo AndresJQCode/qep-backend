@@ -12,6 +12,10 @@ internal sealed class ApiExceptionHandler(
     IProblemDetailsService problemDetailsService,
     ILogger<ApiExceptionHandler> logger) : IExceptionHandler
 {
+    // El Message de ValidationException es el volcado de FluentValidation ("Validation failed: ... Severity: Error"):
+    // sirve en el log, que lo sigue guardando, no en la respuesta. Lo que hay que corregir viaja en `errors`.
+    private const string ValidationDetail = "Algunos datos no son válidos. Revisa cada campo e intenta de nuevo.";
+
     private static readonly Action<ILogger, Exception?> LogUnhandledException =
         LoggerMessage.Define(
             LogLevel.Error,
@@ -54,7 +58,7 @@ internal sealed class ApiExceptionHandler(
         {
             Status = status,
             Title = title,
-            Detail = exception.Message,
+            Detail = exception is ValidationException ? ValidationDetail : exception.Message,
             Instance = httpContext.Request.Path
         };
         problem.Extensions["code"] = code;
@@ -160,9 +164,9 @@ internal sealed class ApiExceptionHandler(
             ResourceNotFoundException value =>
                 (StatusCodes.Status404NotFound, "Resource not found", value.Code),
             RequestForbiddenException value =>
-                (StatusCodes.Status403Forbidden, "Access denied", value.Code),
+                (StatusCodes.Status403Forbidden, "Acceso denegado", value.Code),
             RequestUnauthorizedException value =>
-                (StatusCodes.Status401Unauthorized, "Unauthorized", value.Code),
+                (StatusCodes.Status401Unauthorized, "Autenticación requerida", value.Code),
             ResourceConflictException value =>
                 (StatusCodes.Status409Conflict, "Conflict", value.Code),
             RequestConcurrencyException value =>
@@ -176,7 +180,7 @@ internal sealed class ApiExceptionHandler(
             UpstreamServiceException value =>
                 (StatusCodes.Status502BadGateway, "Bad gateway", value.Code),
             ValidationException =>
-                (StatusCodes.Status422UnprocessableEntity, "Validation failed", "validation.failed"),
+                (StatusCodes.Status422UnprocessableEntity, "Datos no válidos", "validation.failed"),
             DomainException value =>
                 (StatusCodes.Status422UnprocessableEntity, "Business rule failed", value.Code),
             _ => (
