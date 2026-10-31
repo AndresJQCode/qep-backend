@@ -2254,6 +2254,24 @@ El cuerpo pesa como máximo 16 KB; uno ilegible, mal tipado o más grande respon
 | `qep.web.vital`               | s      | `name`   | `lcp`, `inp`, `ttfb` y `fcp`                        |
 | `qep.web.cls`                 | —      | —        | Cumulative Layout Shift                             |
 
+Las colas asíncronas y el rezago de la mensajería salen de los meters `Qep.Platform` y `Qep.Messaging`.
+`QueueSamplerWorker` lee cada 15 s, una por una, las seis colas (`webhook`, `automation`, `media`, `campaign`, `outbox` y
+`shopify_webhook`) con SQL crudo y las publica como gauges. Una cola que falla se loguea y se salta; una lectura de más de
+60 s deja de publicarse, así que un hueco en el panel significa que el muestreador (o esa cola) no está respondiendo, no que
+la cola esté vacía.
+
+| Métrica                     | Unidad | Etiqueta  | Qué mide                                                                                              |
+| --------------------------- | ------ | --------- | ----------------------------------------------------------------------------------------------------- |
+| `qep.queue.backlog`         | —      | `queue`   | Filas pendientes de la cola                                                                           |
+| `qep.queue.retrying`        | —      | `queue`   | De esas, las que ya se intentaron al menos una vez y reintentan                                       |
+| `qep.queue.oldest_age`      | s      | `queue`   | Edad de la pendiente más vieja que nadie ha intentado (`attempts = 0`)                                |
+| `qep.messaging.inbound.lag` | s      | `channel` | Histograma: segundos entre la hora que Meta le pone a un mensaje entrante y el momento en que se guarda |
+
+`oldest_age` ignora lo que ya reintenta (una fila sana en reintento largo o un outbox envenenado no son atraso); en
+`automation` también las que espera una anterior de su misma conversación, y en `media` los medios importados con el
+historial y los abandonados. `campaign` no tiene columna de edad, así que sólo publica `backlog` y `retrying`. En
+`qep.messaging.inbound.lag` la etiqueta `channel` es `whatsapp` o `instagram`; un timestamp a futuro (reloj desfasado) cuenta cero.
+
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
