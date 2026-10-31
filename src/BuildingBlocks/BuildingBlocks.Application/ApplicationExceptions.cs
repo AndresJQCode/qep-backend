@@ -55,3 +55,11 @@ public sealed class UpstreamServiceException(string code, string message) : Exce
 {
     public string Code { get; } = code;
 }
+
+// 429: el llamador superó su cupo de la API externa. RetryAfter, si se conoce, viaja en el header Retry-After.
+public sealed class RequestRateLimitedException(string code, string message, TimeSpan? retryAfter) : Exception(message)
+{
+    public string Code { get; } = code;
+
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}

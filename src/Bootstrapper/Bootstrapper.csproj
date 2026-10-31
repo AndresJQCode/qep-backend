@@ -17,6 +17,8 @@
     <ProjectReference Include="..\Modules\Companies\Modules.Companies.Infrastructure\Modules.Companies.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Application\Modules.ServiceContracts.Application.csproj" />
     <ProjectReference Include="..\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
+    <ProjectReference Include="..\Modules\ApiAccess\Modules.ApiAccess.Infrastructure\Modules.ApiAccess.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Application\Modules.Suppliers.Application.csproj" />
     <ProjectReference Include="..\Modules\Suppliers\Modules.Suppliers.Infrastructure\Modules.Suppliers.Infrastructure.csproj" />
     <ProjectReference Include="..\Modules\Pos\Modules.Pos.Application\Modules.Pos.Application.csproj" />
