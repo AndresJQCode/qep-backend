@@ -225,6 +225,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` (`--no-ff`, sin push) **el texto de los mensajes no soportados del historial** (merge `054918d7`): un
+  `131051` en un mensaje importado ya no pide reenviarlo, dice que el historial no trae ese tipo. Los mensajes en vivo y el `131060` no
+  cambian. Verificado con las unitarias de Messaging y `ThreadApiTests`, no con la suite completa.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, con push) **observabilidad y fluidez** (backend `6aa89693`, frontend
   `b50aa657`). La suite no dejó regresiones por nombre frente a `origin/develop`; las 17 fallas previas están en «Defectos conocidos».
   El dashboard vive en `migracion-k8s`, rama `feature/qep-observabilidad`.
