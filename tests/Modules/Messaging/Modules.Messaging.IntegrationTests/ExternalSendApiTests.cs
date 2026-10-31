@@ -314,6 +314,30 @@ public sealed class ExternalSendApiTests
         await AssertValidationAsync(response, "idempotencyKey");
     }
 
+    [Fact]
+    public async Task AValidationFailureReadsAsPlainSpanishAndKeepsItsContract()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var response = await PostAsync(f.Client, new
+        {
+            idempotencyKey = "pedido-4821",
+            connectionId = f.ConnectionId,
+            to = Phone,
+            template = new { name = TemplateName, language = Language, parameters = DefaultParameters() },
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal("Datos no válidos", body.GetProperty("title").GetString());
+        Assert.Equal("Algunos datos no son válidos. Revisa cada campo e intenta de nuevo.", body.GetProperty("detail").GetString());
+        Assert.Equal("validation.failed", body.GetProperty("code").GetString());
+        Assert.Equal(422, body.GetProperty("status").GetInt32());
+        Assert.Equal("""{"idempotencyKey":["Envía un UUID."]}""", body.GetProperty("errors").GetRawText());
+    }
+
     [Theory]
     [InlineData("3001234567")] // Sin indicativo se leería como +30 y le llegaría a otra persona.
     [InlineData("0573001234567")]
