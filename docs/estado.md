@@ -127,6 +127,7 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Plantillas editables (2026-10-31):** backend primero y frontend después. Antes de desplegar, confirmar que ningún flujo publicado en producción use `{nombre}`: la consulta está en la Task 9 de `docs/superpowers/plans/2026-10-31-plantillas-editables-backend.md`, y si devuelve filas ese flujo se corrige primero, porque una versión publicada no se revalida y el nombre saldría vacío. Falta también la prueba manual de la ventana de edición contra Meta: no se hizo.
 Las entradas de esta lista se escribieron antes de que `develop` llegara a `main` el 2026-10-31. Ninguna se dio por
 cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 
@@ -232,6 +233,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **las plantillas de cotización y cobro editables por tenant** (backend
+  `2badbf31`, frontend `64ede2f9`): texto base editable antes de ir a Meta, lista cerrada de variables con claves en español, envío y bandeja desde la
+  fila aprobada, sin pie en las nuevas y `{nombre}` renombrada a `{nombre_contacto}` en Automatizaciones. Cierra el rechazo de `qep_cotizacion` por el
+  subcódigo 2388293. Sin verificar: la prueba manual y la aprobación del texto base en Meta. Pendiente del owner: no hay «Borrar» en pantalla para una
+  plantilla del sistema, así que un tenant con la plantilla aprobada no cambia el texto desde QEP.
 - 2026-10-31 — Mergeado a `develop` (`--no-ff`, sin push) **el texto legible de las fallas de validación** (merge `7f9c3c6c`): el `detail` del
   422 era el volcado de FluentValidation, con `Severity` y saltos de línea, y ahora es una frase fija en todas las rutas. Los títulos de 401,
   403 y 422 pasan a español. No cambian el status, `code` ni `errors`.
