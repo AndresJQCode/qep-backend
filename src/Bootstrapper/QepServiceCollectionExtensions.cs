@@ -1145,6 +1145,8 @@ public static class QepServiceCollectionExtensions
         // miembros con el mismo adaptador que Messaging (una sola copia de «DisplayName ?? correo»). El único punto donde Pipeline
         // toca esos módulos.
         services.AddScoped<IPipelineConversationDirectory, PipelineConversationDirectory>();
+        // Observabilidad fase 2: profundidad y edad de las seis colas, para el muestreador (SQL crudo por nombre).
+        services.AddScoped<Observability.IQueueMetricsSource, Observability.QueueMetricsSource>();
         services.AddScoped<IPipelineCustomerDirectory, PipelineCustomerDirectory>();
         services.AddScoped<IPipelineMemberNames, MessagingMemberNames>();
         // Quién puede ser dueño de un negocio: sólo membresías Active (los nombres de arriba son sólo para mostrar).

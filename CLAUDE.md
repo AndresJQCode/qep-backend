@@ -505,6 +505,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `PosSaleStatus` u `OrderStatus` que no sea venta tiene que entrar en `is_void`, o empieza a sumar en el resumen sin
   error. Y un filtro opcional nuevo se omite del texto cuando no viene, no se manda como parámetro nulo: PostgreSQL no
   tipa un `NULL` suelto (`could not determine data type of parameter`).
+- **`QueueMetricsSource` lee seis tablas por nombre** (observabilidad fase 2, 2026-10-30): `messaging.webhook_deliveries`,
+  `automation_inbox`, `message_media` (unida a `messages`), `campaign_recipients` (unida a `campaigns`),
+  `platform.outbox_messages` y `shopify.webhook_deliveries`. Es SQL crudo en `src/Bootstrapper/Observability/`. Renombrar una
+  columna compila y deja esa cola sin dato; si es `webhook`, dispara `QepQueueMetricsMissing`. Una cola nueva entra en
+  `QueueNames`, en `QueueMetricsSourceTests`, en el dashboard y en las reglas de alerta. La edad mira sólo `attempts = 0`, y la de
+  `automation` repite el `NOT EXISTS` de `AutomationInbox.ClaimAsync`: si cambias el reclamo, cambia también la lectura. En una
+  prueba, el registro del tenant deja eventos sin despachar en `platform.outbox_messages`: ciérralos antes de esperar una cola vacía.
 - **Borrar una variante es explícito: `deletedVariantIds`. Omitirla del `PUT` responde `catalog.variant.missing_in_request`.**
   No lo «simplifiques» a «la que no viene se borra» (era lo que pedía el plan, y el spec §6 lo corrigió): la tabla de
   variantes llega a 2.048 filas y el formulario la pagina, así que una fila ausente puede ser una página que no se
