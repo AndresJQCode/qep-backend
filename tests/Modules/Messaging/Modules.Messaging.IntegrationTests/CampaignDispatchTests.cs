@@ -2,9 +2,12 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
+using Modules.Tenancy.Application;
 using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
@@ -31,11 +34,22 @@ public sealed class CampaignDispatchTests
 
     private static string CampaignsUrl(Fixture f) => $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/campaigns";
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database, int messagesPerSecond = 20)
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, int messagesPerSecond = 20, ITenantClock? tenantClock = null)
     {
         var connectionString = database.GetConnectionString();
         var pod = new QepApiFactory(connectionString);
-        var host = pod.WithWebHostBuilder(builder => builder.UseSetting("Messaging:Campaigns:MessagesPerSecond", messagesPerSecond.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var host = pod.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Messaging:Campaigns:MessagesPerSecond", messagesPerSecond.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (tenantClock is not null)
+            {
+                builder.ConfigureTestServices(services =>
+                {
+                    services.RemoveAll<ITenantClock>();
+                    services.AddSingleton(tenantClock);
+                });
+            }
+        });
         var tenant = await RegisterTenantAsync(host);
         await EnableMessagingAsync(connectionString, tenant.TenantId);
         var connectionId = await SeedWhatsAppConnectionAsync(host, tenant.TenantId, "Ventas", "111", "222");
@@ -125,6 +139,141 @@ public sealed class CampaignDispatchTests
         using var payload = JsonDocument.Parse(send.Body!);
         var parameters = payload.RootElement.GetProperty("template").GetProperty("components")[0].GetProperty("parameters");
         Assert.Contains(parameters[0].GetProperty("text").GetString(), Greetings);
+    }
+
+    // 14:00 UTC son las 09:00 en Bogotá y 20:00 UTC las 15:00: el mismo destinatario cambia de franja entre dos intentos.
+    private static readonly DateTimeOffset Morning = new(2026, 10, 30, 14, 0, 0, TimeSpan.Zero);
+
+    private static readonly DateTimeOffset Afternoon = new(2026, 10, 30, 20, 0, 0, TimeSpan.Zero);
+
+    private sealed class MovableTenantClock(DateTimeOffset utcNow) : ITenantClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
+
+        public Task<TenantCalendar> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult(new TenantCalendar(UtcNow, TimeZoneInfo.FindSystemTimeZoneById("America/Bogota")));
+    }
+
+    private static object GreetingInput(Fixture f, IEnumerable<Guid> customerIds) =>
+        new
+        {
+            name = "Promo",
+            connectionId = f.ConnectionId,
+            template = new { name = "promo", language = "es" },
+            parameters = new Dictionary<string, object> { ["1"] = new { source = "greeting" }, ["2"] = new { source = "text", value = "A1234" } },
+            audience = new { tagIds = Array.Empty<Guid>(), customerIds = customerIds.ToArray() },
+        };
+
+    private static string GreetingSentToMeta(FakeMetaGraphHandler meta, int send)
+    {
+        var request = meta.Requests.Where(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal)).ElementAt(send);
+        using var payload = JsonDocument.Parse(request.Body!);
+        return payload.RootElement.GetProperty("template").GetProperty("components")[0].GetProperty("parameters")[0].GetProperty("text").GetString()!;
+    }
+
+    private static Task<string> StoredTextAsync(Fixture f) =>
+        ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE direction = 2");
+
+    private static Task<string> StoredDetailsAsync(Fixture f) =>
+        ScalarAsync<string>(f.ConnectionString, "SELECT details::text FROM messaging.messages WHERE direction = 2");
+
+    private static Task<string> ConversationPreviewAsync(Fixture f) =>
+        ScalarAsync<string>(f.ConnectionString, "SELECT last_message_preview FROM messaging.conversations");
+
+    // Decisión del owner: el saludo es el de la hora real de cada intento. El chat tiene que guardar el que salió, no el del primer intento.
+    [Fact]
+    public async Task ARetryThatCrossesIntoAnotherGreetingStoresWhatItActuallySent()
+    {
+        var clock = new MovableTenantClock(Morning);
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, tenantClock: clock);
+        using var pod = f.Pod;
+        f.Pod.MetaHandler.Reset();
+        f.Pod.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        ScriptSends(f.Pod.MetaHandler, number => number == 1 ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(130429)) : null);
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, GreetingInput(f, customers));
+        await DrainCampaignsAsync(f.Host);
+        Assert.Equal("Buenos días", GreetingSentToMeta(f.Pod.MetaHandler, 0));
+        Assert.StartsWith("Hola Buenos días,", await StoredTextAsync(f), StringComparison.Ordinal);
+
+        clock.UtcNow = Afternoon;
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.connection_send_budgets SET throttled_until = now() - interval '1 minute', refilled_at = now() - interval '1 minute'");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET next_attempt_at = now() - interval '1 hour'");
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal("Buenas tardes", GreetingSentToMeta(f.Pod.MetaHandler, 1));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 2"));
+        Assert.StartsWith("Hola Buenas tardes,", await StoredTextAsync(f), StringComparison.Ordinal);
+        var details = await StoredDetailsAsync(f);
+        Assert.Contains("Buenas tardes", details, StringComparison.Ordinal);
+        Assert.DoesNotContain("Buenos días", details, StringComparison.Ordinal);
+        Assert.StartsWith("Hola Buenas tardes,", await ConversationPreviewAsync(f), StringComparison.Ordinal);
+    }
+
+    // Meta aceptó, avisó después que no entregó y el reintento manual falla: la conversación ya apuntaba a este mensaje y SettleSentAsync, que
+    // es quien escribe la vista previa, no corre. La lista no puede quedar con un texto que el mensaje ya no tiene.
+    [Fact]
+    public async Task AManualRetryThatFailsKeepsThePreviewOfTheMessageItRewrote()
+    {
+        var clock = new MovableTenantClock(Morning);
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, tenantClock: clock);
+        using var pod = f.Pod;
+        f.Pod.MetaHandler.Reset();
+        f.Pod.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        ScriptSends(f.Pod.MetaHandler, number => number == 2 ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(131042)) : null);
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        var id = await LaunchAsync(f, GreetingInput(f, customers));
+        await DrainCampaignsAsync(f.Host);
+        var wamid = await ScalarAsync<string>(f.ConnectionString, "SELECT wamid FROM messaging.messages WHERE direction = 2");
+        using var webhook = f.Host.CreateClient();
+        await PostWebhookAsync(webhook, MetaPayloads.Status("111", wamid, "failed", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), null, 131042, "Business eligibility payment issue"));
+        await DrainDeliveriesAsync(f.Host);
+        Assert.Equal("Failed", await RecipientStatusAsync(f, "Ana Ruiz"));
+        Assert.StartsWith("Hola Buenos días,", await ConversationPreviewAsync(f), StringComparison.Ordinal);
+
+        clock.UtcNow = Afternoon;
+        var detail = await f.Client.GetFromJsonAsync<JsonElement>($"{CampaignsUrl(f)}/{id}", Ct);
+        var retried = await SendAsync(f.Client, HttpMethod.Post, $"{CampaignsUrl(f)}/{id}/retry", new { expectedVersion = detail.GetProperty("version").GetInt64() });
+        Assert.Equal(HttpStatusCode.OK, retried.StatusCode);
+        await DrainCampaignsAsync(f.Host);
+
+        Assert.Equal(2, MetaSends(f.Pod.MetaHandler));
+        Assert.Equal("Failed", await RecipientStatusAsync(f, "Ana Ruiz"));
+        Assert.Equal("Buenas tardes", GreetingSentToMeta(f.Pod.MetaHandler, 1));
+        Assert.StartsWith("Hola Buenas tardes,", await StoredTextAsync(f), StringComparison.Ordinal);
+        Assert.StartsWith("Hola Buenas tardes,", await ConversationPreviewAsync(f), StringComparison.Ordinal);
+    }
+
+    // R1 en la rama de reutilización: quien perdió el destinatario no le reescribe el mensaje al nuevo dueño.
+    [Fact]
+    public async Task AWorkerThatLostTheRecipientDoesNotRewriteItsMessage()
+    {
+        var clock = new MovableTenantClock(Morning);
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, tenantClock: clock);
+        using var pod = f.Pod;
+        f.Pod.MetaHandler.Reset();
+        f.Pod.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
+        ScriptSends(f.Pod.MetaHandler, number => number == 1 ? FakeMetaGraphHandler.Json(HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(130429)) : null);
+        var customers = await CreateCustomersAsync(f.Host, f.Tenant, ("Ana Ruiz", "300 111 2222"));
+        await LaunchAsync(f, GreetingInput(f, customers));
+        await DrainCampaignsAsync(f.Host);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET next_attempt_at = now() - interval '1 hour'");
+        using var scopeA = f.Host.Services.CreateScope();
+        using var scopeB = f.Host.Services.CreateScope();
+        var workerA = scopeA.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        var workerB = scopeB.ServiceProvider.GetRequiredService<CampaignDispatcher>();
+        var claimedByA = Assert.Single(await workerA.ClaimAsync(20, Ct));
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET status = 'Pending', locked_until = NULL, next_attempt_at = now() - interval '1 hour'");
+        Assert.Single(await workerB.ClaimAsync(20, Ct));
+        clock.UtcNow = Afternoon;
+
+        await workerA.SendAsync(claimedByA, Ct);
+
+        Assert.Equal(1, MetaSends(f.Pod.MetaHandler));
+        Assert.StartsWith("Hola Buenos días,", await StoredTextAsync(f), StringComparison.Ordinal);
     }
 
     [Fact]

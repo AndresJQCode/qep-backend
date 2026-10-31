@@ -79,7 +79,8 @@ public interface ICampaignDispatchStore
     /// Paso 3.1 y 3.2: abre la conversación del cliente (sin asignar) e inserta el mensaje saliente <c>Template</c> con
     /// <c>sent_by_member_id</c> = el creador de la campaña, y guarda <c>message_id</c> en el destinatario en la misma transacción. El
     /// mensaje nace <c>Failed</c> sin confirmar: si el proceso cae con la llamada a Meta en vuelo, no hay una burbuja que diga «enviado».
-    /// En un reintento reutiliza el mensaje que ya tiene. <c>null</c> si la campaña ya no está <c>Sending</c> (se canceló o falló): el
+    /// En un reintento reutiliza el mensaje que ya tiene y le reescribe <paramref name="text"/> y <paramref name="detailsJson"/>: cada intento
+    /// arma los suyos (el saludo es el de ese momento). <c>null</c> si la campaña ya no está <c>Sending</c> (se canceló o falló): el
     /// destinatario queda <c>Skipped</c> y no hay nada que enviar. También <c>null</c> —sin tocar nada— si este worker dejó de ser el dueño
     /// del destinatario (R1): ata el mensaje con un compare-and-set sobre <c>status = Sending</c>, el lease vivo y el número de intento
     /// que reclamó <see cref="ClaimedRecipient.Attempts"/>. Todas las transiciones posteriores (liquidar, omitir, reintentar, diferir)
