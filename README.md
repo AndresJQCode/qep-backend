@@ -2245,7 +2245,8 @@ Pide sesión del tenant (sin permiso propio) y el header `X-Qep-Client`. Hasta 5
 (segundos, salvo `cls`, que es un puntaje); `route` es obligatoria sólo en `navigation` y es la **plantilla** de la ruta
 del router, nunca la URL (con ids saldría una serie por registro). Un lote inválido responde 422 `validation.failed` con
 `errors`. Límite: 600 lotes por minuto por IP (política `telemetry`). La etiqueta `route` admite 256 valores distintos
-por proceso; el resto sale como `other`.
+por proceso: las primeras 256 rutas distintas que ve un proceso se quedan con su nombre y el resto sale como `other`.
+El cuerpo pesa como máximo 16 KB; uno ilegible, mal tipado o más grande responde 422 con el error en `Samples`.
 
 | Métrica                       | Unidad | Etiqueta | Qué mide                                            |
 | ----------------------------- | ------ | -------- | --------------------------------------------------- |

@@ -168,6 +168,12 @@ public sealed class WebTelemetryApiTests
             Batch(("navigation", null, 1)),
             Batch(("navigation", "bad route", 1)),
             "{}",
+            "{",
+            """{"samples":"x"}""",
+            """{"samples":[{"metric":"lcp","value":"a"}]}""",
+            """{"samples":[null]}""",
+            // 17 KB: pasa del tope del cuerpo aunque sea JSON legal.
+            $$"""{"samples":[],"pad":"{{new string('a', 17 * 1024)}}"}""",
         };
     }
 
@@ -186,6 +192,37 @@ public sealed class WebTelemetryApiTests
             JsonSerializerOptions.Web, TestContext.Current.CancellationToken);
         Assert.Equal("validation.failed", problem?.Code);
         Assert.NotEmpty(problem?.Errors ?? []);
+    }
+
+    /// <summary>El tenant se comprueba antes de leer el cuerpo: un cuerpo roto de otro tenant es 403, no 422.</summary>
+    [Fact]
+    public async Task AnotherTenantWithAMalformedBodyIsForbidden()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, OtherSubjectId, OtherTenantId);
+
+        var response = await client.PostAsync(Url, Json("{"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>El lote legal más grande (50 muestras con rutas de 160 caracteres) cabe en el tope de 16 KB.</summary>
+    [Fact]
+    public async Task TheLargestLegalBatchFitsTheBodyLimit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var samples = Enumerable.Range(0, 50)
+            .Select(i => ("navigation", (string?)("/" + i.ToString("D3", System.Globalization.CultureInfo.InvariantCulture) + new string('a', 156)), 120.0))
+            .ToArray();
+        var body = Batch(samples);
+        Assert.True(body.Length < 16 * 1024, $"body was {body.Length}");
+
+        var response = await client.PostAsync(Url, Json(body), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
     /// <summary>La etiqueta de ruta tiene tope: la ruta 257 sale como <c>other</c>, una ya vista sigue por su nombre.</summary>
