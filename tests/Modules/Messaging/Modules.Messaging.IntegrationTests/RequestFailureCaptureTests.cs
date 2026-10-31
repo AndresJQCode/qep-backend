@@ -32,7 +32,7 @@ public sealed class RequestFailureCaptureTests
     public void ReadsAreNotCaptured() =>
         Assert.False(ShouldCapture("GET", "/api/v1/tenants/x/messaging/conversations"));
 
-    // Spec 2026-10-30 §5.5: en la API externa el 401 (clave inventada) y el 429 (límite) son ruido anónimo que no debe
+    // Spec 2026-10-30 §6.4: en la API externa el 401 (clave inventada) y el 429 (límite) son ruido anónimo que no debe
     // escribir filas; el 403, el 422 y el 502 son fallas de una clave legítima y sí.
     [Theory]
     [InlineData(401, false)]

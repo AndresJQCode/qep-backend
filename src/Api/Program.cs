@@ -77,7 +77,7 @@ builder.Services.AddMessagingRealtime();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    // Spec 2026-10-30 §5.5: solo la API externa lleva cuerpo y Retry-After en su 429 por IP; el resto queda como hoy.
+    // Spec 2026-10-30 §6.1: solo la API externa lleva cuerpo y Retry-After en su 429 por IP; el resto queda como hoy.
     options.OnRejected = ExternalRateLimitRejection.WriteAsync;
     static FixedWindowRateLimiterOptions FixedWindow(string _) => new()
     {
@@ -123,7 +123,7 @@ builder.Services.AddRateLimiter(options =>
                 };
             }));
 
-    // Spec 2026-10-30 §5.5: la API externa, 600 por minuto por IP y antes de autenticar, para frenar claves inventadas. El
+    // Spec 2026-10-30 §6.1: la API externa, 600 por minuto por IP y antes de autenticar, para frenar claves inventadas. El
     // límite por clave (300) corre después, como filtro del grupo. Se particiona por IP y nunca por el header.
     options.AddPolicy(
         RateLimiterPolicies.External,

@@ -57,7 +57,7 @@ internal sealed class RequireCsrfHeaderMiddleware(
         // HMAC de Meta.
         if (SafeMethods.Contains(context.Request.Method)
             || WebhookPaths.IsWebhook(context.Request.Path)
-            // Spec 2026-10-30 §5.5: la API externa se autentica con X-Api-Key y su grupo fija el esquema ApiKey, así que
+            // Spec 2026-10-30 §6.1: la API externa se autentica con X-Api-Key y su grupo fija el esquema ApiKey, así que
             // no acepta la cookie de sesión: no hay sesión que un sitio hermano pueda aprovechar. Tampoco hay CORS que
             // permita X-Api-Key desde el navegador (CorsApiTests).
             || ExternalApiPaths.IsExternal(context.Request.Path)

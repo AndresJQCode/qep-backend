@@ -15,7 +15,7 @@ using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 namespace Modules.Messaging.IntegrationTests;
 
 /// <summary>
-/// Spec 2026-10-30 §5.5: lo que rodea a la API externa sin ser su lógica: la exención de CSRF, los dos límites de tasa y qué
+/// Spec 2026-10-30 §6.1: lo que rodea a la API externa sin ser su lógica: la exención de CSRF, los dos límites de tasa y qué
 /// fallas dejan fila en <c>platform.request_failures</c>. Todo con el stub apagado, porque en modo stub el middleware de CSRF ni
 /// se registra. Aún no hay un <c>POST</c> real bajo <c>/api/v1/external/</c> (llega con el envío): las pruebas montan uno de
 /// sonda sobre el mismo grupo, para ejercer la tubería de producción y no una copia.

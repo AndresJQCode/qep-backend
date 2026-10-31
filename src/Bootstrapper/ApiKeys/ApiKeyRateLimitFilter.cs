@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 namespace Bootstrapper.ApiKeys;
 
 /// <summary>
-/// Cobra una petición al cupo de la clave que llama (spec 2026-10-30 §5.5). Corre después de autenticar, así que conoce el id de
+/// Cobra una petición al cupo de la clave que llama (spec 2026-10-30 §6.1). Corre después de autenticar, así que conoce el id de
 /// la clave; sin cupo lanza <see cref="RequestRateLimitedException"/>, que <c>ApiExceptionHandler</c> responde 429 con
 /// <c>Retry-After</c>.
 /// </summary>

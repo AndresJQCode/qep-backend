@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace Api;
 
 /// <summary>
-/// Spec 2026-10-30 §5.5: lo que recibe quien supera el límite por IP de la API externa. Bajo <c>/api/v1/external/</c> escribe un
+/// Spec 2026-10-30 §6.1: lo que recibe quien supera el límite por IP de la API externa. Bajo <c>/api/v1/external/</c> escribe un
 /// ProblemDetails con el <c>code</c> del contrato y el <c>Retry-After</c>, igual que el límite por clave; en cualquier otra ruta
 /// no hace nada y queda el 429 pelado de siempre.
 /// </summary>

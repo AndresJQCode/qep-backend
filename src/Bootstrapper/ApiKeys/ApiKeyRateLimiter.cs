@@ -5,7 +5,7 @@ using Modules.ApiAccess.Application;
 namespace Bootstrapper.ApiKeys;
 
 /// <summary>
-/// El límite por clave de la API externa (spec 2026-10-30 §5.5): ventana fija de un minuto, una partición por id de clave.
+/// El límite por clave de la API externa (spec 2026-10-30 §6.1): ventana fija de un minuto, una partición por id de clave.
 /// Singleton, porque el estado de las ventanas vive aquí. Solo se le piden ids de claves ya autenticadas, así que el número de
 /// particiones lo acota el de claves reales; el limitador por IP es el que absorbe las inventadas.
 /// </summary>

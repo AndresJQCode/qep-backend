@@ -32,7 +32,7 @@ internal static class RequestFailureCapture
     /// manejador y <see cref="RequestFailureLoggingMiddleware"/>, así que la excepción cubre a los dos, y
     /// el prefijo es el mismo de la excepción de CSRF (<see cref="WebhookPaths"/>).
     ///
-    /// La API externa (spec 2026-10-30 §5.5) tampoco guarda el 401 ni el 429: son el ruido anónimo de quien prueba claves
+    /// La API externa (spec 2026-10-30 §6.4) tampoco guarda el 401 ni el 429: son el ruido anónimo de quien prueba claves
     /// inventadas o supera su cupo, y cada uno escribiría una fila gratis. Un 403, un 422 o un 502 de una clave legítima sí
     /// se guardan. <c>statusCode</c> llega por parámetro porque el manejador de excepciones decide antes de poner el código
     /// en la respuesta.

@@ -79,7 +79,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
-        // Límites de la API externa (spec 2026-10-30 §5.5): sin ValidateOnStart, porque todo tiene valor por defecto y no hay
+        // Límites de la API externa (spec 2026-10-30 §6.1): sin ValidateOnStart, porque todo tiene valor por defecto y no hay
         // configuración nueva en Backend-prod. El limitador por clave es singleton: el estado de las ventanas vive en él.
         services.AddOptions<ApiAccessOptions>().Bind(configuration.GetSection(ApiAccessOptions.SectionName));
         services.AddSingleton<ApiKeyRateLimiter>();
