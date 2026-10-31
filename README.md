@@ -1,4 +1,4 @@
-﻿# QEP Backend
+# QEP Backend
 
 Backend de **QCode Enterprise Platform (QEP)** implementado como monolito
 modular sobre .NET 10.
@@ -4057,10 +4057,10 @@ una conversación bloqueada rechaza cualquier categoría.
 
 **Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
 `ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos
-viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas.
+viven en memoria:** hoy hay una réplica, y con más el límite efectivo se multiplica por el número de réplicas. Ambos deben ser mayores que 0: un 0 o un negativo tumba el arranque (`ValidateOnStart`), no se interpreta como «sin límite».
 
 **Autoría.** El mensaje queda firmado con la clave (`sent_by_kind = 4`, `sent_by_api_key_id`, `sent_by_api_key_name`) y el hilo lo muestra como
-`sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto; la creación y la revocación sí
+`sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
 se auditan (`api_access.key.created`, `api_access.key.revoked`).
 
 ## Verificación

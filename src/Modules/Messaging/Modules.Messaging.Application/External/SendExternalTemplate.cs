@@ -105,7 +105,7 @@ public sealed class SendExternalTemplateHandler(
         var resolution = await connections.ResolveSenderWithReasonAsync(tenantId, connectionId, cancellationToken);
         if (resolution.Sender is not { } sender)
         {
-            throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "The WhatsApp connection is paused, needs attention or was deleted.");
+            throw new MessagingDomainException(MessagingErrorCodes.ConnectionUnavailable, "La conexión de WhatsApp está en pausa, requiere atención o fue eliminada.");
         }
 
         // El validador ya garantizó que ningún valor es nulo.

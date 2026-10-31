@@ -43,7 +43,17 @@ internal sealed partial class ApiKeyAuthenticationHandler(
         var verification = await verifier.VerifyAsync(presented, Context.RequestAborted);
         if (verification.Key is not { } key)
         {
-            LogRejected(Logger, verification.Rejection, verification.KeyPrefix);
+            // Unknown y Malformed son ruido de quien prueba claves inventadas (el tope por IP aun deja 600 por minuto): Debug.
+            // Revoked, Expired y SecretMismatch nombran una clave real y vale verlos.
+            if (verification.Rejection is ApiKeyRejection.Unknown or ApiKeyRejection.Malformed)
+            {
+                LogRejectedNoise(Logger, verification.Rejection, verification.KeyPrefix);
+            }
+            else
+            {
+                LogRejected(Logger, verification.Rejection, verification.KeyPrefix);
+            }
+
             return AuthenticateResult.Fail("Invalid API key.");
         }
 
@@ -78,11 +88,11 @@ internal sealed partial class ApiKeyAuthenticationHandler(
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
         WriteProblemAsync(
-            StatusCodes.Status401Unauthorized, "Unauthorized", ExternalApiErrorCodes.InvalidKey, "The API key is missing or not valid.");
+            StatusCodes.Status401Unauthorized, "Unauthorized", ExternalApiErrorCodes.InvalidKey, "La clave de API no viene en la petición o no es válida.");
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
         WriteProblemAsync(
-            StatusCodes.Status403Forbidden, "Access denied", ExternalApiErrorCodes.ScopeMissing, "The API key does not have the required scope.");
+            StatusCodes.Status403Forbidden, "Access denied", ExternalApiErrorCodes.ScopeMissing, "Tu clave de API no tiene el permiso necesario para esta operación.");
 
     // El comportamiento por defecto es un cuerpo vacío, y un integrador externo no tiene otra forma de saber qué pasó.
     private async Task WriteProblemAsync(int status, string title, string code, string detail)
@@ -103,6 +113,9 @@ internal sealed partial class ApiKeyAuthenticationHandler(
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "API key rejected: {Rejection} (prefix {KeyPrefix}).")]
     private static partial void LogRejected(ILogger logger, ApiKeyRejection? rejection, string? keyPrefix);
+
+    [LoggerMessage(EventId = 3, Level = LogLevel.Debug, Message = "API key rejected: {Rejection} (prefix {KeyPrefix}).")]
+    private static partial void LogRejectedNoise(ILogger logger, ApiKeyRejection? rejection, string? keyPrefix);
 
     [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "Could not update last_used_at for API key with prefix {KeyPrefix}.")]
     private static partial void LogTouchFailed(ILogger logger, Exception exception, string keyPrefix);

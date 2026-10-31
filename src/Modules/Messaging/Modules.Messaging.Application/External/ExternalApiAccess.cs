@@ -21,7 +21,7 @@ public static class ExternalApiAccess
         if (!caller.HasScope(scope))
         {
             throw new RequestForbiddenException(
-                ExternalApiErrorCodes.ScopeMissing, "The API key does not have the required scope.");
+                ExternalApiErrorCodes.ScopeMissing, "Tu clave de API no tiene el permiso necesario para esta operación.");
         }
 
         await TenantModuleGuard.EnsureEnabledFailClosedAsync(
@@ -49,5 +49,5 @@ public static class ExternalApiAccess
     }
 
     private static RequestForbiddenException NotAllowed() =>
-        new(ExternalApiErrorCodes.ConnectionNotAllowed, "The API key cannot use this connection.");
+        new(ExternalApiErrorCodes.ConnectionNotAllowed, "Tu clave de API no puede usar esta conexión.");
 }
