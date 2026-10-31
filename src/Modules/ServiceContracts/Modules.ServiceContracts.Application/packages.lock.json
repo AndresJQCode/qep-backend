@@ -29,12 +29,6 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
-      "modules.billing.domain": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Domain": "[1.0.0, )"
-        }
-      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {
@@ -45,6 +39,12 @@
         }
       },
       "modules.identity.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.servicecontracts.domain": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Domain": "[1.0.0, )"

@@ -2904,6 +2904,14 @@ desde la app.
   condiciones: el último mensaje es del contacto y llegó en las 24 h anteriores a la conexión (esas entran
   abiertas, con `history_managed = true`). Los contactos crean clientes incompletos. Los ecos
   (`smb_message_echoes`) guardan lo que el negocio responde desde la app.
+- **De quién es cada mensaje del historial.** Meta no manda `to` en el historial. El hilo es el contacto: si el
+  `from`, en dígitos, es el id del hilo, el mensaje es del contacto; si es otro, es del negocio. Sin `from` queda
+  como entrante. La regla de abiertas y los no leídos dependen de esto.
+- **Reparación de lo importado antes del 2026-10-30.** El parser anterior esperaba `to` y guardó como entrante lo
+  que escribió el negocio. [`ops/2026-10-30-repair-history-direction.sql`](ops/2026-10-30-repair-history-direction.sql)
+  lo corrige a mano en DBeaver, leyendo los payloads de `messaging.webhook_deliveries`, que se purgan a los 7 días.
+  Corrige la dirección y el estado de los mensajes y la foto de la conversación. No toca el estado ni los no leídos
+  de la conversación (decisión del owner). Por defecto termina en `ROLLBACK`, y correrlo dos veces no cambia nada.
 - **Un eco a un número que QEP no conoce crea la conversación cerrada** (P-5, decisión del owner del
   2026-10-30). Que el negocio escriba desde la app no le deja nada pendiente a un asesor, así que no aparece en
   la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
