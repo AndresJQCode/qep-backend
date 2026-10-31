@@ -31,7 +31,7 @@ public static class QuickReplyMessages
 
     public const string OrderTooLong = "El orden lleva a lo sumo 500 respuestas.";
 
-    public static string UnknownVariable(string variable) => $"«{variable}» no es una variable. Usa {{nombre}}, {{asesor}} o {{empresa}}.";
+    public static string UnknownVariable(string variable) => $"«{variable}» no es una variable. Usa {{nombre_contacto}}, {{asesor}}, {{empresa}} o {{saludo}}.";
 }
 
 /// <summary>
@@ -47,7 +47,7 @@ public abstract class QuickReplyInputValidator<T> : AbstractValidator<T>
         RuleFor(input => input.Shortcut)
             .Must(shortcut => QuickReply.IsValidShortcut(QuickReply.NormalizeShortcut(shortcut)))
             .OverridePropertyName("shortcut").WithMessage(QuickReplyMessages.Shortcut);
-        // Custom con ValidationFailure armado a mano: el mensaje lleva {nombre} literal, y WithMessage lo pasaría por el formateador
+        // Custom con ValidationFailure armado a mano: el mensaje lleva {nombre_contacto} literal, y WithMessage lo pasaría por el formateador
         // de FluentValidation, que trata {…} como placeholder.
         RuleFor(input => input.Body).Custom((body, context) =>
         {

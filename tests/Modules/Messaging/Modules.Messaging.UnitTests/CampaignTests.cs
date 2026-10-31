@@ -104,6 +104,27 @@ public sealed class CampaignTests
         Assert.Throws<MessagingDomainException>(() => Draft(parameters: new Dictionary<string, CampaignParameter> { ["1"] = new(CampaignParameterSource.Text, null) }));
     }
 
+    // El saludo se calcula al despachar: no tiene valor, y el cable sólo dice de dónde sale.
+    [Fact]
+    public void AVariableCanComeFromTheGreetingWithoutAValue()
+    {
+        var campaign = Draft(parameters: new Dictionary<string, CampaignParameter> { ["1"] = CampaignParameter.Greeting });
+
+        Assert.Equal(CampaignParameterSource.Greeting, campaign.Parameters["1"].Source);
+        Assert.Null(campaign.Parameters["1"].Value);
+    }
+
+    [Theory]
+    [InlineData("text", CampaignParameterSource.Text)]
+    [InlineData("customerName", CampaignParameterSource.CustomerName)]
+    [InlineData("greeting", CampaignParameterSource.Greeting)]
+    public void EverySourceReadsAndWritesItsWireName(string wire, CampaignParameterSource source)
+    {
+        Assert.True(CampaignParameter.TryParseSource(wire, out var parsed));
+        Assert.Equal(source, parsed);
+        Assert.Equal(wire, new CampaignParameter(source, null).SourceWire);
+    }
+
     [Fact]
     public void LaunchingWithoutADateSendsNowAndStampsStartedAt()
     {

@@ -125,6 +125,7 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Variables fijas (2026-10-31):** backend y frontend salen en la misma ventana, backend primero y el frontend enseguida. La migración `RenameQuickReplyNombreVariable` entró a `develop` por decisión del owner y corre al arrancar la API: hasta que salga el frontend, todo SPA inserta `{nombre_contacto}` literal en el chat, y después siguen así las pestañas viejas abiertas (hay que pedir que recarguen). Al revés, sin el backend, guardar `{nombre_contacto}` o `{saludo}` da 422 y una campaña con `greeting` se rechaza. Falta correr la suite completa. Tras un rollback del backend, las campañas con `greeting` se detienen con `132001` y se recuperan con `POST /{id}/retry`.
 - **Observabilidad (2026-10-31):** desplegar el backend primero; sin el endpoint, los lotes de telemetría del frontend fallan en silencio y se pierden. Después, confirmar los nombres reales de las métricas en Prometheus y escribir las alertas (Task 11).
 - **Contratos de servicio (2026-10-30):** el renombre a `ServiceContracts` y el historial de precios entraron a `develop` sin compilar. Antes: `dotnet build`, `dotnet test` de `tests/ArchitectureTests`, `tests/Modules/ServiceContracts` y `tests/Bootstrapper`, y comprobar que la migración `AddServicePriceChanges` (escrita a mano, sin `dotnet ef`) no deja cambios pendientes en el modelo. Backend y frontend salen juntos: el frontend manda `priceChangeReason` y lee `priceChanges`.
 - **Variantes:** backend y frontend salen en la misma ventana (decisión del owner, 2026-10-20). Antes: correr las
@@ -227,6 +228,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **las variables fijas de respuestas rápidas y campañas** (backend `df6d6ae5`,
+  frontend `adff7601`): `{nombre_contacto}` y `{saludo}`, con `{nombre}` todavía aceptado, y la fuente `greeting` de campañas, resuelta por envío en la
+  zona del tenant. Verificado con las unitarias de Messaging, `ArchitectureTests`, integración filtrada y la suite del frontend, no con la suite completa
+  del backend. La migración de datos entró después por decisión del owner, sin esperar el día acordado (ver «Antes de llevar `develop` a `main`»).
 - 2026-10-31 — Mergeado a `develop` (`--no-ff`, sin push) **el arreglo del falso tope de plantillas** (merge `d91471fe`): el subcódigo 2388293 de
   Meta (demasiadas variables para el texto) dice «limit» en el título y salía como `limit_reached` en cuentas sin plantillas. Ahora es
   `rejected_by_meta` con el texto de Meta. La plantilla de cotización sigue rechazada en producción hasta el spec 2026-10-31 de plantillas editables.

@@ -9,8 +9,8 @@ namespace Modules.Messaging.Application;
 // Spec 2026-10-11 §6.2: las campañas. Todo handler revalida tenant, permiso (messaging.campaign.manage) y módulo antes de tocar nada
 // (403 con código, nunca 404 ante otro tenant), y valida después, así el 422 por campo no le cuenta a un extraño qué existe.
 
-/// <summary>Una variable de la plantilla como llega en el cuerpo: <c>{ "source": "text", "value": "…" }</c> o
-/// <c>{ "source": "customerName" }</c>. Todo opcional: el validador marca la clave exacta.</summary>
+/// <summary>Una variable de la plantilla como llega en el cuerpo: <c>{ "source": "text", "value": "…" }</c>,
+/// <c>{ "source": "customerName" }</c> o <c>{ "source": "greeting" }</c>. Todo opcional: el validador marca la clave exacta.</summary>
 public sealed record CampaignParameterInput(string? Source, string? Value);
 
 /// <summary>El <c>CampaignInput</c> de crear y editar, que comparten su validador y su manera de armar el agregado.</summary>
@@ -127,7 +127,7 @@ public abstract class CampaignInputValidator<T> : AbstractValidator<T>
         {
             if (input is null || !CampaignParameter.TryParseSource(input.Source, out var source))
             {
-                yield return new ValidationFailure(TemplateParameterRules.KeyPrefix + key, $"Elige de dónde sale «{key}»: un texto fijo o el nombre del cliente.");
+                yield return new ValidationFailure(TemplateParameterRules.KeyPrefix + key, $"Elige de dónde sale «{key}»: un texto fijo, el nombre del cliente o el saludo.");
             }
             else if (source == CampaignParameterSource.Text && !TemplateParameterRules.IsValid(input.Value))
             {
@@ -138,7 +138,7 @@ public abstract class CampaignInputValidator<T> : AbstractValidator<T>
             else if (TemplateCatalog.IsButtonParameter(key)
                 && (source != CampaignParameterSource.Text || !TemplateParameterRules.IsValidFor(key, input.Value)))
             {
-                // El nombre del cliente trae espacios y rompería el enlace: el de un botón sólo es un texto fijo.
+                // El nombre del cliente y el saludo traen espacios y romperían el enlace: el de un botón sólo es un texto fijo.
                 yield return new ValidationFailure(TemplateParameterRules.KeyPrefix + key, $"El enlace de «{key}» es un texto fijo sin espacios.");
             }
         }
@@ -258,7 +258,12 @@ internal static class CampaignSupport
         {
             // El validador ya garantizó que la fuente existe y que un texto trae valor.
             _ = CampaignParameter.TryParseSource(value!.Source, out var source);
-            result[key] = source == CampaignParameterSource.Text ? CampaignParameter.Text(value.Value!) : CampaignParameter.CustomerName;
+            result[key] = source switch
+            {
+                CampaignParameterSource.Text => CampaignParameter.Text(value.Value!),
+                CampaignParameterSource.Greeting => CampaignParameter.Greeting,
+                _ => CampaignParameter.CustomerName,
+            };
         }
 
         return result;

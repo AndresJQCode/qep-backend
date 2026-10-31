@@ -73,14 +73,16 @@ public sealed partial class QuickReply
         return trimmedBody.Length is > 0 and <= BodyMaxLength;
     }
 
-    /// <summary>D-Q3: el primer <c>{…}</c> que no es <c>{nombre}</c>, <c>{asesor}</c> ni <c>{empresa}</c> (con sus llaves), o
-    /// <c>null</c>. Sensible a mayúsculas: el frontend reemplaza exactamente esas tres, y cualquier otra llegaría literal al cliente.</summary>
+    /// <summary>D-Q3: el primer <c>{…}</c> que no es <c>{nombre_contacto}</c>, <c>{asesor}</c>, <c>{empresa}</c> ni <c>{saludo}</c> (con sus
+    /// llaves), o <c>null</c>. Sensible a mayúsculas: el frontend reemplaza exactamente ésas, y cualquier otra llegaría literal al cliente.
+    /// <c>{nombre}</c> es el nombre viejo de <c>{nombre_contacto}</c>: entra porque un SPA de antes del despliegue lo sigue mandando, pero
+    /// los mensajes de error ya no lo ofrecen.</summary>
     public static string? FindUnknownVariable(string body)
     {
         ArgumentNullException.ThrowIfNull(body);
         foreach (Match match in VariablePattern().Matches(body))
         {
-            if (match.Groups[1].Value is not ("nombre" or "asesor" or "empresa"))
+            if (match.Groups[1].Value is not ("nombre_contacto" or "asesor" or "empresa" or "saludo" or "nombre"))
             {
                 return match.Value;
             }
@@ -107,7 +109,7 @@ public sealed partial class QuickReply
         if (FindUnknownVariable(trimmedBody) is { } unknown)
         {
             throw new MessagingDomainException(
-                MessagingErrorCodes.QuickReplyUnknownVariable, $"'{unknown}' is not a variable; use {{nombre}}, {{asesor}} or {{empresa}}.");
+                MessagingErrorCodes.QuickReplyUnknownVariable, $"'{unknown}' is not a variable; use {{nombre_contacto}}, {{asesor}}, {{empresa}} or {{saludo}}.");
         }
 
         return (normalizedShortcut, trimmedBody);
