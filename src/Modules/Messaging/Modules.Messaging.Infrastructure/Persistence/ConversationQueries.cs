@@ -127,6 +127,20 @@ internal sealed class ConversationQueries(MessagingDbContext dbContext) : IConve
             .Select(Projection)
             .SingleOrDefaultAsync(cancellationToken);
 
+    public async Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        // Un evento es una fila de messages con direction = 3 y kind = 13 (ConversationEventRows); su tipo viaja en details->>'type'.
+        var utcSince = since.ToUniversalTime();
+        var found = await dbContext.Database.SqlQuery<int>(
+            $"""
+            SELECT 1 AS "Value" FROM messaging.messages
+            WHERE tenant_id = {tenantId} AND conversation_id = {conversationId} AND direction = 3 AND kind = 13
+              AND details->>'type' = 'Resolved' AND occurred_at > {utcSince}
+            LIMIT 1
+            """).ToListAsync(cancellationToken);
+        return found.Count > 0;
+    }
+
     public async Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {
         var wanted = ids.ToArray();

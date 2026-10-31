@@ -347,6 +347,9 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
     public Task<ConversationRow?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         Task.FromResult(Rows.SingleOrDefault(row => row.TenantId == tenantId && row.Id == conversationId));
 
+    public Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
     public Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ConversationRow>>(Rows.Where(row => row.TenantId == tenantId && ids.Contains(row.Id)).ToList());
 }

@@ -390,6 +390,9 @@ public sealed class RunProcessorRecordingTests
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
 
+        public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
         public Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task SetStepAsync(Guid tenantId, Guid conversationId, string? stepTitle, CancellationToken cancellationToken) => Task.CompletedTask;

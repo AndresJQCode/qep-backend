@@ -270,6 +270,43 @@ public sealed class ConversationTests
         Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => conversation.StartAutomation(Guid.CreateVersion7(), Now)));
     }
 
+    [Theory]
+    [InlineData(AutomationPauseReason.AdvisorTook)]
+    [InlineData(AutomationPauseReason.AdvisorReplied)]
+    [InlineData(AutomationPauseReason.AdvisorTransferred)]
+    public void StartAutomationAcceptsAnAutomaticPauseOnceTheAdvisorLeft(AutomationPauseReason reason)
+    {
+        // Spec 2026-10-26 D-3b: el asesor la tomó, la liberó y la pausa automática quedó sin dueño.
+        var conversation = Active();
+        conversation.PauseAutomation(null, reason, Now);
+        var chatbot = Guid.CreateVersion7();
+        var later = Now.AddMinutes(5);
+
+        conversation.StartAutomation(chatbot, later);
+
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Equal(chatbot, conversation.AutomationChatbotId);
+        Assert.Equal(later, conversation.AutomationStartedAt);
+        Assert.Null(conversation.AutomationPausedAt);
+        Assert.Null(conversation.AutomationPausedByMemberId);
+        Assert.Null(conversation.AutomationPauseReason);
+        // Sin AutomationResumedAt: HumanTookOver lo compara con el arranque de la corrida y mataría la corrida nueva.
+        Assert.Null(conversation.AutomationResumedAt);
+    }
+
+    [Fact]
+    public void StartAutomationStillRejectsAHandoffPauseAndAnAdvisor()
+    {
+        var handoff = Active();
+        handoff.HandOffAutomation(AutomationHandoff.Create(AutomationHandoffKind.Block, null, null, null, null, null, null, null), Now);
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => handoff.StartAutomation(Guid.CreateVersion7(), Now)));
+
+        var withAdvisor = Active();
+        withAdvisor.Take(Andres, Now);
+        Assert.Equal(AutomationPauseReason.AdvisorTook, withAdvisor.AutomationPauseReason);
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, CodeOf(() => withAdvisor.StartAutomation(Guid.CreateVersion7(), Now)));
+    }
+
     [Fact]
     public void TakingAnActiveConversationPausesItWithAdvisorTook()
     {

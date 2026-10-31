@@ -159,7 +159,8 @@ internal static class InboundIngestion
             FROM old
             WHERE id = {conversationId}
             RETURNING old.old_status AS "OldStatus", old.old_customer_id AS "OldCustomerId", assigned_member_id AS "AssignedMemberId",
-                      automation_status AS "AutomationStatus", old.old_last_inbound_at AS "OldLastInboundAt"
+                      automation_status AS "AutomationStatus", automation_pause_reason AS "AutomationPauseReason",
+                      old.old_last_inbound_at AS "OldLastInboundAt"
             """).ToListAsync(cancellationToken)).Single();
 
         if (message.Media is { } media)
@@ -226,7 +227,9 @@ internal static class InboundIngestion
     /// </summary>
     private static bool ShouldEnqueue(InboundMessage message, PreviousState state) =>
         state.AssignedMemberId is null
-        && state.AutomationStatus is "None" or "Active"
+        // Spec 2026-10-26 D-3b: una pausa que puso el trabajo de un asesor (la tomó y la liberó) no frena al bot; Manual y Handoff sí.
+        && (state.AutomationStatus is "None" or "Active"
+            || state.AutomationStatus == "Paused" && state.AutomationPauseReason is "AdvisorTook" or "AdvisorReplied" or "AdvisorTransferred")
         && (state.OldLastInboundAt is null || message.OccurredAt >= state.OldLastInboundAt)
         && message.Kind is MessageKind.Text or MessageKind.Interactive or MessageKind.Image or MessageKind.Document
             or MessageKind.Video or MessageKind.Audio or MessageKind.Unsupported;
@@ -306,7 +309,8 @@ internal static class InboundIngestion
         return source is null ? null : source.Length <= PreviewMaxLength ? source : source[..PreviewMaxLength];
     }
 
-    private sealed record PreviousState(string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus, DateTimeOffset? OldLastInboundAt);
+    private sealed record PreviousState(
+        string OldStatus, Guid? OldCustomerId, Guid? AssignedMemberId, string AutomationStatus, string? AutomationPauseReason, DateTimeOffset? OldLastInboundAt);
 
     private sealed record EchoState(Guid? AssignedMemberId, string AutomationStatus);
 }

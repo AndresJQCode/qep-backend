@@ -3,33 +3,33 @@ using Modules.Automations.Domain;
 
 namespace Modules.Automations.UnitTests;
 
-/// <summary>Spec 2026-10-21 D-C6 y D-M16: qué entrante arranca una corrida en una conversación sin corrida y en <c>None</c>.</summary>
+/// <summary>Spec 2026-10-21 D-C6 y spec 2026-10-26 D-1/D-1b: qué entrante arranca una corrida en una conversación sin corrida y sin asesor.</summary>
 public sealed class TriggerEvaluatorTests
 {
     private static readonly string[] Keywords = ["hola", "servicio tecnico"];
 
     [Fact]
-    public void NewConversationAppliesOnlyWhenOpened()
+    public void NewConversationAppliesOnAnyInbound()
     {
-        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.NewConversation, [], opened: true, "lo que sea", businessHoursOpen: true));
-        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.NewConversation, [], opened: false, "lo que sea", businessHoursOpen: true));
+        // Reemplaza a D-M16: ya no depende de que el entrante haya abierto la conversación.
+        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.NewConversation, [], "lo que sea", businessHoursOpen: true));
+        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.NewConversation, [], null, businessHoursOpen: false));
     }
 
     [Fact]
     public void KeywordAppliesOnAnyInboundWithoutAccents()
     {
-        // D-M16: con cualquier entrante, haya abierto o no la conversación; D-C6: palabra exacta sin mayúsculas ni tildes.
-        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, opened: false, "  Servicio TÉCNICO ", businessHoursOpen: true));
-        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, opened: true, "HOLA", businessHoursOpen: false));
-        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, opened: true, "hola, necesito ayuda", businessHoursOpen: true));
-        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, opened: true, null, businessHoursOpen: true));
+        // D-C6: palabra exacta sin mayúsculas ni tildes.
+        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, "  Servicio TÉCNICO ", businessHoursOpen: true));
+        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, "HOLA", businessHoursOpen: false));
+        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, "hola, necesito ayuda", businessHoursOpen: true));
+        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.Keyword, Keywords, null, businessHoursOpen: true));
     }
 
     [Fact]
-    public void OutsideHoursNeedsOpenedAndClosedHours()
+    public void OutsideHoursAppliesOnlyWhileClosed()
     {
-        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.OutsideHours, [], opened: true, "hola", businessHoursOpen: false));
-        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.OutsideHours, [], opened: true, "hola", businessHoursOpen: true));
-        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.OutsideHours, [], opened: false, "hola", businessHoursOpen: false));
+        Assert.True(TriggerEvaluator.Applies(ChatbotTrigger.OutsideHours, [], "hola", businessHoursOpen: false));
+        Assert.False(TriggerEvaluator.Applies(ChatbotTrigger.OutsideHours, [], "hola", businessHoursOpen: true));
     }
 }
