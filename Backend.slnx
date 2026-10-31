@@ -153,6 +153,12 @@
     <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.UnitTests/Modules.ServiceContracts.UnitTests.csproj" />
     <Project Path="tests/Modules/ServiceContracts/Modules.ServiceContracts.IntegrationTests/Modules.ServiceContracts.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Loans/">
+    <Project Path="src/Modules/Loans/Modules.Loans.Domain/Modules.Loans.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Loans/">
+    <Project Path="tests/Modules/Loans/Modules.Loans.UnitTests/Modules.Loans.UnitTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/ApiAccess/">
     <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Api/Modules.ApiAccess.Api.csproj" />
     <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Application/Modules.ApiAccess.Application.csproj" />
