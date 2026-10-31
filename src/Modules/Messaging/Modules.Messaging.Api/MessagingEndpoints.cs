@@ -128,6 +128,13 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // Sin If-Match ni cuerpo: el frontend lo llama cada 20 s mientras el asesor escribe, y no toca la conversación. 204 aunque no salga nada.
+        group.MapPost("/conversations/{conversationId:guid}/typing", SendTypingAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         // Spec 2026-10-14 §3.1: espejo de /read. Sin If-Match ni cuerpo; 204 siempre que exista en el tenant.
         group.MapPost("/conversations/{conversationId:guid}/unread", MarkUnreadAsync)
             .RequireAuthorization(MessagingPermissions.ConversationManage)
@@ -471,6 +478,12 @@ public static class MessagingEndpoints
     private static async Task<IResult> MarkReadAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {
         await dispatcher.SendAsync(new MarkConversationReadCommand(tenantId, conversationId), cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> SendTypingAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new SendTypingIndicatorCommand(tenantId, conversationId), cancellationToken);
         return Results.NoContent();
     }
 

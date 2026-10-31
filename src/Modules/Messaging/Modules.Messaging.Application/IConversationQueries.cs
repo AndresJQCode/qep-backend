@@ -37,7 +37,8 @@ public sealed record ConversationRow(
     DateTimeOffset? AutomationResumedAt = null,
     DateTimeOffset? BlockedAt = null,
     Guid? BlockedByMemberId = null,
-    bool Imported = false);
+    bool Imported = false,
+    string? LastInboundWamid = null);
 
 /// <summary>Spec 2026-10-10 §5.1: <c>assigned=all|me|none</c>.</summary>
 public enum AssignedFilter

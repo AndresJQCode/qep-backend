@@ -121,6 +121,10 @@ public interface IWhatsAppCloudClient
     /// <summary>§8.4: best effort, 5 s. <c>true</c> si Meta respondió 2xx.</summary>
     Task<bool> MarkReadAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);
 
+    /// <summary>El indicador «escribiendo» del asesor, best effort, 5 s. <c>true</c> si Meta respondió 2xx. Va en la misma llamada que el
+    /// leído: Cloud API no lo manda sin marcar <paramref name="wamid"/>, así que el contacto ve el chulo azul.</summary>
+    Task<bool> SendTypingIndicatorAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-26 §2: <c>POST /{phone_number_id}/block_users</c>. <paramref name="waId"/> va sólo con dígitos; el cliente le pone el «+».</summary>
     Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken);
 
