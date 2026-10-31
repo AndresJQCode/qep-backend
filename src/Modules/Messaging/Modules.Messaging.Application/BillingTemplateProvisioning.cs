@@ -164,11 +164,19 @@ public sealed partial class ProvisionBillingTemplatesHandler(
         await TenantModuleGuard.EnsureEnabledAsync(tenantModules, command.TenantId, TenantModuleKeys.ServiceContracts, cancellationToken);
         var source = await connections.ResolveTemplateSourceAsync(command.TenantId, command.ConnectionId, cancellationToken)
             ?? throw TemplateManagementSupport.ConnectionUnavailable();
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var mirror = (await repository.ListAsync(command.TenantId, command.ConnectionId, cancellationToken)).ToList();
+        // El cuerpo de una plantilla viva se ignora, así que no se valida: un cliente que reenvía el texto viejo de una fila POSITIONAL
+        // (`{{1}}`) no puede frenar la creación de la otra.
+        await validator.ValidateAndThrowAsync(
+            command with
+            {
+                ReminderBody = IsLive(mirror, MessageTemplateKind.BillingReminder) ? null : command.ReminderBody,
+                OverdueBody = IsLive(mirror, MessageTemplateKind.BillingOverdue) ? null : command.OverdueBody,
+            },
+            cancellationToken);
         var now = clock.UtcNow;
         var memberId = await callerMembership.FindAsync(command.TenantId, cancellationToken);
 
-        var mirror = (await repository.ListAsync(command.TenantId, command.ConnectionId, cancellationToken)).ToList();
         var rows = new List<MessageTemplate>();
         foreach (var definition in BillingTemplateDefinitions.All)
         {
@@ -220,6 +228,9 @@ public sealed partial class ProvisionBillingTemplatesHandler(
             memberNames, command.TenantId, rows.Where(row => row.CreatedByMemberId.HasValue).Select(row => row.CreatedByMemberId!.Value).Distinct().ToArray(), cancellationToken);
         return rows.Select(row => ManagedTemplateMapping.ToDto(row, names)).ToArray();
     }
+
+    private static bool IsLive(List<MessageTemplate> mirror, MessageTemplateKind kind) =>
+        mirror.FirstOrDefault(template => template.Kind == kind) is { IsLive: true };
 
     private async Task<(CreatedTemplate Created, string Name)> CreateAsync(
         ProvisionBillingTemplatesCommand command, MessagingTemplateSource source, BillingTemplateDefinition definition, string body, int firstVersion,

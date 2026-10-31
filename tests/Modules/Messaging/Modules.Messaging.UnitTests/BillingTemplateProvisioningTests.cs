@@ -73,8 +73,10 @@ public sealed class BillingTemplateProvisioningTests
         Assert.Equal("NAMED", payload["parameter_format"]!.GetValue<string>());
         var body = Assert.Single(payload["components"]!.AsArray());
         Assert.Equal("BODY", body!["type"]!.GetValue<string>());
-        Assert.Equal("nombre_contacto", body["example"]!["body_text_named_params"]![0]!["param_name"]!.GetValue<string>());
-        Assert.Equal("María González", body["example"]!["body_text_named_params"]![0]!["example"]!.GetValue<string>());
+        var named = body["example"]!["body_text_named_params"]!.AsArray();
+        Assert.Single(named);
+        Assert.Equal("nombre_contacto", named[0]!["param_name"]!.GetValue<string>());
+        Assert.Equal("María González", named[0]!["example"]!.GetValue<string>());
     }
 
     [Fact]
@@ -157,6 +159,37 @@ public sealed class BillingTemplateProvisioningTests
         Assert.Equal(2, again.Count);
         Assert.Equal(2, rig.Repository.Rows.Count);
         Assert.Equal(2, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task WhenMetaRejectsTheFirstNothingIsSavedAndTheMessageNamesTheReminder()
+    {
+        var rig = new Rig();
+        rig.Bed.Meta.CreateResults.Enqueue(new(null, new MessagingGraphFailure(400, 100, "http_400", "Invalid Format", "El cuerpo no sirve")));
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ProvisionAsync());
+
+        Assert.Equal(MessagingErrorCodes.TemplateRejectedByMeta, error.Code);
+        Assert.StartsWith("Recordatorio: ", error.Message, StringComparison.Ordinal);
+        Assert.Empty(rig.Repository.Rows);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
+    // Una fila viva se ignora con todo y su cuerpo: un cliente que reenvía el texto viejo de una fila POSITIONAL (`{{1}}`) no frena la otra.
+    [Fact]
+    public async Task ALiveRowsBodyIsIgnoredBeforeValidatingSoItDoesNotBlockTheOther()
+    {
+        var rig = new Rig();
+        var live = MessageTemplate.Pending(
+            rig.Bed.TenantId, rig.Bed.ConnectionId, "771", "qep_cobro_recordatorio", "es", "UTILITY", "POSITIONAL", "PENDING", "[]",
+            MessageTemplateKind.BillingReminder, rig.Bed.MemberId, rig.Bed.Now.AddDays(-1));
+        rig.Repository.Rows.Add(live);
+
+        var rows = await rig.ProvisionAsync(reminderBody: "Hola {{1}}, tu servicio vence.", overdueBody: OverdueBody);
+
+        Assert.Equal([OverdueBody], rig.Bed.Meta.CreatedTemplates.Select(Rig.BodyOf));
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(1, rig.UnitOfWork.Saves);
     }
 
     [Fact]

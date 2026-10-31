@@ -177,6 +177,58 @@ public sealed class TemplateManagementApiTests
             "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t AND kind IN ('BillingReminder', 'BillingOverdue')", ("t", f.Tenant.TenantId)));
     }
 
+    private static string[] CreatedBodies(FakeMetaGraphHandler meta) =>
+        meta.Requests
+            .Where(request => request.Method == HttpMethod.Post && request.Uri!.AbsolutePath.EndsWith("/222/message_templates", StringComparison.Ordinal))
+            .Select(request =>
+            {
+                using var payload = JsonDocument.Parse(request.Body!);
+                return payload.RootElement.GetProperty("components").EnumerateArray()
+                    .Single(component => component.GetProperty("type").GetString() == "BODY").GetProperty("text").GetString()!;
+            })
+            .ToArray();
+
+    [Fact]
+    public async Task ProvisioningBillingTemplatesSendsTheEditedBodiesToMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await SetBillingModuleAsync(f, "active");
+        var next = 0;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.RespondWith("/222/message_templates", request =>
+            request.Method == HttpMethod.Get
+                ? FakeMetaGraphHandler.Json(HttpStatusCode.OK, """{"data":[]}""")
+                : FakeMetaGraphHandler.Json(HttpStatusCode.OK, $$"""{"id":"90{{++next}}","status":"PENDING","category":"UTILITY"}"""));
+        const string reminder = "Hola {{nombre_contacto}}, tu servicio {{servicio}} vence el {{vencimiento}}.";
+        const string overdue = "Hola {{nombre_contacto}}, tienes {{cantidad_cobros}} cobros vencidos.";
+
+        var response = await SendAsync(
+            f.Admin, HttpMethod.Post, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/billing", new { reminderBody = reminder, overdueBody = overdue });
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal([reminder, overdue], CreatedBodies(f.Factory.MetaHandler));
+    }
+
+    [Fact]
+    public async Task ABillingBodyWithAVariableOfTheOtherNoticeIs422WithItsKeyAndNeverReachesMeta()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await SetBillingModuleAsync(f, "active");
+
+        var response = await SendAsync(
+            f.Admin, HttpMethod.Post, $"{TemplateManagementUrl(f.Tenant.TenantId, f.ConnectionId)}/billing",
+            new { reminderBody = "Hola {{nombre_contacto}}, tienes {{cantidad_cobros}} cobros.", overdueBody = (string?)null });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var (code, keys) = await ProblemAsync(response);
+        Assert.Equal(("validation.failed", "reminderBody"), (code, Assert.Single(keys)));
+        Assert.Equal(0, Creations(f.Factory.MetaHandler));
+    }
+
     [Fact]
     public async Task AConnectionOfAnotherTenantIs422ConnectionUnavailableNot404()
     {
