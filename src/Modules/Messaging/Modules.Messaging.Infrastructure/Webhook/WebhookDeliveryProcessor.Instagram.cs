@@ -167,6 +167,8 @@ internal sealed partial class WebhookDeliveryProcessor
             var ingested = await InboundIngestion.IngestAsync(dbContext, route.TenantId, route.ConnectionId, message, context, now, enqueueAutomation: false, cancellationToken, ConversationChannel.Instagram);
             if (ingested is not null)
             {
+                // Sólo el entrante nuevo mide: un reenvío de Meta (null) no. Antes de NotifyAsync, que puede fallar.
+                metrics.RecordInboundLag("instagram", message.OccurredAt, clock.UtcNow);
                 await NotifyAsync(deliveryId, ingested.ConversationId,
                     () => notifier.InboundMessageAsync(route.TenantId, ingested.ConversationId, ingested.MessageId, ingested.AssignedMemberId, cancellationToken));
             }
