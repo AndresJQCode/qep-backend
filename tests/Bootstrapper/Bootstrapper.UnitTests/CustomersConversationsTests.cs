@@ -24,6 +24,9 @@ public sealed class CustomersConversationsTests
         public Task<ConversationCountsDto> CountsAsync(Guid tenantId, Guid? memberId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<ConversationRow>> FindManyAsync(
             Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

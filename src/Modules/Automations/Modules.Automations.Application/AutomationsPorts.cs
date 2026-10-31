@@ -269,10 +269,13 @@ public interface IAutomationInboundQueue
 /// <summary>Lo que el motor necesita de la conversación (§5.2 paso 2). <see cref="Status"/> es <c>Open</c> o <c>Resolved</c>;
 /// <see cref="AutomationStatus"/>, <c>None</c>, <c>Active</c> o <c>Paused</c> (los nombres de los enums de Mensajería).
 /// <see cref="CustomerName"/> es el nombre de perfil de WhatsApp y <see cref="Phone"/>, el <c>wa_id</c>.
-/// <see cref="AutomationResumedAt"/> (D-M15, P2-R25) es cuándo una persona la devolvió al asistente por última vez.</summary>
+/// <see cref="AutomationResumedAt"/> (D-M15, P2-R25) es cuándo una persona la devolvió al asistente por última vez.
+/// <see cref="AutomationPauseReason"/> (spec 2026-10-26 D-3b) es el motivo de la pausa (<c>AdvisorTook</c>, <c>AdvisorReplied</c>,
+/// <c>AdvisorTransferred</c>, <c>Manual</c> o <c>Handoff</c>) y es <c>null</c> si el asistente no está pausado.</summary>
 public sealed record AutomationConversationState(
     string Status, Guid? AssignedMemberId, string AutomationStatus, Guid? AutomationChatbotId, Guid ConnectionId,
-    DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone, DateTimeOffset? AutomationResumedAt = null);
+    DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone, DateTimeOffset? AutomationResumedAt = null,
+    string? AutomationPauseReason = null);
 
 /// <summary>Spec 2026-10-21 §5.3, D-M5 y D-M14: lo que el motor le hace a la conversación (adaptador en Bootstrapper sobre el agregado
 /// <c>Conversation</c> de Mensajería). Cada cambio se guarda y se notifica antes de volver. Una regla del agregado que no se cumple
@@ -283,7 +286,13 @@ public interface IAutomationConversations
     /// <summary><c>null</c> si la conversación no es del tenant.</summary>
     Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 
-    /// <summary><c>None → Active</c> con el chatbot y el primer paso.</summary>
+    /// <summary>Spec 2026-10-26 D-12b: ¿hubo una resolución de la conversación (el evento <c>Resolved</c> del hilo) después de
+    /// <paramref name="since"/>? Se mide con la historia y no con el estado actual: una conversación puede figurar <c>Open</c> porque la
+    /// ingesta la reabrió, y aun así haber sido resuelta después de que terminó la última corrida.</summary>
+    Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
+
+    /// <summary><c>None → Active</c> con el chatbot y el primer paso. Spec 2026-10-26 D-3b: también <c>Paused → Active</c> cuando la
+    /// pausa es automática (<c>AdvisorTook</c>, <c>AdvisorReplied</c>, <c>AdvisorTransferred</c>) y la conversación ya no tiene asesor.</summary>
     Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken);
 
     /// <summary>El paso visible en la bandeja (D-M14). No es un cambio de la conversación: no mueve su versión ni falla porque

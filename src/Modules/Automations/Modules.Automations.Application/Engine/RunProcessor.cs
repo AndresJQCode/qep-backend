@@ -262,6 +262,10 @@ public sealed partial class RunProcessor(
         {
             AutomationStates.None => await StartByTriggerAsync(item, conversation, now, cancellationToken),
             AutomationStates.Active => await ResumeAsync(item, conversation, now, cancellationToken),
+            // Spec 2026-10-26 D-3b: sin asesor (ya verificado arriba), una pausa que puso el trabajo de un asesor no frena al bot; Manual y
+            // Handoff sí (D-13b).
+            AutomationStates.Paused when conversation.AutomationPauseReason is "AdvisorTook" or "AdvisorReplied" or "AdvisorTransferred" =>
+                await StartByTriggerAsync(item, conversation, now, cancellationToken),
             _ => null,
         };
     }
@@ -277,9 +281,10 @@ public sealed partial class RunProcessor(
         }
 
         // El horario sólo se consulta cuando decide algo.
-        var hoursOpen = chatbot.Trigger != ChatbotTrigger.OutsideHours || !item.Opened
+        var hoursOpen = chatbot.Trigger != ChatbotTrigger.OutsideHours
             || await businessHours.IsOpenAsync(item.TenantId, item.ConnectionId, cancellationToken);
-        if (!TriggerEvaluator.Applies(chatbot.Trigger, chatbot.Keywords, item.Opened, inbound.Text, hoursOpen)
+        if (!TriggerEvaluator.Applies(chatbot.Trigger, chatbot.Keywords, inbound.Text, hoursOpen)
+            || await FinishedAloneWithoutResolutionAsync(item, chatbot.Trigger, cancellationToken)
             || await LoadFlowAsync(item.TenantId, chatbot.PublishedVersionId, cancellationToken) is not { } flow)
         {
             return null;
@@ -297,6 +302,22 @@ public sealed partial class RunProcessor(
         }
 
         return await StartRunAsync(item, conversation, chatbot, flow, now, cancellationToken);
+    }
+
+    /// <summary>
+    /// Spec 2026-10-26 D-12 y D-12b: si la última corrida terminó <c>Completed</c> (el flujo llegó al final sin resolver ni traspasar), no
+    /// se vuelve a empezar hasta que haya una resolución posterior, medida con la historia del hilo y no con el estado actual. Sólo aplica
+    /// a esa última corrida y no al disparador <c>Keyword</c> (no objetivo del spec).
+    /// </summary>
+    private async Task<bool> FinishedAloneWithoutResolutionAsync(InboundQueueItem item, ChatbotTrigger trigger, CancellationToken cancellationToken)
+    {
+        if (trigger == ChatbotTrigger.Keyword
+            || await runs.FindLatestAsync(item.TenantId, item.ConversationId, cancellationToken) is not { Status: RunStatus.Completed } last)
+        {
+            return false;
+        }
+
+        return !await conversations.WasResolvedSinceAsync(item.TenantId, item.ConversationId, last.EndedAt ?? last.StartedAt, cancellationToken);
     }
 
     /// <summary>

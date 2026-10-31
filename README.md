@@ -3803,8 +3803,8 @@ $auth = @("-b", "qep_session=$env:QEP_SESSION", "-H", "X-Tenant-Id: $tenantId", 
       Desde ahí QEP recibe el webhook del número.
    2. En el editor, ajustes del chatbot: se le asigna esa conexión de WhatsApp y se publica.
       `Messaging:Automation:Enqueue` ya está prendido (`appsettings.json`). Con el disparador `NewConversation` el bot toma
-      la conversación que se abre o se reabre **después** de publicar: una que se abrió entre el Embedded Signup y la
-      publicación sigue sin bot hasta que se resuelva y vuelva a abrir, así que este paso va enseguida del anterior.
+      cualquier entrante de una conversación sin asesor (spec 2026-10-26 D-1), esté abierta o resuelta; sólo no vuelve a empezar si
+      la última corrida terminó sola (`Completed`) y nadie resolvió después (D-12).
    3. lulo-chat deja de reenviar los mensajes del número a `whatsapp-bot/webhook` de Clasic. Mientras los dos reciban,
       contestan los dos bots: el spec de migración cuenta con que lulo siga recibiendo hasta que se apague (§7, paso 6), así
       que este paso no se deja para después.

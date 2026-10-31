@@ -233,6 +233,12 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **la parte en horario de «cuándo toma el bot la conversación»** (spec
+  2026-10-26, D-1, D-1b, D-2, D-3b, D-12, D-12b; backend `07fcaafb`, frontend `589e0f4f`): `NewConversation` y `OutsideHours` arrancan con cualquier
+  entrante, y una pausa automática sin asesor ya no frena al bot; `Manual`, `Handoff` y tener asesor sí. **Sin correr pruebas, por pedido del owner
+  para desplegar rápido:** sólo se compiló y se revisó el SQL contra filas reales. Faltan las de `RunProcessor`, `TriggerEvaluator` y las de
+  integración de Automations y Messaging; `AutomationInboxTests` puede tener un caso que espera lo contrario. La cobertura fuera de horario de
+  conversaciones asignadas (D-5 a D-16) sigue sin construir.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **borrar las plantillas del sistema desde sus tarjetas** (backend
   `eb68a999`, frontend `496039b2`): botón por plantilla en cualquier estado, nombre real visible y el texto en el diálogo para copiarlo. Cierra el
   pendiente de la entrada siguiente. El tope de creaciones sube de 5 a 20, porque borrar reinicia las versiones en 1, y sólo se adopta una `External`

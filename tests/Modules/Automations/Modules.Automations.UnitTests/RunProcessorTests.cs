@@ -987,6 +987,148 @@ public sealed class RunProcessorTests
           ] }
         """;
 
+    // Spec 2026-10-26: cuándo toma el bot la conversación. Un entrante que NO abrió la conversación (Opened: false).
+    private static readonly InboundQueueItem LaterInbound = new(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, DateTimeOffset.UtcNow, Attempts: 1);
+
+    private static AutomationConversationState PausedState(string reason, Guid? advisor = null) =>
+        new("Open", advisor, "Paused", ChatbotId, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567", AutomationPauseReason: reason);
+
+    private static ConversationRun EndedRun(RunStatus status, DateTimeOffset endedAt) =>
+        ConversationRun.Start(
+            Guid.CreateVersion7(), TenantId, ConversationId, ConnectionId, ChatbotId, VersionId,
+            RunState.Initial(RunVariables.Empty()) with { Status = status, CurrentNodeId = "n1" }, endedAt);
+
+    /// <summary>D-1 y el caso verificado de §1: abierta, sin asesor, asistente en None y sin corrida; el entrante no la abrió. Arranca.</summary>
+    [Fact]
+    public async Task NewConversationStartsOnAnInboundThatDidNotOpenTheConversation()
+    {
+        var bed = new Bed(startFailure: null);
+
+        var outcome = await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Ended, outcome);
+        Assert.Equal(1, bed.Conversations.Started);
+        Assert.Single(bed.Runs.Added);
+    }
+
+    /// <summary>D-1b: fuera de horario arranca con cualquier entrante; en horario no.</summary>
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 0)]
+    public async Task OutsideHoursStartsOnAnyInboundOnlyWhileClosed(bool hoursOpen, int started)
+    {
+        var bed = new Bed(startFailure: null, trigger: ChatbotTrigger.OutsideHours, hoursOpen: hoursOpen);
+
+        await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(started, bed.Conversations.Started);
+    }
+
+    /// <summary>D-12: el flujo terminó solo (Completed) y nadie resolvió después; un «gracias» no vuelve a empezar el saludo.</summary>
+    [Fact]
+    public async Task ACompletedRunWithoutALaterResolutionDoesNotRestart()
+    {
+        var bed = new Bed(startFailure: null);
+        var endedAt = DateTimeOffset.UtcNow.AddHours(-2);
+        bed.Runs.Added.Add(EndedRun(RunStatus.Completed, endedAt));
+
+        var outcome = await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal(0, bed.Conversations.Started);
+        Assert.Single(bed.Runs.Added);
+        Assert.Equal([endedAt], bed.Conversations.ResolvedChecks);
+    }
+
+    /// <summary>D-12b: la resolución posterior sale de la historia, aunque la conversación figure Open porque este entrante la reabrió.</summary>
+    [Fact]
+    public async Task ACompletedRunFollowedByAResolutionRestarts()
+    {
+        var bed = new Bed(startFailure: null, resolvedAfterRun: true);
+        bed.Runs.Added.Add(EndedRun(RunStatus.Completed, DateTimeOffset.UtcNow.AddHours(-2)));
+
+        await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, bed.Conversations.Started);
+        Assert.Equal(2, bed.Runs.Added.Count);
+    }
+
+    /// <summary>D-12b: sólo la última corrida Completed pide una resolución; con cualquier otro final, o sin corrida, arranca sin preguntar.</summary>
+    [Theory]
+    [InlineData(RunStatus.Resolved)]
+    [InlineData(RunStatus.HandedOff)]
+    [InlineData(RunStatus.Interrupted)]
+    [InlineData(RunStatus.Abandoned)]
+    [InlineData(RunStatus.Failed)]
+    [InlineData(RunStatus.WindowClosed)]
+    public async Task OnlyACompletedLastRunWaitsForAResolution(RunStatus last)
+    {
+        var bed = new Bed(startFailure: null);
+        bed.Runs.Added.Add(EndedRun(last, DateTimeOffset.UtcNow.AddHours(-2)));
+
+        await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, bed.Conversations.Started);
+        Assert.Empty(bed.Conversations.ResolvedChecks);
+    }
+
+    /// <summary>D-12 no cambia el disparador Keyword (no objetivo del spec): la palabra arranca aunque la última corrida sea Completed.</summary>
+    [Fact]
+    public async Task AKeywordStartsEvenAfterACompletedRun()
+    {
+        var bed = new Bed(startFailure: null, trigger: ChatbotTrigger.Keyword);
+        bed.Runs.Added.Add(EndedRun(RunStatus.Completed, DateTimeOffset.UtcNow.AddHours(-2)));
+
+        await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, bed.Conversations.Started);
+        Assert.Empty(bed.Conversations.ResolvedChecks);
+    }
+
+    /// <summary>D-3b: un asesor la tomó y la liberó; sin asesor y con una pausa automática, el bot la vuelve a tomar.</summary>
+    [Theory]
+    [InlineData("AdvisorTook")]
+    [InlineData("AdvisorReplied")]
+    [InlineData("AdvisorTransferred")]
+    public async Task AnAutomaticPauseWithoutAdvisorLetsTheBotStart(string reason)
+    {
+        var bed = new Bed(startFailure: null, PausedState(reason));
+
+        await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, bed.Conversations.Started);
+    }
+
+    /// <summary>D-3b y D-13b: con asesor nunca; la pausa Manual y la de Handoff siguen frenando al bot.</summary>
+    [Theory]
+    [InlineData("AdvisorTook", true)]
+    [InlineData("AdvisorReplied", true)]
+    [InlineData("Manual", false)]
+    [InlineData("Handoff", false)]
+    public async Task AnAdvisorOrADeliberatePauseKeepsTheBotOut(string reason, bool withAdvisor)
+    {
+        var bed = new Bed(startFailure: null, PausedState(reason, withAdvisor ? Guid.CreateVersion7() : null));
+
+        var outcome = await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal(0, bed.Conversations.Started);
+    }
+
+    /// <summary>D-1: con asesor y el asistente en None el bot tampoco entra.</summary>
+    [Fact]
+    public async Task AnAdvisorKeepsTheBotOutEvenOnAnUnopenedInbound()
+    {
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", Guid.CreateVersion7(), "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
+
+        var outcome = await bed.Processor().ProcessAsync(LaterInbound, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal(0, bed.Conversations.Started);
+    }
+
     private static AutomationConversationState ActiveState(DateTimeOffset? lastInboundAt = null) =>
         new("Open", null, "Active", ChatbotId, ConnectionId, lastInboundAt ?? DateTimeOffset.UtcNow, "Laura", "573001234567");
 
@@ -1011,7 +1153,8 @@ public sealed class RunProcessorTests
     private sealed class Bed(
         Exception? startFailure, AutomationConversationState? state = null, IClock? clock = null, Action? onLock = null, string? flow = Flow,
         IHttpBlockExecutor? http = null, bool moduleEnabled = true, bool lockBusy = false, Exception? endFailure = null, IAutomationMedia? media = null,
-        EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null)
+        EngineSettings? engineSettings = null, RecordingDataConsents? dataConsents = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation,
+        bool hoursOpen = true, bool resolvedAfterRun = false)
     {
         public RecordingInbox Inbox { get; } = new();
 
@@ -1021,7 +1164,7 @@ public sealed class RunProcessorTests
 
         public RecordingMessenger Messenger { get; } = new();
 
-        public Conversations Conversations { get; } = new(startFailure, state, endFailure);
+        public Conversations Conversations { get; } = new(startFailure, state, endFailure, resolvedAfterRun);
 
         public RecordingAudit Audit { get; } = new();
 
@@ -1029,13 +1172,13 @@ public sealed class RunProcessorTests
         {
             var conversations = Conversations;
             var audit = Audit;
-            var hours = new OpenHours();
+            var hours = new OpenHours(hoursOpen);
             var files = media ?? new NoMedia();
             var effects = new RunEffects(
-                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings),
+                Messenger, conversations, hours, http ?? new RecordingHttpBlocks(null), files, audit, DataConsents, new ServingChatbots(flow, engineSettings, trigger),
                 NullLogger<RunEffects>.Instance);
             return new RunProcessor(
-                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings), Inbox, conversations, new TenantNames(), new Connections(), hours,
+                new NoUnitOfWork(onLock, lockBusy), Runs, new ServingChatbots(flow, engineSettings, trigger), Inbox, conversations, new TenantNames(), new Connections(), hours,
                 files, new ModuleStatus(moduleEnabled), audit, effects, clock ?? new FixedClock(), NullLogger<RunProcessor>.Instance);
         }
     }
@@ -1098,11 +1241,11 @@ public sealed class RunProcessorTests
     }
 
     /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
-    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null) : IChatbotRepository
+    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
-                ChatbotId, "Servicio", ChatbotStatus.Active, ChatbotTrigger.NewConversation, [], Chatbot.DefaultRestartKeyword, 3, VersionId));
+                ChatbotId, "Servicio", ChatbotStatus.Active, trigger, ["hola"], Chatbot.DefaultRestartKeyword, 3, VersionId));
 
         public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
@@ -1156,8 +1299,18 @@ public sealed class RunProcessorTests
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure) : IAutomationConversations
+    private sealed class Conversations(Exception? startFailure, AutomationConversationState? state, Exception? endFailure, bool resolvedAfterRun = false)
+        : IAutomationConversations
     {
+        /// <summary>Spec 2026-10-26 D-12b: las veces que el procesador preguntó por una resolución y desde cuándo.</summary>
+        public List<DateTimeOffset> ResolvedChecks { get; } = [];
+
+        public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken)
+        {
+            ResolvedChecks.Add(since);
+            return Task.FromResult(resolvedAfterRun);
+        }
+
         public int Ended { get; private set; }
 
         public int HandedOff { get; private set; }
@@ -1239,12 +1392,12 @@ public sealed class RunProcessorTests
         }
     }
 
-    private sealed class OpenHours : IAutomationBusinessHours
+    private sealed class OpenHours(bool open = true) : IAutomationBusinessHours
     {
         public Task<IReadOnlyDictionary<Guid, string?>> ScheduleNamesAsync(Guid tenantId, IReadOnlyCollection<Guid> connectionIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<bool> IsOpenAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> IsOpenAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) => Task.FromResult(open);
     }
 
     private sealed class TenantNames : IAutomationTenantNames
