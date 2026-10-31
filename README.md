@@ -2765,7 +2765,9 @@ más pasa en el request. Un worker reclama cada entrega con un lease (8 intentos
 **Entrantes que Meta no entrega.** Un mensaje `type: "unsupported"` se guarda como `Unsupported` con el `type` y los
 `errors` de Meta en `details`. Al leer, `unsupportedReason` lo traduce a español como `failureReason`
 (`UnsupportedMessageReasons`): `131060` (la persona escribió pero el contenido no llegó; Meta no lo reenvía) y
-`131051` (tipo que la Cloud API no entrega); cualquier otro código viaja `null`. La lista de conversaciones no lo
+`131051` (tipo que la Cloud API no entrega); cualquier otro código viaja `null`. Un `131051` de un mensaje importado del historial (`imported`) lleva otro texto: «Este
+mensaje no se pudo importar del historial: WhatsApp no entrega este tipo. Puedes verlo en el celular.», porque no hay a quién
+pedirle que reenvíe; el `131060` y los entrantes en vivo no cambian. La lista de conversaciones no lo
 trae. Handoff al frontend: `docs/superpowers/plans/2026-10-14-mensaje-no-disponible-frontend.md`.
 
 **Lista e hilo: paginación por cursor.** `GET …/conversations` devuelve `{ items, nextCursor, counts }`: el

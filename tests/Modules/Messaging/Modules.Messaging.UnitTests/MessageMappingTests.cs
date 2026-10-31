@@ -14,9 +14,9 @@ public sealed class MessageMappingTests
     private static readonly IReadOnlyDictionary<Guid, string> Names = new Dictionary<Guid, string> { [Andres] = "Andrés" };
     private static readonly IReadOnlyDictionary<Guid, ReplyTargetRow> NoTargets = new Dictionary<Guid, ReplyTargetRow>();
 
-    private static MessageRow Row(MessageDirection direction, MessageKind kind, string? text = null, string? details = null, Guid? replyTo = null) =>
+    private static MessageRow Row(MessageDirection direction, MessageKind kind, string? text = null, string? details = null, Guid? replyTo = null, bool imported = false) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), direction, kind, text, null, details, MessageStatus.Delivered, null,
-            DateTimeOffset.UnixEpoch, null, null, null, replyTo);
+            DateTimeOffset.UnixEpoch, null, null, null, replyTo, Imported: imported);
 
     [Fact]
     public void AnEventCarriesItsMembersAndNothingElse()
@@ -75,6 +75,13 @@ public sealed class MessageMappingTests
     [InlineData(131051, "WhatsApp no admite este tipo de mensaje. Pídele a la persona que lo envíe como texto, imagen o documento.")]
     public void AnUnsupportedMessageWithAKnownMetaCodeCarriesItsReason(int code, string expected) =>
         Assert.Equal(expected, MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Unsupported, details: UnsupportedDetails(code)), TenantId, Names, NoTargets).UnsupportedReason);
+
+    [Theory]
+    [InlineData(131051, true, "Este mensaje no se pudo importar del historial: WhatsApp no entrega este tipo. Puedes verlo en el celular.")]
+    [InlineData(131051, false, "WhatsApp no admite este tipo de mensaje. Pídele a la persona que lo envíe como texto, imagen o documento.")]
+    [InlineData(131060, true, "WhatsApp no entregó el contenido de este mensaje. Pídele a la persona que lo envíe de nuevo.")]
+    public void AnImportedUnsupportedMessageDoesNotAskThePersonToResend(int code, bool imported, string expected) =>
+        Assert.Equal(expected, MessageMapping.ToDto(Row(MessageDirection.Inbound, MessageKind.Unsupported, details: UnsupportedDetails(code), imported: imported), TenantId, Names, NoTargets).UnsupportedReason);
 
     // Sin motivo conocido la burbuja dibuja la etiqueta del kind, que ya existe en el frontend.
     [Theory]

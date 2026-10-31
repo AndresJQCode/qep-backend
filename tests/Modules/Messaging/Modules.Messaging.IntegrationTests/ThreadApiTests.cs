@@ -81,6 +81,37 @@ public sealed class ThreadApiTests
         Assert.Equal(JsonValueKind.Null, items[1].GetProperty("unsupportedReason").ValueKind);
     }
 
+    // Un 131051 importado del historial (plantillas, interactivos) no tiene a quién pedirle que reenvíe.
+    [Fact]
+    public async Task AnImportedUnsupportedMessageDoesNotAskThePersonToResend()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableMessagingAsync(connectionString, tenant.TenantId);
+        await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
+        using var anonymous = factory.CreateClient();
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundUnavailable("111", "573001234567", "w1", 1760000001));
+        await PostWebhookAsync(anonymous, MetaPayloads.InboundUnavailable("111", "573001234567", "w2", 1760000002));
+        await DrainDeliveriesAsync(factory);
+        const string unsupportedType = """{"type":"unsupported","errors":[{"code":131051,"title":"x","message":"x","error_data":{"details":"x"}}]}""";
+        await ExecuteAsync(connectionString, "UPDATE messaging.messages SET details = @d::jsonb WHERE wamid IN ('w1', 'w2')", ("d", unsupportedType));
+        await ExecuteAsync(connectionString, "UPDATE messaging.messages SET imported = true WHERE wamid = 'w1'");
+        using var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ReadPermissions);
+        var conversationId = (await client.GetFromJsonAsync<JsonElement>(ConversationsUrl(tenant.TenantId), Ct)).GetProperty("items")[0].GetProperty("id").GetGuid();
+
+        var page = await client.GetFromJsonAsync<JsonElement>(MessagesUrl(tenant.TenantId, conversationId), Ct);
+        var items = page.GetProperty("items").EnumerateArray().Where(item => item.GetProperty("kind").GetString() == "Unsupported").ToArray();
+
+        Assert.Equal(
+            [
+                "Este mensaje no se pudo importar del historial: WhatsApp no entrega este tipo. Puedes verlo en el celular.",
+                "WhatsApp no admite este tipo de mensaje. Pídele a la persona que lo envíe como texto, imagen o documento.",
+            ],
+            items.Select(item => item.GetProperty("unsupportedReason").GetString()));
+    }
+
     [Fact]
     public async Task MediaLocationAndFailedMessagesHaveTheirShape()
     {
