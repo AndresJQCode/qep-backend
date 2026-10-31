@@ -190,21 +190,6 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
-      "modules.billing.application": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Application": "[1.0.0, )",
-          "FluentValidation": "[12.1.1, )",
-          "Modules.ServiceContracts.Domain": "[1.0.0, )",
-          "Modules.Tenancy.Application": "[1.0.0, )"
-        }
-      },
-      "modules.billing.domain": {
-        "type": "Project",
-        "dependencies": {
-          "BuildingBlocks.Domain": "[1.0.0, )"
-        }
-      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {
@@ -215,6 +200,21 @@
         }
       },
       "modules.identity.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.servicecontracts.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Modules.ServiceContracts.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.servicecontracts.domain": {
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Domain": "[1.0.0, )"
