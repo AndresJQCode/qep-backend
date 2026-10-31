@@ -258,5 +258,4 @@ alerta y dejar el bot punta a punta para después.
 ## Queda para quien construya
 
 Forma exacta del `BackgroundService` y de su conexión, nombres de clases, disposición visual del dashboard y texto de las
-alertas. Confirmar en el plan cuál mapeo de `MessagingDbContext` corresponde a `automation_inbox` para la columna `attempts`
-(hay dos `inbox`, con default 0 y 1).
+alertas.
