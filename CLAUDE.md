@@ -267,6 +267,18 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   busca la conversación por teléfono (`OpenByPhoneAsync`) y no por `customer_id`, para no caer en el hilo de otro número (D16b);
   pasa `seen: 0` para no tocar los no leídos (D16a); y el PDF va por `id` de media, no por URL. Un cambio en el reclamo o la
   liquidación (`IOutboundMessages`, `OutboundSettlement`) se prueba también con `QuotationTemplateOutboundTests`.
+- **El módulo de cobros recurrentes se llama `ServiceContracts` en el código y `billing` en todo lo desplegado** (owner,
+  2026-10-30). Carpeta `src/Modules/ServiceContracts/`, namespaces `Modules.ServiceContracts.*`, agregado `ServiceContract`
+  (antes `BillingService`), tipos `ServiceContracts*` (`ServiceContractsDbContext`, `ServiceContractsPermissions`,
+  `IServiceContractsAuditPublisher`…), en pantalla «Contratos de servicio». **No cambiaron, y no se cambian sin migración de
+  datos ni despliegue conjunto con el frontend:** el esquema `billing`, la clave de módulo `billing` (`TenantModuleKey.ServiceContracts`),
+  los permisos `billing.service.read|manage`, las rutas `/api/v1/tenants/{id}/billing` y `/billing` del SPA, las acciones de
+  auditoría y los códigos de error `billing.*`, la sección `Billing` de configuración (`ServiceContractsOptions.SectionName`) y el id
+  de la migración `20261029180546_InitialBilling`. Conservan «Billing» a propósito porque nombran el cobro y no el módulo, o son de
+  otro módulo: `BillingCycle`, `BillingChannel`, `CustomerBillingProfile`; `MessageTemplateKind.BillingReminder|BillingOverdue`
+  (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
+  (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
+  (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
   Los dieciocho módulos construidos son Audit, Authorization, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
@@ -286,6 +298,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
   sin cambio le da un 412 al asesor.
+- **Un mensaje del historial no trae `to`: la dirección sale de comparar `from` con el id del hilo** (producción, 2026-10-30).
+  Los ecos sí traen `to`, y un fixture de historial que también lo llevaba pasó en verde y escondió el bug: 795 mensajes del
+  negocio entraron como del contacto. Un fixture de Meta se copia de la forma real (`messaging.webhook_deliveries`), no de otro
+  campo del webhook.
 - **Un eco (`smb_message_echoes`) a un número desconocido crea la conversación `Resolved`, no `Open`** (P-5, owner
   2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
   abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la

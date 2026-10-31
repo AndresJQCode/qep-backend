@@ -17,6 +17,12 @@
 
 ## 1. Módulo
 
+> **Renombre (owner, 2026-10-30).** El módulo se llama `ServiceContracts` en el código (`src/Modules/ServiceContracts/`,
+> `Modules.ServiceContracts.*`, agregado `ServiceContract`, antes `BillingService`) y «Contratos de servicio» en pantalla. El
+> contrato desplegado no cambió: esquema `billing`, clave de módulo `billing`, permisos `billing.service.*`, rutas `/billing`,
+> auditoría y códigos `billing.*`, sección `Billing` de configuración. Lo que sigue describe ese contrato con los nombres de
+> entonces; para la correspondencia de nombres ver `CLAUDE.md`.
+
 | Qué | Valor | Precedente |
 | --- | --- | --- |
 | Carpeta | `src/Modules/Billing/Modules.Billing.{Domain,Application,Infrastructure,Api}` | `src/Modules/Suppliers` |
@@ -65,6 +71,21 @@ Montos `numeric(18,2)`; moneda `varchar(3)` del catálogo `Currencies`. Todo lle
 | `last_generated_due_date` | date null | El vencimiento del último cobro generado; el worker genera a partir de él (§3.2). |
 | `version` | bigint | Token de concurrencia (`If-Match`). |
 | `created_at`, `updated_at`, `status_changed_at` | timestamptz | |
+
+### `billing.service_price_changes` — el historial de precios (owner, 2026-10-30)
+
+Una fila por cambio de precio o de moneda de un contrato, escrita en la misma transacción del `PUT`. Sólo se inserta: es la
+justificación del cambio, nunca se edita ni se borra. Sin FK a `services`, como `charges`.
+
+| Columna | Tipo | Regla |
+| --- | --- | --- |
+| `id` | uuid v7 | PK |
+| `tenant_id`, `service_id` | uuid | Índice `(service_id, occurred_at)`. |
+| `previous_price`, `new_price` | numeric(18,2) | El precio antes y después. |
+| `previous_currency`, `new_currency` | varchar(3) | La moneda antes y después (cambiar sólo la moneda también es un cambio de precio). |
+| `reason` | varchar(500) | Obligatorio, trim, no vacío. |
+| `changed_by_member_id` | uuid null | La membresía activa de quien editó; nula si no tenía (un operador). |
+| `occurred_at` | timestamptz | |
 
 ### `billing.charges`
 
@@ -158,6 +179,11 @@ PK `tenant_id`; `whatsapp_connection_id` uuid null (la conexión de Integrations
 - Marcar pagado un cobro de un servicio `Paused` o `Cancelled`: se permite si el cobro está `Pending` (la deuda existe).
 - `PUT` del servicio cambia `name`, `price`, `currency`. Un cobro ya generado conserva su monto; los que se generen después toman
   el nuevo.
+- **Historial de precios (owner, 2026-10-30).** Si el `PUT` cambia `price` o `currency` (100 y 100.00 son el mismo precio), el
+  cuerpo tiene que traer `priceChangeReason` (trim, 1 a 500) o responde 422 `billing.service.price_reason_required` sin tocar
+  nada; con él, se inserta una fila en `service_price_changes` con el antes, el después, el motivo y la membresía activa de quien
+  editó (nula si no tiene). Si el precio no cambia, `priceChangeReason` se ignora aunque venga. El historial viaja completo en
+  `ServiceDetailDto.priceChanges`, del más reciente al más viejo.
 - Marcar pagado: cobro `Pending` → si no, 422 `billing.charge.not_pending`. `paidOn <= hoy del tenant` → si no, 422
   `billing.payment.date_in_future`. `note` hasta 1000, trim, vacío = null.
 - Corregir pago (`PUT /charges/{id}/payment`): cobro `Paid` → si no, 422 `billing.charge.not_paid`. Mismas reglas de fecha y nota.
@@ -327,7 +353,10 @@ ChargeDto         { id, serviceId, serviceName, customer: CustomerRef, assignee:
 ServiceDto        { id, customer: CustomerRef, name, price: decimal, currency, cycle: Cycle, firstDueDate: date, status: ServiceStatus,
                     nextCharge: ChargeDto|null (el Pending de vencimiento más próximo), openCount: int, openAmountByCurrency: CurrencyAmountDto[],
                     version: long, createdAt: iso, updatedAt: iso }
-ServiceDetailDto  { service: ServiceDto, profile: ProfileDto, charges: ChargeDto[] (todas, por dueDate desc) }
+ServicePriceChangeDto { id, previousPrice: decimal, previousCurrency, newPrice: decimal, newCurrency, reason: string,
+                        changedBy: MemberRef|null, occurredAt: iso }
+ServiceDetailDto  { service: ServiceDto, profile: ProfileDto, charges: ChargeDto[] (todas, por dueDate desc),
+                    priceChanges: ServicePriceChangeDto[] (del más reciente al más viejo; [] si nunca cambió) }
 ```
 
 ### Cobros
@@ -350,7 +379,7 @@ Auditoría (`IAuditRecorder`, misma transacción): `billing.charge.paid` y `bill
 | `GET /services/preview-charges?cycle=Monthly&firstDueDate=2025-12-10` | read | `200 { chargesToGenerate: int, overdueCharges: int }`: lo que `POST /services` crearía hoy con esos datos (`ChargeGenerator` en seco, §3.2). Lo usa el aviso del formulario «Se van a crear N cobros vencidos» (design §4.3); no escribe. | 403; 422 `validation.failed` (`Cycle`, `FirstDueDate`) |
 | `GET /services/{serviceId}` | read | `200 ServiceDetailDto` | 403; 404 `billing.service.not_found` |
 | `POST /services` body `{ customerId, name, price, currency: string\|null, cycle: Cycle, firstDueDate: date, profile: { channel, assigneeMemberId }\|null }` | manage | `201 ServiceDetailDto`, `Location: /services/{id}`. `currency` null → moneda del tenant. `profile` se **ignora** si el cliente ya tiene perfil; si no tiene y viene null → 422 `billing.profile.missing`. `charges` trae el primer cobro o, con `firstDueDate` pasada, todos los períodos hasta hoy + 5 (§3.2). | 403; 422 `billing.customer.not_found` (no existe en el tenant), `billing.customer.inactive`, `billing.profile.missing`, `billing.profile.assignee_invalid`, `billing.profile.whatsapp_requires_phone`, `billing.profile.email_requires_address`, `billing.currency.unknown`, `validation.failed` (`Name`, `Price`, `Cycle`, `FirstDueDate`) |
-| `PUT /services/{serviceId}` body `{ name, price, currency }`, `If-Match: <version>` | manage | `200 ServiceDetailDto` | 403; 404; 412 `concurrency.conflict`; 428; 422 `billing.service.cancelled` (no se edita un cancelado), `billing.currency.unknown`, `validation.failed` |
+| `PUT /services/{serviceId}` body `{ name, price, currency, priceChangeReason: string\|null }`, `If-Match: <version>` | manage | `200 ServiceDetailDto`. `priceChangeReason` es obligatorio sólo si `price` o `currency` cambian (§3.2); si no, se ignora. | 403; 404; 412 `concurrency.conflict`; 428; 422 `billing.service.cancelled` (no se edita un cancelado), `billing.service.price_reason_required`, `billing.currency.unknown`, `validation.failed` (`PriceChangeReason` > 500) |
 | `POST /services/{serviceId}/pause` · `/resume` · `/cancel`, `If-Match` | manage | `200 ServiceDetailDto` | 403; 404; 412; 428; 422 `billing.service.invalid_transition` |
 
 Auditoría: `billing.service.created`, `billing.service.updated` (`changedFields` = campos cambiados), `billing.service.paused`,

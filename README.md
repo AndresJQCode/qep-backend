@@ -2930,6 +2930,14 @@ desde la app.
   condiciones: el último mensaje es del contacto y llegó en las 24 h anteriores a la conexión (esas entran
   abiertas, con `history_managed = true`). Los contactos crean clientes incompletos. Los ecos
   (`smb_message_echoes`) guardan lo que el negocio responde desde la app.
+- **De quién es cada mensaje del historial.** Meta no manda `to` en el historial. El hilo es el contacto: si el
+  `from`, en dígitos, es el id del hilo, el mensaje es del contacto; si es otro, es del negocio. Sin `from` queda
+  como entrante. La regla de abiertas y los no leídos dependen de esto.
+- **Reparación de lo importado antes del 2026-10-30.** El parser anterior esperaba `to` y guardó como entrante lo
+  que escribió el negocio. [`ops/2026-10-30-repair-history-direction.sql`](ops/2026-10-30-repair-history-direction.sql)
+  lo corrige a mano en DBeaver, leyendo los payloads de `messaging.webhook_deliveries`, que se purgan a los 7 días.
+  Corrige la dirección y el estado de los mensajes y la foto de la conversación. No toca el estado ni los no leídos
+  de la conversación (decisión del owner). Por defecto termina en `ROLLBACK`, y correrlo dos veces no cambia nada.
 - **Un eco a un número que QEP no conoce crea la conversación cerrada** (P-5, decisión del owner del
   2026-10-30). Que el negocio escriba desde la app no le deja nada pendiente a un asesor, así que no aparece en
   la bandeja de abiertas ni en el triage del embudo. Cuando el contacto escribe en vivo, la conversación se
@@ -3913,11 +3921,14 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
    pasos y lo que queda por verificar contra Shopify real (V-1 a V-10) están en
    `docs/superpowers/plans/2026-10-18-shopify-handoff.md`.
 
-### Facturación: cobros recurrentes
+### Contratos de servicio (cobros recurrentes)
 
 Spec `docs/superpowers/specs/2026-10-29-cobros-recurrentes.md` (el código gana ante cualquier discrepancia). Módulo
-`Modules.Billing.{Domain,Application,Infrastructure,Api}`, esquema `billing`, clave de módulo `billing`
-(`Dependencies = [Customers]`, fuera de `DefaultForNewTenants`: nace apagado).
+`Modules.ServiceContracts.{Domain,Application,Infrastructure,Api}` (hasta el 2026-10-30 se llamó `Billing`; el agregado
+`ServiceContract` era `BillingService`), esquema `billing`, clave de módulo `billing` (`Dependencies = [Customers]`, fuera de
+`DefaultForNewTenants`: nace apagado). **El renombre fue sólo de código y de pantalla:** esquema, clave, permisos
+`billing.service.*`, rutas `/billing`, acciones de auditoría, códigos de error y la sección `Billing` de configuración siguen
+como estaban, porque ya estaban desplegados.
 
 **Permisos y roles.** `billing.service.read` (toda lectura de la lista de servicios, cobros y perfil) y `billing.service.manage` (todo
 lo que escribe, y también la configuración). Los llevan `admin` y el rol de sistema `billing` («Facturación»); ningún otro. Ambos
@@ -3932,7 +3943,7 @@ el código `tenancy.module_not_enabled` (decisión del owner, 2026-10-29: nunca 
 | `GET` | `/assignees` | manage | Miembros activos que pueden ser encargados |
 | `GET` / `POST` | `/services` | read / manage | Lista paginada con resumen por moneda / crea el servicio (y su perfil si el cliente no tiene) |
 | `GET` | `/services/preview-charges` | manage | Cuántos cobros nacerían con esa fecha y ciclo, sin escribir |
-| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros / edita nombre, precio y moneda (`If-Match`) |
+| `GET` / `PUT` | `/services/{serviceId}` | read / manage | Detalle con cobros e historial de precios (`priceChanges`) / edita nombre, precio y moneda (`If-Match`). Cambiar el precio o la moneda exige `priceChangeReason` (422 `billing.service.price_reason_required` sin él) y deja una fila en `billing.service_price_changes` |
 | `POST` | `/services/{serviceId}/pause`, `/resume`, `/cancel` | manage | Transiciones de estado (`If-Match`); cancelar cancela los cobros `Pending` |
 | `GET` | `/charges`, `/charges/{chargeId}` | read | Cobros con cliente, encargado y último aviso |
 | `POST` / `PUT` | `/charges/{chargeId}/pay`, `/charges/{chargeId}/payment` | manage | Marca pagado / corrige el pago |
@@ -3950,7 +3961,7 @@ se cubre el paso más reciente. **Un mensaje por cliente y día** (índice únic
 si algún cobro con paso hoy está vencido (lista todos los vencidos), si no `Reminder`. Un total por moneda, nunca convertido. Un
 cliente **sin perfil de cobro** no recibe aviso; sus cobros van al email diario de cada miembro con `billing.service.manage`.
 
-**Worker** (`BillingReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
+**Worker** (`ServiceContractsReminderWorker`, `Billing:SweepMinutes`): por tick recorre los tenants activos con el módulo prendido; desde
 `Billing:SendHourLocal` en la zona horaria del tenant genera cobros, manda el mensaje del día a cada cliente y el email diario al
 equipo, y cierra el día en `billing.tenant_runs`. La entrega es **al menos una vez**: si el proceso cae después de que el proveedor
 aceptó el mensaje, el aviso puede llegar dos veces. Un fallo (`no_phone`, `no_email`, `channel_not_configured`,
@@ -3984,7 +3995,7 @@ quien lo contrata; mientras esté apagado el worker lo ignora.
 
 **Migraciones, en este orden de despliegue** (cada módulo aplica las suyas al arrancar, `Program.cs`): `Tenancy`
 `AddBillingModuleKey` (el CHECK de `tenant_modules` admite `billing`), `Messaging` `AddBillingTemplateKinds` (tipos de plantilla de
-cobro) y `Billing` `InitialBilling` (esquema `billing`). Billing se inicializa al final, después de Audit.
+cobro) y `ServiceContracts` `InitialBilling` (esquema `billing`). ServiceContracts se inicializa al final, después de Audit.
 
 **Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
 (3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la
