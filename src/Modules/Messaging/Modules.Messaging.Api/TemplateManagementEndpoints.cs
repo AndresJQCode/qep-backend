@@ -47,9 +47,10 @@ internal static class TemplateManagementEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Cobros recurrentes §5: las dos plantillas de cobro, también sin cuerpo (su definición vive en el backend).
+        // Cobros recurrentes §5: las dos plantillas de cobro, también con el cuerpo HTTP opcional (el texto base vive en el backend).
         group.MapPost("/billing", ProvisionBillingAsync)
             .RequireAuthorization(MessagingPermissions.TemplateManage)
+            .Accepts<ProvisionBillingTemplatesRequest>(isOptional: true, "application/json")
             .Produces<IReadOnlyList<ManagedTemplateDto>>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -88,10 +89,11 @@ internal static class TemplateManagementEndpoints
             await dispatcher.SendAsync(new ProvisionQuotationTemplateCommand(tenantId, connectionId, request?.Body), cancellationToken));
 
     // Location = la pantalla, como al provisionar la de cotización.
-    private static async Task<IResult> ProvisionBillingAsync(Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+    private static async Task<IResult> ProvisionBillingAsync(
+        Guid tenantId, Guid connectionId, ProvisionBillingTemplatesRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Created(
             $"/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-management",
-            await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId), cancellationToken));
+            await dispatcher.SendAsync(new ProvisionBillingTemplatesCommand(tenantId, connectionId, request?.ReminderBody, request?.OverdueBody), cancellationToken));
 
     // Sin cuerpo en la respuesta: el frontend quita la fila de su lista y no necesita nada más.
     private static async Task<IResult> DeleteAsync(Guid tenantId, Guid connectionId, Guid templateId, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
@@ -117,6 +119,10 @@ public sealed record CreateTemplateRequest(
 /// <summary>El cuerpo editado de la plantilla de cotización. Son opcionales la propiedad <c>Body</c> y también el cuerpo HTTP entero: sin
 /// ellos se crea el texto base (backend desplegado antes que el frontend).</summary>
 public sealed record ProvisionQuotationTemplateRequest(string? Body);
+
+/// <summary>Los cuerpos editados de las dos plantillas de cobro. Son opcionales cada propiedad y también el cuerpo HTTP entero: lo que falte
+/// se crea con el texto base de su aviso (backend desplegado antes que el frontend).</summary>
+public sealed record ProvisionBillingTemplatesRequest(string? ReminderBody, string? OverdueBody);
 
 /// <summary><c>type</c> es <c>QuickReply</c>, <c>Url</c> o <c>PhoneNumber</c>, como <c>TemplateButtonDto</c>.</summary>
 public sealed record TemplateButtonRequest(string? Type, string? Text, string? Url, string? PhoneNumber);

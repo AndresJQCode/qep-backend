@@ -28,7 +28,8 @@ public sealed class BillingTemplateOutboundTests
 
     /// <summary>La fila POSITIONAL que dejó el aprovisionamiento viejo: <c>{{1}}</c>…<c>{{4}}</c>, sin <c>asesor</c>, <c>empresa</c> ni <c>saludo</c>.</summary>
     private static ApprovedTemplate LegacyPositional() => new(
-        TemplateName, "es", "UTILITY", "POSITIONAL", BillingTemplateDefinitions.Reminder.Components().ToJsonString());
+        TemplateName, "es", "UTILITY", "POSITIONAL",
+        """[{"type":"BODY","text":"Hola {{1}}, te recordamos que tu servicio {{2}} por {{3}} vence el {{4}}. Si ya realizaste el pago, ignora este mensaje.","example":{"body_text":[["Ana Pérez","Hosting plan pro","150.000","10/03/2026"]]}}]""");
 
     private static ApprovedTemplate Named(string body) => new(
         TemplateName, "es", "UTILITY", "NAMED",
