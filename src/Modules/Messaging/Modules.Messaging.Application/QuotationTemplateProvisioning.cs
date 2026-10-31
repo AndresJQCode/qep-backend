@@ -73,25 +73,6 @@ public static class QuotationTemplateDefinition
         return int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var version) && version >= 2 ? version : null;
     }
 
-    /// <summary>Los cuatro valores del cuerpo, en el orden de <see cref="Variables"/>.</summary>
-    public static IReadOnlyList<TemplateParameter> ParametersFor(string fullName, string orderNumber, string total, string validUntil) =>
-    [
-        new(Variables[0], fullName),
-        new(Variables[1], orderNumber),
-        new(Variables[2], total),
-        new(Variables[3], validUntil),
-    ];
-
-    /// <summary>Lo que verá la persona en la bandeja: el cuerpo con las variables sustituidas, una línea en blanco y el pie. Mismo
-    /// formato que <see cref="TemplateCatalog.Render"/>.</summary>
-    public static string Render(IReadOnlyList<TemplateParameter> parameters)
-    {
-        ArgumentNullException.ThrowIfNull(parameters);
-        var values = parameters.ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.Ordinal);
-        var body = TemplateCatalog.Placeholder().Replace(Body, match => values.TryGetValue(match.Groups[1].Value, out var value) ? value : match.Value);
-        return body + "\n\n" + Footer;
-    }
-
     public static TemplateDraft Draft(string name) => new(name, Language, Category, null, Body, Footer, [], Examples);
 
     /// <summary>El payload de creación de la versión <paramref name="name"/>, con el encabezado de documento apuntando al

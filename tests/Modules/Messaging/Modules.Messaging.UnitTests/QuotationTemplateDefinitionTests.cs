@@ -123,25 +123,6 @@ public sealed class QuotationTemplateDefinitionTests
     }
 
     [Fact]
-    public void ParametersFollowTheVariablesOrder()
-    {
-        var parameters = QuotationTemplateDefinition.ParametersFor("Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026");
-
-        Assert.Equal(["fullname", "order_number", "total", "valid_until"], parameters.Select(parameter => parameter.Key));
-        Assert.Equal(["Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026"], parameters.Select(parameter => parameter.Value));
-    }
-
-    [Fact]
-    public void RenderFillsTheFourVariablesAndAppendsTheFooter()
-    {
-        var parameters = QuotationTemplateDefinition.ParametersFor("Juan Perez", "COT-000123", "$ 2.450.000", "30 de septiembre de 2026");
-
-        Assert.Equal(
-            "¡Hola, Juan Perez! Adjuntamos la cotización *COT-000123* por *$ 2.450.000*, vigente hasta el *30 de septiembre de 2026*.\n\nEste mensaje fue generado automáticamente.",
-            QuotationTemplateDefinition.Render(parameters));
-    }
-
-    [Fact]
     public void TheExamplePdfIsSmall() => Assert.InRange(QuotationTemplateDefinition.ExamplePdf().Length, 300, 2000);
 
     [Fact]

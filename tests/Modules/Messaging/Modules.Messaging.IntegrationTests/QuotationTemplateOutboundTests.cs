@@ -74,9 +74,21 @@ public sealed class QuotationTemplateOutboundTests
 
     private static byte[] Pdf() => Encoding.ASCII.GetBytes("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
 
-    private static QuotationTemplateSend Send(Fixture f, string waId = Phone, Guid? customerId = null, string fullName = "Laura Gómez") =>
-        new(f.Tenant.TenantId, f.ConnectionId, f.MemberId, waId, customerId, "Laura Gómez", "qep_cotizacion_v2", "es",
-            fullName, "COT-1", "2.450.000 COP", "30 de septiembre de 2026", Pdf(), FileName);
+    /// <summary>La fila aprobada que lee el sender: la plantilla de fábrica (sus cuatro claves viejas y su pie) salvo que la prueba pida otra.</summary>
+    private static ApprovedTemplate Approved(string? body = null, string? footer = null, string category = "UTILITY")
+    {
+        var draft = body is null
+            ? QuotationTemplateDefinition.Draft("qep_cotizacion_v2")
+            : new TemplateDraft("qep_cotizacion_v2", "es", category, null, body, footer, [], new Dictionary<string, string>());
+        return new ApprovedTemplate(
+            "qep_cotizacion_v2", "es", category, "NAMED", TemplateComponentsBuilder.Components(draft, "4::handle").ToJsonString());
+    }
+
+    private static QuotationTemplateSend Send(
+        Fixture f, string waId = Phone, Guid? customerId = null, string fullName = "Laura Gómez", ApprovedTemplate? template = null,
+        string total = "2.450.000 COP") =>
+        new(f.Tenant.TenantId, f.ConnectionId, f.MemberId, waId, customerId, "Laura Gómez", template ?? Approved(),
+            fullName, "COT-1", total, "30 de septiembre de 2026", Pdf(), FileName);
 
     private static async Task<QuotationTemplateSendResult> SendAsync(Fixture f, QuotationTemplateSend send)
     {
@@ -102,8 +114,8 @@ public sealed class QuotationTemplateOutboundTests
             FROM messaging.conversations WHERE id = @id
             """,
             ("id", sent.ConversationId)));
-        var text = QuotationTemplateDefinition.Render(
-            QuotationTemplateDefinition.ParametersFor("Laura Gómez", "COT-1", "2.450.000 COP", "30 de septiembre de 2026"));
+        const string text =
+            "¡Hola, Laura Gómez! Adjuntamos la cotización *COT-1* por *2.450.000 COP*, vigente hasta el *30 de septiembre de 2026*.\n\nEste mensaje fue generado automáticamente.";
         Assert.Equal($"{sent.ConversationId}|{f.MemberId}|qep_cotizacion_v2|1|{text}", await ScalarAsync<string>(f.ConnectionString,
             """
             SELECT conversation_id || '|' || sent_by_member_id || '|' || (details->'template'->>'name') || '|' || status || '|' || text
@@ -329,6 +341,126 @@ public sealed class QuotationTemplateOutboundTests
         ScriptMetaOk(f.Factory.MetaHandler);
 
         var result = await SendAsync(f, Send(f, fullName: "Juan\nPerez"));
+
+        Assert.Equal(new QuotationTemplateSendResult.Failed("messaging.message.rejected"), result);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
+        Assert.Empty(MetaCalls(f));
+    }
+
+    /// <summary>Los componentes de la plantilla tal como llegaron a Meta.</summary>
+    private static JsonElement SentComponents(Fixture f, out JsonDocument owner)
+    {
+        owner = JsonDocument.Parse(MetaCalls(f)[1].Body!);
+        return owner.RootElement.GetProperty("template").GetProperty("components");
+    }
+
+    [Fact]
+    public async Task AnEditedTemplateSendsOnlyItsVariablesWithTheSendersNames()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Approved("{{saludo}}, {{nombre_contacto}}, soy {{asesor}} de {{empresa}}. Te comparto {{numero_cotizacion}}.");
+
+        var sent = Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
+
+        var components = SentComponents(f, out var owner);
+        using var _owner = owner;
+        var parameters = components[1].GetProperty("parameters").EnumerateArray().ToList();
+        Assert.Equal(
+            ["saludo", "nombre_contacto", "asesor", "empresa", "numero_cotizacion"],
+            parameters.Select(parameter => parameter.GetProperty("parameter_name").GetString()));
+        var values = parameters.Select(parameter => parameter.GetProperty("text").GetString()!).ToList();
+        Assert.Equal(("Laura Gómez", "COT-1"), (values[1], values[4]));
+        Assert.All(values, value => Assert.False(string.IsNullOrWhiteSpace(value)));
+        Assert.Equal($"{values[0]}, {values[1]}, soy {values[2]} de {values[3]}. Te comparto {values[4]}.", await ScalarAsync<string>(
+            f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
+    }
+
+    [Fact]
+    public async Task ALegacyApprovedTemplateStillSendsItsFourVariablesAndShowsItsFooter()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Approved(
+            "¡Hola, {{fullname}}! Adjuntamos la cotización *{{order_number}}* por *{{total}}*, vigente hasta el *{{valid_until}}*.",
+            "Este mensaje fue generado automáticamente.");
+
+        var sent = Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
+
+        var components = SentComponents(f, out var owner);
+        using var _owner = owner;
+        Assert.Equal(
+            [("fullname", "Laura Gómez"), ("order_number", "COT-1"), ("total", "2.450.000 COP"), ("valid_until", "30 de septiembre de 2026")],
+            components[1].GetProperty("parameters").EnumerateArray()
+                .Select(parameter => (parameter.GetProperty("parameter_name").GetString(), parameter.GetProperty("text").GetString())));
+        var text = await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE id = @id", ("id", sent.MessageId));
+        Assert.EndsWith("\n\nEste mensaje fue generado automáticamente.", text, StringComparison.Ordinal);
+    }
+
+    // Review Focus 3.
+    [Fact]
+    public async Task ATemplateWithoutVariablesSendsThePdfAndNoBodyParameters()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: Approved("Te enviamos tu cotización."))));
+
+        var components = SentComponents(f, out var owner);
+        using var _owner = owner;
+        var only = Assert.Single(components.EnumerateArray());
+        Assert.Equal("header", only.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task AReclassifiedTemplateStillSendsAndKeepsItsCategory()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Approved("Hola {{nombre_contacto}}.", category: "MARKETING");
+
+        var sent = Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template)));
+
+        Assert.Equal("MARKETING", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT details->'template'->>'category' FROM messaging.messages WHERE id = @id", ("id", sent.MessageId)));
+    }
+
+    [Fact]
+    public async Task AValueTheRowDoesNotUseCannotBlockTheSend()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Approved("Hola {{nombre_contacto}}.");
+
+        Assert.IsType<QuotationTemplateSendResult.Sent>(await SendAsync(f, Send(f, template: template, total: "2.450\n000")));
+    }
+
+    [Fact]
+    public async Task AValueTheRowUsesThatMetaWouldRejectFailsBeforeAnyCall()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var template = Approved("Hola {{nombre_contacto}}.");
+
+        var result = await SendAsync(f, Send(f, template: template, fullName: "Juan\nPerez"));
 
         Assert.Equal(new QuotationTemplateSendResult.Failed("messaging.message.rejected"), result);
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));

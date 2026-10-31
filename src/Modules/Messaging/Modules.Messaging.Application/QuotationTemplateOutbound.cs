@@ -7,15 +7,16 @@ namespace Modules.Messaging.Application;
 /// <summary>
 /// Spec 2026-10-21 D16: lo que Quotations manda por la conexión de WhatsApp Business elegida. <c>WaId</c> son sólo dígitos, con
 /// indicativo. <c>CustomerId</c> es <c>null</c> con destinatario de facturación (D16b). <c>RecipientName</c> es el <c>profile_name</c> de
-/// una conversación nueva. <c>TemplateName</c> y <c>TemplateLanguage</c> salen de <c>FindApprovedAsync</c>, nunca de la constante: tras
-/// un reintento la vigente puede ser <c>qep_cotizacion_v2</c>. Los cuatro valores ya vienen formateados.
+/// una conversación nueva. <c>Template</c> es la fila aprobada que devuelve <c>FindApprovedAsync</c>, nunca la constante: tras un reintento
+/// la vigente puede ser <c>qep_cotizacion_v2</c>, y su cuerpo puede ser el que editó el tenant. Los cuatro valores ya vienen formateados;
+/// sólo viajan los que la fila usa.
 /// </summary>
 public sealed record QuotationTemplateSend(
     Guid TenantId, Guid ConnectionId, Guid SentByMemberId,
     string WaId,
     Guid? CustomerId,
     string RecipientName,
-    string TemplateName, string TemplateLanguage,
+    ApprovedTemplate Template,
     string FullName, string OrderNumber, string Total, string ValidUntil,
     ReadOnlyMemory<byte> Document, string DocumentFileName);
 
@@ -61,8 +62,14 @@ public sealed class QuotationTemplateOutbound(
     ReadReceipts receipts,
     IClock clock,
     IConversationOpener opener,
-    IMessagingMediaStore store) : IQuotationTemplateOutbound
+    IMessagingMediaStore store,
+    TemplateSenderValues senderValues) : IQuotationTemplateOutbound
 {
+    // Las tres claves propias de la cotización; las del remitente están en SystemTemplateVariables.
+    private const string QuotationNumberKey = "numero_cotizacion";
+    private const string TotalKey = "valor_total";
+    private const string ValidUntilKey = "vigencia";
+
     private const string PdfMimeType = "application/pdf";
 
     // El multipart lleva un nombre genérico ASCII; el que ve el cliente viaja en el encabezado de la plantilla.
@@ -72,8 +79,22 @@ public sealed class QuotationTemplateOutbound(
     {
         ArgumentNullException.ThrowIfNull(send);
 
-        // 1. Las reglas de Meta sobre cada valor (error 132018), antes de tocar nada.
+        // 1. El teléfono, y después las reglas de Meta sobre cada valor que la fila usa (error 132018), antes de tocar nada. Un valor que la
+        // fila no usa no la bloquea: no viaja.
         if (!IsAcceptable(send))
+        {
+            return new QuotationTemplateSendResult.Failed(MessagingErrorCodes.MessageRejected);
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [SystemTemplateVariables.ContactName] = send.FullName,
+            [QuotationNumberKey] = send.OrderNumber,
+            [TotalKey] = send.Total,
+            [ValidUntilKey] = send.ValidUntil,
+        };
+        await senderValues.AddAsync(send.TenantId, send.SentByMemberId, SystemTemplateSend.VariablesOf(send.Template), values, cancellationToken);
+        if (SystemTemplateSend.Build(send.Template, values) is not { } built)
         {
             return new QuotationTemplateSendResult.Failed(MessagingErrorCodes.MessageRejected);
         }
@@ -113,13 +134,11 @@ public sealed class QuotationTemplateOutbound(
             ?? throw new InvalidOperationException("The conversation that was just opened could not be read.");
 
         // 5. Un clientId nuevo: cada envío de la cotización es un mensaje propio, no un reintento.
-        var parameters = QuotationTemplateDefinition.ParametersFor(send.FullName, send.OrderNumber, send.Total, send.ValidUntil);
-        var values = parameters.ToDictionary(parameter => parameter.Key, parameter => parameter.Value, StringComparer.Ordinal);
         var draft = new OutboundDraft(
-            Guid.CreateVersion7(), conversation.Id, send.TenantId, send.ConnectionId, Guid.CreateVersion7(), QuotationTemplateDefinition.Render(parameters),
+            Guid.CreateVersion7(), conversation.Id, send.TenantId, send.ConnectionId, Guid.CreateVersion7(), built.Text,
             send.SentByMemberId, now, Kind: MessageKind.Template,
             Media: new OutboundMedia(PdfMimeType, document.Length, Convert.ToHexStringLower(SHA256.HashData(document)), send.DocumentFileName),
-            DetailsJson: TemplateDetailsJson.Serialize(send.TemplateName, send.TemplateLanguage, QuotationTemplateDefinition.Category, values));
+            DetailsJson: built.DetailsJson);
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
 
         // 6. D16c: la copia propia de Mensajería, con la clave del reclamo.
@@ -142,9 +161,7 @@ public sealed class QuotationTemplateOutbound(
         {
             var result = await meta.SendTemplateAsync(
                 sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId),
-                new TemplateSend(
-                    send.TemplateName, send.TemplateLanguage, Named: true, parameters,
-                    HeaderDocument: new TemplateHeaderDocument(mediaId, send.DocumentFileName)),
+                built.Send with { HeaderDocument = new TemplateHeaderDocument(mediaId, send.DocumentFileName) },
                 SendMessageHandler.CallbackPrefix + claim.MessageId.ToString("D"),
                 CancellationToken.None);
             await new OutboundSettlement(repository, connections, notifier, receipts, clock)
@@ -173,11 +190,7 @@ public sealed class QuotationTemplateOutbound(
 
     private static bool IsAcceptable(QuotationTemplateSend send) =>
         // El teléfono es la clave de la conversación: con otra forma, el opener no podría usarlo.
-        send.WaId is { Length: > 0 and <= Conversation.WaIdMaxLength } waId && waId.All(char.IsAsciiDigit)
-        && TemplateParameterRules.IsValid(send.FullName)
-        && TemplateParameterRules.IsValid(send.OrderNumber)
-        && TemplateParameterRules.IsValid(send.Total)
-        && TemplateParameterRules.IsValid(send.ValidUntil);
+        send.WaId is { Length: > 0 and <= Conversation.WaIdMaxLength } waId && waId.All(char.IsAsciiDigit);
 
     // Best effort: la respuesta ya es connection_unavailable, y el próximo envío vuelve a recibir 190/133010 y reintenta el reporte.
     // Application no tiene logger; no vale cambiar la respuesta por eso.
