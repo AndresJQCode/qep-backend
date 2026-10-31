@@ -153,8 +153,11 @@ public sealed partial class ProvisionBillingTemplatesHandler(
     IValidator<ProvisionBillingTemplatesCommand> validator)
     : ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>
 {
-    /// <summary>Creaciones por plantilla, contando la primera: un tope para no recorrer versiones sin fin si Meta responde «ya existe» a todo.</summary>
-    public const int MaxCreateAttempts = 5;
+    /// <summary>Creaciones por plantilla, contando la primera: un tope para no recorrer versiones sin fin si Meta responde «ya existe» a todo.
+    /// Es alto porque borrar quita la fila del espejo, así que la versión siguiente vuelve a calcularse desde la 1 y el recorrido atraviesa
+    /// otra vez todos los nombres que Meta tiene bloqueados (unos 30 días): con un tope de 5, cinco borrados en ese lapso daban
+    /// <c>name_taken</c> en cada intento.</summary>
+    public const int MaxCreateAttempts = 20;
 
     public async Task<IReadOnlyList<ManagedTemplateDto>> HandleAsync(ProvisionBillingTemplatesCommand command, CancellationToken cancellationToken)
     {
