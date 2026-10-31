@@ -237,7 +237,7 @@ internal static class MessageMapping
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
                     ToDto(conversationEvent.Handoff, memberNames)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
-            row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson)) : null,
+            row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
             row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null,
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
