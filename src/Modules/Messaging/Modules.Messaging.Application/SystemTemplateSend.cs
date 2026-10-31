@@ -63,7 +63,13 @@ public static class SystemTemplateSend
             return values.GetValueOrDefault(ValueKeyOf(key));
         }
 
-        var position = int.Parse(key, System.Globalization.CultureInfo.InvariantCulture) - 1;
+        // TryParse: una clave vacía o enorme viene de una fila de Meta y no puede tumbar el envío.
+        if (!int.TryParse(key, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number))
+        {
+            return null;
+        }
+
+        var position = number - 1;
         return legacyPositionalKeys is not null && position >= 0 && position < legacyPositionalKeys.Count
             ? values.GetValueOrDefault(legacyPositionalKeys[position])
             : null;

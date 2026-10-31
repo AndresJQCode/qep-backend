@@ -23,7 +23,9 @@ public sealed class SystemTemplateSendTests
     [Fact]
     public void SendsOnlyTheVariablesTheRowUsesInItsOrder()
     {
-        var built = SystemTemplateSend.Build(Row("NAMED", "Hola {{nombre_contacto}}, de {{empresa}}, tu total: {{valor_total}} hoy."), AllValues);
+        // Con "vigencia" disponible: la fila no la usa, y no puede viajar ni quedar en el details.
+        var values = new Dictionary<string, string>(AllValues) { ["vigencia"] = "1 de enero" };
+        var built = SystemTemplateSend.Build(Row("NAMED", "Hola {{nombre_contacto}}, de {{empresa}}, tu total: {{valor_total}} hoy."), values);
         Assert.True(built!.Send.Named);
         Assert.Equal(["nombre_contacto", "empresa", "valor_total"], built.Send.Parameters.Select(parameter => parameter.Key));
         Assert.Equal("Hola Laura, de Andina, tu total: 10 hoy.", built.Text);
@@ -44,6 +46,11 @@ public sealed class SystemTemplateSendTests
         Assert.False(built!.Send.Named);
         Assert.Equal([("1", "Laura"), ("2", "10")], built.Send.Parameters.Select(parameter => (parameter.Key, parameter.Value)));
     }
+
+    // Una fila rara no puede tumbar el envío: una posición que no cabe en un entero no lanza, no arma nada.
+    [Fact]
+    public void AnOversizedPositionalKeyBuildsNothingInsteadOfThrowing() =>
+        Assert.Null(SystemTemplateSend.Build(Row("POSITIONAL", "Hola {{99999999999999999999}}."), AllValues, ["nombre_contacto"]));
 
     // Review Focus 1: si Meta no devuelve parameter_format, el refresco guarda POSITIONAL.
     [Fact]
