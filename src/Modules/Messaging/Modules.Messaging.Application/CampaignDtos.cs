@@ -70,7 +70,7 @@ public class CampaignSummaryDto(
     public int RetryCount { get; } = retryCount;
 }
 
-/// <summary><c>source</c> es <c>text</c> (con <c>value</c>) o <c>customerName</c> (sin).</summary>
+/// <summary><c>source</c> es <c>text</c> (con <c>value</c>), <c>customerName</c> o <c>greeting</c> (sin).</summary>
 public sealed record CampaignParameterDto(string Source, string? Value);
 
 public sealed record CampaignAudienceTagDto(Guid Id, string Name, string Color);

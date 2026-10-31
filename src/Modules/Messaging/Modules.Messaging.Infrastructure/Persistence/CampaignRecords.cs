@@ -55,7 +55,7 @@ internal sealed class CampaignRecipientRecord
 
 /// <summary>
 /// <c>parameters jsonb</c>: <c>{ "1": { "source": "customerName" }, "promo": { "source": "text", "value": "20%" } }</c>. A mano con
-/// <see cref="JsonNode"/> y no con un serializador sobre el record, así los nombres de las fuentes (<c>text</c>, <c>customerName</c>) son
+/// <see cref="JsonNode"/> y no con un serializador sobre el record, así los nombres de las fuentes (<c>text</c>, <c>customerName</c>, <c>greeting</c>) son
 /// los del contrato HTTP y no los del enum.
 /// </summary>
 internal static class CampaignParametersJson

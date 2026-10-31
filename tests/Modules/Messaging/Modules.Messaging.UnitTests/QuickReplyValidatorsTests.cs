@@ -24,8 +24,11 @@ public sealed class QuickReplyValidatorsTests
     [InlineData("horarios")]
     [InlineData(" Horarios ")]
     [InlineData("pago-2")]
-    public void AValidReplyPasses(string shortcut) =>
+    public void AValidReplyPasses(string shortcut)
+    {
         Assert.True(Validate(shortcut, "Hola {nombre}, soy {asesor} de {empresa}.").IsValid);
+        Assert.True(Validate(shortcut, "{saludo} {nombre_contacto}, soy {asesor} de {empresa}.").IsValid);
+    }
 
     [Theory]
     [InlineData(null)]
@@ -60,7 +63,7 @@ public sealed class QuickReplyValidatorsTests
         Assert.Equal(("body", BodyMessage), (failure.PropertyName, failure.ErrorMessage));
     }
 
-    // Review Focus 3: el mensaje nombra la variable y muestra las tres permitidas con sus llaves, sin que el formateador las coma.
+    // Review Focus 3: el mensaje nombra la variable y muestra las cuatro permitidas con sus llaves, sin que el formateador las coma.
     [Theory]
     [InlineData("Hola {Nombre}", "{Nombre}")]
     [InlineData("Hola { nombre }", "{ nombre }")]
@@ -69,7 +72,7 @@ public sealed class QuickReplyValidatorsTests
     public void AnUnknownVariableFailsOnBodyNamingIt(string body, string variable)
     {
         var failure = Assert.Single(Validate("saludo", body).Errors);
-        Assert.Equal(("body", $"«{variable}» no es una variable. Usa {{nombre}}, {{asesor}} o {{empresa}}."), (failure.PropertyName, failure.ErrorMessage));
+        Assert.Equal(("body", $"«{variable}» no es una variable. Usa {{nombre_contacto}}, {{asesor}}, {{empresa}} o {{saludo}}."), (failure.PropertyName, failure.ErrorMessage));
     }
 
     [Theory]

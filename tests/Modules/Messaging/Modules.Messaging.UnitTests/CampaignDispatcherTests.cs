@@ -413,6 +413,39 @@ public sealed class CampaignDispatcherTests
         Assert.Equal([(recipient, CampaignFailureCodes.CampaignFailed)], bed.Store.Skipped);
     }
 
+    // El reloj va en UTC: a las 15:00 son las 10:00 en Bogotá y a las 23:30 son las 18:30. El saludo es el del tenant y el del momento del
+    // envío, no el de lanzar la campaña ni el del servidor.
+    [Theory]
+    [InlineData(15, 0, "Buenos días")]
+    [InlineData(23, 30, "Buenas noches")]
+    public async Task TheGreetingIsWorkedOutWhenSendingInTheTenantsTimeZone(int hour, int minute, string greeting)
+    {
+        var bed = new DispatchBed();
+        bed.Clock.UtcNow = new DateTimeOffset(2026, 10, 9, hour, minute, 0, TimeSpan.Zero);
+        var recipient = bed.Recipient(parameters: new Dictionary<string, CampaignParameter>
+        {
+            ["1"] = CampaignParameter.Greeting,
+            ["2"] = CampaignParameter.Text("A1"),
+        });
+
+        await bed.Dispatcher.SendAsync(recipient, Ct);
+
+        var send = Assert.Single(bed.Bed.Meta.TemplateSends);
+        Assert.Equal(new TemplateParameter("1", greeting), send.Template.Parameters[0]);
+        Assert.StartsWith($"Hola {greeting},", Assert.Single(bed.Store.Prepared).Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACampaignWithoutGreetingNeverReadsTheTenantsTimeZone()
+    {
+        var bed = new DispatchBed();
+
+        await bed.Dispatcher.SendAsync(bed.Recipient(), Ct);
+
+        Assert.Single(bed.Bed.Meta.TemplateSends);
+        Assert.Equal(0, bed.TenantClock.Calls);
+    }
+
     [Fact]
     public async Task VariablesThatNoLongerMatchTheTemplateStopTheCampaignToo()
     {
