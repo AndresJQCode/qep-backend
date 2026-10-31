@@ -13,6 +13,9 @@ public static class MessagingErrorCodes
     public const string MessageNotFound = "messaging.message.not_found";
     public const string WebhookSignatureInvalid = "messaging.webhook.signature_invalid";
 
+    /// <summary>Spec 2026-10-30 §4.4: el mismo <c>clientId</c> de una clave de API ya salió en otra conversación del tenant (409).</summary>
+    public const string ExternalClientIdReused = "external.client_id_reused";
+
     /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
     public const string ChannelUnsupported = "messaging.channel_unsupported";
 

@@ -58,13 +58,20 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     public const string BlockCheck =
         "(blocked_at IS NULL AND blocked_by_member_id IS NULL AND blocked_wa_id IS NULL) OR (blocked_at IS NOT NULL AND blocked_by_member_id IS NOT NULL AND blocked_wa_id IS NOT NULL)";
 
-    public const string SentByKindCheck = "sent_by_kind IN (1,2)";
+    public const string SentByKindCheck = "sent_by_kind IN (1,2,4)";
 
     /// <summary>El autor es chatbot si y sólo si hay chatbot.</summary>
     public const string SentByChatbotCheck = "(sent_by_kind = 2) = (sent_by_chatbot_id IS NOT NULL)";
 
-    /// <summary>Un mensaje del chatbot no lleva miembro.</summary>
-    public const string SentByOneCheck = "sent_by_kind <> 2 OR sent_by_member_id IS NULL";
+    /// <summary>Un mensaje del chatbot o de una clave de API no lleva miembro.</summary>
+    public const string SentByOneCheck = "sent_by_kind NOT IN (2,4) OR sent_by_member_id IS NULL";
+
+    /// <summary>Spec 2026-10-30 §4.4: el autor es una clave si y sólo si hay clave, y el id y el nombre se escriben juntos.</summary>
+    public const string SentByApiKeyCheck =
+        "(sent_by_kind = 4) = (sent_by_api_key_id IS NOT NULL) AND (sent_by_api_key_id IS NULL) = (sent_by_api_key_name IS NULL)";
+
+    /// <summary>Spec 2026-10-30 §4.4: un <c>clientId</c> de clave de API sale una sola vez por tenant, en cualquier conversación.</summary>
+    public const string ApiClientIndex = "IX_messages_tenant_api_client";
 
     /// <summary>§7.3: calificada con esquema para no depender del search_path de quien inserte.</summary>
     public const string SearchVectorSql = "to_tsvector('messaging.es_unaccent', coalesce(text, '') || ' ' || coalesce(caption, ''))";
@@ -314,6 +321,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             table.HasCheckConstraint("CK_messages_sent_by_kind", SentByKindCheck);
             table.HasCheckConstraint("CK_messages_sent_by_chatbot", SentByChatbotCheck);
             table.HasCheckConstraint("CK_messages_sent_by_one", SentByOneCheck);
+            table.HasCheckConstraint("CK_messages_sent_by_api_key", SentByApiKeyCheck);
         });
         message.HasKey(value => value.Id);
         message.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
@@ -336,6 +344,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         message.Property(value => value.SentByKind).HasColumnName("sent_by_kind").HasColumnType("smallint").HasConversion<short>()
             .HasDefaultValue(MessageAuthorKind.Member).HasSentinel((MessageAuthorKind)0);
         message.Property(value => value.SentByChatbotId).HasColumnName("sent_by_chatbot_id");
+        message.Property(value => value.SentByApiKeyId).HasColumnName("sent_by_api_key_id");
+        message.Property(value => value.SentByApiKeyName).HasColumnName("sent_by_api_key_name").HasMaxLength(80);
         message.Property(value => value.ReplyToMessageId).HasColumnName("reply_to_message_id");
         message.Property(value => value.ReplyToWamid).HasColumnName("reply_to_wamid");
         message.Property(value => value.FailureCode).HasColumnName("failure_code");
@@ -362,6 +372,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
             .HasDatabaseName("IX_messages_connection_wamid").HasFilter("wamid IS NOT NULL");
         message.HasIndex(value => new { value.ConversationId, value.ClientId }).IsUnique()
             .HasDatabaseName("IX_messages_conversation_client").HasFilter("client_id IS NOT NULL");
+        message.HasIndex(value => new { value.TenantId, value.ClientId }).IsUnique()
+            .HasDatabaseName(ApiClientIndex).HasFilter("sent_by_kind = 4");
         message.HasIndex(nameof(MessageRecord.TenantId), "SearchVector").HasDatabaseName("IX_messages_tenant_search").HasMethod("gin");
     }
 

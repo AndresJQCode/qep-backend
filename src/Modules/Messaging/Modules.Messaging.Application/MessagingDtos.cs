@@ -172,7 +172,13 @@ public sealed record MessageDto(
     /// <summary>Spec 2026-10-29 §1: de un <c>media_placeholder</c> del historial, <c>Pending</c> (el archivo puede llegar) o
     /// <c>Unavailable</c> (Meta ya no lo guarda); <c>null</c> en todo lo demás. Cuando viaja, <c>UnsupportedReason</c> es <c>null</c>:
     /// la burbuja dibuja el estado del medio y no «mensaje no compatible».</summary>
-    string? MediaState = null);
+    string? MediaState = null,
+    /// <summary>Spec 2026-10-30 §4.4: la clave de API que envió el saliente, con el nombre que tenía al enviar; excluyente con <c>SentBy</c> y
+    /// <c>SentByChatbot</c>.</summary>
+    ApiKeyRefDto? SentByApiKey = null);
+
+/// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
+public sealed record ApiKeyRefDto(Guid Id, string Name);
 
 /// <summary>Spec 2026-10-21 D-I3: el chatbot autor de un mensaje, con el nombre que hoy tiene.</summary>
 public sealed record ChatbotRefDto(Guid ChatbotId, string Name);

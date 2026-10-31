@@ -27,6 +27,12 @@ internal sealed class MessageRecord
     /// <summary>Referencia blanda al chatbot (otro módulo, sin FK); presente si y sólo si <see cref="SentByKind"/> es Chatbot.</summary>
     public Guid? SentByChatbotId { get; set; }
 
+    /// <summary>Spec 2026-10-30 §4.4: la clave de API que lo envió (referencia blanda, sin FK) y su nombre de entonces; presentes si y sólo si
+    /// <see cref="SentByKind"/> es ApiKey.</summary>
+    public Guid? SentByApiKeyId { get; set; }
+
+    public string? SentByApiKeyName { get; set; }
+
     /// <summary>Spec 2026-10-10 §7.1: el mensaje citado, si QEP lo tiene. Sin FK (§7.1).</summary>
     public Guid? ReplyToMessageId { get; set; }
 

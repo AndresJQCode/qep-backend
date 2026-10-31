@@ -684,6 +684,12 @@ internal sealed class FakeOutboundMessages : IOutboundMessages
     public Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
         Task.FromResult(++_lookups > 1 && CommittedOnSecondLookup is not null ? CommittedOnSecondLookup : Committed);
 
+    /// <summary>Lo que devuelve la búsqueda por tenant de un mensaje de clave de API (spec 2026-10-30 §4.4).</summary>
+    public ExistingApiMessage? ApiMessage { get; set; }
+
+    public Task<ExistingApiMessage?> FindApiMessageAsync(Guid tenantId, Guid clientId, CancellationToken cancellationToken) =>
+        Task.FromResult(ApiMessage);
+
     public List<FakeClaim> Claims { get; } = [];
 
     public Task<IOutboundClaim> ClaimAsync(OutboundDraft draft, CancellationToken cancellationToken)
