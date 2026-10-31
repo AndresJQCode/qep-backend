@@ -434,10 +434,7 @@ internal static partial class WebhookPayloadParser
                         {
                             foreach (var message in messageItems.EnumerateArray())
                             {
-                                var direction = message.ValueKind == JsonValueKind.Object && message.TryGetProperty("to", out _)
-                                    ? MessageDirection.Outbound
-                                    : MessageDirection.Inbound;
-                                if (ParseCoexistenceMessage(message, direction) is { } parsed)
+                                if (ParseCoexistenceMessage(message, HistoryDirection(message, waId)) is { } parsed)
                                 {
                                     messages.Add(parsed);
                                 }
@@ -462,6 +459,27 @@ internal static partial class WebhookPayloadParser
         }
 
         return new HistoryChange(PhoneNumberIdOf(value), chunks, errorCodes);
+    }
+
+    /// <summary>
+    /// De quién es un mensaje del historial. Meta no manda <c>to</c> en el historial (1.824 mensajes de producción, 2026-10-30): el
+    /// hilo es el contacto, así que un <c>from</c> que no es el id del hilo es el número del negocio. Si algún día llega <c>to</c>, es
+    /// saliente. Sin <c>from</c> no hay a quién atribuirlo y queda entrante, como antes: fueron 10 de esos 1.824.
+    /// </summary>
+    private static MessageDirection HistoryDirection(JsonElement message, string threadWaId)
+    {
+        if (message.ValueKind != JsonValueKind.Object)
+        {
+            return MessageDirection.Inbound;
+        }
+
+        if (message.TryGetProperty("to", out _))
+        {
+            return MessageDirection.Outbound;
+        }
+
+        var from = ReadString(message, "from");
+        return string.IsNullOrWhiteSpace(from) || DigitsOnly(from) == threadWaId ? MessageDirection.Inbound : MessageDirection.Outbound;
     }
 
     private static CoexistenceMessage? ParseCoexistenceMessage(JsonElement item, MessageDirection direction)

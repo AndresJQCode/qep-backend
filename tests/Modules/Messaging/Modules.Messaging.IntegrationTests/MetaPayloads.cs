@@ -344,7 +344,8 @@ internal static class MetaPayloads
     }
 
     /// <summary>Spec 2026-10-29: un <c>history</c> con un trozo y un hilo por teléfono. Cada mensaje es
-    /// (<c>Wamid</c>, <c>Body</c>, <c>Timestamp</c>, <c>FromBusiness</c>): con <c>FromBusiness</c> lleva <c>to</c> y es saliente.</summary>
+    /// (<c>Wamid</c>, <c>Body</c>, <c>Timestamp</c>, <c>FromBusiness</c>): con <c>FromBusiness</c> su <c>from</c> es el número del negocio
+    /// y es saliente. Sin <c>to</c>: es la forma real, vista en <c>messaging.webhook_deliveries</c> de producción el 2026-10-30.</summary>
     public static string History(
         string phoneNumberId,
         int phase,
@@ -358,21 +359,15 @@ internal static class MetaPayloads
             var messageNodes = new JsonArray();
             foreach (var message in messages)
             {
-                var node = new JsonObject
+                messageNodes.Add(new JsonObject
                 {
                     ["from"] = message.FromBusiness ? "15550001111" : waId,
                     ["id"] = message.Wamid,
                     ["timestamp"] = Seconds(message.Timestamp),
                     ["type"] = "text",
                     ["text"] = new JsonObject { ["body"] = message.Body },
-                    ["history_context"] = new JsonObject { ["status"] = "READ" }, // V-1: unverified (valores de history_context.status)
-                };
-                if (message.FromBusiness)
-                {
-                    node["to"] = waId;
-                }
-
-                messageNodes.Add(node);
+                    ["history_context"] = new JsonObject { ["status"] = "read" },
+                });
             }
 
             threadNodes.Add(new JsonObject { ["id"] = waId, ["messages"] = messageNodes });

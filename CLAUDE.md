@@ -298,6 +298,10 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
   sin cambio le da un 412 al asesor.
+- **Un mensaje del historial no trae `to`: la dirección sale de comparar `from` con el id del hilo** (producción, 2026-10-30).
+  Los ecos sí traen `to`, y un fixture de historial que también lo llevaba pasó en verde y escondió el bug: 795 mensajes del
+  negocio entraron como del contacto. Un fixture de Meta se copia de la forma real (`messaging.webhook_deliveries`), no de otro
+  campo del webhook.
 - **Un eco (`smb_message_echoes`) a un número desconocido crea la conversación `Resolved`, no `Open`** (P-5, owner
   2026-10-30). Abierta y sin asignar caería en la bandeja y en el triage del embudo (`TriageRules.IsPending` sólo mira
   abierta + cliente) sin que haya nada pendiente. No lleva `history_managed`, así que la regla de abiertas no la abre; la
