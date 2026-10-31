@@ -1,3 +1,4 @@
+using Api;
 using Bootstrapper.ApiKeys;
 using BuildingBlocks.Application;
 using Modules.Messaging.Api;
@@ -11,16 +12,25 @@ internal static class ExternalApiEndpoints
 {
     public static IEndpointRouteBuilder MapExternalApi(this IEndpointRouteBuilder app)
     {
+        MapExternalGroup(app).MapExternalWhatsAppEndpoints();
+        return app;
+    }
+
+    /// <summary>
+    /// El grupo con toda su tubería: esquema, límite por IP, límite por clave y capacidad <c>developer</c>, en ese orden. Aparte
+    /// de <see cref="MapExternalApi"/> para que las pruebas cuelguen una sonda del grupo real y no de una copia.
+    /// </summary>
+    internal static RouteGroupBuilder MapExternalGroup(IEndpointRouteBuilder app)
+    {
         ArgumentNullException.ThrowIfNull(app);
 
-        var group = app.MapGroup("/api/v1/external")
+        return app.MapGroup("/api/v1/external")
             .RequireAuthorization(policy => policy
                 .AddAuthenticationSchemes(ApiKeyDefaults.AuthenticationScheme)
                 .RequireAuthenticatedUser())
+            .RequireRateLimiting(RateLimiterPolicies.External)
+            .AddEndpointFilter<ApiKeyRateLimitFilter>()
             .AddEndpointFilter<DeveloperModuleFilter>()
             .WithTags("External API");
-
-        group.MapExternalWhatsAppEndpoints();
-        return app;
     }
 }

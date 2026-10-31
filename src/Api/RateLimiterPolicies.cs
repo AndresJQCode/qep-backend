@@ -13,4 +13,9 @@ public static class RateLimiterPolicies
     /// <summary>Endpoints de credenciales (login, registro, reset, aceptar invitación): 10 por minuto
     /// por IP y por endpoint, cada uno con su contador.</summary>
     public const string Credentials = "credentials";
+
+    /// <summary>Spec 2026-10-30 §5.5: la API externa, ventana fija por IP antes de autenticar
+    /// (<c>ApiAccess:RateLimit:PerIpPerMinute</c>). Se particiona por IP y nunca por el header: una partición por clave
+    /// inventada sería memoria gratis para quien ataca.</summary>
+    public const string External = "external";
 }

@@ -31,10 +31,17 @@ internal static class RequestFailureCapture
     /// <see cref="ApiExceptionHandler"/> se mantiene; sólo deja de guardarse la fila. Lo usan el
     /// manejador y <see cref="RequestFailureLoggingMiddleware"/>, así que la excepción cubre a los dos, y
     /// el prefijo es el mismo de la excepción de CSRF (<see cref="WebhookPaths"/>).
+    ///
+    /// La API externa (spec 2026-10-30 §5.5) tampoco guarda el 401 ni el 429: son el ruido anónimo de quien prueba claves
+    /// inventadas o supera su cupo, y cada uno escribiría una fila gratis. Un 403, un 422 o un 502 de una clave legítima sí
+    /// se guardan. <c>statusCode</c> llega por parámetro porque el manejador de excepciones decide antes de poner el código
+    /// en la respuesta.
     /// </summary>
-    public static bool ShouldCapture(HttpContext httpContext) =>
+    public static bool ShouldCapture(HttpContext httpContext, int statusCode) =>
         MutatingMethods.Contains(httpContext.Request.Method, StringComparer.OrdinalIgnoreCase)
-        && !WebhookPaths.IsWebhook(httpContext.Request.Path);
+        && !WebhookPaths.IsWebhook(httpContext.Request.Path)
+        && !(ExternalApiPaths.IsExternal(httpContext.Request.Path)
+            && statusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status429TooManyRequests);
 
     /// <summary>
     /// Arma la fila. No la guarda: quien llama decide cuándo, y el puerto es el que se traga sus
