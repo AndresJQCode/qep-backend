@@ -43,6 +43,7 @@ public static class ServiceContractsMapping
             service.Id.Value,
             customer,
             service.Name,
+            service.Description,
             service.Price,
             service.Currency,
             service.Cycle.ToString(),

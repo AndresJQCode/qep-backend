@@ -91,113 +91,6 @@ namespace Modules.ServiceContracts.Infrastructure.Persistence.Migrations
                         });
                 });
 
-            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServiceContract", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)")
-                        .HasColumnName("currency");
-
-                    b.Property<Guid>("CustomerId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("customer_id");
-
-                    b.Property<short>("Cycle")
-                        .HasColumnType("smallint")
-                        .HasColumnName("cycle_months");
-
-                    b.Property<DateOnly>("FirstDueDate")
-                        .HasColumnType("date")
-                        .HasColumnName("first_due_date");
-
-                    b.Property<DateOnly?>("LastGeneratedDueDate")
-                        .HasColumnType("date")
-                        .HasColumnName("last_generated_due_date");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(150)
-                        .HasColumnType("character varying(150)")
-                        .HasColumnName("name");
-
-                    b.Property<decimal>("Price")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)")
-                        .HasColumnName("price");
-
-                    b.Property<DateOnly?>("ReactivatedOn")
-                        .HasColumnType("date")
-                        .HasColumnName("reactivated_on");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("status");
-
-                                        b.Property<DateTimeOffset>("StatusChangedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("status_changed_at");
-
-b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint")
-                        .HasColumnName("version");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "CustomerId")
-                        .HasDatabaseName("IX_services_tenant_customer");
-
-                    b.ToTable("services", "billing", t =>
-                        {
-                            t.HasCheckConstraint("CK_services_cycle_months", "cycle_months IN (1, 6, 12)");
-
-                            t.HasCheckConstraint("CK_services_status", "status IN ('Active','Paused','Cancelled')");
-                        });
-                });
-
-            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServiceContractsSettings", b =>
-                {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("tenant_id");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint")
-                        .HasColumnName("version");
-
-                    b.Property<Guid?>("WhatsAppConnectionId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("whatsapp_connection_id");
-
-                    b.HasKey("TenantId");
-
-                    b.ToTable("settings", "billing");
-                });
-
             modelBuilder.Entity("Modules.ServiceContracts.Domain.Charge", b =>
                 {
                     b.Property<Guid>("Id")
@@ -320,6 +213,118 @@ b.Property<Guid>("TenantId")
                         {
                             t.HasCheckConstraint("CK_customer_profiles_channel", "channel IN ('WhatsApp','Email')");
                         });
+                });
+
+            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServiceContract", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("customer_id");
+
+                    b.Property<short>("Cycle")
+                        .HasColumnType("smallint")
+                        .HasColumnName("cycle_months");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("description");
+
+                    b.Property<DateOnly>("FirstDueDate")
+                        .HasColumnType("date")
+                        .HasColumnName("first_due_date");
+
+                    b.Property<DateOnly?>("LastGeneratedDueDate")
+                        .HasColumnType("date")
+                        .HasColumnName("last_generated_due_date");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)")
+                        .HasColumnName("name");
+
+                    b.Property<decimal>("Price")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price");
+
+                    b.Property<DateOnly?>("ReactivatedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("reactivated_on");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("StatusChangedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "CustomerId")
+                        .HasDatabaseName("IX_services_tenant_customer");
+
+                    b.ToTable("services", "billing", t =>
+                        {
+                            t.HasCheckConstraint("CK_services_cycle_months", "cycle_months IN (1, 6, 12)");
+
+                            t.HasCheckConstraint("CK_services_status", "status IN ('Active','Paused','Cancelled')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.ServiceContracts.Domain.ServiceContractsSettings", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.Property<Guid?>("WhatsAppConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("whatsapp_connection_id");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("settings", "billing");
                 });
 
             modelBuilder.Entity("Modules.ServiceContracts.Domain.ServicePriceChange", b =>

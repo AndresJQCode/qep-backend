@@ -43,6 +43,7 @@ public sealed record ServiceDto(
     Guid Id,
     CustomerRefDto Customer,
     string Name,
+    string? Description,
     decimal Price,
     string Currency,
     string Cycle,
