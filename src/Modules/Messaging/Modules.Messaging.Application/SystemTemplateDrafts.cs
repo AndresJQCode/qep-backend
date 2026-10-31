@@ -25,7 +25,8 @@ internal static class SystemTemplateDrafts
     /// <summary>
     /// Con <paramref name="current"/> viva, su cuerpo y bloqueado. Con <paramref name="current"/> rechazada o pausada, su cuerpo si no está
     /// vacío y todas sus variables están en la lista; si no (claves viejas, <c>{{1}}</c>), el texto base, conservando su motivo. Sin
-    /// <paramref name="current"/>, el cuerpo de una <paramref name="external"/> adoptable; si no, el texto base.
+    /// <paramref name="current"/>, el cuerpo de una <paramref name="external"/> viva y adoptable; si no, el texto base: una externa muerta
+    /// (la que el refresco trae en <c>PENDING_DELETION</c> tras borrarla) no se adopta, así que tampoco presta su texto.
     /// </summary>
     public static SystemTemplateDraftDto For(
         MessageTemplate? current, MessageTemplate? external, string baseBody, IReadOnlyList<SystemTemplateVariable> variables)
@@ -47,7 +48,7 @@ internal static class SystemTemplateDrafts
             return new SystemTemplateDraftDto(usable ? described.Body : baseBody, false, current.StatusReason, list);
         }
 
-        if (external is not null && QuotationTemplateDefinition.IsAdoptable(external.ComponentsJson))
+        if (external is { IsLive: true } && QuotationTemplateDefinition.IsAdoptable(external.ComponentsJson))
         {
             return new SystemTemplateDraftDto(Describe(external).Body, false, null, list);
         }

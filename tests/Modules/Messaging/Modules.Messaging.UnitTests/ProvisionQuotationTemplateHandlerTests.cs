@@ -6,7 +6,7 @@ namespace Modules.Messaging.UnitTests;
 
 /// <summary>Spec 2026-10-14 §4.5 con el reintento versionado (enmienda del owner, 2026-10-15): lo que las pruebas de integración no alcanzan
 /// sin forzar a Meta. La versión siguiente sale del nombre reservado más alto del espejo (cualquier kind, sólo <c>es</c>); <c>name_taken</c>
-/// salta de versión con el mismo handle hasta cinco creaciones; el borrado de la vieja va después de crear, y si falla por otra cosa que el
+/// salta de versión con el mismo handle hasta veinte creaciones; el borrado de la vieja va después de crear, y si falla por otra cosa que el
 /// token sólo deja un warning sin el token.</summary>
 public sealed class ProvisionQuotationTemplateHandlerTests
 {
@@ -45,7 +45,8 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         public static string DocumentComponents(string body) =>
             $$"""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"{{body}}"}]""";
 
-        public void ExternalWithBody(string body) => External(MessageTemplateName.QuotationName, components: DocumentComponents(body));
+        public void ExternalWithBody(string body, string status = MessageTemplateStatuses.Approved) =>
+            External(MessageTemplateName.QuotationName, components: DocumentComponents(body), status: status);
 
         /// <summary>La <c>Quotation</c> que Meta rechazó: lo que el admin reintenta.</summary>
         public MessageTemplate RejectedQuotation(string name = MessageTemplateName.QuotationName, string metaId = "771")
@@ -58,8 +59,8 @@ public sealed class ProvisionQuotationTemplateHandlerTests
             return row;
         }
 
-        public void External(string name, string language = "es", string metaId = "900", string components = "[]") =>
-            Repository.Rows.Add(MessageTemplate.Mirrored(Bed.TenantId, Bed.ConnectionId, metaId, name, language, "UTILITY", "NAMED", "APPROVED", null, components, Bed.Now.AddDays(-2)));
+        public void External(string name, string language = "es", string metaId = "900", string components = "[]", string status = MessageTemplateStatuses.Approved) =>
+            Repository.Rows.Add(MessageTemplate.Mirrored(Bed.TenantId, Bed.ConnectionId, metaId, name, language, "UTILITY", "NAMED", status, null, components, Bed.Now.AddDays(-2)));
     }
 
     [Fact]
@@ -155,6 +156,80 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         Assert.Empty(rig.Bed.Meta.ExampleUploads);
     }
 
+    [Theory]
+    [InlineData(MessageTemplateStatuses.Pending)]
+    [InlineData(MessageTemplateStatuses.InAppeal)]
+    public async Task AnExternalAliveInAnyWayIsAdopted(string status)
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.", status);
+
+        var dto = await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias.");
+
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
+    // El refresco trae de vuelta la plantilla recién borrada, en PENDING_DELETION o con el estado que Meta le deje. Adoptarla dejaría la
+    // conexión con una Quotation muerta; el nombre queda en cuarentena, así que se crea la versión siguiente y la fila sigue External.
+    [Theory]
+    [InlineData(MessageTemplateStatuses.PendingDeletion)]
+    [InlineData(MessageTemplateStatuses.Rejected)]
+    [InlineData(MessageTemplateStatuses.Disabled)]
+    public async Task ADeadExternalWithTheSubmittedBodyIsNotAdoptedAndTheNextVersionIsCreated(string status)
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.", status);
+
+        var dto = await rig.ProvisionAsync("Hola {{nombre_contacto}}, gracias.");
+
+        Assert.Equal("qep_cotizacion_v2", dto.Name);
+        Assert.Equal("Quotation", dto.Kind.ToString());
+        Assert.Equal(["qep_cotizacion_v2"], rig.Bed.Meta.CreatedTemplates.Select(payload => payload["name"]!.GetValue<string>()));
+        Assert.Empty(rig.Bed.Meta.Deleted);
+        var dead = Assert.Single(rig.Repository.Rows, row => row.Name == MessageTemplateName.QuotationName);
+        Assert.Equal((MessageTemplateKind.External, status), (dead.Kind, dead.Status));
+        Assert.Null(Assert.Single(rig.Audit.Templates).ChangedFields);
+    }
+
+    // Pedirle al admin que borre lo que acaba de borrar no tendría salida: Meta no la deja borrar otra vez.
+    [Fact]
+    public async Task ADeadExternalWithAnotherBodyIsNotAConflict()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{nombre_contacto}}, gracias.", MessageTemplateStatuses.PendingDeletion);
+
+        var dto = await rig.ProvisionAsync("Otro texto {{nombre_contacto}}, con gusto te ayudamos.");
+
+        Assert.Equal(("qep_cotizacion_v2", "Otro texto {{nombre_contacto}}, con gusto te ayudamos."), (dto.Name, dto.Body));
+        Assert.Equal(MessageTemplateKind.External, Assert.Single(rig.Repository.Rows, row => row.Name == MessageTemplateName.QuotationName).Kind);
+    }
+
+    [Fact]
+    public async Task ADeadExternalOfAnotherShapeIsNotAConflictEvenWithoutBody()
+    {
+        var rig = new Rig();
+        rig.External(MessageTemplateName.QuotationName, status: MessageTemplateStatuses.PendingDeletion);
+
+        var dto = await rig.ProvisionAsync();
+
+        Assert.Equal(("qep_cotizacion_v2", QuotationTemplateDefinition.BaseBody), (dto.Name, dto.Body));
+    }
+
+    // A diferencia de la adopción, la creación sí pasa por el validador: la fila muerta no exime al cuerpo de la lista de variables.
+    [Fact]
+    public async Task ADeadExternalDoesNotExemptTheBodyFromTheValidator()
+    {
+        var rig = new Rig();
+        rig.ExternalWithBody("Hola {{fullname}}, gracias.", MessageTemplateStatuses.PendingDeletion);
+
+        var error = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() => rig.ProvisionAsync("Hola {{fullname}}, gracias."));
+
+        Assert.Equal("body", Assert.Single(error.Errors).PropertyName);
+        Assert.Empty(rig.Bed.Meta.ExampleUploads);
+        Assert.Empty(rig.Bed.Meta.CreatedTemplates);
+    }
+
     // El cuerpo enviado se recorta antes de compararlo con el de Meta.
     [Fact]
     public async Task AnExternalIsAdoptedWhenTheSubmittedBodyOnlyDiffersByTheSurroundingSpaces()
@@ -231,7 +306,7 @@ public sealed class ProvisionQuotationTemplateHandlerTests
     }
 
     [Fact]
-    public async Task FiveNameTakenInARowSurfaceNameTakenAfterFiveCreatesWithASingleUploadAndWriteNothing()
+    public async Task TwentyNameTakenInARowSurfaceNameTakenAfterTwentyCreatesWithASingleUploadAndWriteNothing()
     {
         var rig = new Rig();
         rig.Bed.Meta.NextCreatedTemplate = new(null, NameTaken);
@@ -239,8 +314,9 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         var error = await Assert.ThrowsAsync<MessagingDomainException>(rig.ProvisionAsync);
 
         Assert.Equal(MessagingErrorCodes.TemplateNameTaken, error.Code);
+        Assert.Equal(20, rig.Bed.Meta.CreatedTemplates.Count);
         Assert.Equal(
-            ["qep_cotizacion", "qep_cotizacion_v2", "qep_cotizacion_v3", "qep_cotizacion_v4", "qep_cotizacion_v5"],
+            Enumerable.Range(1, 20).Select(QuotationTemplateDefinition.NameFor),
             rig.Bed.Meta.CreatedTemplates.Select(payload => payload["name"]!.GetValue<string>()));
         Assert.Single(rig.Bed.Meta.ExampleUploads);
         Assert.All(rig.Bed.Meta.CreatedTemplates, payload =>
@@ -248,6 +324,23 @@ public sealed class ProvisionQuotationTemplateHandlerTests
         Assert.Empty(rig.Repository.Rows);
         Assert.Empty(rig.Audit.Templates);
         Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
+    // Borrar quita la fila, así que la siguiente creación vuelve a la 1 y tiene que atravesar todos los nombres en cuarentena.
+    [Fact]
+    public async Task NineteenNamesInQuarantineAreWalkedUntilTheTwentiethIsAccepted()
+    {
+        var rig = new Rig();
+        for (var taken = 0; taken < 19; taken++)
+        {
+            rig.Bed.Meta.CreateResults.Enqueue(new(null, NameTaken));
+        }
+
+        var created = await rig.ProvisionAsync();
+
+        Assert.Equal("qep_cotizacion_v20", created.Name);
+        Assert.Equal(20, rig.Bed.Meta.CreatedTemplates.Count);
+        Assert.Single(rig.Bed.Meta.ExampleUploads);
     }
 
     [Fact]

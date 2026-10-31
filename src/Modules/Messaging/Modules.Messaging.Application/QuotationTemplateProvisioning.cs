@@ -177,11 +177,13 @@ public sealed class ProvisionQuotationTemplateCommandValidator : AbstractValidat
 /// §4.5 con el reintento versionado (enmienda del owner, 2026-10-15), en orden:
 /// <list type="number">
 /// <item>Si la conexión ya tiene su <c>Quotation</c> viva (pendiente, aprobada o en apelación), <c>quotation_exists</c>.</item>
-/// <item>Sin <c>Quotation</c>, una <c>External</c> <c>qep_cotizacion</c> en <c>es</c> se adopta sin tocar Meta si tiene la forma esperada
-/// (<see cref="QuotationTemplateDefinition.IsAdoptable"/>) y, con cuerpo en el pedido, el suyo es igual; sin cuerpo en el pedido (backend
-/// desplegado antes que el frontend) basta la forma. Se audita con <c>changed_fields = ["kind"]</c>, la marca de «adoptada»; si no
+/// <item>Sin <c>Quotation</c>, una <c>External</c> <b>viva</b> <c>qep_cotizacion</c> en <c>es</c> se adopta sin tocar Meta si tiene la forma
+/// esperada (<see cref="QuotationTemplateDefinition.IsAdoptable"/>) y, con cuerpo en el pedido, el suyo es igual; sin cuerpo en el pedido
+/// (backend desplegado antes que el frontend) basta la forma. Se audita con <c>changed_fields = ["kind"]</c>, la marca de «adoptada»; si no
 /// cuadra, <c>quotation_conflict</c>. El cuerpo se valida <b>después</b> de la adopción: una externa adoptable puede traer claves viejas
-/// que el validador rechaza.</item>
+/// que el validador rechaza. Una externa que no está viva no se adopta ni choca: el refresco trae de vuelta una plantilla recién borrada
+/// como <c>External</c> en <c>PENDING_DELETION</c>, y adoptarla dejaría una <c>Quotation</c> muerta, y el conflicto le pediría al admin
+/// borrar lo que ya borró. Sigue a la creación, y su nombre cuenta para la versión siguiente.</item>
 /// <item>El nombre a crear es la versión siguiente a la mayor del espejo (cualquier kind, idioma <c>es</c>); sin ninguna, la 1.</item>
 /// <item>Sube el PDF de ejemplo y crea con ese handle. Si Meta dice que el nombre ya existe (uno en cuarentena que el espejo ya no
 /// conoce), prueba la versión siguiente con el mismo handle, hasta <see cref="MaxCreateAttempts"/> creaciones.</item>
@@ -215,8 +217,11 @@ public sealed partial class ProvisionQuotationTemplateHandler(
     IValidator<ProvisionQuotationTemplateCommand> validator)
     : ICommandHandler<ProvisionQuotationTemplateCommand, ManagedTemplateDto>
 {
-    /// <summary>Creaciones por intento, contando la primera: un tope para no recorrer versiones sin fin si Meta responde «ya existe» a todo.</summary>
-    public const int MaxCreateAttempts = 5;
+    /// <summary>Creaciones por intento, contando la primera: un tope para no recorrer versiones sin fin si Meta responde «ya existe» a todo.
+    /// Es alto porque borrar quita la fila del espejo, así que la versión siguiente vuelve a calcularse desde la 1 y el recorrido atraviesa
+    /// otra vez todos los nombres que Meta tiene bloqueados (unos 30 días): con un tope de 5, cinco borrados en ese lapso daban
+    /// <c>name_taken</c> en cada intento.</summary>
+    public const int MaxCreateAttempts = 20;
 
     // La adopción sólo cambia el kind: es lo que distingue en la auditoría una adoptada de una creada.
     private static readonly string[] AdoptedFields = ["kind"];
@@ -237,7 +242,7 @@ public sealed partial class ProvisionQuotationTemplateHandler(
         }
 
         if (current is null
-            && await repository.FindByNameAsync(command.TenantId, command.ConnectionId, QuotationTemplateDefinition.Name, QuotationTemplateDefinition.Language, cancellationToken) is { } external)
+            && await repository.FindByNameAsync(command.TenantId, command.ConnectionId, QuotationTemplateDefinition.Name, QuotationTemplateDefinition.Language, cancellationToken) is { IsLive: true } external)
         {
             return await AdoptAsync(command, external, body, now, cancellationToken);
         }

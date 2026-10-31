@@ -264,6 +264,38 @@ public sealed class BillingTemplateProvisioningTests
         Assert.Equal(["qep_cobro_recordatorio_v2", "qep_cobro_vencido"], created.Select(template => template.Name));
     }
 
+    // Borrar quita la fila, así que la siguiente creación vuelve a la 1 y tiene que atravesar todos los nombres en cuarentena.
+    [Fact]
+    public async Task NineteenNamesInQuarantineAreWalkedUntilTheTwentiethIsAccepted()
+    {
+        var rig = new Rig();
+        for (var taken = 0; taken < 19; taken++)
+        {
+            rig.Bed.Meta.CreateResults.Enqueue(new(null, NameTaken));
+        }
+
+        var created = await rig.ProvisionAsync();
+
+        Assert.Equal(["qep_cobro_recordatorio_v20", "qep_cobro_vencido"], created.Select(template => template.Name));
+    }
+
+    [Fact]
+    public async Task TwentyNameTakenInARowSurfaceNameTakenAfterTwentyCreatesAndWriteNothing()
+    {
+        var rig = new Rig();
+        rig.Bed.Meta.NextCreatedTemplate = new(null, NameTaken);
+
+        var error = await Assert.ThrowsAsync<MessagingDomainException>(() => rig.ProvisionAsync());
+
+        Assert.Equal(MessagingErrorCodes.TemplateNameTaken, error.Code);
+        Assert.Equal(20, rig.Bed.Meta.CreatedTemplates.Count);
+        Assert.Equal(
+            Enumerable.Range(1, 20).Select(BillingTemplateDefinitions.Reminder.NameFor),
+            rig.Bed.Meta.CreatedTemplates.Select(payload => payload["name"]!.GetValue<string>()));
+        Assert.Empty(rig.Repository.Rows);
+        Assert.Equal(0, rig.UnitOfWork.Saves);
+    }
+
     [Fact]
     public void TheBillingNamesAreReservedForFreeTemplates()
     {

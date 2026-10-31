@@ -233,6 +233,10 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **borrar las plantillas del sistema desde sus tarjetas** (backend
+  `eb68a999`, frontend `496039b2`): botón por plantilla en cualquier estado, nombre real visible y el texto en el diálogo para copiarlo. Cierra el
+  pendiente de la entrada siguiente. El tope de creaciones sube de 5 a 20, porque borrar reinicia las versiones en 1, y sólo se adopta una `External`
+  viva. Sin verificar contra Meta real: la prueba manual y que una borrada se liste como `PENDING_DELETION`.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **las plantillas de cotización y cobro editables por tenant** (backend
   `2badbf31`, frontend `64ede2f9`): texto base editable antes de ir a Meta, lista cerrada de variables con claves en español, envío y bandeja desde la
   fila aprobada, sin pie en las nuevas y `{nombre}` renombrada a `{nombre_contacto}` en Automatizaciones. Cierra el rechazo de `qep_cotizacion` por el
