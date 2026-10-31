@@ -4,8 +4,7 @@ namespace Modules.Messaging.Application;
 
 /// <summary>
 /// Spec 2026-10-14 §4.8: de una falla de Graph al código de dominio. Discrimina por <c>error_user_title</c> y <c>error_user_msg</c>,
-/// nunca sólo por <c>code = 100</c> (y no por <c>error_subcode</c>, que Meta ya no devuelve): mismo criterio que el nombre de índice
-/// en los <c>23505</c>. Vive en Application porque traduce un <see cref="MessagingGraphFailure"/> ya parseado y porque quien la llama
+/// nunca sólo por <c>code = 100</c>: mismo criterio que el nombre de índice en los <c>23505</c>. Vive en Application porque traduce un <see cref="MessagingGraphFailure"/> ya parseado y porque quien la llama
 /// tiene que reaccionar al token vencido en el mismo lugar (<see cref="FailAsync"/>).
 /// <para>
 /// <see cref="Translate"/> es para las operaciones que escriben en Meta (crear y, con <see cref="TemplateGraphOperation.Delete"/>, borrar). El listado del refresco no lo usa: ahí
@@ -58,7 +57,10 @@ public static class TemplateGraphErrors
             return new MessagingDomainException(MessagingErrorCodes.TemplateNameTaken, "Meta already has a template with that name in that language.");
         }
 
-        if (Mentions(title, "limit"))
+        // «template limit» y no «limit» a secas: el subcódigo 2388293 (demasiadas variables para el texto) y el tope de caracteres también
+        // lo dicen, y salían como tope de plantillas en una cuenta sin ninguna (producción, 2026-10-31). Lo que no case cae en el rechazo,
+        // que muestra el texto de Meta: errar por ahí no le miente a nadie.
+        if (Mentions(title, "template limit"))
         {
             return new MessagingDomainException(MessagingErrorCodes.TemplateLimitReached, "The WhatsApp Business account reached its template limit.");
         }

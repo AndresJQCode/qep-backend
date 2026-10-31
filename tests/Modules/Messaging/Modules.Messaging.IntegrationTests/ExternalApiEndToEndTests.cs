@@ -74,9 +74,9 @@ public sealed class ExternalApiEndToEndTests
         return new CreatedKey(body.GetProperty("key").GetProperty("id").GetGuid(), body.GetProperty("secret").GetString()!);
     }
 
-    private static object Body(Guid clientId, Guid connectionId, string parameter = "4821") => new
+    private static object Body(Guid idempotencyKey, Guid connectionId, string parameter = "4821") => new
     {
-        clientId,
+        idempotencyKey,
         connectionId,
         to = Phone,
         template = new { name = TemplateName, language = Language, parameters = new Dictionary<string, string> { ["1"] = "Ana", ["2"] = parameter } },
@@ -178,8 +178,8 @@ public sealed class ExternalApiEndToEndTests
         var memberB = await OwnerMembershipIdAsync(f.ConnectionString, tenantB);
         var (_, plaintextB) = await SeedApiKeyAsync(f.ConnectionString, tenantB.TenantId, memberB, [MessagingScopes.TemplatesSend], name: "Clave B");
         using var clientB = CreateExternalClient(f.Host, plaintextB);
-        var sharedClientId = Guid.CreateVersion7();
-        var sentByB = await SendAsync(clientB, Body(sharedClientId, connectionB));
+        var sharedIdempotencyKey = Guid.CreateVersion7();
+        var sentByB = await SendAsync(clientB, Body(sharedIdempotencyKey, connectionB));
         Assert.Equal(HttpStatusCode.Created, sentByB.StatusCode);
         var messageOfB = (await BodyAsync(sentByB)).GetProperty("messageId").GetGuid();
 
@@ -189,8 +189,8 @@ public sealed class ExternalApiEndToEndTests
         var intoB = await SendAsync(clientA, Body(Guid.CreateVersion7(), connectionB));
         var templatesOfB = await clientA.GetAsync(ExternalTemplatesUrl(connectionB), Ct);
         var connections = await clientA.GetFromJsonAsync<JsonElement>(ExternalConnectionsUrl, Ct);
-        // El clientId de B tampoco hace replay para A: la idempotencia es por tenant.
-        var withBClientId = await SendAsync(clientA, Body(sharedClientId, f.ConnectionId));
+        // El idempotencyKey de B tampoco hace replay para A: la idempotencia es por tenant.
+        var withBIdempotencyKey = await SendAsync(clientA, Body(sharedIdempotencyKey, f.ConnectionId));
 
         foreach (var response in new[] { intoB, templatesOfB })
         {
@@ -199,8 +199,8 @@ public sealed class ExternalApiEndToEndTests
         }
 
         Assert.Equal(f.ConnectionId, Assert.Single(connections.EnumerateArray()).GetProperty("id").GetGuid());
-        Assert.Equal(HttpStatusCode.Created, withBClientId.StatusCode);
-        Assert.NotEqual(messageOfB, (await BodyAsync(withBClientId)).GetProperty("messageId").GetGuid());
+        Assert.Equal(HttpStatusCode.Created, withBIdempotencyKey.StatusCode);
+        Assert.NotEqual(messageOfB, (await BodyAsync(withBIdempotencyKey)).GetProperty("messageId").GetGuid());
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE tenant_id = @t AND direction = 2", ("t", tenantB.TenantId)));
     }
 

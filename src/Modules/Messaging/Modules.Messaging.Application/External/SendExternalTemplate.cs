@@ -6,13 +6,13 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Messaging.Application;
 
-/// <summary><c>POST /api/v1/external/whatsapp/messages</c>. Todo viaja como texto: un <c>clientId</c> mal formado tiene que ser un 422 con
+/// <summary><c>POST /api/v1/external/whatsapp/messages</c>. Todo viaja como texto: un <c>idempotencyKey</c> mal formado tiene que ser un 422 con
 /// su campo, no un cuerpo que no enlaza.</summary>
 public sealed record SendExternalTemplateCommand(
-    string? ClientId, string? ConnectionId, string? To, string? TemplateName, string? TemplateLanguage, IReadOnlyDictionary<string, string?>? Parameters)
+    string? IdempotencyKey, string? ConnectionId, string? To, string? TemplateName, string? TemplateLanguage, IReadOnlyDictionary<string, string?>? Parameters)
     : ICommand<ExternalMessageResult>;
 
-/// <summary><c>Replayed</c>: el mensaje ya existía con ese <c>clientId</c> y no se llamó a Meta (200 en vez de 201).</summary>
+/// <summary><c>Replayed</c>: el mensaje ya existía con ese <c>idempotencyKey</c> y no se llamó a Meta (200 en vez de 201).</summary>
 public sealed record ExternalMessageResult(Guid MessageId, Guid ConversationId, string Status, bool Replayed);
 
 /// <summary>Spec 2026-10-30 §5.2. Las claves de <c>errors</c> son las del cuerpo JSON (<c>template.parameters.1</c>). Una plantilla sin
@@ -26,7 +26,7 @@ public sealed class SendExternalTemplateValidator : AbstractValidator<SendExtern
     public SendExternalTemplateValidator(IDialablePhoneNumbers phones)
     {
         ArgumentNullException.ThrowIfNull(phones);
-        RuleFor(command => command.ClientId).Must(IsUuid).WithMessage("Envía un UUID.").OverridePropertyName("clientId");
+        RuleFor(command => command.IdempotencyKey).Must(IsUuid).WithMessage("Envía un UUID.").OverridePropertyName("idempotencyKey");
         RuleFor(command => command.ConnectionId).Must(IsUuid).WithMessage("Envía un UUID.").OverridePropertyName("connectionId");
         RuleFor(command => command.To)
             .Must(to => ExternalPhoneNumber.TryNormalize(to, out var waId) && phones.IsDialable(waId))
@@ -51,7 +51,7 @@ public sealed class SendExternalTemplateValidator : AbstractValidator<SendExtern
 /// <summary>
 /// Spec 2026-10-30 §6.3: <see cref="BillingTemplateOutbound"/> generalizado, para el sistema del tenant. No usa <see cref="OutboundGuards"/>
 /// ni <c>TemplateOutbound.ResolveAsync</c>, que exigen una persona con sesión. Lo que manda el orden es la idempotencia: un reintento se
-/// resuelve antes de mirar la plantilla, el destinatario o el estado de la conexión, porque lo que ya salió, ya salió, y un <c>clientId</c>
+/// resuelve antes de mirar la plantilla, el destinatario o el estado de la conexión, porque lo que ya salió, ya salió, y un <c>idempotencyKey</c>
 /// repetido nunca deja un hilo vacío. La carrera entre dos reintentos la cierra el reclamo: el segundo espera ahí y decide con lo que dejó el
 /// primero, por las mismas reglas (<see cref="Repeat"/>).
 /// </summary>
@@ -81,18 +81,18 @@ public sealed class SendExternalTemplateHandler(
         // 1. Scope, capacidad y número.
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         var tenantId = caller.TenantId;
-        var clientId = Guid.Parse(command.ClientId!);
+        var idempotencyKey = Guid.Parse(command.IdempotencyKey!);
         var connectionId = Guid.Parse(command.ConnectionId!);
         ExternalPhoneNumber.TryNormalize(command.To, out var waId);
         await ExternalApiAccess.EnsureAsync(caller, tenantModules, MessagingScopes.TemplatesSend, cancellationToken);
         await ExternalApiAccess.EnsureConnectionAsync(caller, connections, connectionId, cancellationToken);
 
         // 2. Idempotencia antes de todo, por tenant y no por clave: rotar una clave en medio de un reintento no duplica.
-        if (await outbound.FindApiMessageAsync(tenantId, clientId, cancellationToken) is { } existing)
+        if (await outbound.FindApiMessageAsync(tenantId, idempotencyKey, cancellationToken) is { } existing)
         {
             if (existing.ConnectionId != connectionId || !string.Equals(existing.WaId, waId, StringComparison.Ordinal))
             {
-                throw ClientIdReused();
+                throw IdempotencyKeyReused();
             }
 
             if (!CanResend(existing.Status, existing.FailureCode))
@@ -135,9 +135,9 @@ public sealed class SendExternalTemplateHandler(
         var conversation = await conversations.FindAsync(tenantId, opened.ConversationId, cancellationToken)
             ?? throw new InvalidOperationException("The conversation that was just opened could not be read.");
 
-        // 7. Un request en carrera con el mismo clientId espera acá hasta que el primero cierre, y lee lo que este dejó.
+        // 7. Un request en carrera con el mismo idempotencyKey espera acá hasta que el primero cierre, y lee lo que este dejó.
         var draft = new OutboundDraft(
-            Guid.CreateVersion7(), conversation.Id, tenantId, connectionId, clientId, built.Text, SentByMemberId: null, now,
+            Guid.CreateVersion7(), conversation.Id, tenantId, connectionId, idempotencyKey, built.Text, SentByMemberId: null, now,
             Kind: MessageKind.Template, DetailsJson: built.DetailsJson, SentByApiKey: new OutboundApiKeyAuthor(caller.ApiKeyId, caller.ApiKeyName));
         await using var claim = await outbound.ClaimAsync(draft, cancellationToken);
         if (claim.Existing is { } held)
@@ -146,7 +146,7 @@ public sealed class SendExternalTemplateHandler(
             if (held.SentByApiKeyId is null)
             {
                 await claim.RollbackAsync(CancellationToken.None);
-                throw ClientIdReused();
+                throw IdempotencyKeyReused();
             }
 
             if (!CanResend(held.Status, held.FailureCode))
@@ -206,13 +206,13 @@ public sealed class SendExternalTemplateHandler(
     private static bool CanResend(MessageStatus status, int? failureCode) =>
         status == MessageStatus.Failed && failureCode != MessageFailureReasons.Unconfirmed;
 
-    /// <summary>Lo que responde un <c>clientId</c> que ya no se reenvía: otra plantilla es 409; la misma, lo guardado, o el 502 si nunca se
+    /// <summary>Lo que responde un <c>idempotencyKey</c> que ya no se reenvía: otra plantilla es 409; la misma, lo guardado, o el 502 si nunca se
     /// supo si salió.</summary>
     private static ExternalMessageResult Repeat(Guid messageId, Guid conversationId, MessageStatus status, string? detailsJson, SendExternalTemplateCommand command)
     {
         if (!SameTemplate(detailsJson, command))
         {
-            throw ClientIdReused();
+            throw IdempotencyKeyReused();
         }
 
         return status == MessageStatus.Failed
@@ -234,6 +234,6 @@ public sealed class SendExternalTemplateHandler(
             && parameters.All(pair => stored.Parameters.TryGetValue(pair.Key, out var value) && string.Equals(value, pair.Value, StringComparison.Ordinal));
     }
 
-    private static ResourceConflictException ClientIdReused() =>
-        new(MessagingErrorCodes.ExternalClientIdReused, "Ese clientId ya se usó con otro destino o plantilla.");
+    private static ResourceConflictException IdempotencyKeyReused() =>
+        new(MessagingErrorCodes.ExternalIdempotencyKeyReused, "Esa idempotencyKey ya se usó con otro destino o plantilla.");
 }

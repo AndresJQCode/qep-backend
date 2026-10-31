@@ -60,8 +60,8 @@ public sealed class ExternalSendApiTests
     private static Dictionary<string, string> DefaultParameters() => new() { ["1"] = "Ana", ["2"] = "4821" };
 
     private static object Body(
-        Guid clientId, Guid connectionId, string to = Phone, string name = TemplateName, string language = Language, Dictionary<string, string>? parameters = null) =>
-        new { clientId, connectionId, to, template = new { name, language, parameters = parameters ?? DefaultParameters() } };
+        Guid idempotencyKey, Guid connectionId, string to = Phone, string name = TemplateName, string language = Language, Dictionary<string, string>? parameters = null) =>
+        new { idempotencyKey, connectionId, to, template = new { name, language, parameters = parameters ?? DefaultParameters() } };
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient client, object body) => client.PostAsJsonAsync(ExternalMessagesUrl, body, Ct);
 
@@ -293,11 +293,11 @@ public sealed class ExternalSendApiTests
         using var host = f.Factory;
 
         await AssertValidationAsync(
-            await PostRawAsync(f.Client, "{}"), "clientId", "connectionId", "template.language", "template.name", "to");
+            await PostRawAsync(f.Client, "{}"), "connectionId", "idempotencyKey", "template.language", "template.name", "to");
     }
 
     [Fact]
-    public async Task ANonUuidClientIdIs422()
+    public async Task ANonUuidIdempotencyKeyIs422()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -305,13 +305,13 @@ public sealed class ExternalSendApiTests
 
         var response = await PostAsync(f.Client, new
         {
-            clientId = "pedido-4821",
+            idempotencyKey = "pedido-4821",
             connectionId = f.ConnectionId,
             to = Phone,
             template = new { name = TemplateName, language = Language, parameters = DefaultParameters() },
         });
 
-        await AssertValidationAsync(response, "clientId");
+        await AssertValidationAsync(response, "idempotencyKey");
     }
 
     [Theory]
@@ -355,7 +355,7 @@ public sealed class ExternalSendApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         var json = $$"""
-            {"clientId":"{{Guid.CreateVersion7()}}","connectionId":"{{f.ConnectionId}}","to":"{{Phone}}",
+            {"idempotencyKey":"{{Guid.CreateVersion7()}}","connectionId":"{{f.ConnectionId}}","to":"{{Phone}}",
              "template":{"name":"{{TemplateName}}","language":"{{Language}}","parameters":{"1":"Ana","2":4821} } }
             """;
 
@@ -369,8 +369,8 @@ public sealed class ExternalSendApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         ScriptMetaOk(f.Factory.MetaHandler);
-        var clientId = Guid.CreateVersion7();
-        var body = new { clientId, connectionId = f.ConnectionId, to = Phone, template = new { name = "aviso_general", language = Language } };
+        var idempotencyKey = Guid.CreateVersion7();
+        var body = new { idempotencyKey, connectionId = f.ConnectionId, to = Phone, template = new { name = "aviso_general", language = Language } };
 
         var first = await PostAsync(f.Client, body);
         var repeat = await PostAsync(f.Client, body);
@@ -443,7 +443,7 @@ public sealed class ExternalSendApiTests
     }
 
     [Fact]
-    public async Task AnotherTenantCanUseTheSameClientId()
+    public async Task AnotherTenantCanUseTheSameIdempotencyKey()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -458,10 +458,10 @@ public sealed class ExternalSendApiTests
         var otherMember = await OwnerMembershipIdAsync(f.ConnectionString, otherTenant);
         var (_, otherKey) = await SeedApiKeyAsync(f.ConnectionString, otherTenant.TenantId, otherMember, SendScope);
         using var otherClient = CreateExternalClient(f.Factory, otherKey);
-        var clientId = Guid.CreateVersion7();
+        var idempotencyKey = Guid.CreateVersion7();
 
-        var first = await PostAsync(f.Client, Body(clientId, f.ConnectionId));
-        var second = await PostAsync(otherClient, Body(clientId, otherConnection));
+        var first = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId));
+        var second = await PostAsync(otherClient, Body(idempotencyKey, otherConnection));
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.Created, second.StatusCode);
@@ -469,51 +469,51 @@ public sealed class ExternalSendApiTests
     }
 
     [Fact]
-    public async Task TheSameClientIdWithAnotherNumberIs409AndOpensNoThread()
+    public async Task TheSameIdempotencyKeyWithAnotherNumberIs409AndOpensNoThread()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         ScriptMetaOk(f.Factory.MetaHandler);
-        var clientId = Guid.CreateVersion7();
-        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(clientId, f.ConnectionId))).StatusCode);
+        var idempotencyKey = Guid.CreateVersion7();
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId))).StatusCode);
 
-        var response = await PostAsync(f.Client, Body(clientId, f.ConnectionId, to: OtherPhone));
+        var response = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId, to: OtherPhone));
 
-        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(1L, await ConversationsAsync(f));
         Assert.Equal(1, SendCalls(f));
     }
 
     [Fact]
-    public async Task TheSameClientIdWithAnotherTemplateIs409()
+    public async Task TheSameIdempotencyKeyWithAnotherTemplateIs409()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         ScriptMetaOk(f.Factory.MetaHandler);
-        var clientId = Guid.CreateVersion7();
-        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(clientId, f.ConnectionId))).StatusCode);
+        var idempotencyKey = Guid.CreateVersion7();
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId))).StatusCode);
 
-        var response = await PostAsync(f.Client, Body(clientId, f.ConnectionId, name: "aviso_cierre"));
+        var response = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId, name: "aviso_cierre"));
 
-        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(1, SendCalls(f));
     }
 
     [Fact]
-    public async Task TheSameClientIdWithOtherParametersIs409()
+    public async Task TheSameIdempotencyKeyWithOtherParametersIs409()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         ScriptMetaOk(f.Factory.MetaHandler);
-        var clientId = Guid.CreateVersion7();
-        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(clientId, f.ConnectionId))).StatusCode);
+        var idempotencyKey = Guid.CreateVersion7();
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId))).StatusCode);
 
-        var response = await PostAsync(f.Client, Body(clientId, f.ConnectionId, parameters: new() { ["1"] = "ANA", ["2"] = "4821" }));
+        var response = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId, parameters: new() { ["1"] = "ANA", ["2"] = "4821" }));
 
-        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(1, SendCalls(f));
     }
 
@@ -524,12 +524,12 @@ public sealed class ExternalSendApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         var held = HoldFirstSend(f, _ => FakeMetaGraphHandler.Json(HttpStatusCode.OK, MetaOk));
-        var clientId = Guid.CreateVersion7();
+        var idempotencyKey = Guid.CreateVersion7();
 
-        var (first, second) = await RaceAsync(f, held, Body(clientId, f.ConnectionId), Body(clientId, f.ConnectionId, to: OtherPhone));
+        var (first, second) = await RaceAsync(f, held, Body(idempotencyKey, f.ConnectionId), Body(idempotencyKey, f.ConnectionId, to: OtherPhone));
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-        await AssertProblemAsync(second, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(second, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(1, SendCalls(f));
         Assert.Equal(1L, await OutboundMessagesAsync(f));
     }
@@ -588,7 +588,7 @@ public sealed class ExternalSendApiTests
     }
 
     [Fact]
-    public async Task AClientIdOfAnAdvisorMessageIs409NotAReplay()
+    public async Task AnIdempotencyKeyOfAnAdvisorMessageIs409NotAReplay()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -596,17 +596,17 @@ public sealed class ExternalSendApiTests
         ScriptMetaOk(f.Factory.MetaHandler);
         var conversation = await SeedBsuidConversationAsync(f.Factory, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, "CO.573001234567", Phone);
         var advisorMessage = await SeedOutboundAsync(f.ConnectionString, conversation, f.Tenant.TenantId, f.ConnectionId, "wamid.advisor");
-        var clientId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT client_id FROM messaging.messages WHERE id = @id", ("id", advisorMessage));
+        var idempotencyKey = await ScalarAsync<Guid>(f.ConnectionString, "SELECT client_id FROM messaging.messages WHERE id = @id", ("id", advisorMessage));
 
-        var response = await PostAsync(f.Client, Body(clientId, f.ConnectionId));
+        var response = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId));
 
-        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(0, SendCalls(f));
         Assert.Equal(1L, await OutboundMessagesAsync(f));
     }
 
     [Fact]
-    public async Task ACertainRejectionIs422AndTheSameClientIdResends()
+    public async Task ACertainRejectionIs422AndTheSameIdempotencyKeyResends()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
@@ -634,20 +634,20 @@ public sealed class ExternalSendApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.InternalServerError, "{}");
-        var clientId = Guid.CreateVersion7();
-        var body = Body(clientId, f.ConnectionId);
+        var idempotencyKey = Guid.CreateVersion7();
+        var body = Body(idempotencyKey, f.ConnectionId);
 
         await AssertProblemAsync(await PostAsync(f.Client, body), HttpStatusCode.BadGateway, "external.send_unconfirmed");
         var repeat = await PostAsync(f.Client, body);
-        var otherTemplate = await PostAsync(f.Client, Body(clientId, f.ConnectionId, name: "aviso_cierre"));
+        var otherTemplate = await PostAsync(f.Client, Body(idempotencyKey, f.ConnectionId, name: "aviso_cierre"));
 
         await AssertProblemAsync(repeat, HttpStatusCode.BadGateway, "external.send_unconfirmed");
-        await AssertProblemAsync(otherTemplate, HttpStatusCode.Conflict, "external.client_id_reused");
+        await AssertProblemAsync(otherTemplate, HttpStatusCode.Conflict, "external.idempotency_key_reused");
         Assert.Equal(1, SendCalls(f));
     }
 
     [Fact]
-    public async Task AMetaLimitIs429WithRetryAfterAndTheSameClientIdResends()
+    public async Task AMetaLimitIs429WithRetryAfterAndTheSameIdempotencyKeyResends()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);

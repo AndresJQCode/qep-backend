@@ -387,6 +387,18 @@ internal sealed partial class WhatsAppCloudClient(
         return response?.IsSuccessStatusCode == true;
     }
 
+    public async Task<bool> SendTypingIndicatorAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{Version}/{sender.PhoneNumberId}/messages")
+        {
+            Content = JsonContent.Create(new { messaging_product = "whatsapp", status = "read", message_id = wamid, typing_indicator = new { type = "text" } }),
+        };
+        var answer = await SendAsync("typing", request, sender.AccessToken, ReadReceiptTimeout, cancellationToken);
+        using var response = answer.Response;
+        return response?.IsSuccessStatusCode == true;
+    }
+
     public Task<MessagingGraphResult<BlockUsersResult>> BlockUserAsync(MessagingSender sender, string waId, CancellationToken cancellationToken) =>
         BlockUsersAsync("block", HttpMethod.Post, sender, waId, cancellationToken);
 

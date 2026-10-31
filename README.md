@@ -2888,6 +2888,8 @@ en `true`.
   responde (`messaging.conversation.assigned_to_other`); responder una conversación sin asignar la toma;
   resolver no libera. Una conversación nueva de un cliente con dueño hereda el asignado si todavía puede
   responder. `GET /messaging/assignees` lista a quién transferir. `assignedTo.isMe` lo calcula el servidor.
+- **Indicador de escritura.** `POST …/conversations/{id}/typing` (`.manage`, sin cuerpo, 204) le muestra «escribiendo» al contacto en WhatsApp e
+  Instagram, best effort. Es no-op si el asesor no podría contestar ya mismo, y no cambia la conversación ni la toma. Sólo sale hacia el contacto: Meta no avisa por webhook que el contacto esté escribiendo.
 - **Número compartido.** Dos clientes pueden tener el mismo WhatsApp (R3). Toda respuesta de **una** sola conversación (el detalle y las que devuelven su resumen) lleva
   `sharedPhoneCustomers: [{ id, name, isComplete, tags: [] }]` (hasta 10) con los otros clientes del mismo número; en el listado
   va siempre `[]`. Se lee por el puerto `IMessagingCustomerDirectory`, no por el esquema de Customers.
@@ -4058,7 +4060,7 @@ Cuerpo de `POST /messages`, en un archivo, porque PowerShell rompe las comillas 
 ```powershell
 @'
 {
-  "clientId": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "idempotencyKey": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
   "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
   "to": "573001234567",
   "template": { "name": "aviso_despacho", "language": "es_CO", "parameters": { "1": "Ana", "2": "4821" } }
@@ -4071,7 +4073,7 @@ curl.exe -s https://<host>/api/v1/external/whatsapp/connections/<connectionId>/t
 curl.exe -s -X POST https://<host>/api/v1/external/whatsapp/messages -H "X-Api-Key: $env:QEP_API_KEY" -H "Content-Type: application/json" -d "@cuerpo.json"
 ```
 
-Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `clientId` es obligatorio, lo genera el sistema
+Respuesta de envío: `{ "messageId": "…", "conversationId": "…", "status": "Sent" }`; en un reintento, `status` trae el estado actual del mensaje, que puede ser posterior a `Sent` (por ejemplo `Read`). El `idempotencyKey` es obligatorio, lo genera el sistema
 externo y es la llave de idempotencia **por tenant**: repetirlo con el mismo destino, plantilla, idioma y parámetros devuelve `200` con lo
 guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de país (se aceptan `+`, espacios y guiones); sin él responde
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
@@ -4085,7 +4087,7 @@ una conversación bloqueada rechaza cualquier categoría.
 | 403 | `external.auth.scope_missing` | La clave no tiene el scope |
 | 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
 | 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.client_id_reused` | Mismo `clientId` con otro destino o plantilla |
+| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro destino o plantilla |
 | 422 | `validation.failed` | Con el mapa `errors` |
 | 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
 | 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
@@ -4095,12 +4097,12 @@ una conversación bloqueada rechaza cualquier categoría.
 | 422 | `external.recipient_blocked` | Contacto bloqueado |
 | 422 | `external.recipient_opted_out` | Plantilla `MARKETING` a quien no la acepta |
 | 422 | `external.recipient_inactive` | Plantilla `MARKETING` a un cliente inactivo |
-| 422 | `external.message_rejected` | Meta rechazó con certeza; el mismo `clientId` reenvía |
+| 422 | `external.message_rejected` | Meta rechazó con certeza; el mismo `idempotencyKey` reenvía |
 | 429 | `external.rate_limited` | Límite de QEP o de Meta, con `Retry-After` |
 | 502 | `external.send_unconfirmed` | No se sabe si salió |
 
 **`external.send_unconfirmed` significa «no sé si salió».** Meta pudo haber aceptado el mensaje aunque no lo confirmó. Repetir el mismo
-`clientId` repite el `502` y **no** reenvía; decidir si se manda otro exige un `clientId` nuevo, y esa decisión es del sistema externo.
+`idempotencyKey` repite el `502` y **no** reenvía; decidir si se manda otro exige un `idempotencyKey` nuevo, y esa decisión es del sistema externo.
 
 **Límites.** Dos, porque el rate limiter corre antes de autenticar: 600 por minuto por IP (frena a quien prueba claves inventadas,
 `ApiAccess:RateLimit:PerIpPerMinute`) y 300 por minuto por clave después de autenticar (`ApiAccess:RateLimit:PerKeyPerMinute`). **Los dos

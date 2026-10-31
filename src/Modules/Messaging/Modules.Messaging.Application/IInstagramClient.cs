@@ -24,6 +24,10 @@ public interface IInstagramClient
     /// <summary>Decisión 14 (V-5): <c>sender_action: mark_seen</c>, best effort.</summary>
     Task<bool> MarkSeenAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken);
 
+    /// <summary>El indicador «escribiendo» del asesor: <c>sender_action: typing_on</c>, best effort. Por persona, y a diferencia de WhatsApp
+    /// no marca nada como visto.</summary>
+    Task<bool> SendTypingOnAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken);
+
     /// <summary><c>GET /{v}/{igsid}?fields=name,username,profile_pic</c> con el token de la cuenta.</summary>
     Task<MessagingGraphResult<InstagramProfile>> GetProfileAsync(InstagramSender sender, string igsid, CancellationToken cancellationToken);
 

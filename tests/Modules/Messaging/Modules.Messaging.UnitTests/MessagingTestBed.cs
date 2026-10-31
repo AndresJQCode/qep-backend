@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -125,16 +126,39 @@ internal sealed class MessagingTestBed
 
     public ConversationRow OpenConversation(
         int? lastInboundHoursAgo, bool resolved = false, Guid? assignedTo = null, Guid? customerId = null, string? userId = null, string? waId = "573001234567",
-        ConversationChannel channel = ConversationChannel.WhatsApp, bool blocked = false)
+        ConversationChannel channel = ConversationChannel.WhatsApp, bool blocked = false, string? lastInboundWamid = null,
+        ConversationAutomationStatus automation = ConversationAutomationStatus.None)
     {
         var row = new ConversationRow(
             Guid.CreateVersion7(), TenantId, ConnectionId, UserId: userId, WaId: waId, Username: null, "Laura",
             CustomerId: customerId, AssignedMemberId: assignedTo, resolved ? ConversationStatus.Resolved : ConversationStatus.Open, 0,
             lastInboundHoursAgo is { } hours ? Now.AddHours(-hours) : null,
             null, null, null, null, null, null, Now, 1, channel,
-            BlockedAt: blocked ? Now.AddHours(-2) : null, BlockedByMemberId: blocked ? MemberId : null);
+            AutomationStatus: automation,
+            BlockedAt: blocked ? Now.AddHours(-2) : null, BlockedByMemberId: blocked ? MemberId : null,
+            LastInboundWamid: lastInboundWamid);
         Conversations.Rows.Add(row);
         return row;
+    }
+
+    public SendTypingIndicatorHandler TypingHandler(ILogger<SendTypingIndicatorHandler>? logger = null, Guid? tenantId = null, bool member = true, params string[] permissions)
+    {
+        var membership = new FakeMembershipDirectory();
+        if (member)
+        {
+            membership.Active[(SubjectId, TenantId)] = MemberId;
+        }
+
+        return new SendTypingIndicatorHandler(
+            Conversations,
+            Connections,
+            Meta,
+            Instagram,
+            membership,
+            TenantModules,
+            new FakeExecutionContext(tenantId ?? TenantId, SubjectId, permissions.Length > 0 ? permissions : [MessagingPermissions.ConversationManage]),
+            new FakeClock(Now),
+            logger ?? NullLogger<SendTypingIndicatorHandler>.Instance);
     }
 
     public SendMessageHandler SendHandler(Guid? tenantId = null)
@@ -620,6 +644,24 @@ internal sealed class FakeWhatsAppClient : IWhatsAppCloudClient
         return Task.FromResult(true);
     }
 
+    /// <summary>Los wamid que recibieron el indicador de escritura.</summary>
+    public List<string> Typing { get; } = [];
+
+    public bool TypingSucceeds { get; set; } = true;
+
+    public Exception? TypingException { get; set; }
+
+    public Task<bool> SendTypingIndicatorAsync(MessagingSender sender, string wamid, CancellationToken cancellationToken)
+    {
+        Typing.Add(wamid);
+        if (TypingException is { } exception)
+        {
+            throw exception;
+        }
+
+        return Task.FromResult(TypingSucceeds);
+    }
+
     /// <summary>Spec 2026-10-26 §2: lo que responde Block Users; por defecto, aplicado.</summary>
     public MessagingGraphResult<BlockUsersResult> NextBlock { get; set; } = new(new BlockUsersResult(true, null), null);
 
@@ -949,6 +991,23 @@ internal sealed class FakeInstagramClient : IInstagramClient
     {
         Seen.Add((sender, recipientId));
         return Task.FromResult(SeenSucceeds);
+    }
+
+    public List<(InstagramSender Sender, string RecipientId)> Typing { get; } = [];
+
+    public bool TypingSucceeds { get; set; } = true;
+
+    public Exception? TypingException { get; set; }
+
+    public Task<bool> SendTypingOnAsync(InstagramSender sender, string recipientId, CancellationToken cancellationToken)
+    {
+        Typing.Add((sender, recipientId));
+        if (TypingException is { } exception)
+        {
+            throw exception;
+        }
+
+        return Task.FromResult(TypingSucceeds);
     }
 
     public Task<MessagingGraphResult<InstagramProfile>> GetProfileAsync(InstagramSender sender, string igsid, CancellationToken cancellationToken) =>
