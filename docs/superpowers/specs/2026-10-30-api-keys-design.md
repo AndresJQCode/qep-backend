@@ -213,7 +213,7 @@ El primer endpoint existe porque sin él el integrador no tiene de dónde sacar 
 
 ```json
 {
-  "clientId": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
+  "idempotencyKey": "0192f3a4-7b1c-7e2a-9d4f-3a5b6c7d8e9f",
   "connectionId": "0192f3a4-7b1c-7e2a-9d4f-000000000001",
   "to": "573001234567",
   "template": { "name": "aviso_despacho", "language": "es_CO", "parameters": { "1": "Ana", "2": "4821" } }
@@ -224,7 +224,7 @@ El primer endpoint existe porque sin él el integrador no tiene de dónde sacar 
 { "messageId": "…", "conversationId": "…", "status": "Sent" }
 ```
 
-- `clientId` es obligatorio, UUID y lo genera el sistema externo.
+- `idempotencyKey` es obligatorio, UUID y lo genera el sistema externo.
 - `to` lleva indicativo de país. Se aceptan `+`, espacios y guiones; se normaliza a dígitos, de 8 a 15, y se valida con
   `libphonenumber` (el que ya usa Customers, por un puerto). No se adivina el país: `3001234567` sin indicativo se leería como +30 y
   le llegaría a otra persona, así que responde 422.
@@ -239,7 +239,7 @@ Todo es ProblemDetails con `code`. **Los `code` son contrato público:** cambiar
 | 403 | `external.auth.scope_missing` | La clave no tiene el scope |
 | 403 | `external.connection_not_allowed` | Número fuera de la clave o de otro tenant |
 | 403 | `tenancy.module_not_enabled` | `developer` o `messaging` apagados |
-| 409 | `external.client_id_reused` | Mismo `clientId` con otro destino o plantilla |
+| 409 | `external.idempotency_key_reused` | Mismo `idempotencyKey` con otro destino o plantilla |
 | 422 | `validation.failed` | Con mapa `errors` |
 | 422 | `messaging.template.not_available` | Plantilla inexistente, no aprobada o no enviable |
 | 422 | `messaging.template.parameters_mismatch` | Parámetros que no coinciden |
@@ -287,7 +287,7 @@ este orden:
 6. `OpenByPhoneAsync`, sin variante. Una conversación existente no cambia de estado ni de asignación. Una nueva nace `Open` y sin asignar
    (D13).
 7. `ClaimAsync` con kind 4. Desde aquí todo va con `CancellationToken.None`, como en Billing: si Meta aceptó, cancelar no puede borrar la
-   fila. El mismo `clientId` en carrera con otro destino choca con `IX_messages_tenant_api_client`, que se traduce por nombre a 409.
+   fila. El mismo `idempotencyKey` en carrera con otro destino choca con `IX_messages_tenant_api_client`, que se traduce por nombre a 409.
 8. Envío y `OutboundSettlement` con `seen: 0`.
 
 `BillingTemplateOutbound` no se toca. La lógica común se extrae solo si queda evidente al escribir, no por adelantado.
@@ -312,13 +312,13 @@ Si Meta rechaza por opt-out (`MetaErrorCodes.MarketingOptOut`), responde `extern
 `OutboundSettlement.cs:74-78` deja `Failed` también cuando Meta pudo haber aceptado (`MessageFailureReasons.Unconfirmed`). Reenviar ahí
 mandaría dos mensajes, así que se sigue la regla de campañas (`CampaignDispatch.cs:341`):
 
-| Resultado | Respuesta | Con el mismo `clientId` |
+| Resultado | Respuesta | Con el mismo `idempotencyKey` |
 | --- | --- | --- |
 | Meta rechazó con certeza | 422 `external.message_rejected` | Reenvía: es lo que hace `OutboundGuards.cs:53` |
 | Sin confirmar (timeout, 5xx, 2xx sin id) | 502 `external.send_unconfirmed` | **No reenvía.** Repite el 502 |
 | Meta limita (130429) | 429 `external.rate_limited` | Reenvía |
 
-El integrador debe tratar `external.send_unconfirmed` como «no sé si salió»: decidir si manda otro exige un `clientId` nuevo, y esa decisión
+El integrador debe tratar `external.send_unconfirmed` como «no sé si salió»: decidir si manda otro exige un `idempotencyKey` nuevo, y esa decisión
 queda explícita de su lado.
 
 ### 6.4 Auditoría
@@ -365,7 +365,7 @@ TDD, con RED y GREEN literales. Además de los casos felices, cada anti-meta tie
 - La API funciona con el stub prendido (el esquema se registró en las dos ramas).
 - Secreto ausente de logs en nivel `Trace`, de auditoría y de `platform.request_failures` (patrón
   `TheKeyNeverAppearsInLogsAuditOrHttpCalls`).
-- `clientId`: repetido igual da 200 sin segundo envío a Meta; con otro número da 409; en paralelo con otro número da un solo envío; un rechazo
+- `idempotencyKey`: repetido igual da 200 sin segundo envío a Meta; con otro número da 409; en paralelo con otro número da un solo envío; un rechazo
   cierto reintenta; **un envío sin confirmar no vuelve a llamar a Meta**.
 - Cada fila de §6.3.1.
 - `developer` apagado, `messaging` apagado, marketing a opt-out, contacto bloqueado, conexión de Instagram.

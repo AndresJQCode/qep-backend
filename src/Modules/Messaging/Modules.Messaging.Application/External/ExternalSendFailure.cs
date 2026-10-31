@@ -45,7 +45,7 @@ public static class ExternalSendFailure
             "WhatsApp rechazó el mensaje.");
     }
 
-    /// <summary>El 502: lo mismo en vivo que al repetir un <c>clientId</c> cuyo envío quedó sin confirmar.</summary>
+    /// <summary>El 502: lo mismo en vivo que al repetir un <c>idempotencyKey</c> cuyo envío quedó sin confirmar.</summary>
     public static UpstreamServiceException Unconfirmed() =>
         new(MessagingErrorCodes.ExternalSendUnconfirmed, "WhatsApp no confirmó el envío. Revisa antes de reintentar: el mensaje pudo haber salido.");
 }

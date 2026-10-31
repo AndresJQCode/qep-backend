@@ -260,7 +260,7 @@ public sealed class MessageAuthorshipApiTests
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() => other.ServiceProvider.GetRequiredService<IOutboundMessages>().ClaimAsync(
             new OutboundDraft(Guid.CreateVersion7(), second, tenant.TenantId, connectionId, clientId, "hola", null, at, SentByApiKey: key), Ct));
 
-        Assert.Equal("external.client_id_reused", error.Code);
+        Assert.Equal("external.idempotency_key_reused", error.Code);
     }
 
     [Fact]
