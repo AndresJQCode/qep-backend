@@ -91,6 +91,7 @@ public sealed class ExternalApiAuthTests
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var body = await BodyAsync(response);
         Assert.Equal("external.auth.invalid_key", body.GetProperty("code").GetString());
+        Assert.Equal("Autenticación requerida", body.GetProperty("title").GetString());
         Assert.Equal(401, body.GetProperty("status").GetInt32());
         Assert.False(string.IsNullOrEmpty(body.GetProperty("traceId").GetString()));
     }
@@ -229,7 +230,9 @@ public sealed class ExternalApiAuthTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("external.auth.scope_missing", (await BodyAsync(response)).GetProperty("code").GetString());
+        var body = await BodyAsync(response);
+        Assert.Equal("external.auth.scope_missing", body.GetProperty("code").GetString());
+        Assert.Equal("Acceso denegado", body.GetProperty("title").GetString());
     }
 
     [Fact]

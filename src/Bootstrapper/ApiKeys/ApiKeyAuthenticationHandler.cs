@@ -88,11 +88,11 @@ internal sealed partial class ApiKeyAuthenticationHandler(
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
         WriteProblemAsync(
-            StatusCodes.Status401Unauthorized, "Unauthorized", ExternalApiErrorCodes.InvalidKey, "La clave de API no viene en la petición o no es válida.");
+            StatusCodes.Status401Unauthorized, "Autenticación requerida", ExternalApiErrorCodes.InvalidKey, "La clave de API no viene en la petición o no es válida.");
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
         WriteProblemAsync(
-            StatusCodes.Status403Forbidden, "Access denied", ExternalApiErrorCodes.ScopeMissing, "Tu clave de API no tiene el permiso necesario para esta operación.");
+            StatusCodes.Status403Forbidden, "Acceso denegado", ExternalApiErrorCodes.ScopeMissing, "Tu clave de API no tiene el permiso necesario para esta operación.");
 
     // El comportamiento por defecto es un cuerpo vacío, y un integrador externo no tiene otra forma de saber qué pasó.
     private async Task WriteProblemAsync(int status, string title, string code, string detail)

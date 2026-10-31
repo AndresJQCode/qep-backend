@@ -4078,7 +4078,9 @@ guardado, sin volver a enviar; con otra cosa, `409`. `to` lleva indicativo de pa
 `422`, porque no se adivina el país. Solo las plantillas `MARKETING` heredan las reglas de campañas (opt-out del cliente, cliente inactivo);
 una conversación bloqueada rechaza cualquier categoría.
 
-**Errores.** Todo es `ProblemDetails` con `code`, y los `code` son contrato público: cambiarlos rompe integraciones.
+**Errores.** Todo es `ProblemDetails` con `code`, y los `code` son contrato público: cambiarlos rompe integraciones. `title` y `detail` son
+texto para personas y pueden cambiar: decide por `code`. En un `422 validation.failed`, `detail` es un texto fijo y lo que hay que corregir
+viene por campo en `errors`.
 
 | Status | `code` | Cuándo |
 | --- | --- | --- |
