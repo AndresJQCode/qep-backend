@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Bootstrapper.Authentication;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Http;
 
@@ -19,7 +20,7 @@ internal sealed class HttpApiCaller(IHttpContextAccessor accessor) : IApiCaller
 
     public string ApiKeyName => Identity?.FindFirst(ApiKeyClaimTypes.KeyName)?.Value ?? string.Empty;
 
-    public Guid TenantId => GuidClaim("tenant_id");
+    public Guid TenantId => GuidClaim(QepClaimTypes.TenantId);
 
     public bool HasScope(string scope) =>
         Identity?.HasClaim(ApiKeyClaimTypes.Scope, scope) ?? false;
