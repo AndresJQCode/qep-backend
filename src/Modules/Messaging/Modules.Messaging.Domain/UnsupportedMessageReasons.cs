@@ -17,6 +17,12 @@ public static class UnsupportedMessageReasons
         [131051] = "WhatsApp no admite este tipo de mensaje. Pídele a la persona que lo envíe como texto, imagen o documento.",
     };
 
-    public static string? For(int? metaErrorCode) =>
-        metaErrorCode is { } code ? Texts.GetValueOrDefault(code) : null;
+    // Un 131051 del historial importado (plantillas, interactivos) no tiene a quién pedirle que lo reenvíe y el mensaje puede ser de
+    // hace meses: se dice que el historial no lo trae.
+    private const string ImportedUnsupportedType = "Este mensaje no se pudo importar del historial: WhatsApp no entrega este tipo. Puedes verlo en el celular.";
+
+    public static string? For(int? metaErrorCode, bool imported = false) =>
+        metaErrorCode is { } code
+            ? imported && code == 131051 ? ImportedUnsupportedType : Texts.GetValueOrDefault(code)
+            : null;
 }

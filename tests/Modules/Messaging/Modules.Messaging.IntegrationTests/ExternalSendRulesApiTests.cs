@@ -58,8 +58,8 @@ public sealed class ExternalSendRulesApiTests
             HttpStatusCode.OK, $$"""{"messages":[{"id":"wamid.{{Interlocked.Increment(ref sends)}}"}]}"""));
     }
 
-    private static object Body(Guid clientId, Guid connectionId, string template, string to = Phone) =>
-        new { clientId, connectionId, to, template = new { name = template, language = Language } };
+    private static object Body(Guid idempotencyKey, Guid connectionId, string template, string to = Phone) =>
+        new { idempotencyKey, connectionId, to, template = new { name = template, language = Language } };
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient client, object body) => client.PostAsJsonAsync(ExternalMessagesUrl, body, Ct);
 
@@ -220,7 +220,7 @@ public sealed class ExternalSendRulesApiTests
     // ---- §6.3.2 ----
 
     [Fact]
-    public async Task ACertainRejectionIs422AndTheSameClientIdResends()
+    public async Task ACertainRejectionIs422AndTheSameIdempotencyKeyResends()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);

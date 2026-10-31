@@ -55,7 +55,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             // (conversación, clientId) no llega aquí: la absorbe el ON CONFLICT de arriba.
             await transaction.DisposeAsync();
             throw new ResourceConflictException(
-                MessagingErrorCodes.ExternalClientIdReused, "The clientId was already used by this tenant in another conversation.", exception);
+                MessagingErrorCodes.ExternalIdempotencyKeyReused, "Ese idempotencyKey ya se usó en otra conversación de tu cuenta.", exception);
         }
         catch
         {

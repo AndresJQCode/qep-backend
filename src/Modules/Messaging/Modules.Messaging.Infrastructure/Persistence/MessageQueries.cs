@@ -12,7 +12,7 @@ internal sealed class MessageQueries(MessagingDbContext dbContext) : IMessageQue
         message.Id, message.ConversationId, message.Direction, message.Kind, message.Text, message.Caption, message.Details, message.Status,
         message.FailureCode, message.OccurredAt, message.SentByMemberId, message.ClientId,
         message.Media == null ? null : new MessageMediaRow(message.Media.MimeType, message.Media.FileName), message.ReplyToMessageId, message.SentByChatbotId,
-        message.CreatedAt, message.SentByApiKeyId, message.SentByApiKeyName);
+        message.CreatedAt, message.SentByApiKeyId, message.SentByApiKeyName, message.Imported);
 
     public Task<MessageCursor?> FindCursorAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken) =>
         dbContext.Messages.AsNoTracking()

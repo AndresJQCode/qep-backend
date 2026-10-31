@@ -22,7 +22,8 @@ public sealed record MessageRow(
     Guid? SentByChatbotId = null,
     DateTimeOffset CreatedAt = default,
     Guid? SentByApiKeyId = null,
-    string? SentByApiKeyName = null);
+    string? SentByApiKeyName = null,
+    bool Imported = false);
 
 public sealed record MessageMediaRow(string MimeType, string? FileName);
 
