@@ -235,6 +235,9 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — **Imagen entrante que no se veía hasta recargar** (frontend `c0ad80ae`, en `origin/develop`; falta `main`): el hilo la
+  pintaba antes de terminar la copia a R2, `GET /media` daba 404 y el `<img>` no volvía a pedirla. Imagen, sticker y video reintentan
+  solos unos 70 s (`useMediaCopyRetry`) y luego ofrecen «Intentar de nuevo». Mensajería 1026 en verde; sin navegador.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`; el frontend ya está en `origin/develop`, el backend sin push) **«Iniciar asistente» desde el hilo** (spec
   2026-10-31; backend `5df69090`, frontend `1e0e0033`): `POST /conversations/{id}/automation/start` y `automationStart` en el resumen; también con
   pausa manual o traspaso, siempre sin asesor. Sin migración. Integración 29 + 84 + 24 + 13 en verde, que cubren además la entrada de abajo, y
