@@ -167,6 +167,10 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-31: la conexión de la conversación no tiene un chatbot activo que arrancar.</summary>
     public const string AutomationNoChatbot = "messaging.automation.no_chatbot";
 
+    /// <summary>Spec 2026-11-01 D-8: no hay un paso pendiente que retomar. La pantalla relee y <c>automationContinue</c> le dice qué queda.
+    /// No cae a <c>resume</c> en silencio: el asesor pidió seguir, no reiniciar.</summary>
+    public const string AutomationCannotContinue = "messaging.automation.cannot_continue";
+
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está pausado.</summary>
     public const string AutomationAlreadyPaused = "messaging.automation.already_paused";
 

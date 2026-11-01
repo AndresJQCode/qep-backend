@@ -392,6 +392,9 @@ public sealed class RunProcessorRecordingTests
             Task.FromResult<AutomationConversationState?>(state ?? new AutomationConversationState(
                 "Open", null, "None", null, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567"));
 
+        public Task<bool> WasTakenSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
         public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
             Task.FromResult(false);
 

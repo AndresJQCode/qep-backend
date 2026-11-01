@@ -1359,6 +1359,9 @@ public sealed partial class RunProcessorTests
         /// <summary>Spec 2026-10-26 D-12b: las veces que el procesador preguntó por una resolución y desde cuándo.</summary>
         public List<DateTimeOffset> ResolvedChecks { get; } = [];
 
+        public Task<bool> WasTakenSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
         public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken)
         {
             ResolvedChecks.Add(since);

@@ -252,6 +252,19 @@ public sealed class ConversationEventJsonTests
     public void ForEventNamesTheStartedAudit() =>
         Assert.Equal("messaging.conversation.automation_started", MessagingAuditActions.ForEvent(ConversationEventType.AutomationStarted));
 
+    /// <summary>Spec 2026-11-01 D-13: un tipo aparte, para que la auditoría distinga un regreso que reinicia de uno que continúa.</summary>
+    [Fact]
+    public void AutomationContinuedRoundTripsByNameAndHasItsAudit()
+    {
+        var value = new ConversationEvent(ConversationEventType.AutomationContinued, Actor: Actor);
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Equal($$"""{"type":"AutomationContinued","actor":"{{Actor}}"}""", json);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+        Assert.Equal("messaging.conversation.automation_continued", MessagingAuditActions.ForEvent(ConversationEventType.AutomationContinued));
+    }
+
     [Fact]
     public void CustomerChangedRoundTripsWithBothCustomers()
     {

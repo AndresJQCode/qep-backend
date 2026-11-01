@@ -27,6 +27,9 @@ public enum ConversationEventType
 
     /// <summary>Spec 2026-10-31: un asesor arrancó el asistente desde el hilo (se guarda por nombre: va al final).</summary>
     AutomationStarted,
+
+    /// <summary>Spec 2026-11-01 D-13: un asesor devolvió la conversación para que el asistente siga en el paso pendiente (va al final).</summary>
+    AutomationContinued,
 }
 
 /// <summary>

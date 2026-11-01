@@ -45,11 +45,14 @@ internal sealed partial class AutomationConversations(
             ? new AutomationConversationState(
                 row.Status.ToString(), row.AssignedMemberId, row.AutomationStatus.ToString(), row.AutomationChatbotId, row.ConnectionId,
                 row.LastInboundAt, row.ProfileName, row.WaId, row.AutomationResumedAt, row.AutomationPauseReason?.ToString(),
-                row.Channel.ToString(), row.BlockedAt is not null, row.LastInboundAt?.Add(Conversation.WindowLength))
+                row.Channel.ToString(), row.BlockedAt is not null, row.LastInboundAt?.Add(Conversation.WindowLength), row.AutomationPausedAt)
             : null;
 
     public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
         queries.HasResolvedEventSinceAsync(tenantId, conversationId, since, cancellationToken);
+
+    public Task<bool> WasTakenSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        queries.HasAdvisorEventSinceAsync(tenantId, conversationId, since, cancellationToken);
 
     public async Task StartAsync(Guid tenantId, Guid conversationId, Guid chatbotId, string? firstStepTitle, CancellationToken cancellationToken)
     {

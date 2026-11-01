@@ -160,4 +160,33 @@ public sealed class ConversationRunTests
         Assert.Contains("\"at\":", run.TraceJson);
         Assert.Contains("\"outcome\":\"waiting\"", run.TraceJson);
     }
+
+    /// <summary>Spec 2026-11-01 D-9: continuar renueva el reloj del barrido y nada más; la corrida sigue en su paso.</summary>
+    [Fact]
+    public void KeepWaitingOnlyMovesTheClock()
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()) with { Status = RunStatus.Waiting, CurrentNodeId = "n2", StepNumber = 3, Attempts = 1 });
+        var later = Now.AddHours(23);
+
+        run.KeepWaiting(later);
+
+        Assert.Equal(later, run.UpdatedAt);
+        Assert.Equal(Now, run.StartedAt);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal("n2", run.CurrentNodeId);
+        Assert.Equal(3, run.StepNumber);
+        Assert.Equal(1, run.Attempts);
+    }
+
+    /// <summary>Una corrida que no espera no tiene un paso pendiente que retomar: es un error de quien llama, no un veredicto.</summary>
+    [Theory]
+    [InlineData(RunStatus.Running)]
+    [InlineData(RunStatus.Completed)]
+    public void KeepWaitingRejectsARunThatIsNotWaiting(RunStatus status)
+    {
+        var run = NewRun(RunState.Initial(RunVariables.Empty()) with { Status = status });
+
+        Assert.Throws<InvalidOperationException>(() => run.KeepWaiting(Now.AddHours(1)));
+        Assert.Equal(Now, run.UpdatedAt);
+    }
 }

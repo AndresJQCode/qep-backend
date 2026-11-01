@@ -101,6 +101,10 @@ public interface IConversationQueries
     /// <summary>Spec 2026-10-26 D-12b: ¿tiene el hilo un evento <c>Resolved</c> con <c>occurred_at</c> posterior a <paramref name="since"/>?</summary>
     Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-01 D-5: ¿tiene el hilo un evento <c>Taken</c>, <c>AutoTaken</c> o <c>Transferred</c> con <c>occurred_at</c>
+    /// posterior a <paramref name="since"/>?</summary>
+    Task<bool> HasAdvisorEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
+
     /// <summary>Las conversaciones de una página de resultados de búsqueda (§8.8), en una consulta.</summary>
     Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 }

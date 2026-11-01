@@ -54,9 +54,11 @@ public sealed class ConversationSummaryBuilder(
     {
         ArgumentNullException.ThrowIfNull(row);
         // Spec 2026-10-31 D-13: antes de la salida temprana por canal o wa_id, para que toda respuesta de una conversación lo lleve.
+        var assistant = await manualStart.FindStateAsync(tenantId, row.Id, cancellationToken);
         var summary = (await BuildAsync(tenantId, [row], cancellationToken))[0] with
         {
-            AutomationStart = await manualStart.FindStateAsync(tenantId, row.Id, cancellationToken),
+            AutomationStart = assistant.Start,
+            AutomationContinue = assistant.Continue,
         };
         if (row.Channel != ConversationChannel.WhatsApp || row.WaId is not { } waId)
         {
