@@ -1411,7 +1411,7 @@ public sealed partial class RunProcessorTests
             return Task.CompletedTask;
         }
 
-        public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ResolveAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid? reasonId, CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task EndAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
         {

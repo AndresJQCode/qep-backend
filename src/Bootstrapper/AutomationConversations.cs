@@ -136,7 +136,7 @@ internal sealed partial class AutomationConversations(
             assignedMemberId);
     }
 
-    public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken)
+    public async Task ResolveAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid? reasonId, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var services = new Services(scope.ServiceProvider);
@@ -148,9 +148,11 @@ internal sealed partial class AutomationConversations(
             : null;
         var now = services.Clock.UtcNow;
         conversation.Resolve(now, reason?.Id);
-        // Spec 2026-10-10 §6.1.5: el evento lleva quién; el bot no es una membresía, así que va sin actor (ConversationEventJson lo omite).
+        // Spec 2026-10-10 §6.1.5: el evento lleva quién. El bot no es una membresía, así que Actor queda null (ConversationEventJson lo
+        // omite) y el chatbot va en ChatbotId: el hilo lo resuelve a nombre al leer, como SentByChatbotId (spec 2026-10-21 D-I3).
         services.Events.Record(
-            tenantId, conversation.ConnectionId, conversation.Id, new ConversationEvent(ConversationEventType.Resolved, Actor: null, ReasonId: reason?.Id), now);
+            tenantId, conversation.ConnectionId, conversation.Id,
+            new ConversationEvent(ConversationEventType.Resolved, Actor: null, ReasonId: reason?.Id, ChatbotId: chatbotId), now);
         services.Audit.RecordBySystem(tenantId, MessagingAuditActions.Resolved, conversation.Id, now);
         await services.UnitOfWork.SaveChangesAsync(cancellationToken);
         await NotifyAsync(tenantId, conversationId, () => services.Notifier.ConversationChangedAsync(tenantId, conversationId, cancellationToken));

@@ -315,8 +315,9 @@ public interface IAutomationConversations
     /// si no puede (o es <c>null</c>) queda sin asesor y el aviso suena a todo el tenant como un entrante sin asignar.</summary>
     Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken);
 
-    /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> sin actor y auditoría de sistema.</summary>
-    Task ResolveAsync(Guid tenantId, Guid conversationId, Guid? reasonId, CancellationToken cancellationToken);
+    /// <summary>D-M5: resuelta con el motivo (si sigue activo en el tenant), con evento <c>Resolved</c> firmado por el chatbot
+    /// (sin actor: el bot no es una membresía) y auditoría de sistema.</summary>
+    Task ResolveAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid? reasonId, CancellationToken cancellationToken);
 
     /// <summary>D-M14: <c>Active → None</c>, sin evento. Si el asistente ya no está activo (terminó, lo pausó una persona o la
     /// conversación se resolvió) no hace nada.</summary>

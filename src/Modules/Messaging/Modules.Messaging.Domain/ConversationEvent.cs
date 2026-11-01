@@ -37,8 +37,10 @@ public enum ConversationEventType
 /// sólo lo usa <c>AutomationPaused</c> (spec 2026-10-21). <see cref="PreviousCustomerId"/> sólo lo usa
 /// <c>CustomerChanged</c> (spec 2026-10-24): el cliente nuevo va en <see cref="CustomerId"/> y no en <see cref="Previous"/>/<see cref="Target"/>,
 /// que el hilo resuelve como membresías (desvío A2). <see cref="Handoff"/> sólo lo usa <c>AutomationPaused</c> con
-/// <c>PauseReason = Handoff</c> (spec 2026-10-24 D-T7): la causa del traspaso, en códigos. Nunca teléfonos,
-/// BSUIDs ni textos de Meta (§11).
+/// <c>PauseReason = Handoff</c> (spec 2026-10-24 D-T7): la causa del traspaso, en códigos. <see cref="ChatbotId"/>
+/// sólo lo lleva un <c>Resolved</c> hecho por el bot (bloque «Resolver»): el bot no es una membresía, así que
+/// <see cref="Actor"/> queda <c>null</c> y el nombre se resuelve al leer, como <c>SentByChatbotId</c> (spec 2026-10-21 D-I3).
+/// Nunca teléfonos, BSUIDs ni textos de Meta (§11).
 /// </summary>
 public sealed record ConversationEvent(
     ConversationEventType Type,
@@ -50,4 +52,5 @@ public sealed record ConversationEvent(
     Guid? ReasonId = null,
     AutomationPauseReason? PauseReason = null,
     Guid? PreviousCustomerId = null,
-    AutomationHandoff? Handoff = null);
+    AutomationHandoff? Handoff = null,
+    Guid? ChatbotId = null);

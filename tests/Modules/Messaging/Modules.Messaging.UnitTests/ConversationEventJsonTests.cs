@@ -62,6 +62,28 @@ public sealed class ConversationEventJsonTests
             new ConversationEvent(ConversationEventType.Resolved, Actor: Actor),
             ConversationEventJson.Parse($$"""{"type":"Resolved","actor":"{{Actor}}"}"""));
 
+    private static readonly Guid Chatbot = Guid.Parse("01900000-0000-7000-8000-0000000000c1");
+
+    // Un Resolved del bot no tiene actor (no es una membresía): firma con chatbotId, y sólo cuando lo hay.
+    [Fact]
+    public void TheChatbotIsWrittenAsChatbotId() =>
+        Assert.Equal(
+            $$"""{"type":"Resolved","reasonId":"{{Reason}}","chatbotId":"{{Chatbot}}"}""",
+            ConversationEventJson.Serialize(new ConversationEvent(ConversationEventType.Resolved, ReasonId: Reason, ChatbotId: Chatbot)));
+
+    [Fact]
+    public void TheChatbotRoundTrips()
+    {
+        var value = new ConversationEvent(ConversationEventType.Resolved, ChatbotId: Chatbot);
+
+        Assert.Equal(value, ConversationEventJson.Parse(ConversationEventJson.Serialize(value)));
+    }
+
+    // Los Resolved del bot escritos antes de este arreglo no tienen la clave: se leen sin chatbot.
+    [Fact]
+    public void AnOldBotResolvedEventReadsWithoutAChatbot() =>
+        Assert.Null(ConversationEventJson.Parse("""{"type":"Resolved"}""")!.ChatbotId);
+
     [Fact]
     public void ThePauseReasonRoundTripsByName()
     {

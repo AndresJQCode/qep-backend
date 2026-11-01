@@ -282,15 +282,17 @@ public sealed class AutomationConversationsAdapterTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
-        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), "Menú", Ct));
+        var chatbotId = Guid.CreateVersion7();
+        await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, chatbotId, "Menú", Ct));
         f.Notifier.Events.Clear();
 
-        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, null, Ct));
+        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, chatbotId, null, Ct));
 
         Assert.Equal("Resolved|None|true|true|0",
             await RowAsync(f, "status || '|' || automation_status || '|' || (automation_chatbot_id IS NULL)::text || '|' || (automation_step IS NULL)::text || '|' || unread_count"));
-        Assert.Equal("false", await ScalarAsync<string>(f.ConnectionString,
-            "SELECT (details ? 'actor')::text FROM messaging.messages WHERE details->>'type' = 'Resolved'"));
+        // El bot no es una membresía: el evento va sin actor y firma con chatbotId, que el hilo resuelve a nombre al leer.
+        Assert.Equal($"false|{chatbotId}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT (details ? 'actor')::text || '|' || (details->>'chatbotId') FROM messaging.messages WHERE details->>'type' = 'Resolved'"));
         Assert.Equal(1L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM audit.entries WHERE action = 'messaging.conversation.resolved' AND actor_type = 'System' AND resource_id = @id",
             ("id", f.ConversationId.ToString())));
@@ -312,7 +314,7 @@ public sealed class AutomationConversationsAdapterTests
             ("id", reasonId), ("t", f.TenantId));
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct));
 
-        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, reasonId, Ct));
+        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), reasonId, Ct));
 
         Assert.Equal(reasonId.ToString(), await RowAsync(f, "resolution_reason_id::text"));
         Assert.Equal(reasonId.ToString(), await ScalarAsync<string>(f.ConnectionString,
@@ -321,7 +323,7 @@ public sealed class AutomationConversationsAdapterTests
         // Un chatbot importado de otra empresa puede traer un motivo que aquí no existe: se resuelve sin motivo, no se cae por la FK.
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET status = 'Open', resolution_reason_id = NULL");
         await WithAdapterAsync(f, adapter => adapter.StartAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), null, Ct));
-        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), Ct));
+        await WithAdapterAsync(f, adapter => adapter.ResolveAsync(f.TenantId, f.ConversationId, Guid.CreateVersion7(), Guid.CreateVersion7(), Ct));
 
         Assert.Equal("Resolved|true", await RowAsync(f, "status || '|' || (resolution_reason_id IS NULL)::text"));
     }

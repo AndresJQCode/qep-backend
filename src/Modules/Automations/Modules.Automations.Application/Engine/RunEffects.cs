@@ -154,7 +154,7 @@ public sealed partial class RunEffects(
                         Audit(run, AutomationsAuditActions.RunHandedOff, now);
                         break;
                     case Effect.Resolve resolve:
-                        if (!await HandsOverAsync(run, state, () => conversations.ResolveAsync(run.TenantId, run.ConversationId, resolve.ReasonId, cancellationToken), now))
+                        if (!await HandsOverAsync(run, state, () => conversations.ResolveAsync(run.TenantId, run.ConversationId, run.ChatbotId, resolve.ReasonId, cancellationToken), now))
                         {
                             return;
                         }

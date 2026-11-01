@@ -240,11 +240,12 @@ internal static class MessageMapping
                     conversationEvent.PauseReason?.ToString(),
                     EventCustomer(conversationEvent.CustomerId, customerRefs),
                     EventCustomer(conversationEvent.PreviousCustomerId, customerRefs),
-                    ToDto(conversationEvent.Handoff, memberNames)),
+                    ToDto(conversationEvent.Handoff, memberNames),
+                    Chatbot(conversationEvent.ChatbotId, chatbotNames)),
             row.Kind == MessageKind.Template ? TemplateDetailsJson.ParseRef(row.DetailsJson) : null,
             row.Kind == MessageKind.Unsupported && mediaState is null ? UnsupportedMessageReasons.For(FirstMetaErrorCode(row.DetailsJson), row.Imported) : null,
             row.Direction == MessageDirection.Inbound && IsDeleted(row.DetailsJson),
-            row.SentByChatbotId is { } chatbotId ? new ChatbotRefDto(chatbotId, chatbotNames?.GetValueOrDefault(chatbotId) ?? DeletedChatbotName) : null,
+            Chatbot(row.SentByChatbotId, chatbotNames),
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
             row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null,
             mediaState,
@@ -254,11 +255,17 @@ internal static class MessageMapping
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
     public const string DeletedChatbotName = "Chatbot";
 
-    /// <summary>Los chatbots que una página necesita con nombre, sin repetir.</summary>
+    private static ChatbotRefDto? Chatbot(Guid? chatbotId, IReadOnlyDictionary<Guid, string>? chatbotNames) =>
+        chatbotId is { } id ? new ChatbotRefDto(id, chatbotNames?.GetValueOrDefault(id) ?? DeletedChatbotName) : null;
+
+    /// <summary>Los chatbots que una página necesita con nombre, sin repetir: los autores de mensajes y el que firma un
+    /// <c>Resolved</c> del bot (sin esto el evento saldría siempre como «Chatbot»).</summary>
     public static IReadOnlyCollection<Guid> ChatbotIdsOf(IEnumerable<MessageRow> rows)
     {
         ArgumentNullException.ThrowIfNull(rows);
-        return rows.Select(row => row.SentByChatbotId).OfType<Guid>().Distinct().ToArray();
+        return rows
+            .Select(row => row.Kind == MessageKind.Event ? ConversationEventJson.Parse(row.DetailsJson)?.ChatbotId : row.SentByChatbotId)
+            .OfType<Guid>().Distinct().ToArray();
     }
 
     /// <summary>Spec 2026-10-14 §6.2: <c>details.deleted = true</c> lo escribe la ingesta de Instagram con <c>is_deleted</c>.</summary>
