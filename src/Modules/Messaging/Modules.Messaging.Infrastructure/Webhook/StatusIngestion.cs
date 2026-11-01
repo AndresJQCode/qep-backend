@@ -33,6 +33,8 @@ internal static class StatusIngestion
         int? failureCode = update.Status == MessageStatus.Failed ? update.ErrorCode ?? 0 : null;
         var failureTitle = update.Status == MessageStatus.Failed ? update.ErrorTitle : null;
 
+        // Un failed deja la fila sin wamid: ese intento ya no existe en Meta, y un reintento acepta uno nuevo. El callback sólo identifica
+        // una fila sin wamid (sin confirmar o ya fallida); con el wamid de otro intento, un acuse rezagado del primero no la pisa.
         // §8.2: cada cambio en su transacción. El candado que toma el UPDATE del mensaje se mantiene hasta que la
         // foto commitea: dos réplicas con el delivered y el read del mismo mensaje se serializan, y la foto no
         // puede quedar en el estado del que perdió. Además el par es atómico: un corte entre los dos no deja
@@ -42,9 +44,9 @@ internal static class StatusIngestion
             $"""
             UPDATE messaging.messages
             SET status = {newStatus}, failure_code = {failureCode}, failure_title = {failureTitle},
-                wamid = COALESCE(wamid, {update.Wamid})
+                wamid = CASE WHEN {newStatus} = 4 THEN NULL ELSE COALESCE(wamid, {update.Wamid}) END
             WHERE connection_id = {connectionId}
-              AND (wamid = {update.Wamid} OR id = {callback})
+              AND (wamid = {update.Wamid} OR (id = {callback} AND wamid IS NULL))
               AND direction = 2
               AND (
                     ({newStatus} IN (2, 3) AND (status < {newStatus} OR (status = 4 AND failure_code = -1)))

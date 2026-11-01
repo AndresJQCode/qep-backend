@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Messaging.Infrastructure.Webhook;
@@ -63,7 +64,7 @@ public sealed class StatusIngestionTests
 
         var sent = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, "wamid.two", occurredAtUnix: 1760000500);
         await ApplyAsync(f, "wamid.two", "failed", 1760000600, errorCode: 131047);
-        Assert.Equal("4|131047|wamid.two|4|1", await StateAsync(f, sent));
+        Assert.Equal("4|131047|-|4|1", await StateAsync(f, sent));
         Assert.Equal("Some title", await ScalarAsync<string>(f.ConnectionString, "SELECT failure_title FROM messaging.messages WHERE id = @id", ("id", sent)));
 
         // Review Focus 4, literal: un Delivered tampoco se vuelve Failed.
@@ -218,5 +219,120 @@ public sealed class StatusIngestionTests
         await ApplyAsync(f, "wamid.off", "delivered", 1760000100);
 
         Assert.Equal("2|-|wamid.off|2|1", await StateAsync(f, id));
+    }
+
+    private const string StateByIdSql = "SELECT status || '|' || coalesce(wamid, '-') FROM messaging.messages WHERE id = @id";
+
+    // Un failed rezagado del primer intento llega cuando el reintento ya fue aceptado: la fila ya es del intento nuevo (otro wamid),
+    // y el callback no puede devolverla a Failed. Sólo el wamid del intento vigente (o el callback de una fila sin wamid) la identifica.
+    private static async Task<Guid> SeedFailedFirstAttemptThenAcceptedRetryAsync(Fixture f)
+    {
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, "wamid.x");
+        await ApplyAsync(f, "wamid.x", "failed", 1760000100, callback: $"qep:{id}", errorCode: 131042);
+        Assert.Equal("4|131042|-|4|1", await StateAsync(f, id));
+
+        // El reintento aceptado: lo que escribe CommitSentAsync, sin la foto (un UPDATE directo no la toca).
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET status = 1, wamid = 'wamid.y', failure_code = NULL WHERE id = @id", ("id", id));
+        await ApplyAsync(f, "wamid.x", "failed", 1760000100, callback: $"qep:{id}", errorCode: 131042);
+        return id;
+    }
+
+    [Fact]
+    public async Task ALateFailedOfTheFirstAttemptDoesNotOverwriteAnAcceptedRetry()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        var id = await SeedFailedFirstAttemptThenAcceptedRetryAsync(f);
+
+        Assert.Equal("1|-|wamid.y|4|1", await StateAsync(f, id));
+    }
+
+    [Fact]
+    public async Task AStaleStatusEndsAsProcessedAndIsNotRetried()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+
+        await SeedFailedFirstAttemptThenAcceptedRetryAsync(f);
+
+        Assert.Equal("1|t", await ScalarAsync<string>(f.ConnectionString, DeliverySql + " ORDER BY id DESC LIMIT 1"));
+    }
+
+    [Fact]
+    public async Task AnUnconfirmedRetryIsResolvedByTheAckOfTheCurrentAttempt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, "wamid.x", status: 4, failureCode: 131042);
+        var clientId = Guid.CreateVersion7();
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET client_id = @clientId WHERE id = @id", ("clientId", clientId), ("id", id));
+
+        // El reintento con el mismo clientId reclama la fila vieja y Meta no contesta a tiempo: queda «sin confirmar», y sin el wamid del intento anterior.
+        await using (var scope = f.Factory.Services.CreateAsyncScope())
+        {
+            var outbound = scope.ServiceProvider.GetRequiredService<IOutboundMessages>();
+            var draft = new OutboundDraft(
+                Guid.CreateVersion7(), f.ConversationId, f.TenantId, f.ConnectionId, clientId, "x", null, DateTimeOffset.UtcNow,
+                SentByApiKey: new OutboundApiKeyAuthor(Guid.CreateVersion7(), "integracion"));
+            await using var claim = await outbound.ClaimAsync(draft, TestContext.Current.CancellationToken);
+            Assert.False(claim.Inserted);
+            await claim.CommitFailedAsync(-1, null, DateTimeOffset.UtcNow, null, TestContext.Current.CancellationToken);
+        }
+
+        await ApplyAsync(f, "wamid.y", "sent", 1760000200, callback: $"qep:{id}");
+
+        Assert.Equal("1|wamid.y", await ScalarAsync<string>(f.ConnectionString, StateByIdSql, ("id", id)));
+    }
+
+    [Fact]
+    public async Task AnAckDuringTheRetryWaitsForItAndAppliesOverItsResult()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, null, status: 4, failureCode: -1);
+
+        // Sin confirmar (-1) para que la versión vieja de la fila todavía cumpla el filtro del acuse: así espera el candado en vez de descartarse.
+        // El reintento tiene la fila bloqueada mientras Meta responde (§8.3); el acuse del intento nuevo espera ese candado y,
+        // al soltarse, ya ve el wamid nuevo.
+        await using var connection = new Npgsql.NpgsqlConnection(f.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var retry = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using (var lockRow = new Npgsql.NpgsqlCommand("SELECT 1 FROM messaging.messages WHERE id = @id FOR UPDATE", connection, retry))
+        {
+            lockRow.Parameters.AddWithValue("id", id);
+            await lockRow.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var accept = new Npgsql.NpgsqlCommand("UPDATE messaging.messages SET status = 1, wamid = 'wamid.y', failure_code = NULL WHERE id = @id", connection, retry))
+        {
+            accept.Parameters.AddWithValue("id", id);
+            await accept.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var ack = ApplyDirectAsync(f, new StatusUpdate("wamid.y", MessageStatus.Delivered, DateTimeOffset.UtcNow, id, null, null));
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        Assert.False(ack.IsCompleted);
+        await retry.CommitAsync(TestContext.Current.CancellationToken);
+        await ack;
+
+        Assert.Equal("2|-|wamid.y|2|1", await StateAsync(f, id));
+    }
+
+    [Fact]
+    public async Task AnUnconfirmedRowWithoutAPreviousAttemptIsStillResolvedByCallback()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, null, status: 4, failureCode: -1);
+
+        await ApplyAsync(f, "wamid.z", "sent", 1760000100, callback: $"qep:{id}");
+
+        Assert.Equal("1|wamid.z", await ScalarAsync<string>(f.ConnectionString, StateByIdSql, ("id", id)));
     }
 }

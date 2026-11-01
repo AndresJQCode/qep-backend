@@ -41,12 +41,13 @@ public sealed class MarketingOptOutStatusTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
-        await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.Tenant.TenantId, f.ConnectionId, "wamid.promo");
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.Tenant.TenantId, f.ConnectionId, "wamid.promo");
 
         await FailAsync(f, "wamid.promo", 131050);
 
         Assert.Equal("true|meta", await OptOutAsync(f));
-        Assert.Equal("4|131050", await ScalarAsync<string>(f.ConnectionString, "SELECT status || '|' || failure_code FROM messaging.messages WHERE wamid = 'wamid.promo'"));
+        // Un failed borra el wamid de la fila (el intento ya no existe en Meta), así que se busca por id.
+        Assert.Equal("4|131050", await ScalarAsync<string>(f.ConnectionString, "SELECT status || '|' || failure_code FROM messaging.messages WHERE id = @id", ("id", id)));
     }
 
     [Fact]
@@ -68,12 +69,12 @@ public sealed class MarketingOptOutStatusTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database, withCustomer: false);
         using var host = f.Factory;
-        await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.Tenant.TenantId, f.ConnectionId, "wamid.promo");
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.Tenant.TenantId, f.ConnectionId, "wamid.promo");
 
         await FailAsync(f, "wamid.promo", 131050);
 
         Assert.Equal("false|-", await OptOutAsync(f));
-        Assert.Equal("4", await ScalarAsync<string>(f.ConnectionString, "SELECT status::text FROM messaging.messages WHERE wamid = 'wamid.promo'"));
+        Assert.Equal("4", await ScalarAsync<string>(f.ConnectionString, "SELECT status::text FROM messaging.messages WHERE id = @id", ("id", id)));
         Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NOT NULL"));
     }
 }
