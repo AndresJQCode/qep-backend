@@ -36,6 +36,12 @@ public static class LoansEndpoints
             .Produces<LoanAssigneesDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapGet("/installments", ListInstallmentsAsync)
+            .RequireAuthorization(LoansPermissions.Read)
+            .Produces<LoanInstallmentPageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapGet("/{loanId:guid}", GetLoanAsync)
             .RequireAuthorization(LoansPermissions.Read)
             .Produces<LoanDetailDto>()
@@ -55,6 +61,29 @@ public static class LoansEndpoints
         group.MapDelete("/{loanId:guid}", DeleteLoanAsync)
             .RequireAuthorization(LoansPermissions.Manage)
             .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/{loanId:guid}/installments/{installmentId:guid}/pay", PayInstallmentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Accepts<PayInstallmentRequest>("application/json")
+            .Produces<LoanDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPut("/{loanId:guid}/installments/{installmentId:guid}/payment", UpdateInstallmentPaymentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Accepts<PayInstallmentRequest>("application/json")
+            .Produces<LoanDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapDelete("/{loanId:guid}/installments/{installmentId:guid}/payment", RemoveInstallmentPaymentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Produces<LoanDetailDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -138,6 +167,61 @@ public static class LoansEndpoints
         await dispatcher.SendAsync(new DeleteLoanCommand(tenantId, loanId), cancellationToken);
 
         return Results.NoContent();
+    }
+
+    private static async Task<IResult> ListInstallmentsAsync(
+        Guid tenantId,
+        string? search,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ListLoanInstallmentsQuery.DefaultPageSize)
+    {
+        var installments = await dispatcher.QueryAsync(
+            new ListLoanInstallmentsQuery(tenantId, search, page, pageSize), cancellationToken);
+
+        return Results.Ok(installments);
+    }
+
+    private static async Task<IResult> PayInstallmentAsync(
+        Guid tenantId,
+        Guid loanId,
+        Guid installmentId,
+        PayInstallmentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var loan = await dispatcher.SendAsync(
+            PayInstallmentCommand.From(tenantId, loanId, installmentId, request), cancellationToken);
+
+        return Results.Ok(loan);
+    }
+
+    private static async Task<IResult> UpdateInstallmentPaymentAsync(
+        Guid tenantId,
+        Guid loanId,
+        Guid installmentId,
+        PayInstallmentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var loan = await dispatcher.SendAsync(
+            UpdateInstallmentPaymentCommand.From(tenantId, loanId, installmentId, request), cancellationToken);
+
+        return Results.Ok(loan);
+    }
+
+    private static async Task<IResult> RemoveInstallmentPaymentAsync(
+        Guid tenantId,
+        Guid loanId,
+        Guid installmentId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var loan = await dispatcher.SendAsync(
+            new RemoveInstallmentPaymentCommand(tenantId, loanId, installmentId), cancellationToken);
+
+        return Results.Ok(loan);
     }
 
     // Copia de ServiceContractsEndpoints.RequireVersion (Loans no referencia ese módulo): sin If-Match 428; la versión vieja es 412 en el handler.

@@ -410,6 +410,18 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Loans.Application.DeleteLoanCommand, bool>,
             Modules.Loans.Application.DeleteLoanHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Loans.Application.ListLoanInstallmentsQuery, Modules.Loans.Application.LoanInstallmentPageDto>,
+            Modules.Loans.Application.ListLoanInstallmentsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.PayInstallmentCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.PayInstallmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.UpdateInstallmentPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.UpdateInstallmentPaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.RemoveInstallmentPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.RemoveInstallmentPaymentHandler>();
         // Lo reutilizan los mutadores de cuotas y abonos de las tareas siguientes.
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
