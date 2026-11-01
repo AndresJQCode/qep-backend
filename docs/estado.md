@@ -1,8 +1,8 @@
 # Estado del proyecto `qep-backend`
 
 Archivo vivo: se actualiza al cerrar un trabajo, tomar una decisión o desplegar. **Verificado contra el código el
-2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `019c5259` más este
-registro; `origin/develop` en `9476862b`; `origin/main` en `200feaed`). Ante
+2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `019532f4` más este
+registro; `origin/develop` en `019532f4`; `origin/main` en `0c16be9d`). Ante
 cualquier duda gana el código ([CLAUDE.md](../CLAUDE.md)). La línea `Estado:` de cada spec dice si el diseño se aprobó,
 no si se construyó: varios siguen diciendo «borrador» y están construidos.
 
@@ -11,10 +11,10 @@ no si se construyó: varios siguen diciendo «borrador» y están construidos.
 Estados: **Construido** (mergeado a `develop`) · **En curso** · **Aprobado, sin empezar** · **Por verificar**.
 «Push» dice si el trabajo ya llegó a `origin`. Para comprobarlo: `git log --oneline origin/develop..develop` en cada repo.
 
-**Push al 2026-11-01.** `origin/main` del backend (`200feaed`) ya tiene todo `origin/develop` (`9476862b`), y producción
-corre la imagen `4834`. El frontend igual: `origin/main` (`1895200a`) tiene todo `origin/develop` (`44f604d7`). Las filas de
+**Push al 2026-11-01.** `origin/main` del backend (`0c16be9d`) ya tiene todo `origin/develop` (`019532f4`), y producción
+corre la imagen `4835`. El frontend tiene `origin/main` (`1895200a`) con todo `origin/develop` (`44f604d7`). Las filas de
 este archivo escritas antes dicen «sin push» o «falta `main`» con la fecha de su merge: esa parte ya no vale. Sin push
-quedan el N+1 de los pedidos en el backend (`019c5259`) y este registro, y el cargador inicial en el frontend (`e64e2c36`).
+quedan este registro en el backend y, en el frontend, el cargador inicial (`e64e2c36`), que por eso no está en producción.
 Ramas del backend sin mergear: `feature/api-externa-observabilidad` (con su worktree) y
 `feature/chatbot-transportes-ci` (chatbot de Transportes CI, sin push; handoff en
 `superpowers/plans/2026-10-24-chatbot-transportes-ci.md` §8).
