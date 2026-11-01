@@ -28,6 +28,9 @@ public static class LoanCapitalOperations
     /// <summary>
     /// Validación en este orden: cuotas pendientes, monto, fecha. Después rebalancea y, si el capital llega a
     /// cero, cierra el período en la fecha del abono más reciente. <paramref name="payments"/> no incluye el nuevo.
+    /// Quien llama tiene que haber generado antes los períodos ya cerrados
+    /// (<see cref="LoanInstallmentGenerator.GenerateClosedPeriods"/>): si no, un abono que salda perdería el interés de
+    /// esos períodos. <c>CapitalPaymentSupport.LoadAsync</c> es lo que lo garantiza.
     /// </summary>
     public static CapitalPaymentOutcome Add(
         Loan loan,
@@ -135,7 +138,8 @@ public static class LoanCapitalOperations
             LoanCapitalLedger.OpeningBalance(loan, payments, from),
             LoanCapitalLedger.ChangesFrom(payments, from),
             loan.MonthlyRatePercent);
-        if (segments.Count == 0)
+        // Sin tramos, o con un interés que redondea a 0,00: una cuota en cero no se cobra y bloquearía el saldado.
+        if (segments.Count == 0 || LoanInterestCalculator.Total(segments) == 0m)
         {
             return null;
         }

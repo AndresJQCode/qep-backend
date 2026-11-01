@@ -422,8 +422,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Loans.Application.RemoveInstallmentPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
             Modules.Loans.Application.RemoveInstallmentPaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.PreviewCapitalPaymentCommand, Modules.Loans.Application.LoanCapitalPaymentPreviewDto>,
+            Modules.Loans.Application.PreviewCapitalPaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.AddCapitalPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.AddCapitalPaymentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.VoidCapitalPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.VoidCapitalPaymentHandler>();
         // Lo reutilizan los mutadores de cuotas y abonos de las tareas siguientes.
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
+        // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
+        services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

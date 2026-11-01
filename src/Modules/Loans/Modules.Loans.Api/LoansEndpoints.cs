@@ -88,7 +88,74 @@ public static class LoansEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        group.MapPost("/{loanId:guid}/capital-payments/preview", PreviewCapitalPaymentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Accepts<CapitalPaymentRequest>("application/json")
+            .Produces<LoanCapitalPaymentPreviewDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/{loanId:guid}/capital-payments", AddCapitalPaymentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Accepts<CapitalPaymentRequest>("application/json")
+            .Produces<LoanDetailDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/{loanId:guid}/capital-payments/{paymentId:guid}/void", VoidCapitalPaymentAsync)
+            .RequireAuthorization(LoansPermissions.Manage)
+            .Accepts<VoidCapitalPaymentRequest>("application/json")
+            .Produces<LoanDetailDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> PreviewCapitalPaymentAsync(
+        Guid tenantId,
+        Guid loanId,
+        CapitalPaymentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var preview = await dispatcher.SendAsync(
+            PreviewCapitalPaymentCommand.From(tenantId, loanId, request), cancellationToken);
+
+        return Results.Ok(preview);
+    }
+
+    private static async Task<IResult> AddCapitalPaymentAsync(
+        Guid tenantId,
+        Guid loanId,
+        CapitalPaymentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var loan = await dispatcher.SendAsync(
+            AddCapitalPaymentCommand.From(tenantId, loanId, request), cancellationToken);
+
+        return Results.Created($"/api/v1/tenants/{tenantId}/loans/{loanId}", loan);
+    }
+
+    private static async Task<IResult> VoidCapitalPaymentAsync(
+        Guid tenantId,
+        Guid loanId,
+        Guid paymentId,
+        VoidCapitalPaymentRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var loan = await dispatcher.SendAsync(
+            VoidCapitalPaymentCommand.From(tenantId, loanId, paymentId, request), cancellationToken);
+
+        return Results.Ok(loan);
     }
 
     private static async Task<IResult> ListLoansAsync(

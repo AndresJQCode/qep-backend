@@ -123,6 +123,26 @@ public sealed class LoanCapitalOperationsTests
     }
 
     [Fact]
+    public void SettlingWithInterestThatRoundsToZeroCreatesNoInstallment()
+    {
+        // 10 × 1,5 % × 1 día / 31 = 0,0048: redondea a 0,00 y una cuota en cero no se cobra.
+        var loan = Loan(principal: 10m);
+
+        var outcome = Add(loan, [], 10m, "2026-10-02");
+
+        Assert.Null(outcome.FinalInstallment);
+        Assert.Equal(LoanStatus.Settled, loan.Status);
+        Assert.Equal(0m, loan.OutstandingPrincipal);
+        Assert.Null(loan.LastGeneratedPeriodEnd);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void AnAmountThatIsNotPositiveIsRejected(int amount) =>
+        AssertCode(LoansErrorCodes.LoanInvalid, () => Add(Loan(), [], amount, "2026-10-15"));
+
+    [Fact]
     public void ABackdatedPaymentRebalancesTheLaterOnes()
     {
         var loan = Loan();
@@ -167,6 +187,7 @@ public sealed class LoanCapitalOperationsTests
         var final = outcome.FinalInstallment;
         Assert.NotNull(final);
         Assert.Equal(Date("2026-10-20"), final.PeriodEnd);
+        Assert.Equal(629032.26m, final.Amount);
         Assert.Equal(2, final.Segments.Count);
         Assert.Equal((100_000_000m, 9), (final.Segments[0].Principal, final.Segments[0].Days));
         Assert.Equal((40_000_000m, 10), (final.Segments[1].Principal, final.Segments[1].Days));
