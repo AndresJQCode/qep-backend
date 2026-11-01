@@ -22,9 +22,13 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// <item>Una conversación que nació de un eco (<c>started_by_echo</c>) tampoco arranca sesión al crearse: nace cerrada, y la arranca el
 /// <c>Reopened</c> del contacto. Una que abre un asesor desde QEP sí cuenta desde su creación, aunque no tenga entrante (S3): nace
 /// abierta y nadie la reabre. Por eso el filtro es por origen y no por «tiene entrante».</item>
+/// <item>Una resolución es un evento <c>Resolved</c> (<c>direction = 3, kind = 13</c>), no una conversación: la que el bot resuelve, se reabre y
+/// resuelve un asesor cuenta dos. <c>details-&gt;&gt;'chatbotId'</c> dice qué chatbot la cerró (sin él, un miembro). El barrido entra por
+/// <c>IX_messages_events_reopened</c>, que pese al nombre filtra todos los eventos. Sólo periodo actual: no hay comparación con el anterior.</item>
 /// </list>
-/// Las tres consultas leen <c>imported</c> y <c>started_by_echo</c> por nombre: renombrarlas compila y deja el reporte en 500; lo amarra
-/// <c>CoexistenceReportTests</c>, que corre contra el esquema migrado.
+/// Las consultas leen <c>imported</c> y <c>started_by_echo</c> por nombre: renombrarlas compila y deja el reporte en 500; lo amarra
+/// <c>CoexistenceReportTests</c>, que corre contra el esquema migrado. La clave <c>chatbotId</c> del evento también va por nombre, pero
+/// renombrarla no da error: el reporte se queda sin chatbots. Lo amarra <c>MessagingReportApiTests</c>, que siembra con el serializador real.
 /// </summary>
 internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMessagingReportSource
 {
@@ -155,6 +159,27 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
         return [.. names.Select(Enum.Parse<ConversationChannel>)];
     }
 
+    public async Task<IReadOnlyList<ReportResolutionRow>> ResolutionsAsync(
+        Guid tenantId, ReportWindow window, ConversationChannel? channel, CancellationToken cancellationToken)
+    {
+        var channelName = channel?.ToString();
+        var start = window.StartUtc;
+        var end = window.EndExclusiveUtc;
+
+        var rows = await dbContext.Database.SqlQuery<ResolutionSql>(
+            $"""
+            SELECT c.channel AS "Channel", (m.details->>'chatbotId')::uuid AS "ChatbotId", count(*)::int AS "Resolved"
+            FROM messaging.messages m
+            JOIN messaging.conversations c ON c.id = m.conversation_id
+            WHERE m.tenant_id = {tenantId} AND m.direction = 3 AND m.kind = 13 AND m.details->>'type' = 'Resolved'
+              AND NOT m.imported AND m.created_at >= {start} AND m.created_at < {end}
+              AND ({channelName}::text IS NULL OR c.channel = {channelName}::text)
+            GROUP BY c.channel, (m.details->>'chatbotId')::uuid
+            """).ToListAsync(cancellationToken);
+
+        return [.. rows.Select(row => new ReportResolutionRow(Enum.Parse<ConversationChannel>(row.Channel), row.ChatbotId, row.Resolved))];
+    }
+
     // EF materializa estos tipos por nombre de columna (alias entre comillas).
     private sealed class SessionRow
     {
@@ -175,5 +200,12 @@ internal sealed class MessagingReportSource(MessagingDbContext dbContext) : IMes
         public Guid ConversationId { get; set; }
         public string Channel { get; set; } = string.Empty;
         public DateTimeOffset FirstInboundAt { get; set; }
+    }
+
+    private sealed class ResolutionSql
+    {
+        public string Channel { get; set; } = string.Empty;
+        public Guid? ChatbotId { get; set; }
+        public int Resolved { get; set; }
     }
 }

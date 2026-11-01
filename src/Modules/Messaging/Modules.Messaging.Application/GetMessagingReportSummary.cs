@@ -70,12 +70,19 @@ public interface IMessagingReportSource
     /// y el actual son contiguos), sin filtro de canal.
     /// </summary>
     Task<IReadOnlyList<ConversationChannel>> ChannelsWithDataAsync(Guid tenantId, DateTimeOffset startUtc, DateTimeOffset endExclusiveUtc, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los eventos <c>Resolved</c> del periodo por canal y chatbot, los de miembros incluidos (el denominador del bloque <c>chatbots</c>).
+    /// Va aparte de <see cref="LoadAsync"/> porque ese corre también para el periodo anterior, y este dato no tiene comparación.
+    /// </summary>
+    Task<IReadOnlyList<ReportResolutionRow>> ResolutionsAsync(Guid tenantId, ReportWindow window, ConversationChannel? channel, CancellationToken cancellationToken);
 }
 
 public sealed class GetMessagingReportSummaryHandler(
     IMessagingReportSource source,
     IBusinessHoursRepository businessHours,
     IMessagingMemberNames memberNames,
+    IAutomationsChatbotNames chatbotNames,
     ITenantClock tenantClock,
     ITenantModules tenantModules,
     IExecutionContext executionContext,
@@ -134,7 +141,11 @@ public sealed class GetMessagingReportSummaryHandler(
             ? new Dictionary<Guid, string>()
             : (await memberNames.FindAsync(query.TenantId, memberIds, cancellationToken)).ToDictionary(pair => pair.Key, pair => pair.Value);
 
-        return MessagingReportAggregator.Build(current, currentData, previous, previousData, groupBy, calendar.TimeZone, schedules, names, channelsWithData);
+        var resolutions = await source.ResolutionsAsync(query.TenantId, current, channel, cancellationToken);
+        var chatbotIds = resolutions.Select(row => row.ChatbotId).OfType<Guid>().Distinct().ToArray();
+        var chatbots = await chatbotNames.ResolveAsync(query.TenantId, chatbotIds, cancellationToken);
+
+        return MessagingReportAggregator.Build(current, currentData, previous, previousData, groupBy, calendar.TimeZone, schedules, names, channelsWithData, resolutions, chatbots);
     }
 
     private static ReportWindow Window(TenantCalendar calendar, DateOnly from, DateOnly to) =>
