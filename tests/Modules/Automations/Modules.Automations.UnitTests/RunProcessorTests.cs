@@ -1323,10 +1323,17 @@ public sealed class RunProcessorTests
             return Task.FromResult(true);
         }
 
+        /// <summary>Los ids de filas sin mensaje (arranque manual, spec 2026-10-31): <c>ReadAsync</c> responde <c>null</c> para ellos.</summary>
+        public HashSet<Guid> NotInbound { get; } = [];
+
         public Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken) =>
-            Task.FromResult<InboundMessage?>(Messages.TryGetValue(messageId, out var message)
-                ? message
-                : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+            Task.FromResult<InboundMessage?>(NotInbound.Contains(messageId)
+                ? null
+                : Messages.TryGetValue(messageId, out var message)
+                    ? message
+                    : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }

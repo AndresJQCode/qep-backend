@@ -424,6 +424,12 @@ public sealed class AutomationAdaptersTests
         public Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        {
+        }
+
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
+
         public int Purged { get; init; }
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
