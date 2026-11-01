@@ -218,4 +218,139 @@ public sealed class ConversationAutomationTests
             Assert.Equal(version, conversation.Version);
         }
     }
+
+    private static readonly Guid Member = Guid.CreateVersion7();
+
+    /// <summary>Una conversación de WhatsApp abierta, sin asesor, con un entrante de hace una hora: la ventana está abierta.</summary>
+    private static Conversation WithOpenWindow() => Conversation.ForTests(Open(), unreadCount: 0, lastInboundAt: Now.AddHours(-1));
+
+    // Spec 2026-10-31: un asesor arranca el asistente desde el hilo y eso borra cualquier pausa, también las deliberadas.
+    [Theory]
+    [InlineData(AutomationPauseReason.Manual)]
+    [InlineData(AutomationPauseReason.Handoff)]
+    [InlineData(AutomationPauseReason.AdvisorTook)]
+    [InlineData(AutomationPauseReason.AdvisorReplied)]
+    [InlineData(AutomationPauseReason.AdvisorTransferred)]
+    public void StartByMemberClearsAnyPause(AutomationPauseReason reason)
+    {
+        var conversation = WithOpenWindow();
+        conversation.StartAutomation(ChatbotId, Now.AddMinutes(-30));
+        conversation.SetAutomationStep("Número de documento");
+        conversation.PauseAutomation(Member, reason, Now.AddMinutes(-20));
+        var version = conversation.Version;
+        var at = Now.AddMinutes(1);
+
+        var change = conversation.StartAutomationByMember(Member, ChatbotId, at);
+
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Equal(ChatbotId, conversation.AutomationChatbotId);
+        Assert.Equal(at, conversation.AutomationStartedAt);
+        Assert.Equal(at, conversation.AutomationResumedAt);
+        Assert.Null(conversation.AutomationPausedAt);
+        Assert.Null(conversation.AutomationPausedByMemberId);
+        Assert.Null(conversation.AutomationPauseReason);
+        Assert.Null(conversation.AutomationStep);
+        Assert.False(conversation.HistoryManaged);
+        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationStarted, Actor: Member), change);
+        Assert.Equal(version + 1, conversation.Version);
+    }
+
+    [Fact]
+    public void StartByMemberWorksFromNoneAndFromActive()
+    {
+        var none = WithOpenWindow();
+        var active = WithOpenWindow();
+        active.StartAutomation(ChatbotId, Now.AddMinutes(-30));
+
+        foreach (var conversation in new[] { none, active })
+        {
+            var change = conversation.StartAutomationByMember(Member, ChatbotId, Now);
+
+            Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+            Assert.Equal(Now, conversation.AutomationStartedAt);
+            Assert.Equal(Now, conversation.AutomationResumedAt);
+            Assert.Equal(ConversationEventType.AutomationStarted, change.Type);
+        }
+    }
+
+    [Fact]
+    public void StartByMemberRejectsAResolvedConversation()
+    {
+        var conversation = WithOpenWindow();
+        conversation.Resolve(Now.AddMinutes(-5));
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomationByMember(Member, ChatbotId, Now));
+
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, error.Code);
+    }
+
+    [Fact]
+    public void StartByMemberRejectsAnAdvisor()
+    {
+        var conversation = WithOpenWindow();
+        conversation.Take(Member, Now.AddMinutes(-5));
+        var version = conversation.Version;
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomationByMember(Member, ChatbotId, Now));
+
+        Assert.Equal(MessagingErrorCodes.AutomationHasAdvisor, error.Code);
+        Assert.Equal(version, conversation.Version);
+    }
+
+    [Fact]
+    public void StartByMemberRejectsABlockedContact()
+    {
+        var conversation = WithOpenWindow();
+        conversation.Block(Member, "573001234567", Now.AddMinutes(-5));
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomationByMember(Member, ChatbotId, Now));
+
+        Assert.Equal(MessagingErrorCodes.ContactBlocked, error.Code);
+    }
+
+    [Fact]
+    public void StartByMemberRejectsInstagram()
+    {
+        var conversation = Conversation.ForTests(
+            Conversation.StartWithUserId(
+                Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "17841400000000000", null, "Laura", Now.AddDays(-2),
+                ConversationChannel.Instagram),
+            unreadCount: 0,
+            lastInboundAt: Now.AddHours(-1));
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomationByMember(Member, ChatbotId, Now));
+
+        Assert.Equal(MessagingErrorCodes.ChannelUnsupported, error.Code);
+    }
+
+    [Fact]
+    public void StartByMemberRejectsAClosedWindow()
+    {
+        var expired = Conversation.ForTests(Open(), unreadCount: 0, lastInboundAt: Now.AddHours(-25));
+        var neverInbound = Open();
+
+        foreach (var conversation in new[] { expired, neverInbound })
+        {
+            var version = conversation.Version;
+            var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomationByMember(Member, ChatbotId, Now));
+
+            Assert.Equal(MessagingErrorCodes.WindowClosed, error.Code);
+            Assert.Equal(version, conversation.Version);
+        }
+    }
+
+    // La orden del motor sigue sin reactivar lo que una persona pausó a propósito: eso es de StartAutomationByMember y ResumeAutomation.
+    [Theory]
+    [InlineData(AutomationPauseReason.Manual)]
+    [InlineData(AutomationPauseReason.Handoff)]
+    public void StartAutomationKeepsRejectingDeliberatePauses(AutomationPauseReason reason)
+    {
+        var conversation = Open();
+        conversation.StartAutomation(ChatbotId, Now);
+        conversation.PauseAutomation(null, reason, Now);
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.StartAutomation(ChatbotId, Now.AddMinutes(1)));
+
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, error.Code);
+    }
 }
