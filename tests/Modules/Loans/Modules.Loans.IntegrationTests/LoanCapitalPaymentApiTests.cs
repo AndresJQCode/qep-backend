@@ -324,6 +324,7 @@ public sealed class LoanCapitalPaymentApiTests
         Assert.Equal("Active", settled.GetProperty("loan").GetProperty("status").GetString());
         Assert.Equal(0m, OutstandingOf(settled));
         Assert.Equal(1, settled.GetProperty("loan").GetProperty("pendingCount").GetInt32());
+        Assert.Equal(JsonValueKind.Null, settled.GetProperty("loan").GetProperty("nextCutoffDate").ValueKind);
         var installmentId = settled.GetProperty("installments")[0].GetProperty("id").GetGuid();
 
         var paid = await manager.PostAsJsonAsync($"{LoansUrl()}/{loanId}/installments/{installmentId}/pay", new { paidOn = "2026-10-16", note = (string?)null }, Ct);
@@ -352,6 +353,40 @@ public sealed class LoanCapitalPaymentApiTests
         Assert.Equal("Error de digitación", payment.GetProperty("voidReason").GetString());
         Assert.Equal(JsonValueKind.Null, detail.GetProperty("voidableCapitalPaymentId").ValueKind);
         Assert.Equal(1, await CountAuditEntriesAsync(factory, LoansAuditActions.CapitalPaymentVoided, paymentId.ToString()));
+    }
+
+    [Fact]
+    public async Task VoidingAnUnknownPaymentIs404()
+    {
+        var (database, factory, _) = await OpenAtAsync(October20);
+        await using var _1 = database;
+        using var _2 = factory;
+        using var manager = CreateManager(factory);
+        var loanId = await CreateLoanAsync(manager, await SeedCustomerAsync(factory, Tenant, "Novasteel SAS"));
+
+        var response = await VoidAsync(manager, loanId, Guid.NewGuid(), "x");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("loans.capital_payment.not_found", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task NoPaymentIsOfferedForVoidingWhileAClosedPeriodIsNotGeneratedYet()
+    {
+        var (database, factory, clock) = await OpenAtAsync(October20);
+        await using var _1 = database;
+        using var _2 = factory;
+        using var manager = CreateManager(factory);
+        var loanId = await CreateLoanAsync(manager, await SeedCustomerAsync(factory, Tenant, "Novasteel SAS"));
+        Assert.Equal(HttpStatusCode.Created, (await PayCapitalAsync(manager, loanId, 40_000_000m, "2026-10-15")).StatusCode);
+        Assert.NotEqual(JsonValueKind.Null, (await DetailAsync(manager, loanId)).GetProperty("voidableCapitalPaymentId").ValueKind);
+        clock.UtcNow = November1;
+
+        // El 1 de noviembre octubre ya cerró pero el worker aún no lo genera: anular daría installment_generated.
+        var detail = await DetailAsync(manager, loanId);
+
+        Assert.Equal(JsonValueKind.Null, detail.GetProperty("voidableCapitalPaymentId").ValueKind);
+        Assert.Equal("PeriodClosing", detail.GetProperty("capitalPaymentBlock").GetString());
     }
 
     [Fact]
@@ -480,7 +515,13 @@ public sealed class LoanCapitalPaymentApiTests
         // llegó después: en ningún caso el capital queda en negativo.
         Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Created);
         var loser = Assert.Single(responses, response => response.StatusCode != HttpStatusCode.Created);
-        Assert.Contains(loser.StatusCode, new[] { HttpStatusCode.PreconditionFailed, HttpStatusCode.UnprocessableEntity });
+        var expectedCode = loser.StatusCode switch
+        {
+            HttpStatusCode.PreconditionFailed => "concurrency.conflict",
+            HttpStatusCode.UnprocessableEntity => "loans.capital_payment.exceeds_balance",
+            _ => throw new Xunit.Sdk.XunitException($"Unexpected status {loser.StatusCode} for the losing payment."),
+        };
+        Assert.Equal(expectedCode, await CodeOfAsync(loser));
         Assert.Equal(40_000_000m, OutstandingOf(await DetailAsync(manager, loanId)));
     }
 

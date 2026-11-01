@@ -30,7 +30,7 @@ public sealed class DeleteLoanHandler(
             ?? throw LoansNotFound.Loan(command.LoanId);
         var rows = await installments.ListByLoanAsync(command.TenantId, loan.Id, cancellationToken);
         var payments = await capitalPayments.ListByLoansAsync(command.TenantId, [loan.Id], cancellationToken);
-        if (rows.Any(row => row.Status == LoanInstallmentStatus.Paid) || payments.Count > 0)
+        if (!LoanRules.CanDelete(rows, payments))
         {
             throw new LoansDomainException(
                 LoansErrorCodes.LoanHasMovement, "A loan with a paid installment or a capital payment cannot be deleted.");

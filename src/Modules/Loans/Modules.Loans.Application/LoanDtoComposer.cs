@@ -71,9 +71,10 @@ public sealed class LoanDtoComposer(
                     accrual.Period.Start, accrual.Period.End, accrual.Period.Days, accrual.Amount, accrual.Segments.Select(ToSegmentDto).ToList()),
             block,
             block is null ? new LoanPaymentWindowDto(LoanCapitalOperations.OpenFrom(loan), today) : null,
-            LoanCapitalOperations.Voidable(loan, payments)?.Id,
+            // POST void rechaza con installment_generated mientras haya un período cerrado sin generar: no se ofrece.
+            HasUngeneratedClosedPeriod(loan, today) ? null : LoanCapitalOperations.Voidable(loan, payments)?.Id,
             !hasMovement,
-            installmentRows.All(row => row.Status != LoanInstallmentStatus.Paid) && payments.Count == 0);
+            LoanRules.CanDelete(installmentRows, payments));
     }
 
     /// <summary>
@@ -122,8 +123,11 @@ public sealed class LoanDtoComposer(
             return nameof(CapitalPaymentBlock.PendingInstallments);
         }
 
-        return loan.NextPeriodToGenerate() is { } next && next.End < today ? nameof(CapitalPaymentBlock.PeriodClosing) : null;
+        return HasUngeneratedClosedPeriod(loan, today) ? nameof(CapitalPaymentBlock.PeriodClosing) : null;
     }
+
+    private static bool HasUngeneratedClosedPeriod(Loan loan, DateOnly today) =>
+        loan.NextPeriodToGenerate() is { } next && next.End < today;
 
     private async Task<IReadOnlyDictionary<Guid, LoansMemberRef>> FindMembersAsync(
         Guid tenantId, IEnumerable<Guid> memberIds, CancellationToken cancellationToken) =>

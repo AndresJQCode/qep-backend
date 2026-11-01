@@ -85,6 +85,10 @@ internal static class LoanRules
     public static bool HasMovement(IReadOnlyCollection<LoanInstallment> installments, IReadOnlyCollection<LoanCapitalPayment> payments) =>
         installments.Count > 0 || payments.Count > 0;
 
+    /// <summary>Sin cuotas pagadas ni filas de abono (un abono anulado cuenta). Lo usan el borrado y el <c>canDelete</c> del detalle.</summary>
+    public static bool CanDelete(IReadOnlyCollection<LoanInstallment> installments, IReadOnlyCollection<LoanCapitalPayment> payments) =>
+        installments.All(row => row.Status != LoanInstallmentStatus.Paid) && payments.Count == 0;
+
     /// <summary>La moneda del cuerpo, normalizada, o la del tenant si no vino.</summary>
     public static async Task<string> ResolveCurrencyAsync(
         string? requested, Guid tenantId, ITenantDefaultCurrency tenantDefaultCurrency, CancellationToken cancellationToken) =>
