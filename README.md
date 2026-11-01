@@ -896,6 +896,13 @@ incluso con la sesión ya abierta. No toca sus módulos: reactivarlo deja todo c
 workers, el outbox y los enlaces públicos (PDF, comprobantes) de un tenant inactivo **siguen
 funcionando** (DECISIÓN-PENDIENTE del spec 2026-10-08). El tenant operador no se puede inactivar.
 
+**Reporte de uso.** `GET …/operator/usage?period=day|week|month` (mes por defecto; otro valor es `422 validation.failed` con la clave `Period`)
+pide `operator.usage.read` y sólo responde en el tenant operador (otro tenant recibe 403). Devuelve `registered` (`day`, `week` y `month`, siempre
+los tres), el `period` normalizado y una fila por tenant con sus conversaciones del periodo (`whatsApp`, `instagram`, `total`) y los
+`connected` ahora mismo. Una conversación cuenta una vez por canal si tuvo al menos un mensaje entrante en vivo (no importado) desde el inicio del
+periodo, con la semana desde el lunes y el día y el mes en hora de Bogotá; un tenant sin actividad aparece en cero y el operador no aparece.
+Los conectados salen de la presencia del hub de la bandeja, que es por proceso: sólo vale con una réplica.
+
 ### Tenant operador
 
 El tenant operador es **QCode**, con id fijo `01900000-0000-7000-8000-000000000006` (slug `qcode`).

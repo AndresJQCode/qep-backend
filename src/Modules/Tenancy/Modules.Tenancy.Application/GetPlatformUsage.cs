@@ -28,7 +28,8 @@ public sealed record PlatformUsageTenantRow(
     Guid TenantId, string Name, DateTimeOffset CreatedAt, int WhatsApp, int Instagram,
     IReadOnlyList<PlatformConnectedMemberDto> Connected);
 
-/// <summary>Puerto del reporte de uso. La implementación vive en Bootstrapper porque lee Messaging.</summary>
+/// <summary>Puerto del reporte de uso. La implementación vive en Bootstrapper porque lee Messaging. Devuelve todos los
+/// tenants sea cual sea <c>startUtc</c>, porque los registrados de hoy, la semana y el mes se cuentan sobre todas las filas.</summary>
 public interface IPlatformUsageSource
 {
     Task<IReadOnlyList<PlatformUsageTenantRow>> ListAsync(DateTimeOffset startUtc, CancellationToken cancellationToken);

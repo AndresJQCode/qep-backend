@@ -117,8 +117,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetPlatformUsageQuery, PlatformUsageDto>,
             GetPlatformUsageHandler>();
-        // Provisional: la fuente real llega con la tarea 3 y reemplaza este registro.
-        services.AddScoped<IPlatformUsageSource, PendingPlatformUsageSource>();
+        services.AddScoped<IPlatformUsageSource, PlatformUsageSource>();
         services.AddScoped<
             ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>,
             ChangeTenantModulesHandler>();
