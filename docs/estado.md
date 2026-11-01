@@ -128,6 +128,7 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Continuar el asistente donde iba (2026-11-01):** el backend sale antes que el frontend; sin migración. Falta la prueba de los dos repos juntos y en navegador: pausar el bot con una corrida esperando y usar «Continuar donde iba».
 - **Canal en vivo de Mensajería (2026-11-01):** crear `DATABASE_LISTENER_CONNECTION_STRING` en `Backend-prod`, la misma cadena de `DATABASE_CONNECTION_STRING` con destino `pg-platform-rw.database.svc.cluster.local:5432`, y comprobar que ese usuario entra directo. Sin la variable el backend despliega igual y los eventos siguen sin llegar. Después del despliegue: el log de arranque debe decir `using connection string key QepDatabaseListener`, y los bytes de los WebSocket en el ingress deben dejar de ser sólo saludo y pings. Backend y frontend salen en cualquier orden.
 - **Iniciar asistente (2026-10-31):** ya en `main` de los dos repos (back `2f1761bc`, front `ae0cc303`). El owner lo probó en producción el 2026-11-01: evento en el hilo y envío a Meta con 200; el mensaje no se veía sin recargar, que es la entrada de arriba.
 - **Plantillas editables (2026-10-31):** backend primero y frontend después. Antes de desplegar, confirmar que ningún flujo publicado en producción use `{nombre}`: la consulta está en la Task 9 de `docs/superpowers/plans/2026-10-31-plantillas-editables-backend.md`, y si devuelve filas ese flujo se corrige primero, porque una versión publicada no se revalida y el nombre saldría vacío. Falta también la prueba manual de la ventana de edición contra Meta: no se hizo.
@@ -236,6 +237,11 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-01 — Mergeado a `develop` de los dos repos, sin push, **continuar el asistente donde iba** (spec 2026-11-01; backend `5aa25be2`,
+  frontend `cefffb16`): `POST …/automation/continue`, `automationContinue` en el resumen, y el modal de «Iniciar asistente» con dos opciones.
+  «Devolver al asistente» sigue reiniciando el flujo. Filtradas de integración: Messaging 13/13, Automations 78/79; falla
+  `GetReadsTheStateTheEngineNeeds` por `WindowExpiresAt`, que parece previa y no se comprobó contra el commit base. No se corrió la suite
+  completa ni se probó en navegador.
 - 2026-11-01 — Mergeado a `develop` de los dos repos (`--no-ff`) **el arreglo del canal en vivo de Mensajería** (backend `7e3a9bba`, frontend
   `2240ef4e`). En producción el hub conectaba y no entregaba nada: 37 de 37 WebSocket en 24 h con sólo saludo y pings. Causa **inferida, sin
   confirmar**: `LISTEN` a través de PgBouncer en modo `transaction`. El listener lee ahora `QepDatabaseListener` y cae a `QepDatabase` si falta
