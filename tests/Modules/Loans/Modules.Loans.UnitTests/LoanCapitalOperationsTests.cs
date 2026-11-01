@@ -298,4 +298,72 @@ public sealed class LoanCapitalOperationsTests
         AssertCode(
             LoansErrorCodes.CapitalPaymentNotFound,
             () => LoanCapitalOperations.Void(Loan(), [], Guid.NewGuid(), "x", 0, Now));
+
+    [Fact]
+    public void SettlingInsideADisbursementDayPeriodAnchoredOn12ChargesFromTheAnchor()
+    {
+        // Ancla 12, período 12/oct-11/nov (31 días). Saldar el 20/oct cobra 12/oct-19/oct = 8 días sobre 100.000.000:
+        //   1.500.000 x 8 / 31 = 387.096,7742 -> 387.096,77
+        var loan = Loan("2026-10-12", LoanCutoffRule.DisbursementDay, today: "2026-10-20");
+        var payments = new List<LoanCapitalPayment>();
+
+        var final = Add(loan, payments, 100_000_000m, "2026-10-20", today: "2026-10-20").FinalInstallment;
+
+        Assert.NotNull(final);
+        Assert.Equal((Date("2026-10-12"), 31), (final.PeriodStart, final.PeriodDays));
+        Assert.Equal(387096.77m, final.Amount);
+        Assert.Equal(LoanStatus.Active, loan.Status);
+    }
+
+    [Fact]
+    public void SettlingInsideAnAnchor31PeriodThatStartedInTheShortMonthChargesFromThe28th()
+    {
+        // Ancla 31 desde el 31/ene. El 10/mar el período abierto es 28/feb-30/mar (31 días), no uno que arranque el 31/ene.
+        // Saldar el 10/mar cobra 28/feb-9/mar = 1 + 9 = 10 días sobre 100.000.000: 1.500.000 x 10 / 31 = 483.870,9677 -> 483.870,97
+        var loan = Loan("2026-01-31", LoanCutoffRule.DisbursementDay, today: "2026-03-10");
+        var payments = new List<LoanCapitalPayment>();
+        // El período 31/ene-27/feb ya cerró y se genera antes de abonar, como lo garantiza CapitalPaymentSupport.
+        var closed = Assert.Single(LoanInstallmentGenerator.GenerateClosedPeriods(loan, payments, Date("2026-03-10"), Now));
+        Assert.Equal(Date("2026-02-27"), closed.PeriodEnd);
+
+        var final = Add(loan, payments, 100_000_000m, "2026-03-10", today: "2026-03-10").FinalInstallment;
+
+        Assert.NotNull(final);
+        Assert.Equal((Date("2026-02-28"), 31), (final.PeriodStart, final.PeriodDays));
+        Assert.Equal(483870.97m, final.Amount);
+    }
+
+    [Fact]
+    public void SettlingAfterAClosedDisbursementDayPeriodChargesOnlyTheOpenOne()
+    {
+        // Ancla 12, hoy 20/nov: el período 12/oct-11/nov ya cerró (1.500.000,00) y el abierto es 12/nov-11/dic (30 días).
+        // Saldar el 20/nov cobra 12/nov-19/nov = 8 días: 1.500.000 x 8 / 30 = 400.000,00
+        var loan = Loan("2026-10-12", LoanCutoffRule.DisbursementDay, today: "2026-11-20");
+        var payments = new List<LoanCapitalPayment>();
+        var closed = Assert.Single(LoanInstallmentGenerator.GenerateClosedPeriods(loan, payments, Date("2026-11-20"), Now));
+        Assert.Equal(1500000.00m, closed.Amount);
+
+        var final = Add(loan, payments, 100_000_000m, "2026-11-20", today: "2026-11-20").FinalInstallment;
+
+        Assert.NotNull(final);
+        Assert.Equal(Date("2026-11-12"), final.PeriodStart);
+        Assert.Equal(400000.00m, final.Amount);
+    }
+
+    [Theory]
+    [InlineData(LoanCutoffRule.EndOfMonth)]
+    [InlineData(LoanCutoffRule.DisbursementDay)]
+    public void SettlingOnTheDisbursementDayOfAPartialFirstPeriodCreatesNoInstallment(LoanCutoffRule rule)
+    {
+        // Desembolso el 10/oct: EndOfMonth abre el período el 1/oct (parcial: arranca el 10), DisbursementDay el 10/oct. En los
+        // dos, saldar el 10/oct deja el rango 10/oct-9/oct vacío: nada que cobrar.
+        var loan = Loan("2026-10-10", rule, today: "2026-10-10");
+        var payments = new List<LoanCapitalPayment>();
+
+        var outcome = Add(loan, payments, 100_000_000m, "2026-10-10", today: "2026-10-10");
+
+        Assert.Null(outcome.FinalInstallment);
+        Assert.Equal(LoanStatus.Settled, loan.Status);
+        Assert.Equal(0m, loan.OutstandingPrincipal);
+    }
 }
