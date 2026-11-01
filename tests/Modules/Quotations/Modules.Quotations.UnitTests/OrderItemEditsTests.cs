@@ -87,6 +87,7 @@ public sealed class OrderItemEditsTests
             Assert.Single(edits));
         Assert.Equal(kept, Assert.Single(order.Items).ProductId);
         Assert.Empty(catalog.Lookups);
+        Assert.Empty(catalog.ManyLookups);
     }
 
     [Fact]
@@ -122,7 +123,7 @@ public sealed class OrderItemEditsTests
         await ApplyAsync(order, catalog, new OrderItemAddition(gone, 1m), new OrderItemAddition(other, 2m));
 
         Assert.Equal("OLD", order.Items.Single(item => item.ProductId == gone).ProductCode);
-        Assert.Equal([other], catalog.Lookups);
+        Assert.Equal([other], Assert.Single(catalog.ManyLookups));
     }
 
     [Fact]
@@ -155,6 +156,91 @@ public sealed class OrderItemEditsTests
         Assert.Empty(edits);
         Assert.Equal(versionBefore, order.Version);
         Assert.Empty(catalog.Lookups);
+        Assert.Empty(catalog.ManyLookups);
+    }
+
+    // Este paso corre mientras la persona escribe en el cálculo previo: una lectura por línea eran
+    // varias sentencias por línea. Las líneas intactas no se leen.
+    [Fact]
+    public async Task ReadsTheCatalogOnceForTheWholeDiff()
+    {
+        var unchanged = Guid.CreateVersion7();
+        var changed = Guid.CreateVersion7();
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+        var order = PendingOrder((unchanged, 1m, 100_000m, null), (changed, 1m, 100_000m, null));
+        var catalog = new StubPricingCatalog(
+            Product(unchanged, "Vela de soja", 100_000m),
+            Product(changed, "Vela de cera", 100_000m),
+            Product(first, "Difusor", 50_000m),
+            Product(second, "Incienso", 10_000m));
+
+        var edits = await ApplyAsync(
+            order,
+            catalog,
+            new OrderItemAddition(unchanged, 1m),
+            new OrderItemAddition(first, 2m),
+            new OrderItemAddition(changed, 4m),
+            new OrderItemAddition(second, 3m));
+
+        Assert.Empty(catalog.Lookups);
+        Assert.Equal(new[] { changed, first, second }.Order(), Assert.Single(catalog.ManyLookups).Order());
+        Assert.Equal(
+            [
+                new OrderItemEdit(OrderItemEditKind.Added, first, "Difusor", null, 2m),
+                new OrderItemEdit(OrderItemEditKind.Added, second, "Incienso", null, 3m),
+                new OrderItemEdit(OrderItemEditKind.QuantityChanged, changed, "Vela de cera", 1m, 4m),
+            ],
+            edits);
+        Assert.Equal(100_000m + 400_000m + 100_000m + 30_000m, order.Total);
+    }
+
+    // Traer los precios de una vez no adelanta los rechazos: lo anterior a la línea mala queda
+    // aplicado y lo posterior no se toca.
+    [Fact]
+    public async Task TheFirstRejectedAdditionStopsEverythingAfterIt()
+    {
+        var existing = Guid.CreateVersion7();
+        var good = Guid.CreateVersion7();
+        var inactive = Guid.CreateVersion7();
+        var never = Guid.CreateVersion7();
+        var order = PendingOrder((existing, 1m, 100_000m, null));
+        var catalog = new StubPricingCatalog(
+            Product(existing, "Vela de soja", 100_000m),
+            Product(good, "Difusor", 50_000m),
+            Product(inactive, "Incienso", 10_000m, isActive: false),
+            Product(never, "Jabón", 20_000m));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ApplyAsync(
+            order,
+            catalog,
+            new OrderItemAddition(existing, 2m),
+            new OrderItemAddition(good, 1m),
+            new OrderItemAddition(inactive, 1m),
+            new OrderItemAddition(never, 1m)));
+
+        Assert.Equal("quotation.item.product_inactive", error.Code);
+        Assert.Equal([existing, good], order.Items.Select(item => item.ProductId));
+        Assert.Equal(1m, order.Items.Single(item => item.ProductId == existing).Quantity);
+    }
+
+    // FindManyAsync no filtra por tenant en este doble: quien rechaza es el resolutor, línea por línea.
+    [Fact]
+    public async Task RejectsAVariantOfAnotherTenantAsNotFound()
+    {
+        var foreign = Guid.CreateVersion7();
+        var existing = Guid.CreateVersion7();
+        var order = PendingOrder((existing, 1m, 100_000m, null));
+        var catalog = new StubPricingCatalog(
+            new QuotationVariantPricingRef(
+                foreign, foreign, Guid.CreateVersion7(), "Difusor", "SKU", true,
+                new Dictionary<string, decimal> { ["COP"] = 50_000m }, [], null));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            ApplyAsync(order, catalog, new OrderItemAddition(existing, 1m), new OrderItemAddition(foreign, 1m)));
+
+        Assert.Equal("quotation.item.product_not_found", error.Code);
+        Assert.Equal(existing, Assert.Single(order.Items).ProductId);
     }
 
     [Fact]
@@ -240,6 +326,8 @@ public sealed class OrderItemEditsTests
     {
         public List<Guid> Lookups { get; } = [];
 
+        public List<IReadOnlyCollection<Guid>> ManyLookups { get; } = [];
+
         public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken)
         {
@@ -251,10 +339,13 @@ public sealed class OrderItemEditsTests
         public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
+            CancellationToken cancellationToken)
+        {
+            ManyLookups.Add(productIds);
+            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 products
                     .Where(product => productIds.Contains(product.VariantId))
                     .ToDictionary(product => product.VariantId));
+        }
     }
 }

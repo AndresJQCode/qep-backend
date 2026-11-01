@@ -87,6 +87,54 @@ public sealed class QuotationPreviewStatementCountApiTests
         Assert.Equal(fewStatements.Count, manyStatements.Count);
     }
 
+    // El pedido pendiente recorre OrderItemEdits, el gemelo de QuotationItemEdits, en el mismo tecleo.
+    [Fact]
+    public async Task ThePreviewOfASavedOrderDoesNotReadMoreForMoreChangedLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var products = await CreateProductsAsync(client, tenantId);
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var ordersUrl = $"/api/v1/tenants/{tenantId}/orders";
+
+        async Task<(string Url, SaveOrderEditsRequest Body)> SavedWithAsync(int lines)
+        {
+            using var response = await client.PostAsJsonAsync(
+                ordersUrl,
+                new CreateOrderRequest(
+                    clientId, "Transferencia", null, false, null, null,
+                    new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
+                    products.Take(lines).Select(product => new OrderEditItemRequest(product, 2m)).ToArray(),
+                    "PaymentPending",
+                    []),
+                TestContext.Current.CancellationToken);
+            response.EnsureSuccessStatusCode();
+            var saved = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+            Assert.NotNull(saved);
+
+            return (
+                $"{ordersUrl}/{saved.Order.Id}/preview",
+                new SaveOrderEditsRequest(
+                    saved.Items.Select(item => new OrderEditItemRequest(item.ProductId, item.Quantity + 1m)).ToArray(),
+                    new OrderEditProofsRequest(null, null, null),
+                    Notes: null));
+        }
+
+        var warmUp = await SavedWithAsync(1);
+        var few = await SavedWithAsync(FewLines);
+        var many = await SavedWithAsync(ManyLines);
+
+        await StatementsOfAsync(client, warmUp.Url, warmUp.Body);
+        var fewStatements = await StatementsOfAsync(client, few.Url, few.Body);
+        var manyStatements = await StatementsOfAsync(client, many.Url, many.Body);
+
+        Report(fewStatements, manyStatements);
+        Assert.Equal(fewStatements.Count, manyStatements.Count);
+    }
+
     private static async Task<Guid[]> CreateProductsAsync(HttpClient client, Guid tenantId)
     {
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
