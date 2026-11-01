@@ -120,7 +120,9 @@ public sealed partial class RunProcessor(
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
         // Después del lock y de leer la conversación: si una persona la devolvió al asistente mientras la unidad esperaba el lock, la
         // corrida nueva no puede quedar con un StartedAt anterior a ese regreso (P2-R25), o el siguiente entrante la interrumpiría.
-        var now = clock.UtcNow;
+        // Piso: el POST que devolvió la conversación y este worker pueden ser pods distintos, con relojes distintos; si el del worker va
+        // detrás del que selló AutomationResumedAt, leer el reloj a secas dejaría la corrida naciendo antes del regreso que la originó.
+        var now = conversation?.AutomationResumedAt is { } resumedAt && resumedAt > clock.UtcNow ? resumedAt : clock.UtcNow;
 
         if (!await modules.IsEnabledAsync(item.TenantId, cancellationToken))
         {
@@ -129,7 +131,7 @@ public sealed partial class RunProcessor(
 
         // D-M15: una acción humana termina la corrida viva; Mensajería no conoce Automations, así que se detecta acá.
         var interrupted = false;
-        if (run is not null && (conversation is null || HumanTookOver(conversation, run)))
+        if (run is not null && (conversation is null || BotAttendance.HumanTookOver(conversation, run)))
         {
             run.Finish(RunStatus.Interrupted, null, now);
             run.MarkInbound(item.MessageId);
@@ -210,7 +212,7 @@ public sealed partial class RunProcessor(
         // humana, así que la corrida termina Interrupted como en ProcessUnitAsync, sin auditoría, y la conversación no se toca: una devuelta
         // queda Active para que el siguiente entrante arranque desde el primer nodo. Leerla va después del lock (P2-R20).
         var conversation = await conversations.GetAsync(run.TenantId, run.ConversationId, cancellationToken);
-        if (conversation is null || HumanTookOver(conversation, run))
+        if (conversation is null || BotAttendance.HumanTookOver(conversation, run))
         {
             run.Finish(RunStatus.Interrupted, null, now);
             recorder?.WriteClosed(run, null, RunCloseReasons.HumanTookOver, now);
@@ -234,14 +236,6 @@ public sealed partial class RunProcessor(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }
-
-    /// <summary>D-M15. Tomar y devolver al asistente no deja rastro en el estado (tomar pausa y no encola, devolver vuelve a
-    /// <c>Active</c>): por eso P2-R25 compara la hora en que una persona la devolvió con el arranque de la corrida.</summary>
-    private static bool HumanTookOver(AutomationConversationState conversation, ConversationRun run) =>
-        conversation.AssignedMemberId is not null
-        || conversation.Status == ConversationStates.Resolved
-        || conversation.AutomationStatus is AutomationStates.Paused or AutomationStates.None
-        || conversation.AutomationResumedAt > run.StartedAt;
 
     /// <summary>§5.2 pasos 2 a 4; <c>null</c> = el entrante no le toca al bot.</summary>
     private async Task<string?> DecideAsync(

@@ -448,6 +448,38 @@ public sealed class RunProcessorTests
         Assert.True(run.StartedAt >= resumedAt, $"La corrida arrancó a las {run.StartedAt:O}, antes del regreso de las {resumedAt:O}.");
     }
 
+    /// <summary>
+    /// Review Focus 1 (spec 2026-10-31): el POST que devolvió la conversación sella <c>AutomationResumedAt</c> con el reloj de su pod, y este
+    /// worker puede ir detrás. Sin piso, la corrida nacería antes del regreso y el siguiente entrante la interrumpiría como si una persona
+    /// la hubiera devuelto después.
+    /// </summary>
+    [Fact]
+    public async Task ARunStartedBehindTheResumeClockStaysAlive()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "b" }, "variables": [],
+              "nodes": [
+                { "id": "b", "kind": "buttons", "title": "¿Cómo seguimos?", "text": "¿Qué prefieres?", "buttons": [ { "id": "si", "label": "Sí" } ],
+                  "saveTo": null, "fallback": "repeat", "outputs": { "si": null } }
+              ] }
+            """;
+        var resumedAt = DateTimeOffset.UtcNow.AddSeconds(2);
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567", resumedAt),
+            flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal(resumedAt, run.StartedAt);
+
+        var second = await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7(), Opened = false }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Advanced, second);
+        Assert.NotEqual(RunStatus.Interrupted, run.Status);
+    }
+
     /// <summary>D-M13 y D-M14: la candidata sigue esperando desde hace más de 24 h bajo el lock: termina <c>Abandoned</c>, la conversación
     /// vuelve a None y queda la auditoría de sistema.</summary>
     [Fact]
