@@ -40,10 +40,23 @@ internal static class OrderItemEdits
         var desiredVariantIds = desired.Select(line => line.VariantId).ToHashSet();
         var edits = new List<OrderItemEdit>();
 
+        // Una sola lectura del catálogo para todo el diff, como en QuotationItemEdits: el cálculo
+        // previo corre mientras se escribe, y una lectura por línea son varias sentencias por línea.
+        // Los rechazos no se adelantan: siguen abajo, línea por línea, en el mismo orden.
+        var variantIdsToPrice = desired
+            .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
+            .Select(line => line.VariantId)
+            .Distinct()
+            .ToArray();
+        var products = variantIdsToPrice.Length == 0
+            ? new Dictionary<Guid, QuotationVariantPricingRef>()
+            : await pricingLookup.FindManyAsync(tenantId, variantIdsToPrice, cancellationToken);
+
         foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.VariantId, line.Quantity, order.Currency, isRetail, cancellationToken);
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(line.VariantId), tenantId, line.VariantId, line.Quantity,
+                order.Currency, isRetail);
             order.AddItem(
                 OrderItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
@@ -59,8 +72,9 @@ internal static class OrderItemEdits
             }
 
             var previousQuantity = item.Quantity;
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.VariantId, line.Quantity, order.Currency, isRetail, cancellationToken);
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(line.VariantId), tenantId, line.VariantId, line.Quantity,
+                order.Currency, isRetail);
             order.UpdateItemQuantity(
                 item.Id, line.Quantity, pricing.Pricing.DiscountPercentage,
                 pricing.Pricing.TaxPercentage, updatedBy, occurredAt);
