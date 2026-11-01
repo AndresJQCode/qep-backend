@@ -41,6 +41,7 @@ public static class MessagingInfrastructureExtensions
         // §7.6 y §8.7: las lecturas de la bandeja y el armado de ConversationSummary por página.
         services.AddScoped<IConversationQueries, ConversationQueries>();
         services.AddScoped<IMessageQueries, MessageQueries>();
+        services.AddScoped<IExternalMessageQueries, ExternalMessageQueries>();
         services.AddScoped<ConversationSummaryBuilder>();
         // Spec 2026-10-10 P20: la membresía de quien llama, una vez por request.
         services.AddScoped<CallerMembership>();
