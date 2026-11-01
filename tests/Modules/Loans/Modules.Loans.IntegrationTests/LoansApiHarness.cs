@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
 using Modules.Loans.Application;
+using Modules.Loans.Infrastructure.Generation;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -252,8 +254,12 @@ internal static class LoansApiHarness
     /// <param name="configureServices">
     /// Sustituciones de servicios para la prueba; corre después del registro de la aplicación.
     /// </param>
+    /// <param name="runGenerationWorker">
+    /// Por defecto el worker de generación se quita: despertaría cada 15 minutos sobre la base de la prueba y generaría cuotas
+    /// que ninguna prueba espera. Las pruebas del procesador lo llaman a mano.
+    /// </param>
     public sealed class QepApiFactory(
-        string connectionString, Action<IServiceCollection>? configureServices = null)
+        string connectionString, Action<IServiceCollection>? configureServices = null, bool runGenerationWorker = false)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -275,6 +281,20 @@ internal static class LoansApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+
+            if (!runGenerationWorker)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    foreach (var descriptor in services
+                        .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                            && descriptor.ImplementationType == typeof(LoansGenerationWorker))
+                        .ToList())
+                    {
+                        services.Remove(descriptor);
+                    }
+                });
+            }
 
             if (configureServices is not null)
             {

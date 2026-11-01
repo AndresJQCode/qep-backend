@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Loans.Application;
+using Modules.Loans.Infrastructure.Generation;
 using Modules.Loans.Infrastructure.Persistence;
 
 namespace Modules.Loans.Infrastructure;
@@ -28,6 +30,13 @@ public static class LoansInfrastructureExtensions
         services.AddScoped<ILoanCapitalPaymentRepository, LoanCapitalPaymentRepository>();
         services.AddScoped<ILoansUnitOfWork, LoansUnitOfWork>();
         services.AddScoped<ILoansAuditPublisher, LoansAuditPublisher>();
+
+        // El worker diario de generación de cuotas: opciones validadas al arrancar.
+        services.AddOptions<LoansOptions>().Bind(configuration.GetSection(LoansOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<LoansOptions>, LoansOptionsValidator>();
+        services.AddScoped<TenantRunStore>();
+        services.AddScoped<ILoansGenerationProcessor, LoansGenerationProcessor>();
+        services.AddHostedService<LoansGenerationWorker>();
 
         return services;
     }

@@ -654,6 +654,27 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Sin el worker registrado, o con un puerto del procesador sin adaptador, ninguna cuota de préstamo se genera al cerrar su
+    /// período, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheLoansGenerationWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Loans.Infrastructure.Generation.LoansGenerationWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Loans.Application.ILoansGenerationProcessor>());
+    }
+
+    /// <summary>
     /// Observabilidad fase 2: sin el muestreador registrado los gauges de cola no publican nada y nadie se entera; y como los gauges
     /// son singleton, ValidateScopes caza que dependan de un servicio scoped (IClock lo es).
     /// </summary>
