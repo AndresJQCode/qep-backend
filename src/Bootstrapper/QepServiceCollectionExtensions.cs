@@ -115,6 +115,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOperatorTenantQuery, OperatorTenantDetailDto>,
             GetOperatorTenantHandler>();
         services.AddScoped<
+            IQueryHandler<GetPlatformUsageQuery, PlatformUsageDto>,
+            GetPlatformUsageHandler>();
+        // Provisional: la fuente real llega con la tarea 3 y reemplaza este registro.
+        services.AddScoped<IPlatformUsageSource, PendingPlatformUsageSource>();
+        services.AddScoped<
             ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>,
             ChangeTenantModulesHandler>();
         services.AddScoped<
@@ -1519,6 +1524,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-26 §6: la consola de ciudades del operador, con el mismo criterio que las tres de arriba.
                 GeographyOperatorPermissions.CitiesRead,
                 GeographyOperatorPermissions.CitiesManage,
+                // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
+                OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
                 // código, así que no hay migración de datos.
                 IntegrationsPermissions.ConnectionRead,
@@ -2047,6 +2054,14 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+        // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.UsageRead,
+            "Ver el uso de la plataforma",
+            "Permite ver cuántas conversaciones tiene cada tenant, los registros nuevos y quién está conectado.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
         // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
@@ -2535,6 +2550,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 GeographyOperatorPermissions.CitiesManage,
                 policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesManage))
+            // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                OperatorPermissions.UsageRead,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.UsageRead))
             .AddPolicy(
                 IntegrationsPermissions.ConnectionRead,
                 policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))
