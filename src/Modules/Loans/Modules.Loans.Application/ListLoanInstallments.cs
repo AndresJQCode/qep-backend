@@ -70,16 +70,17 @@ public sealed class ListLoanInstallmentsHandler(
                 cancellationToken))
             .ToDictionary(member => member.MemberId);
 
+        // Un préstamo borrado entre las consultas deja su cuota sin dueño: esa fila se omite en vez de reventar con un 500.
         var items = page
-            .Select(row => ToRow(row, loansById[row.LoanId], customerRefs, assignees))
+            .Select(row => loansById.GetValueOrDefault(row.LoanId) is { } loan ? ToRow(row, loan, customerRefs, assignees) : null)
+            .OfType<LoanInstallmentRowDto>()
             .ToList();
 
         LoanOldestInstallmentDto? oldest = null;
-        if (totals.Oldest is { } found)
+        if (totals.Oldest is { } found && loansById.GetValueOrDefault(found.LoanId) is { } oldestLoan)
         {
-            var customerId = loansById[found.LoanId].CustomerId;
             oldest = new LoanOldestInstallmentDto(
-                found.PeriodEnd, found.Amount, found.Currency, customerRefs.GetValueOrDefault(customerId)?.Name ?? LoanDtoComposer.UnknownName);
+                found.PeriodEnd, found.Amount, found.Currency, customerRefs.GetValueOrDefault(oldestLoan.CustomerId)?.Name ?? LoanDtoComposer.UnknownName);
         }
 
         var summary = new LoanInstallmentSummaryDto(
