@@ -246,8 +246,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
   suite completa. Siguen leyendo por línea `OrderDraftBuilder`, `AddOrderItems` y `BatchUpdateQuotationItems`.
 - 2026-11-01 — Mergeado a `develop` del frontend (`--no-ff`, sin push) **el cargador estático de la carga inicial** (merge `e64e2c36`): `index.html` pinta un cargador
   fuera de `#root`, porque React lo vacía al montar y el router no pinta nada mientras bajan los chunks, y `dismissBootLoaderOnFirstRoute` lo quita en el primer `onResolved`.
-  Medido en Chromium, una corrida por caso y 150 ms de retraso por archivo: FCP de 868-1.352 ms a unos 190 ms, sin retrasar el contenido. Sin prueba con sesión iniciada;
-  la API estaba simulada con 401. Agrupar chunks sigue pendiente de una cascada con red real. Worktrees y ramas borrados.
+  Medido en Chromium, una corrida por caso y 150 ms de retraso por archivo: FCP de 868-1.352 ms a unos 190 ms, sin retrasar el contenido, con la API simulada con 401. El
+  owner lo probó en local con sesión iniciada y quedó bien (2026-11-01). Agrupar chunks sigue pendiente de una cascada con red real. Worktrees y ramas borrados.
 - 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **«Resueltas por chatbot» en el reporte de mensajería** (backend `95d6f247`, frontend `92ffa5b8`): bloque
   `chatbots` en `GET /messaging/reports/summary` y tarjeta debajo de «Por asesor». El denominador es todo lo resuelto en el canal durante el periodo (decisión del owner:
   mide qué parte del trabajo se quita el equipo), y se cuentan eventos `Resolved`, no conversaciones. Verificado: `MessagingReportAggregatorTests` 34/34, las tres
