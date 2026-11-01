@@ -66,7 +66,24 @@ public static class OperatorEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Reporte de uso: sin periodo es el mes; uno desconocido es 422 del validador, no 400 del binder.
+        group.MapGet("/usage", GetUsageAsync)
+            .RequireAuthorization(OperatorPermissions.UsageRead)
+            .Produces<PlatformUsageDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> GetUsageAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        string? period = null)
+    {
+        var result = await dispatcher.QueryAsync(new GetPlatformUsageQuery(new TenantId(tenantId), period), cancellationToken);
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> ListHistoryAsync(

@@ -733,6 +733,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   verifica tras desplegar con los bytes del WebSocket en el ingress; handshake más pings de 13 bytes y nada más significa que siguen
   sin llegar eventos.
 
+- **`PlatformUsageSource` lee `tenancy.tenants`, `messaging.messages` y `messaging.conversations` por nombre** (spec 2026-11-01). Es SQL crudo en
+  Bootstrapper sobre la conexión de `MessagingDbContext`: una conversación cuenta una vez por canal si tuvo un entrante en vivo (`direction = 1`,
+  `NOT imported`) desde el corte, y el canal sale de `conversations.channel`, no de la conexión. Renombrar una de esas columnas compila y deja
+  `GET …/operator/usage` en 500 (`42703`); lo amarra `PlatformUsageApiTests`, que corre contra el esquema migrado. Si agregas un tipo de mensaje
+  que no deba contar como actividad del cliente, tiene que quedar fuera de `direction = 1` o llevar `imported`, o infla el reporte sin error.
+- **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
+  `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
+  Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
