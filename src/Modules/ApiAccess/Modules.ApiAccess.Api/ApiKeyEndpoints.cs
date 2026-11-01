@@ -34,6 +34,13 @@ public static class ApiKeyEndpoints
             .Produces<ApiScopeCatalogDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        // El registro de llamadas de la API externa, antes de POST /: así se lee en el orden en que la pantalla lo usa.
+        group.MapGet("/requests", ListRequestsAsync)
+            .RequireAuthorization(ApiAccessPermissions.ApiKeyManage)
+            .Produces<ApiKeyRequestPage>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // La única respuesta que trae la clave completa.
         group.MapPost("/", CreateApiKeyAsync)
             .RequireAuthorization(ApiAccessPermissions.ApiKeyManage)
@@ -63,6 +70,22 @@ public static class ApiKeyEndpoints
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListApiScopesQuery(tenantId), cancellationToken));
+
+    private static async Task<IResult> ListRequestsAsync(
+        Guid tenantId,
+        Guid? apiKeyId,
+        string? result,
+        string? traceId,
+        DateTimeOffset? occurredFrom,
+        DateTimeOffset? occurredTo,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        int page = 1,
+        int pageSize = ApiKeyRequestPaging.DefaultPageSize) =>
+        Results.Ok(await dispatcher.QueryAsync(
+            new ListApiKeyRequestsQuery(
+                tenantId, apiKeyId, result, traceId, occurredFrom, occurredTo, page, pageSize),
+            cancellationToken));
 
     private static async Task<IResult> CreateApiKeyAsync(
         Guid tenantId,

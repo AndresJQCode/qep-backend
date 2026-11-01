@@ -314,6 +314,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
             ListApiKeysHandler>();
         services.AddScoped<
+            IQueryHandler<ListApiKeyRequestsQuery, ApiKeyRequestPage>,
+            ListApiKeyRequestsHandler>();
+        services.AddScoped<
             IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
             ListApiScopesHandler>();
         services.AddScoped<
@@ -326,6 +329,7 @@ public static class QepServiceCollectionExtensions
         // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
         services.AddScoped<ApiScopeCatalog>();
         services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiMessageStates, ApiMessageStates>();
         services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
         services.AddSingleton(new ApiScopeDefinition(
             MessagingScopes.TemplatesSend,
