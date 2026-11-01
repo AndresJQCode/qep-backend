@@ -40,6 +40,17 @@ internal static class StatusIngestion
         // puede quedar en el estado del que perdió. Además el par es atómico: un corte entre los dos no deja
         // la foto vieja para siempre (el reintento vería NoChange y no la repararía).
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // El candado va antes del UPDATE: si un reintento tiene la fila bloqueada (§8.3), Postgres sólo esperaría al UPDATE cuando la versión vieja
+        // cumpliera su WHERE, y una fila Failed con un código real no lo cumple para el acuse del intento nuevo: lo saltaría y el estado se perdería.
+        // Con el SELECT ... FOR UPDATE la espera es incondicional, y el UPDATE (READ COMMITTED) ya ve el reintento commiteado.
+        var existing = await dbContext.Database.SqlQuery<int>(
+            $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2 ORDER BY id FOR UPDATE""")
+            .ToListAsync(cancellationToken);
+        if (existing.Count == 0)
+        {
+            return StatusApplied.NotFound;
+        }
+
         var updated = await dbContext.Database.SqlQuery<AppliedRow>(
             $"""
             UPDATE messaging.messages
@@ -58,11 +69,8 @@ internal static class StatusIngestion
 
         if (updated.Count == 0)
         {
-            // RETURNING vacío no distingue «no existe» de «existe pero no avanza»; el reintento depende de eso.
-            var exists = await dbContext.Database.SqlQuery<int>(
-                $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2""")
-                .ToListAsync(cancellationToken);
-            return exists.Count == 0 ? StatusApplied.NotFound : StatusApplied.NoChange;
+            // Existe (el candado de arriba lo probó) pero no avanza.
+            return StatusApplied.NoChange;
         }
 
         if (failureCode is { } code)

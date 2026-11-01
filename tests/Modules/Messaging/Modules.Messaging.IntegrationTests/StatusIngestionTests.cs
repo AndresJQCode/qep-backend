@@ -233,7 +233,9 @@ public sealed class StatusIngestionTests
 
         // El reintento aceptado: lo que escribe CommitSentAsync, sin la foto (un UPDATE directo no la toca).
         await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET status = 1, wamid = 'wamid.y', failure_code = NULL WHERE id = @id", ("id", id));
-        await ApplyAsync(f, "wamid.x", "failed", 1760000100, callback: $"qep:{id}", errorCode: 131042);
+        // Otro timestamp: el mismo cuerpo se deduplica por hash y no crearía una entrega, así que StatusIngestion no correría.
+        await ApplyAsync(f, "wamid.x", "failed", 1760000200, callback: $"qep:{id}", errorCode: 131042);
+        Assert.Equal(2L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries"));
         return id;
     }
 
@@ -288,17 +290,39 @@ public sealed class StatusIngestionTests
         Assert.Equal("1|wamid.y", await ScalarAsync<string>(f.ConnectionString, StateByIdSql, ("id", id)));
     }
 
-    [Fact]
-    public async Task AnAckDuringTheRetryWaitsForItAndAppliesOverItsResult()
+    // Con un código real (131042) la versión vieja de la fila no cumple el WHERE del acuse: sólo el SELECT ... FOR UPDATE previo lo hace esperar.
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(131042)]
+    public async Task AnAckDuringTheRetryWaitsForItAndAppliesOverItsResult(int failureCode)
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var _ = f.Factory;
-        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, null, status: 4, failureCode: -1);
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, null, status: 4, failureCode: failureCode);
 
-        // Sin confirmar (-1) para que la versión vieja de la fila todavía cumpla el filtro del acuse: así espera el candado en vez de descartarse.
-        // El reintento tiene la fila bloqueada mientras Meta responde (§8.3); el acuse del intento nuevo espera ese candado y,
-        // al soltarse, ya ve el wamid nuevo.
+        await RunDuringRetryAsync(f, id, new StatusUpdate("wamid.y", MessageStatus.Delivered, DateTimeOffset.UtcNow, id, null, null));
+
+        Assert.Equal("2|-|wamid.y|2|1", await StateAsync(f, id));
+    }
+
+    [Fact]
+    public async Task AFailedOfTheNewAttemptDuringTheRetryEndsTheRowFailedWithItsCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var id = await SeedOutboundAsync(f.ConnectionString, f.ConversationId, f.TenantId, f.ConnectionId, null, status: 4, failureCode: 131042);
+
+        await RunDuringRetryAsync(f, id, new StatusUpdate("wamid.y", MessageStatus.Failed, DateTimeOffset.UtcNow, id, 131047, "Re-engagement"));
+
+        Assert.Equal("4|131047|-|4|1", await StateAsync(f, id));
+    }
+
+    // El reintento tiene la fila bloqueada mientras Meta responde (§8.3); el acuse del intento nuevo debe esperar ese candado y,
+    // al soltarse, ver el wamid nuevo.
+    private static async Task RunDuringRetryAsync(Fixture f, Guid id, StatusUpdate ackOfNewAttempt)
+    {
         await using var connection = new Npgsql.NpgsqlConnection(f.ConnectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var retry = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
@@ -314,13 +338,11 @@ public sealed class StatusIngestionTests
             await accept.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
-        var ack = ApplyDirectAsync(f, new StatusUpdate("wamid.y", MessageStatus.Delivered, DateTimeOffset.UtcNow, id, null, null));
+        var ack = ApplyDirectAsync(f, ackOfNewAttempt);
         await Task.Delay(300, TestContext.Current.CancellationToken);
         Assert.False(ack.IsCompleted);
         await retry.CommitAsync(TestContext.Current.CancellationToken);
         await ack;
-
-        Assert.Equal("2|-|wamid.y|2|1", await StateAsync(f, id));
     }
 
     [Fact]
