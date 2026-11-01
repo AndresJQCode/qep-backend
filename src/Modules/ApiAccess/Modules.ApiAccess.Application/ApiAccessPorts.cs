@@ -24,6 +24,15 @@ public interface IApiKeyRepository
     Task TouchLastUsedAsync(ApiKeyId id, DateTimeOffset now, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Registro de las llamadas a la API externa. Escribe con contexto propio y <b>nunca propaga sus
+/// errores</b>: se invoca después de responder, y perder una fila no puede romper una llamada.
+/// </summary>
+public interface IApiKeyRequestLog
+{
+    Task RecordAsync(ApiKeyRequest request, CancellationToken cancellationToken);
+}
+
 public interface IApiAccessUnitOfWork
 {
     Task SaveChangesAsync(CancellationToken cancellationToken);
