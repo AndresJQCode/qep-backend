@@ -718,6 +718,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   manda en la misma llamada que el leído (`status: "read"` + `typing_indicator`), así que el contacto ve el chulo azul aunque en QEP la
   conversación siga sin leer. No es un bug: `POST …/typing` no toca `unread_count`, y no hay que «arreglar» la diferencia. Instagram no
   tiene ese efecto: `typing_on` va solo.
+- **El listener de tiempo real no puede pasar por PgBouncer en modo `transaction`** (2026-11-01). `MessagingEventsListener` hace
+  `LISTEN messaging_events` y ahí no sobrevive: el log dice «listening», el hub conecta y no llega ningún evento, sin error. `pg_notify`
+  sí funciona por el pooler (`PgMessagingNotifier`). Por eso el listener lee `ConnectionStrings:QepDatabaseListener` (directo a
+  `pg-platform-rw`) y cae a `QepDatabase` si falta, está vacía o es un `#{…}#` sin resolver (`ListenerConnectionString`). El log de
+  arranque dice qué clave usó (`QepDatabaseListener` o `QepDatabase`), nunca el valor. **La causa está inferida, no medida:** se
+  verifica tras desplegar con los bytes del WebSocket en el ingress; handshake más pings de 13 bytes y nada más significa que siguen
+  sin llegar eventos.
 
 ## Verificación
 

@@ -26,8 +26,8 @@ internal sealed partial class MessagingEventsListener(
 
     private readonly IReadOnlyList<IMessagingEventSink> _sinks = [.. sinks];
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Messaging events listener is listening on channel {Channel}.")]
-    private static partial void LogListening(ILogger logger, string channel);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Messaging events listener is listening on channel {Channel} using connection string key {ConnectionStringKey}.")]
+    private static partial void LogListening(ILogger logger, string channel, string connectionStringKey);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Messaging events listener lost its connection; it reconnects in {Delay}.")]
     private static partial void LogDisconnected(ILogger logger, TimeSpan delay, Exception exception);
@@ -40,15 +40,14 @@ internal sealed partial class MessagingEventsListener(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var connectionString = configuration.GetConnectionString("QepDatabase")
-            ?? throw new InvalidOperationException("Connection string 'QepDatabase' is required.");
+        var (connectionString, keyName) = ListenerConnectionString.Resolve(configuration);
         var attempt = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await Task.Yield();
-                await ListenAsync(connectionString, stoppingToken);
+                await ListenAsync(connectionString, keyName, stoppingToken);
                 attempt = 0;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -72,7 +71,7 @@ internal sealed partial class MessagingEventsListener(
         }
     }
 
-    private async Task ListenAsync(string connectionString, CancellationToken stoppingToken)
+    private async Task ListenAsync(string connectionString, string keyName, CancellationToken stoppingToken)
     {
         // Conexión propia y sin pool: una conexión en LISTEN no puede volver al pool, y Npgsql exige que nadie más
         // la use mientras WaitAsync espera.
@@ -86,7 +85,7 @@ internal sealed partial class MessagingEventsListener(
             await listen.ExecuteNonQueryAsync(stoppingToken);
         }
 
-        LogListening(logger, MessagingEventJson.Channel);
+        LogListening(logger, MessagingEventJson.Channel, keyName);
         while (!stoppingToken.IsCancellationRequested)
         {
             await connection.WaitAsync(stoppingToken);
