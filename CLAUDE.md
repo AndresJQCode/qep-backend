@@ -279,9 +279,12 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   (persistidos como texto), `IBillingTemplateOutbound` y `BillingTemplateDefinitions` (Messaging), las plantillas `Billing*Email*`
   (Notifications), `BillingAccount`/`BillingParty` (Quotations: la facturación de un pedido) y el rol de sistema `billing`
   (`SystemRoleKeys.Billing`). Un `grep Billing` que encuentre algo fuera de esa lista dentro del módulo es un resto del renombre.
+- **`CustomerMergeReferences` también escribe en `loans.loans`** (`customer_id`, sin subir versión; las cuotas no guardan cliente). Es
+  una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
+  ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los diecinueve módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
+  Los veinte módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,

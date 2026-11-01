@@ -1305,6 +1305,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsStaffEmail>(provider => provider.GetRequiredService<ServiceContractsEmailSender>());
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
+        services.AddScoped<IUserReferenceProbe, LoansUserReferenceProbe>();
 
         // Mismo patrón para `loans` (spec de préstamos 2026-10-31): clientes y encargados son ids sueltos y el composition root cablea sus
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
