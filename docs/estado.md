@@ -129,6 +129,7 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **«Resueltas por chatbot» (2026-11-01):** el backend sale antes que el frontend; sin migración. Con un backend viejo la tarjeta no aparece. Falta verla en navegador. Mirar en producción si hay eventos `Resolved` del bot sin `chatbotId`: contarían como de asesor.
 - **Continuar el asistente donde iba (2026-11-01):** el backend sale antes que el frontend; sin migración. Falta la prueba de los dos repos juntos y en navegador: pausar el bot con una corrida esperando y usar «Continuar donde iba».
 - **Canal en vivo de Mensajería (2026-11-01):** crear `DATABASE_LISTENER_CONNECTION_STRING` en `Backend-prod`, la misma cadena de `DATABASE_CONNECTION_STRING` con destino `pg-platform-rw.database.svc.cluster.local:5432`, y comprobar que ese usuario entra directo. Sin la variable el backend despliega igual y los eventos siguen sin llegar. Después del despliegue: el log de arranque debe decir `using connection string key QepDatabaseListener`, y los bytes de los WebSocket en el ingress deben dejar de ser sólo saludo y pings. Backend y frontend salen en cualquier orden.
 - **Iniciar asistente (2026-10-31):** ya en `main` de los dos repos (back `2f1761bc`, front `ae0cc303`). El owner lo probó en producción el 2026-11-01: evento en el hilo y envío a Meta con 200; el mensaje no se veía sin recargar, que es la entrada de arriba.
@@ -238,6 +239,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **«Resueltas por chatbot» en el reporte de mensajería** (backend `95d6f247`, frontend `92ffa5b8`): bloque
+  `chatbots` en `GET /messaging/reports/summary` y tarjeta debajo de «Por asesor». El denominador es todo lo resuelto en el canal durante el periodo (decisión del owner:
+  mide qué parte del trabajo se quita el equipo), y se cuentan eventos `Resolved`, no conversaciones. Verificado: `MessagingReportAggregatorTests` 34/34, las tres
+  clases de integración del reporte 23/23, `ArchitectureTests` 165/165 y 320 pruebas de reportes en el frontend. Sin prueba manual en navegador, sin migración.
+  Rendimiento medido con 5 millones de mensajes sintéticos en orden cronológico (tenant con 1,5 millones al año, `shared_buffers` de 128 MB, Docker en Windows):
+  Postgres usa `IX_messages_events_reopened` en todos los casos; 14 días 22 ms, 92 días 2,8 s, casi todo en el cruce con `conversations` porque estima 44 filas donde
+  hay 22.505. No se cambió: `CREATE STATISTICS` sobre `details->>'type'` lo baja a 1,3 s y traer las conversaciones del tenant a 1,2 s, pero esto último sube el rango
+  de 14 días de 22 a 155 ms. Si un tenant real se queja del rango largo, esas son las dos salidas. El mismo día, frontend `44f604d7`: tres pruebas de chatbots seguían
+  buscando el texto del disparador anterior a `6d9bb232`. Worktrees y ramas borrados.
 - 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **el reporte de uso de la plataforma** (backend `775de70c`, frontend `55af9878`). Verificado sobre el
   merge con `develop`: build, `GetPlatformUsageHandlerTests` 14/14, `ArchitectureTests` 165/165, `PlatformUsageApiTests` y `MessagingHubTests` 21/21, y 321 pruebas
   de operador en el frontend. Sin prueba manual en navegador. Worktrees y ramas borrados.
