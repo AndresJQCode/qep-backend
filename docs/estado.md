@@ -235,7 +235,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
-- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **«Iniciar asistente» desde el hilo** (spec
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`; el frontend ya está en `origin/develop`, el backend sin push) **«Iniciar asistente» desde el hilo** (spec
   2026-10-31; backend `5df69090`, frontend `1e0e0033`): `POST /conversations/{id}/automation/start` y `automationStart` en el resumen; también con
   pausa manual o traspaso, siempre sin asesor. Sin migración. Integración 29 + 84 + 24 + 13 en verde, que cubren además la entrada de abajo, y
   frontend de mensajería en verde; sin suite completa, navegador ni Meta real.
