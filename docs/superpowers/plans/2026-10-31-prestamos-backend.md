@@ -191,7 +191,7 @@ Un abono anulado cuenta como abono para `canEditTerms` y `canDelete`: su fila no
 | --- | --- | --- |
 | `resultingPrincipal` | money | |
 | `settles` | bool | Lleva el capital a cero |
-| `finalInstallment` | objeto? | `{ periodStart: date, periodEnd: date, periodDays: int, amount: money, currency: string, segments: Segment[] }`. `null` si no salda o si no hay interés causado (saldar el primer día del período abierto) |
+| `finalInstallment` | objeto? | `{ periodStart: date, periodEnd: date, periodDays: int, amount: money, currency: string, segments: Segment[] }`. `null` si no salda o si no hay interés causado (saldar el primer día del período abierto, o un interés que redondea a 0,00) |
 
 ### Errores
 

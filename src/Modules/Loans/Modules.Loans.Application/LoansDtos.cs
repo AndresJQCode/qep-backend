@@ -159,7 +159,7 @@ public sealed record LoanFinalInstallmentDto(
     IReadOnlyList<LoanSegmentDto> Segments);
 
 /// <param name="Settles">El abono lleva el capital a cero.</param>
-/// <param name="FinalInstallment"><c>null</c> si no salda o si no hay interés causado (saldar el primer día del período abierto).</param>
+/// <param name="FinalInstallment"><c>null</c> si no salda o si no hay interés causado (saldar el primer día del período abierto, o un interés que redondea a 0,00).</param>
 public sealed record LoanCapitalPaymentPreviewDto(
     decimal ResultingPrincipal,
     bool Settles,

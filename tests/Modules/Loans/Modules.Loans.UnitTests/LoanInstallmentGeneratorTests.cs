@@ -86,4 +86,16 @@ public sealed class LoanInstallmentGeneratorTests
 
         Assert.Empty(LoanInstallmentGenerator.GenerateClosedPeriods(loan, [], Date("2027-01-15"), Now));
     }
+
+    [Fact]
+    public void APeriodWhoseInterestRoundsToZeroCreatesNoInstallmentButIsStillMarkedGenerated()
+    {
+        // 0,01 al 1,5 % mensual causa 0,00015 en el mes: redondea a 0,00 y una cuota en cero no se cobra.
+        var loan = Loan(principal: 0.01m);
+
+        var installments = LoanInstallmentGenerator.GenerateClosedPeriods(loan, [], Date("2026-11-01"), Now);
+
+        Assert.Empty(installments);
+        Assert.Equal(Date("2026-10-31"), loan.LastGeneratedPeriodEnd);
+    }
 }

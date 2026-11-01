@@ -125,7 +125,7 @@ public static class LoanCapitalOperations
     }
 
     // Saldar cierra el período en la fecha del abono más reciente y cobra el interés hasta el día anterior.
-    // Si cae el primer día del período no hay nada que cobrar y no se genera cuota.
+    // Si cae el primer día del período, o el interés redondea a 0,00, no hay nada que cobrar y no se genera cuota.
     private static LoanInstallment? CloseSettledPeriod(Loan loan, IReadOnlyList<LoanCapitalPayment> payments, DateTimeOffset now)
     {
         var closesOn = LoanCapitalLedger.InOrder(payments).Max(payment => payment.PaidOn);
