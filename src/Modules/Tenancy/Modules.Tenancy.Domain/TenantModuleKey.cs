@@ -58,7 +58,7 @@ public static class TenantModuleKeys
     /// <see cref="Messaging"/> y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Automations = TenantModuleKey.Define("automations");
 
-    /// <summary>Spec 2026-10-23, D-12: directorio de proveedores. Sin dependencias y fuera de
+    /// <summary>Spec 2026-10-23, D-12: directorio de proveedores. Último de la lista, sin dependencias y fuera de
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Suppliers = TenantModuleKey.Define("suppliers");
 
@@ -68,7 +68,7 @@ public static class TenantModuleKeys
     /// <c>RequiredModules</c> de sus permisos y en el frontend, y cambiarla sería una migración de datos.</summary>
     public static readonly TenantModuleKey ServiceContracts = TenantModuleKey.Define("billing");
 
-    /// <summary>Spec 2026-10-30, D7: las claves de API de integración. Último de la lista, sin dependencias y fuera de
+    /// <summary>Spec 2026-10-30, D7: las claves de API de integración. Sin dependencias y fuera de
     /// <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Developer = TenantModuleKey.Define("developer");
 
