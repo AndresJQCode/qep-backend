@@ -128,7 +128,8 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
-- **Iniciar asistente (2026-10-31):** backend primero y frontend después, sin migración. Antes: probarlo en el navegador y contra Meta real.
+- **Canal en vivo de Mensajería (2026-11-01):** crear `DATABASE_LISTENER_CONNECTION_STRING` en `Backend-prod`, la misma cadena de `DATABASE_CONNECTION_STRING` con destino `pg-platform-rw.database.svc.cluster.local:5432`, y comprobar que ese usuario entra directo. Sin la variable el backend despliega igual y los eventos siguen sin llegar. Después del despliegue: el log de arranque debe decir `using connection string key QepDatabaseListener`, y los bytes de los WebSocket en el ingress deben dejar de ser sólo saludo y pings. Backend y frontend salen en cualquier orden.
+- **Iniciar asistente (2026-10-31):** ya en `main` de los dos repos (back `2f1761bc`, front `ae0cc303`). El owner lo probó en producción el 2026-11-01: evento en el hilo y envío a Meta con 200; el mensaje no se veía sin recargar, que es la entrada de arriba.
 - **Plantillas editables (2026-10-31):** backend primero y frontend después. Antes de desplegar, confirmar que ningún flujo publicado en producción use `{nombre}`: la consulta está en la Task 9 de `docs/superpowers/plans/2026-10-31-plantillas-editables-backend.md`, y si devuelve filas ese flujo se corrige primero, porque una versión publicada no se revalida y el nombre saldría vacío. Falta también la prueba manual de la ventana de edición contra Meta: no se hizo.
 Las entradas de esta lista se escribieron antes de que `develop` llegara a `main` el 2026-10-31. Ninguna se dio por
 cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
@@ -235,10 +236,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-01 — Mergeado a `develop` de los dos repos (`--no-ff`) **el arreglo del canal en vivo de Mensajería** (backend `7e3a9bba`, frontend
+  `2240ef4e`). En producción el hub conectaba y no entregaba nada: 37 de 37 WebSocket en 24 h con sólo saludo y pings. Causa **inferida, sin
+  confirmar**: `LISTEN` a través de PgBouncer en modo `transaction`. El listener lee ahora `QepDatabaseListener` y cae a `QepDatabase` si falta
+  (`ListenerConnectionString`). El SPA relee lista, hilo y franja al reconectar y al volver a la pestaña, lo que no depende de esa causa. Unitarias
+  7 de 7, `MessagingHubTests` 4 de 4, frontend 32 de 32 en los archivos tocados; sin suite completa, y las pruebas no pasan por PgBouncer.
 - 2026-10-31 — **Imagen entrante que no se veía hasta recargar** (frontend `c0ad80ae`, en `origin/develop`; falta `main`): el hilo la
   pintaba antes de terminar la copia a R2, `GET /media` daba 404 y el `<img>` no volvía a pedirla. Imagen, sticker y video reintentan
   solos unos 70 s (`useMediaCopyRetry`) y luego ofrecen «Intentar de nuevo». Mensajería 1026 en verde; sin navegador.
-- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`; el frontend ya está en `origin/develop`, el backend sin push) **«Iniciar asistente» desde el hilo** (spec
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`; ya en `origin/main` de los dos repos) **«Iniciar asistente» desde el hilo** (spec
   2026-10-31; backend `5df69090`, frontend `1e0e0033`): `POST /conversations/{id}/automation/start` y `automationStart` en el resumen; también con
   pausa manual o traspaso, siempre sin asesor. Sin migración. Integración 29 + 84 + 24 + 13 en verde, que cubren además la entrada de abajo, y
   frontend de mensajería en verde; sin suite completa, navegador ni Meta real.
