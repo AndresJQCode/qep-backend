@@ -101,7 +101,7 @@ public sealed class GetPlatformUsageHandler(
                 new PlatformConversationCountsDto(row.WhatsApp, row.Instagram, row.WhatsApp + row.Instagram),
                 row.Connected))
             .OrderByDescending(tenant => tenant.Conversations.Total)
-            .ThenBy(tenant => tenant.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(tenant => tenant.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         return new PlatformUsageDto(registered, period, tenants);
