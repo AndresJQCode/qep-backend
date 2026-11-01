@@ -395,6 +395,23 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Loans.Application.ListLoanAssigneesQuery, Modules.Loans.Application.LoanAssigneesDto>,
             Modules.Loans.Application.ListLoanAssigneesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Loans.Application.ListLoansQuery, Modules.Loans.Application.LoanPageDto>,
+            Modules.Loans.Application.ListLoansHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Loans.Application.GetLoanQuery, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.GetLoanHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.CreateLoanCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.CreateLoanHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.UpdateLoanCommand, Modules.Loans.Application.LoanDetailDto>,
+            Modules.Loans.Application.UpdateLoanHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Loans.Application.DeleteLoanCommand, bool>,
+            Modules.Loans.Application.DeleteLoanHandler>();
+        // Lo reutilizan los mutadores de cuotas y abonos de las tareas siguientes.
+        services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1006,6 +1023,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateSupplierValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
