@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -84,11 +84,19 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-30, D7: las claves de API de integración; se prende por tenant.
     [Fact]
-    public void DeveloperIsLastHasNoDependenciesAndIsOffForNewTenants()
+    public void DeveloperHasNoDependenciesAndIsOffForNewTenants()
     {
-        Assert.Equal("developer", TenantModuleKeys.All[^1].Value);
         Assert.Empty(TenantModuleKeys.DependenciesOf(TenantModuleKeys.Developer));
         Assert.DoesNotContain(TenantModuleKeys.Developer, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-10-31: préstamos; se emite a un cliente, así que depende de customers.
+    [Fact]
+    public void LoansIsLastDependsOnCustomersAndIsOffForNewTenants()
+    {
+        Assert.Equal("loans", TenantModuleKeys.All[^1].Value);
+        Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Loans));
+        Assert.DoesNotContain(TenantModuleKeys.Loans, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

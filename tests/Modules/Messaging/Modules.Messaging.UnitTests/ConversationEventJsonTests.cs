@@ -216,6 +216,21 @@ public sealed class ConversationEventJsonTests
     }
 
     [Fact]
+    public void AutomationStartedRoundTripsByName()
+    {
+        var value = new ConversationEvent(ConversationEventType.AutomationStarted, Actor: Actor);
+
+        var json = ConversationEventJson.Serialize(value);
+
+        Assert.Equal($$"""{"type":"AutomationStarted","actor":"{{Actor}}"}""", json);
+        Assert.Equal(value, ConversationEventJson.Parse(json));
+    }
+
+    [Fact]
+    public void ForEventNamesTheStartedAudit() =>
+        Assert.Equal("messaging.conversation.automation_started", MessagingAuditActions.ForEvent(ConversationEventType.AutomationStarted));
+
+    [Fact]
     public void CustomerChangedRoundTripsWithBothCustomers()
     {
         var value = new ConversationEvent(ConversationEventType.CustomerChanged, Actor, CustomerId: Guid.CreateVersion7(), PreviousCustomerId: Guid.CreateVersion7());

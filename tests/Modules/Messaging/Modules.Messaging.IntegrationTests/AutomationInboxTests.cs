@@ -235,6 +235,70 @@ public sealed class AutomationInboxTests
         Assert.Equal("handled", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome FROM messaging.automation_inbox WHERE message_id = @id", ("id", first)));
     }
 
+    /// <summary>Spec 2026-10-31: la fila del arranque manual no respalda a ningún mensaje. Se reclama en el orden de su conversación,
+    /// detrás del entrante anterior, y el motor no la lee como entrante (<c>Opened = false</c>, <c>ReadInboundAsync</c> responde <c>null</c>).</summary>
+    [Fact]
+    public async Task AManualStartRowIsClaimedInOrderAndIsNoInbound()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var inboundId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT message_id FROM messaging.automation_inbox");
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT connection_id FROM messaging.conversations");
+        var later = DateTimeOffset.UtcNow.AddMinutes(5);
+        await EnqueueManualStartAsync(f, connectionId, conversationId, later.AddMinutes(-1));
+
+        // Mientras el entrante anterior siga pendiente, la manual espera.
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+        Assert.Equal(inboundId, first.MessageId);
+        Assert.Empty(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later.AddSeconds(5), 10, Ct)));
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "handled", Ct)));
+
+        var manual = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(later, 10, Ct)));
+
+        Assert.NotEqual(inboundId, manual.MessageId);
+        Assert.False(manual.Opened);
+        Assert.Equal(conversationId, manual.ConversationId);
+        Assert.Equal(f.Tenant.TenantId, manual.TenantId);
+        Assert.Equal(connectionId, manual.ConnectionId);
+        Assert.Null(await WithInboxAsync(f, inbox => inbox.ReadInboundAsync(f.Tenant.TenantId, manual.MessageId, Ct)));
+    }
+
+    [Fact]
+    public async Task PendingManualStartIgnoresInboundRowsAndClosedRows()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT connection_id FROM messaging.conversations");
+
+        // Sólo hay un entrante pendiente: no es una fila manual.
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+
+        await EnqueueManualStartAsync(f, connectionId, conversationId, DateTimeOffset.UtcNow);
+
+        Assert.True(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+        // Otro tenant no la ve.
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(Guid.CreateVersion7(), conversationId, Ct)));
+
+        var manualId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE message_id NOT IN (SELECT id FROM messaging.messages)");
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, manualId, 0, "handled", Ct)));
+
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+    }
+
+    private static async Task EnqueueManualStartAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
+    {
+        using var scope = f.Host.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueManualStart(f.Tenant.TenantId, connectionId, conversationId, now);
+        await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     [Fact]
     public async Task ClaimLeasesAndRetryLaterFailsAtFiveAttempts()
     {

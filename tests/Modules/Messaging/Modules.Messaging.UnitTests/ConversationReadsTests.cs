@@ -77,7 +77,7 @@ public sealed class ConversationReadsTests
         var names = new RecordingMemberNames(member);
         var builder = new ConversationSummaryBuilder(
             new FakeConnectionDirectory(), new FakeCustomerDirectory(), names, new FakeResolutionReasonNames(),
-            new CallerMembership(new FakeMembershipDirectory(), new FakeExecutionContext(Tenant, Guid.CreateVersion7())), new FakeChatbotNames());
+            new CallerMembership(new FakeMembershipDirectory(), new FakeExecutionContext(Tenant, Guid.CreateVersion7())), new FakeChatbotNames(), new FakeAutomationManualStart());
 
         var summaries = await builder.BuildAsync(Tenant, [BlockedRow(DateTimeOffset.UnixEpoch, member)], TestContext.Current.CancellationToken);
 
@@ -100,12 +100,12 @@ public sealed class ConversationReadsTests
 
     private static readonly Guid Tenant = Guid.CreateVersion7();
 
-    private static ConversationSummaryBuilder BuilderFor(FakeCustomerDirectory customers)
+    private static ConversationSummaryBuilder BuilderFor(FakeCustomerDirectory customers, FakeAutomationManualStart? manualStart = null)
     {
         var context = new FakeExecutionContext(Tenant, Guid.CreateVersion7());
         return new ConversationSummaryBuilder(
             new FakeConnectionDirectory(), customers, new FakeMemberNames(Guid.CreateVersion7()), new FakeResolutionReasonNames(),
-            new CallerMembership(new FakeMembershipDirectory(), context), new FakeChatbotNames());
+            new CallerMembership(new FakeMembershipDirectory(), context), new FakeChatbotNames(), manualStart ?? new FakeAutomationManualStart());
     }
 
     private static ConversationRow RowOf(Guid? customerId, string? waId, ConversationChannel channel = ConversationChannel.WhatsApp) => new(
@@ -171,5 +171,42 @@ public sealed class ConversationReadsTests
 
         Assert.Equal(ConversationSummaryBuilder.SharedPhoneCustomersCap, summary.SharedPhoneCustomers.Count);
         Assert.Equal(customers.ByPhone.Take(10).Select(customer => customer.Id), summary.SharedPhoneCustomers.Select(customer => customer.Id));
+    }
+
+    // Spec 2026-10-31 D-13: el estado del botón viaja en el resumen de una sola conversación.
+    [Fact]
+    public async Task BuildOneCarriesTheStartState()
+    {
+        var manualStart = new FakeAutomationManualStart { State = AutomationStartStates.Available };
+        var row = RowOf(null, "573001234567");
+
+        var summary = await BuilderFor(new FakeCustomerDirectory(), manualStart).BuildOneAsync(Tenant, row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(AutomationStartStates.Available, summary.AutomationStart);
+        Assert.Equal([row.Id], manualStart.Asked);
+    }
+
+    // La bandeja no paga: el estado es una lectura por conversación y la lista no lo dibuja.
+    [Fact]
+    public async Task BuildAsyncNeverAsksForTheStartState()
+    {
+        var manualStart = new FakeAutomationManualStart { State = AutomationStartStates.Available };
+
+        var summaries = await BuilderFor(new FakeCustomerDirectory(), manualStart)
+            .BuildAsync(Tenant, [RowOf(null, "573001234567")], TestContext.Current.CancellationToken);
+
+        Assert.Null(summaries[0].AutomationStart);
+        Assert.Equal(0, manualStart.Calls);
+    }
+
+    // Review Focus 2: la salida temprana de BuildOneAsync (sin wa_id) no puede dejar el campo sin pedir.
+    [Fact]
+    public async Task ASummaryWithoutWaIdStillCarriesTheStartState()
+    {
+        var manualStart = new FakeAutomationManualStart { State = AutomationStartStates.WindowClosed };
+
+        var summary = await BuilderFor(new FakeCustomerDirectory(), manualStart).BuildOneAsync(Tenant, RowOf(null, waId: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(AutomationStartStates.WindowClosed, summary.AutomationStart);
     }
 }

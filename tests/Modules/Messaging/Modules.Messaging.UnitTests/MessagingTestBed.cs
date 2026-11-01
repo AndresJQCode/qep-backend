@@ -226,7 +226,7 @@ internal sealed class MessagingTestBed
             Templates,
             Customers,
             Opener,
-            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context), new FakeChatbotNames()),
+            new ConversationSummaryBuilder(Connections, Customers, memberNames, new FakeResolutionReasonNames(), new CallerMembership(membership, context), new FakeChatbotNames(), new FakeAutomationManualStart()),
             TenantModules,
             context,
             new FakeClock(Now),
@@ -855,6 +855,27 @@ internal sealed class FakeChatbotNames : IAutomationsChatbotNames
 {
     public Task<IReadOnlyDictionary<Guid, string>> ResolveAsync(Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, CancellationToken ct) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+}
+
+/// <summary>Spec 2026-10-31: el puerto del arranque manual del asistente. <see cref="State"/> es lo que responde al encabezado;
+/// <see cref="Calls"/> y <see cref="Asked"/> dicen si la bandeja pagó la lectura.</summary>
+internal sealed class FakeAutomationManualStart : IAutomationManualStart
+{
+    public string? State { get; set; }
+
+    public int Calls { get; private set; }
+
+    public List<Guid> Asked { get; } = [];
+
+    public Task<string?> FindStateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Asked.Add(conversationId);
+        return Task.FromResult(State);
+    }
+
+    public Task StartAsync(Guid tenantId, Guid conversationId, Func<Guid, CancellationToken, Task> commit, CancellationToken cancellationToken) =>
+        commit(Guid.CreateVersion7(), cancellationToken);
 }
 
 internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames

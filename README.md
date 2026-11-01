@@ -842,9 +842,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing` y `developer`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer` y `loans`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; último de la lista, sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging` y `loans` exige `customers`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -3270,6 +3270,19 @@ suma las conversaciones con asistente (activo o en pausa) y `GET …/conversatio
 `messaging.automation.not_available` (la conversación no tiene asistente), `messaging.automation.already_paused` y
 `messaging.automation.already_active`.
 
+`POST …/conversations/{id}/automation/start` inicia el asistente desde el hilo (spec 2026-10-31). Pide `messaging.conversation.manage` y
+`If-Match` (428 sin él, 412 si la versión cambió, también si la ingesta tocó la conversación mientras se decidía) y responde 200 con el
+`ConversationSummary`. **Responde antes del envío:** deja la conversación `Active` con el evento `AutomationStarted` y encola una fila
+manual en `automation_inbox` (sin mensaje, ver `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
+después de la respuesta. La decisión es la de `ManualRunStarter` (la misma del motor). Los 422, en el orden en que se deciden: `messaging.conversation.not_open`,
+`messaging.automation.has_advisor`, `messaging.contact.blocked`, `messaging.channel_unsupported` (sólo WhatsApp),
+`messaging.automation.not_available` (el módulo no está activo para el tenant), `messaging.automation.already_active` (el asistente ya
+atiende o un arranque está en cola), `messaging.automation.no_chatbot` (la conexión no tiene un chatbot activo) y
+`messaging.window_closed` (pasaron 24 horas desde el último mensaje del cliente). Un 412 `concurrency.conflict` también sale si otro request tenía el
+candado de la conversación mientras se decidía. `ConversationSummary.automationStart` es `Available` | `WindowClosed` | `NoChatbot` o `null` (BFF: el
+encabezado decide si dibuja «Iniciar asistente» activo, apagado o nada); sólo se llena en las respuestas de una conversación, no en el
+listado ni en la búsqueda.
+
 Tomar, transferir y responder una conversación pausan el asistente (`AdvisorTook`, `AdvisorTransferred`, `AdvisorReplied`); soltarla lo
 deja en pausa; reanudarlo libera al asesor asignado; resolver lo devuelve a `None`. Cada cambio deja el evento `AutomationPaused` /
 `AutomationResumed` (con `pauseReason`) en el hilo y la auditoría `messaging.conversation.automation_paused` / `automation_resumed`. Los
@@ -4046,6 +4059,44 @@ cobro) y `ServiceContracts` `InitialBilling` (esquema `billing`). ServiceContrac
 **Despliegue.** **El backend se despliega antes que el frontend** (`qep-frontend` consume estas rutas). Orden: (1) backend con el módulo, sin `billing` habilitado en ningún tenant: el worker no hace nada; (2) frontend;
 (3) el operador habilita `billing` en el tenant piloto, que aprovisiona las plantillas, espera la aprobación de Meta y elige la
 conexión en Configuración.
+
+### Préstamos
+
+Módulo `Modules.Loans.{Domain,Application,Infrastructure,Api}`, esquema `loans`, clave de módulo `loans` (`Dependencies = [Customers]`,
+fuera de `DefaultForNewTenants`: nace apagado). Rutas bajo `/api/v1/tenants/{tenantId}/loans` (`X-Tenant-Id`), permisos
+`loans.loan.read` y `loans.loan.manage`. Un préstamo es de sólo intereses: cada período de corte genera una cuota con el interés del
+capital vigente, y los abonos a capital cambian el capital desde su fecha.
+
+**Worker** (`LoansGenerationWorker`, `Loans:SweepMinutes`, 15 por defecto, mayor que cero o la API no arranca): por tick recorre los
+tenants activos con el módulo prendido y convierte en cuota cada período ya cerrado. La cuota se genera el día siguiente a su corte.
+La unicidad `(loan_id, period_start)` hace la generación idempotente entre réplicas.
+
+**Migraciones:** `Tenancy` `AddLoansModuleKey` (el CHECK de `tenant_modules` admite `loans`) y `Loans` `InitialLoans` (esquema
+`loans`).
+
+**Avisos para quien opera:**
+
+- **Orden de despliegue: primero backend y migración, después frontend.** El frontend consume estas rutas.
+- **Un `INSERT` a mano en `loans.loans` debe llenar `outstanding_principal` y `last_generated_period_end`.** La base los admite
+  sin valor por defecto de dominio, y el worker parte de ellos: con `last_generated_period_end` nulo genera desde el desembolso
+  (duplicaría las cuotas importadas). `outstanding_principal` es el saldo que ve la pantalla, **no** la base del interés: el interés
+  se calcula sobre el `balance_after` del último abono a capital anterior a cada tramo, o sobre `principal_amount` si no hay
+  abonos (`LoanCapitalLedger.OpeningBalance`).
+- **La carga inicial usa `is_imported = true`, `period_days` nulo y ningún tramo** (`installment_segments`), con `period_end` en
+  fechas reales del calendario de corte: de ahí sale la fecha desde la que el worker sigue generando.
+- **Fusión de clientes:** `CustomerMergeReferences` también mueve `loans.loans.customer_id` al cliente que queda, sin subir la
+  versión del préstamo. Las cuotas no guardan cliente. La vista previa de la fusión no cuenta préstamos.
+- **Retención de usuarios:** `LoansUserReferenceProbe` impide borrar a un usuario cuya membresía sea la encargada de un préstamo o
+  haya marcado el pago de una cuota.
+
+**Novasteel (carga inicial).** El script de carga se escribe cuando el owner entregue el Excel; todavía no existe. Las cuotas
+importadas conservan el monto que trae el Excel: no se recalculan con la tasa ni con el capital del préstamo. Reglas de la carga:
+
+- Todo abono a capital importado lleva `balance_after`: es la base del interés de los períodos siguientes.
+- Toda cuota importada ya pagada lleva `paid_at`; sin él la API responde el año 0001 en `payment.paidAt`.
+- Después de cargar se verifica que `loans.loans.outstanding_principal` sea igual al `balance_after` del último abono vigente de
+  cada préstamo (o a `principal_amount` si no tiene abonos); si no coinciden, el saldo que ve la pantalla y el interés que cobra el
+  worker divergen.
 
 ### API externa
 

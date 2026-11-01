@@ -16,7 +16,8 @@ public sealed record InboundForAutomation(
     Guid? ReplyToMessageId = null, Guid? ConversationId = null);
 
 /// <summary>Spec 2026-10-21 D-M1: la cola que la ingesta del webhook llena y el worker del motor vacía. El motor no corre dentro del
-/// procesador del webhook porque éste no serializa por conversación y su reintento descarta el mismo wamid.</summary>
+/// procesador del webhook porque éste no serializa por conversación y su reintento descarta el mismo wamid. Ojo: <c>message_id</c> no
+/// siempre es un mensaje; la fila de un arranque manual (spec 2026-10-31) lleva un id propio sin fila en <c>messages</c>.</summary>
 public interface IAutomationInbox
 {
     // Complete y RetryLater toman la hora del reloj; Claim recibe `now` para que los leases y la regla «la más vieja de la conversación» se
@@ -47,4 +48,14 @@ public interface IAutomationInbox
     /// borró; una pendiente nunca, por vieja que sea. De todos los tenants: es mantenimiento del worker. Sin esto la tabla crece con cada
     /// entrante desde que el flag está prendido.</summary>
     Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-31: encola el arranque manual del asistente, pedido por una persona desde el hilo. Es una fila sin
+    /// mensaje: su <c>message_id</c> es un id nuevo que no existe en <c>messages</c>, <c>opened</c> es <c>false</c> y el motor la reclama
+    /// en el orden de su conversación, detrás de los entrantes anteriores. Sólo agrega al contexto: viaja en el <c>SaveChanges</c> del
+    /// cambio que la pidió, para que el arranque y la fila queden juntos o no queden.</summary>
+    void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now);
+
+    /// <summary>Spec 2026-10-31: <c>true</c> si la conversación tiene una fila manual pendiente (sin cerrar y sin mensaje que la respalde).
+    /// Los entrantes pendientes y las filas ya cerradas no cuentan. Evita encolar un segundo arranque mientras el primero espera.</summary>
+    Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 }

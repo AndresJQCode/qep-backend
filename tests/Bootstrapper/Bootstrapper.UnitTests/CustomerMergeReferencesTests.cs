@@ -247,6 +247,8 @@ public sealed class CustomerMergeReferencesTests
         await AddRowAsync(database, "billing.services", "customer_id", TenantId, mergedA);
         await AddRowAsync(database, "billing.charges", "customer_id", TenantId, mergedA);
         await AddRowAsync(database, "billing.services", "customer_id", OtherTenantId, mergedA);
+        await AddRowAsync(database, "loans.loans", "customer_id", TenantId, mergedA);
+        await AddRowAsync(database, "loans.loans", "customer_id", OtherTenantId, mergedA);
         await AddProfileAsync(database, TenantId, withProfile, keep, 0);
         await AddProfileAsync(database, TenantId, mergedA, drop, 0);
         await AddProfileAsync(database, OtherTenantId, mergedA, drop, 0);
@@ -260,6 +262,8 @@ public sealed class CustomerMergeReferencesTests
         Assert.Equal([withProfile], await CustomerIdsAsync(database, "billing.services", "customer_id", TenantId));
         Assert.Equal([withProfile], await CustomerIdsAsync(database, "billing.charges", "customer_id", TenantId));
         Assert.Equal([mergedA], await CustomerIdsAsync(database, "billing.services", "customer_id", OtherTenantId));
+        Assert.Equal([withProfile], await CustomerIdsAsync(database, "loans.loans", "customer_id", TenantId));
+        Assert.Equal([mergedA], await CustomerIdsAsync(database, "loans.loans", "customer_id", OtherTenantId));
         Assert.Equal([(withProfile, keep)], await ProfilesAsync(database, TenantId));
         Assert.Equal([(mergedA, drop)], await ProfilesAsync(database, OtherTenantId));
 
@@ -292,6 +296,7 @@ public sealed class CustomerMergeReferencesTests
         ("shopify.orders", "qep_customer_id"),
         ("billing.services", "customer_id"),
         ("billing.charges", "customer_id"),
+        ("loans.loans", "customer_id"),
     ];
 
     private static CustomersDbContext CustomersFor(PostgreSqlContainer database, CommandCounter? commands = null)
@@ -313,6 +318,8 @@ public sealed class CustomerMergeReferencesTests
             CREATE SCHEMA messaging;
             CREATE SCHEMA shopify;
             CREATE SCHEMA billing;
+            CREATE SCHEMA loans;
+            CREATE TABLE loans.loans (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL);
             CREATE TABLE billing.services (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL,
                 version integer NOT NULL DEFAULT 1);
             CREATE TABLE billing.charges (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL, customer_id uuid NOT NULL);

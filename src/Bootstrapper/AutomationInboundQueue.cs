@@ -25,6 +25,9 @@ internal sealed class AutomationInboundQueue(IAutomationInbox inbox) : IAutomati
     public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) =>
         inbox.PurgeProcessedBeforeAsync(cutoff, batch, cancellationToken);
 
+    public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
+        inbox.HasPendingManualStartAsync(tenantId, conversationId, cancellationToken);
+
     /// <summary><c>Kind</c> viaja como el nombre del <c>MessageKind</c> (<c>CustomerMessageKinds</c> del motor); el texto ya trae la
     /// leyenda cuando el entrante no tiene texto (P2-R4, en <c>ReadInboundAsync</c>).</summary>
     public async Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken) =>
