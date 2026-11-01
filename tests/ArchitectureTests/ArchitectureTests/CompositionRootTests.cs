@@ -699,6 +699,19 @@ public sealed class CompositionRootTests
         Assert.NotNull(writer.GetValue(processor));
     }
 
+    /// <summary>Spec 2026-10-31: el arranque manual del asistente se resuelve del contenedor con todos sus puertos.</summary>
+    [Fact]
+    public void TheContainerBuildsTheManualRunStarter()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Engine.ManualRunStarter>());
+    }
+
     [Fact]
     public void TheContainerCanBuildTheEntitlementMask()
     {

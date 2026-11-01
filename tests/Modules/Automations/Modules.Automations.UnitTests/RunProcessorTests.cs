@@ -13,7 +13,7 @@ namespace Modules.Automations.UnitTests;
 /// Spec 2026-10-21 §5.2 y D-M4: los caminos del arranque que de punta a punta no se pueden provocar a voluntad (el cambio de la
 /// conversación tiene que caer entre la lectura del procesador y el guardado de Mensajería). Con dobles en memoria de todos los puertos.
 /// </summary>
-public sealed class RunProcessorTests
+public sealed partial class RunProcessorTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly Guid ConnectionId = Guid.CreateVersion7();
@@ -1218,7 +1218,13 @@ public sealed class RunProcessorTests
     /// <param name="busy">Ruling P2-R45: otra unidad tiene el lock de la conversación.</param>
     private sealed class NoUnitOfWork(Action? onLock, bool busy) : IAutomationsUnitOfWork, IAsyncDisposable
     {
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public int Saves { get; private set; }
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            Saves++;
+            return Task.CompletedTask;
+        }
 
         public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
 
@@ -1273,11 +1279,12 @@ public sealed class RunProcessorTests
     }
 
     /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
-    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation) : IChatbotRepository
+    private sealed class ServingChatbots(
+        string? flow, EngineSettings? settings = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation, ChatbotStatus status = ChatbotStatus.Active) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
-                ChatbotId, "Servicio", ChatbotStatus.Active, trigger, ["hola"], Chatbot.DefaultRestartKeyword, 3, VersionId));
+                ChatbotId, "Servicio", status, trigger, ["hola"], Chatbot.DefaultRestartKeyword, 3, VersionId));
 
         public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
@@ -1333,7 +1340,10 @@ public sealed class RunProcessorTests
                     ? message
                     : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
 
-        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
+        /// <summary>Spec 2026-10-31: hay una fila de arranque manual sin procesar.</summary>
+        public bool PendingManualStart { get; set; }
+
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(PendingManualStart);
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }

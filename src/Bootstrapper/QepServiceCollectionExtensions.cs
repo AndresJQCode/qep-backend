@@ -1174,6 +1174,7 @@ public static class QepServiceCollectionExtensions
         // y nada se pone rojo. CompositionRootTests lo amarra.
         services.AddScoped<RunUnitWriter>();
         services.AddScoped<RunProcessor>();
+        services.AddScoped<ManualRunStarter>();
         // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
         services.AddScoped<SimulationRunner>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.
