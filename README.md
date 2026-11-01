@@ -4066,7 +4066,9 @@ La unicidad `(loan_id, period_start)` hace la generación idempotente entre rép
 - **Orden de despliegue: primero backend y migración, después frontend.** El frontend consume estas rutas.
 - **Un `INSERT` a mano en `loans.loans` debe llenar `outstanding_principal` y `last_generated_period_end`.** La base los admite
   sin valor por defecto de dominio, y el worker parte de ellos: con `last_generated_period_end` nulo genera desde el desembolso
-  (duplicaría las cuotas importadas), y `outstanding_principal` es el capital sobre el que se calcula el interés.
+  (duplicaría las cuotas importadas). `outstanding_principal` es el saldo que ve la pantalla, **no** la base del interés: el interés
+  se calcula sobre el `balance_after` del último abono a capital anterior a cada tramo, o sobre `principal_amount` si no hay
+  abonos (`LoanCapitalLedger.OpeningBalance`).
 - **La carga inicial usa `is_imported = true`, `period_days` nulo y ningún tramo** (`installment_segments`), con `period_end` en
   fechas reales del calendario de corte: de ahí sale la fecha desde la que el worker sigue generando.
 - **Fusión de clientes:** `CustomerMergeReferences` también mueve `loans.loans.customer_id` al cliente que queda, sin subir la
@@ -4074,8 +4076,14 @@ La unicidad `(loan_id, period_start)` hace la generación idempotente entre rép
 - **Retención de usuarios:** `LoansUserReferenceProbe` impide borrar a un usuario cuya membresía sea la encargada de un préstamo o
   haya marcado el pago de una cuota.
 
-**Novasteel (carga inicial).** El script de carga está escrito a partir del Excel del owner, y las cuotas importadas conservan el
-monto que trae el Excel: no se recalculan con la tasa ni con el capital del préstamo.
+**Novasteel (carga inicial).** El script de carga se escribe cuando el owner entregue el Excel; todavía no existe. Las cuotas
+importadas conservan el monto que trae el Excel: no se recalculan con la tasa ni con el capital del préstamo. Reglas de la carga:
+
+- Todo abono a capital importado lleva `balance_after`: es la base del interés de los períodos siguientes.
+- Toda cuota importada ya pagada lleva `paid_at`; sin él la API responde el año 0001 en `payment.paidAt`.
+- Después de cargar se verifica que `loans.loans.outstanding_principal` sea igual al `balance_after` del último abono vigente de
+  cada préstamo (o a `principal_amount` si no tiene abonos); si no coinciden, el saldo que ve la pantalla y el interés que cobra el
+  worker divergen.
 
 ### API externa
 
