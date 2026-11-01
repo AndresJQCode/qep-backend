@@ -72,12 +72,13 @@ public sealed class Customer
         Cuc = cuc;
         Name = name;
         BusinessName = businessName;
-        // La primera direccion nace principal: un cliente sin direccion principal deja a la
-        // cotizacion sin saber a donde entregar, y su ciudad es la que ya emitio el CUC.
+        // La primera direccion nace principal: es la que la cotizacion preselecciona para entregar,
+        // y su ciudad es la que ya emitio el CUC.
         //
         // Un cliente de afuera nace **sin** libreta: CustomerAddress.CityId es una FK a
-        // geography.cities, que es DIVIPOLA, y no hay ciudad colombiana que ponerle. Una fila con
-        // una ciudad inventada seria peor que no tenerla.
+        // geography.cities, que es DIVIPOLA, y no hay ciudad colombiana que ponerle. Uno sin calle
+        // tampoco tiene fila: CustomerAddress la exige. Una fila inventada seria peor que no
+        // tenerla.
         if (principalAddress is not null)
         {
             var first = CustomerAddress.Create(id, principalAddress, occurredAt);
@@ -86,13 +87,12 @@ public sealed class Customer
         }
 
         // Directo y no por Assign: el analisis de flujo del compilador no atraviesa metodos, asi
-        // que asignar IdentificationNumber alla deja el constructor con un CS8618. Address tiene
-        // el mismo problema desde que dejo de ser opcional: se inicializa aca por lo mismo, y
-        // Assign(contact) la pisa enseguida con el valor normalizado real. Country igual.
+        // que asignar IdentificationNumber alla deja el constructor con un CS8618. Country tiene
+        // el mismo problema: se inicializa aca por lo mismo, y Assign(contact) la pisa enseguida
+        // con el valor normalizado real.
         IdentificationType = identification.Type;
         IdentificationNumber = identification.Number;
         PersonType = personType;
-        Address = string.Empty;
         Country = string.Empty;
         Assign(contact);
         PhoneE164 = phoneNormalizer?.ToE164(Phone, Country ?? UnknownRegion);
@@ -140,24 +140,24 @@ public sealed class Customer
     public string? BusinessName { get; private set; }
 
     /// <summary>
-    /// La libreta de direcciones de envío (CLI-DIR-01): a dónde se le entrega. Siempre hay al
-    /// menos una mientras el cliente existe: la primera nace del alta con el mismo par que el
-    /// domicilio (decisión 3 del spec 2026-09-18), para que un cliente nuevo tenga a dónde
-    /// enviar sin abrir la libreta. Desde ahí son dos datos distintos: editar la ficha no la
-    /// toca, y marcar otra principal no mueve <see cref="Address"/> ni <see cref="CityId"/>.
+    /// La libreta de direcciones de envío (CLI-DIR-01): a dónde se le entrega. La primera nace
+    /// del alta con el mismo par que el domicilio (decisión 3 del spec 2026-09-18), para que un
+    /// cliente nuevo tenga a dónde enviar sin abrir la libreta. Puede estar vacía: un cliente de
+    /// afuera o uno sin calle nacen sin ella. Desde el alta son dos datos distintos: editar la
+    /// ficha no la toca, y marcar otra principal no mueve <see cref="Address"/> ni
+    /// <see cref="CityId"/>.
     /// </summary>
     public IReadOnlyCollection<CustomerAddress> Addresses => _addresses;
 
-    /// <summary>La direccion que la cotizacion propone por defecto. Nunca es null en un cliente
-    /// creado por <see cref="Create"/>; el tipo lo admite solo porque EF materializa el agregado
-    /// sin sus hijos cuando la consulta no los incluye.</summary>
+    /// <summary>La direccion que la cotizacion propone por defecto. Null en un cliente sin libreta
+    /// (ver <see cref="Addresses"/>), o si la consulta no incluyo las direcciones: EF materializa
+    /// el agregado sin sus hijos.</summary>
     public CustomerAddress? PrincipalAddress =>
         _addresses.FirstOrDefault(address => address.IsPrincipal);
 
-    /// <summary>La principal, o una excepcion clara si la consulta no incluyo las direcciones.
-    /// Todo cliente creado tiene una; que falte solo puede ser un <c>Include</c> olvidado en el
-    /// repositorio. Desde el spec 2026-09-18 la lectura del domicilio no pasa por acá
-    /// (<see cref="Address"/>/<see cref="CityId"/>); queda para la libreta.</summary>
+    /// <summary>La principal, o una excepcion clara si no la hay: una libreta vacia o un
+    /// <c>Include</c> olvidado en el repositorio. Desde el spec 2026-09-18 la lectura del domicilio
+    /// no pasa por acá (<see cref="Address"/>/<see cref="CityId"/>); queda para la libreta.</summary>
     public CustomerAddress RequirePrincipalAddress() =>
         PrincipalAddress
             ?? throw new InvalidOperationException(
@@ -216,7 +216,8 @@ public sealed class Customer
     /// se ofrece primero. CLI-DIR-01 había fundido las dos cosas y marcar otra principal movía el
     /// domicilio; volvieron a separarse.
     ///
-    /// Nulo en un cliente incompleto (spec 2026-10-10 §6.2).
+    /// Opcional: nulo en un cliente incompleto (spec 2026-10-10 §6.2) y en uno completo cuya calle
+    /// no se conoce. Nunca cadena vacía (<see cref="CustomerContactInfo"/>).
     /// </summary>
     public string? Address { get; private set; }
 
@@ -888,7 +889,7 @@ public sealed class Customer
 
     // Asigna todo siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
     // implementacion que ignore los null "para no pisar" deja campos imborrables y pasa todas las
-    // demas pruebas. La direccion llega validada por Normalized; el par pais/ciudad se resuelve
+    // demas pruebas. La direccion llega normalizada (null si vino en blanco); el par pais/ciudad se resuelve
     // aca con el codigo que este agregado emitia antes de la libreta.
     private void Assign(CustomerContactInfo contact)
     {

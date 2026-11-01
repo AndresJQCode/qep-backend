@@ -303,4 +303,103 @@ public sealed class CustomerWriteHandlersTests
 
         Assert.Null(Assert.Single(customers.Added).PersonType);
     }
+
+    // La dirección propia del cliente es opcional. Sin calle no se siembra la libreta, cuya fila sí la exige
+    // (customers.address.address_required): nace sin ella, igual que un cliente de afuera.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateWithoutAnAddressIsCompleteWithNoAddressAndAnEmptyBook(string? address)
+    {
+        var customers = new FakeCustomerRepository();
+        var command = CreateCommand() with { Address = address };
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork()).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        var customer = Assert.Single(customers.Added);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
+        Assert.True(customer.IsComplete);
+    }
+
+    [Fact]
+    public async Task CreateWithAnAddressStillSeedsTheBook()
+    {
+        var customers = new FakeCustomerRepository();
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork()).HandleAsync(CreateCommand(), TestContext.Current.CancellationToken));
+
+        var customer = Assert.Single(customers.Added);
+        Assert.Equal("Calle 10 # 45-12", customer.Address);
+        Assert.Equal("Calle 10 # 45-12", Assert.Single(customer.Addresses).Address);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CompletingWithoutAnAddressIsCompleteWithNoAddressAndAnEmptyBook(string? address)
+    {
+        var customers = new FakeCustomerRepository();
+        var incomplete = IncompleteCustomer();
+        customers.Known.Add(incomplete);
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewUpdate(customers, new UnitOfWork()).HandleAsync(
+                UpdateCommand(incomplete) with { Address = address }, TestContext.Current.CancellationToken));
+
+        Assert.True(incomplete.IsComplete);
+        Assert.Null(incomplete.Address);
+        Assert.Empty(incomplete.Addresses);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateClearingTheAddressSavesNullAndLeavesTheBookUntouched(string? address)
+    {
+        var customers = new FakeCustomerRepository();
+        var target = Customer.Create(
+            CustomerId.New(), CustomerWriteDoubles.Tenant, "CLI08000001", "Verde Esencial", null,
+            new CustomerAddressDetails { Name = "Bodega", Address = "Carrera 7 # 71-21", CityId = CityId },
+            new CustomerIdentification { Type = IdentificationType.Nit, Number = "900123456" },
+            null,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
+            new CustomerCommercialInfo { ClassificationId = Classification.Id },
+            Now,
+            new PlusNormalizer());
+        customers.Known.Add(target);
+        var row = Assert.Single(target.Addresses);
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewUpdate(customers, new UnitOfWork()).HandleAsync(
+                UpdateCommand(target) with { Address = address }, TestContext.Current.CancellationToken));
+
+        Assert.Null(target.Address);
+        Assert.Same(row, Assert.Single(target.Addresses));
+        Assert.Equal("Carrera 7 # 71-21", row.Address);
+    }
+
+    [Fact]
+    public async Task AnAddressLongerThanTheColumnIsStillRejectedWithTheFieldError()
+    {
+        var tooLong = new string('d', CustomerContactInfo.AddressMaxLength + 1);
+        var complete = CompleteCustomer();
+        var customers = new FakeCustomerRepository();
+        customers.Known.Add(complete);
+
+        var onCreate = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() =>
+            NewCreate(new FakeCustomerRepository(), new UnitOfWork()).HandleAsync(
+                CreateCommand() with { Address = tooLong }, TestContext.Current.CancellationToken));
+        var onUpdate = await Assert.ThrowsAsync<FluentValidation.ValidationException>(() =>
+            NewUpdate(customers, new UnitOfWork()).HandleAsync(
+                UpdateCommand(complete) with { Address = tooLong }, TestContext.Current.CancellationToken));
+
+        Assert.Contains(onCreate.Errors, error => error.PropertyName == "Address");
+        Assert.Contains(onUpdate.Errors, error => error.PropertyName == "Address");
+    }
 }

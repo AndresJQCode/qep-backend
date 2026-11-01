@@ -67,6 +67,30 @@ public sealed class CustomerCompletenessApiTests
         Assert.Equal(["isComplete"], await ValidationFieldsAsync(response));
     }
 
+    // La dirección es opcional también al completar: la ficha queda completa, con null y sin libreta.
+    [Fact]
+    public async Task APutWithoutAnAddressCompletesTheRecordWithAnEmptyBook()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var incomplete = await SeedIncompleteAsync(factory);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{incomplete}",
+            NewCustomerBody(city.CityId, classification.Id, name: "Laura Pérez", identificationType: "CC", identificationNumber: "1020304050", address: ""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await client.GetFromJsonAsync<JsonElement>($"{CustomersUrl()}/{incomplete}", TestContext.Current.CancellationToken);
+        Assert.True(detail.GetProperty("isComplete").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, detail.GetProperty("address").ValueKind);
+        Assert.Empty(detail.GetProperty("addresses").EnumerateArray());
+    }
+
     [Fact]
     public async Task APutWithEverythingCompletesTheRecordWithANewCuc()
     {
