@@ -24,6 +24,9 @@ public enum ConversationEventType
 
     /// <summary>Spec 2026-10-26: un asesor desbloqueó al contacto.</summary>
     ContactUnblocked,
+
+    /// <summary>Spec 2026-10-31: un asesor arrancó el asistente desde el hilo (se guarda por nombre: va al final).</summary>
+    AutomationStarted,
 }
 
 /// <summary>

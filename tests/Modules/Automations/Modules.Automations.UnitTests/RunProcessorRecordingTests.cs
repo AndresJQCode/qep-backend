@@ -381,6 +381,8 @@ public sealed class RunProcessorRecordingTests
                 ? message
                 : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
 
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
+
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 

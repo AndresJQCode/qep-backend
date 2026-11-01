@@ -7,6 +7,36 @@ public sealed record PauseAutomationCommand(Guid TenantId, Guid ConversationId, 
 
 public sealed record ResumeAutomationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
 
+public sealed record StartAutomationCommand(Guid TenantId, Guid ConversationId, long ExpectedVersion) : ICommand<ConversationSummary>;
+
+/// <summary>Spec 2026-10-31: una persona inicia el asistente desde el hilo. Mismo orden que pausar (tenant y permiso, 404, membresía,
+/// If-Match). El agregado se carga antes del candado a propósito: cualquier cambio en el medio, también el <c>version + 1</c> por SQL
+/// de la ingesta, choca al guardar y sale 412; no hace falta reintentar. La fila manual de la cola, el evento y la auditoría salen en
+/// un solo guardado, y la unidad corre en el worker.</summary>
+public sealed class StartAutomationHandler(ConversationAssignmentSteps steps, IAutomationManualStart automations, IAutomationInbox inbox)
+    : ICommandHandler<StartAutomationCommand, ConversationSummary>
+{
+    public async Task<ConversationSummary> HandleAsync(StartAutomationCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
+        ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
+        var now = steps.Now;
+        ConversationSummary? summary = null;
+        await automations.StartAsync(
+            command.TenantId,
+            command.ConversationId,
+            async (chatbotId, ct) =>
+            {
+                var start = conversation.StartAutomationByMember(member, chatbotId, now);
+                inbox.EnqueueManualStart(command.TenantId, conversation.ConnectionId, conversation.Id, now);
+                summary = await steps.CommitAsync(command.TenantId, conversation, [start], now, ct);
+            },
+            cancellationToken);
+        return summary!;
+    }
+}
+
 /// <summary>Spec 2026-10-21 §4.4: pausar a mano el asistente. Mismo orden que tomar (tenant y permiso → 404 → membresía → If-Match),
 /// y el evento y la auditoría salen en la misma transacción que el cambio.</summary>
 public sealed class PauseAutomationHandler(ConversationAssignmentSteps steps) : ICommandHandler<PauseAutomationCommand, ConversationSummary>

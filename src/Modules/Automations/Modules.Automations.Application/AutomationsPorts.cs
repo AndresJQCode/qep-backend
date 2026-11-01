@@ -264,6 +264,9 @@ public interface IAutomationInboundQueue
     /// <summary>Ruling P2-R7: borra hasta <paramref name="batch"/> filas ya procesadas antes de <paramref name="cutoff"/>, de todos los
     /// tenants, y devuelve cuántas; las pendientes quedan.</summary>
     Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-10-31: <c>true</c> si la conversación tiene una fila de arranque manual pendiente (sin cerrar y sin mensaje).</summary>
+    Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 }
 
 /// <summary>Lo que el motor necesita de la conversación (§5.2 paso 2). <see cref="Status"/> es <c>Open</c> o <c>Resolved</c>;
@@ -271,11 +274,14 @@ public interface IAutomationInboundQueue
 /// <see cref="CustomerName"/> es el nombre de perfil de WhatsApp y <see cref="Phone"/>, el <c>wa_id</c>.
 /// <see cref="AutomationResumedAt"/> (D-M15, P2-R25) es cuándo una persona la devolvió al asistente por última vez.
 /// <see cref="AutomationPauseReason"/> (spec 2026-10-26 D-3b) es el motivo de la pausa (<c>AdvisorTook</c>, <c>AdvisorReplied</c>,
-/// <c>AdvisorTransferred</c>, <c>Manual</c> o <c>Handoff</c>) y es <c>null</c> si el asistente no está pausado.</summary>
+/// <c>AdvisorTransferred</c>, <c>Manual</c> o <c>Handoff</c>) y es <c>null</c> si el asistente no está pausado.
+/// <see cref="Channel"/> (<c>WhatsApp</c> o <c>Instagram</c>), <see cref="Blocked"/> (el contacto está bloqueado) y
+/// <see cref="WindowExpiresAt"/> (cuándo se cierra la ventana de 24 h; <c>null</c> si el cliente nunca escribió) son lo que hace falta para
+/// decidir si una persona puede iniciar el asistente desde el hilo (spec 2026-10-31).</summary>
 public sealed record AutomationConversationState(
     string Status, Guid? AssignedMemberId, string AutomationStatus, Guid? AutomationChatbotId, Guid ConnectionId,
     DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone, DateTimeOffset? AutomationResumedAt = null,
-    string? AutomationPauseReason = null);
+    string? AutomationPauseReason = null, string Channel = "WhatsApp", bool Blocked = false, DateTimeOffset? WindowExpiresAt = null);
 
 /// <summary>Spec 2026-10-21 §5.3, D-M5 y D-M14: lo que el motor le hace a la conversación (adaptador en Bootstrapper sobre el agregado
 /// <c>Conversation</c> de Mensajería). Cada cambio se guarda y se notifica antes de volver. Una regla del agregado que no se cumple

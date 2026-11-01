@@ -82,6 +82,7 @@ plan 3, ya mergeado en `develop` del frontend (`a2d28c17`).
 | Spec | Estado | Notas |
 | --- | --- | --- |
 | 2026-10-29 cobros recurrentes (contratos de servicio) | Por verificar (backend sin compilar tras el renombre y el historial de precios; merges backend `0165a99`, `cbaf506`, frontend `517bf22`, `893a795`) | Renombre a `ServiceContracts` y historial de precios del owner, 2026-10-30; el spec lleva la nota del renombre en §1 |
+| 2026-10-31 iniciar el bot desde el hilo | Construido (backend `5df69090`, `ManualRunStarter`; frontend `1e0e0033`) | Sin migración; backend primero. Falta la prueba manual. Decisión pendiente del owner: el aviso de 24 horas en conversaciones sin entrantes |
 | 2026-10-29 WhatsApp: historial por coexistencia | Construido (backend `ab353bdb`, frontend `18627637`) | Rulings R1-R16 en el ledger de la sesión; decisiones del owner del 2026-10-30: aviso propio en el compositor, eco a número desconocido nace resuelto, el reporte de Mensajería excluye lo importado |
 | 2026-10-07 módulo POS | Construido (módulo Pos) | El spec aún dice «borrador» |
 | 2026-10-07 módulos por tenant | Construido (`TenantModuleKey`, `TenantModulesEndpoints`) | El spec aún dice «borrador» |
@@ -127,6 +128,7 @@ historial de `git` los conserva.
 
 ## Antes de llevar `develop` a `main` (lo hace el owner)
 
+- **Iniciar asistente (2026-10-31):** backend primero y frontend después, sin migración. Antes: probarlo en el navegador y contra Meta real.
 - **Plantillas editables (2026-10-31):** backend primero y frontend después. Antes de desplegar, confirmar que ningún flujo publicado en producción use `{nombre}`: la consulta está en la Task 9 de `docs/superpowers/plans/2026-10-31-plantillas-editables-backend.md`, y si devuelve filas ese flujo se corrige primero, porque una versión publicada no se revalida y el nombre saldría vacío. Falta también la prueba manual de la ventana de edición contra Meta: no se hizo.
 Las entradas de esta lista se escribieron antes de que `develop` llegara a `main` el 2026-10-31. Ninguna se dio por
 cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
@@ -233,6 +235,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-10-31 — **Imagen entrante que no se veía hasta recargar** (frontend `c0ad80ae`, en `origin/develop`; falta `main`): el hilo la
+  pintaba antes de terminar la copia a R2, `GET /media` daba 404 y el `<img>` no volvía a pedirla. Imagen, sticker y video reintentan
+  solos unos 70 s (`useMediaCopyRetry`) y luego ofrecen «Intentar de nuevo». Mensajería 1026 en verde; sin navegador.
+- 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`; el frontend ya está en `origin/develop`, el backend sin push) **«Iniciar asistente» desde el hilo** (spec
+  2026-10-31; backend `5df69090`, frontend `1e0e0033`): `POST /conversations/{id}/automation/start` y `automationStart` en el resumen; también con
+  pausa manual o traspaso, siempre sin asesor. Sin migración. Integración 29 + 84 + 24 + 13 en verde, que cubren además la entrada de abajo, y
+  frontend de mensajería en verde; sin suite completa, navegador ni Meta real.
 - 2026-10-31 — Mergeado a `develop` de los dos repos (`--no-ff`, sin push) **la parte en horario de «cuándo toma el bot la conversación»** (spec
   2026-10-26, D-1, D-1b, D-2, D-3b, D-12, D-12b; backend `07fcaafb`, frontend `589e0f4f`): `NewConversation` y `OutsideHours` arrancan con cualquier
   entrante, y una pausa automática sin asesor ya no frena al bot; `Manual`, `Handoff` y tener asesor sí. **Sin correr pruebas, por pedido del owner

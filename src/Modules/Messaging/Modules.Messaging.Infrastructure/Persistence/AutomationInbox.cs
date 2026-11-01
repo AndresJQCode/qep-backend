@@ -117,6 +117,31 @@ internal sealed class AutomationInbox(MessagingDbContext dbContext, IClock clock
             """, cancellationToken);
     }
 
+    public void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now) =>
+        dbContext.AutomationInbox.Add(new AutomationInboxRecord
+        {
+            // Un id propio: la fila no respalda a ningún mensaje, y ReadInboundAsync responde null para él.
+            MessageId = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            ConnectionId = connectionId,
+            ConversationId = conversationId,
+            Opened = false,
+            CreatedAt = now,
+            NextAttemptAt = now,
+        });
+
+    // Por IX_automation_inbox_conversation (parcial sobre las pendientes). Lo que distingue a la manual es que su id no está en messages.
+    public async Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Database.SqlQuery<bool>(
+            $"""
+            SELECT EXISTS (SELECT 1 FROM messaging.automation_inbox AS inbox
+                            WHERE inbox.conversation_id = {conversationId} AND inbox.tenant_id = {tenantId} AND inbox.processed_at IS NULL
+                              AND NOT EXISTS (SELECT 1 FROM messaging.messages AS message WHERE message.id = inbox.message_id)) AS "Value"
+            """).ToListAsync(cancellationToken);
+        return rows[0];
+    }
+
     private sealed record InboundRow(
         Guid MessageId, short Kind, string? Text, string? ReplyId, string? MimeType, string? FileName, bool Stored, DateTimeOffset OccurredAt, string? Wamid,
         Guid? ReplyToMessageId, Guid ConversationId)
