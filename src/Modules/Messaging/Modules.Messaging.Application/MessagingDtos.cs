@@ -70,6 +70,14 @@ public sealed record ConversationSummary(
     /// hasta el siguiente GET. Vacía en el listado y en la búsqueda <b>a propósito</b> (D-D6: ninguna fila la dibuja); no la
     /// «arregles». Siempre vacía en Instagram y sin wa_id.</summary>
     public IReadOnlyList<CustomerRefDto> SharedPhoneCustomers { get; init; } = [];
+
+    /// <summary>Spec 2026-10-31 D-8 (BFF): si el encabezado ofrece «Iniciar asistente» y, si no puede, por qué: <c>Available</c>,
+    /// <c>WindowClosed</c> (se ve apagado con «Ya pasaron 24 horas desde el último mensaje del cliente») o <c>NoChatbot</c> («Esta
+    /// conexión no tiene un chatbot activo»); <c>null</c> si no hay nada que ofrecer (asesor, resuelta, bloqueada, otro canal, el
+    /// asistente ya atiende o un arranque ya está en cola). Lo decide Automations con la misma regla del motor: la pantalla no conoce
+    /// el chatbot de la conexión ni debe reimplementar la ventana. Se llena sólo en las respuestas de una conversación; <c>null</c> en
+    /// el listado y la búsqueda es a propósito (ninguna fila lo dibuja y la bandeja no paga la lectura). Es un estado, no un permiso.</summary>
+    public string? AutomationStart { get; init; }
 }
 
 /// <summary>Spec 2026-10-21 §4.5: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
