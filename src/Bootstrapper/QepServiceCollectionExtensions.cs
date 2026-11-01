@@ -902,6 +902,7 @@ public static class QepServiceCollectionExtensions
         // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
         services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
         services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<IQueryHandler<GetExternalMessageQuery, ExternalMessageDto>, GetExternalMessageHandler>();
         services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
