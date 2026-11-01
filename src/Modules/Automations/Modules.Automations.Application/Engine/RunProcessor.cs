@@ -49,8 +49,8 @@ public sealed partial class RunProcessor(
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
 
     // Sólo ids y el nombre del tipo de la excepción: su mensaje puede traer datos del cliente.
-    [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; handed off instead of retrying.")]
-    private static partial void LogManualStartFailed(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId, string errorType);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; closed without retrying (handed off to a person: {HandedOff}).")]
+    private static partial void LogManualStartFailed(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
@@ -72,12 +72,13 @@ public sealed partial class RunProcessor(
         {
             return await RetryLaterAsync(item, ConcurrencyRetryDelay, RunOutcomes.Retry);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            // Spec 2026-10-31 D-8: sin mensaje detrás es la fila de un arranque manual. Un entrante que falla sigue por el reintento del
+            // Spec 2026-10-31 §7: sin mensaje detrás es la fila de un arranque manual. Un entrante que falla sigue por el reintento del
             // lease (la excepción sube), pero acá reintentar deja la conversación con el asistente activo y mudo hasta que el lease
-            // vuelva, que puede ser media hora. Un mensaje pudo haber salido antes de la excepción, así que tampoco se reabre el botón:
-            // se traspasa a una persona y la fila se cierra.
+            // vuelva, que puede ser media hora. Se traspasa para que una persona vea la falla y pueda iniciar de nuevo (queda Paused
+            // Handoff, sin corrida viva ni fila pendiente, y el spec D-3 deja que el botón se ofrezca): ese nuevo intento sabiendo que
+            // un mensaje pudo haber salido antes de la excepción. La fila se cierra.
             if (await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
             {
                 throw;
@@ -109,7 +110,7 @@ public sealed partial class RunProcessor(
     /// fila: la unidad ya se deshizo y dejar la fila abierta la volvería a procesar.</summary>
     private async Task<string> FailManualStartAsync(InboundQueueItem item, Exception exception)
     {
-        LogManualStartFailed(logger, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name);
+        var handedOff = true;
         try
         {
             await conversations.HandoffAsync(
@@ -119,7 +120,10 @@ public sealed partial class RunProcessor(
         catch (DomainException)
         {
             // Ya la tiene una persona.
+            handedOff = false;
         }
+
+        LogManualStartFailed(logger, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name, handedOff);
 
         if (!await inbox.CompleteAsync(item.TenantId, item.MessageId, item.Attempts, RunOutcomes.RunFailed, CancellationToken.None))
         {

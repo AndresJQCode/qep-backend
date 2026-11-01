@@ -10,7 +10,7 @@ public static class AutomationsRunFailures
     /// La corrida no sigue sin el registro.</summary>
     public const string DataConsentUnrecorded = "automations.run.data_consent_unrecorded";
 
-    /// <summary>Spec 2026-10-31 D-8: una excepción no prevista al arrancar el asistente a pedido de una persona. No es un status HTTP: viaja en
+    /// <summary>Spec 2026-10-31 §7: una excepción no prevista al arrancar el asistente a pedido de una persona. No es un status HTTP: viaja en
     /// el traspaso, y el hilo la pinta como «el asistente no pudo arrancar».</summary>
     public const string ManualStartFailed = "automations.run.manual_start_failed";
 

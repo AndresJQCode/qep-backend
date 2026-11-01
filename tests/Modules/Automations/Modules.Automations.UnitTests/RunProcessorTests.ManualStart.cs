@@ -188,6 +188,57 @@ public sealed partial class RunProcessorTests
         Assert.Equal([$"complete {row.MessageId} 1 run_failed"], bed.Inbox.Calls);
     }
 
+    /// <summary>Spec 2026-10-31 D-3: tras el traspaso la conversación queda Paused Handoff, sin corrida viva ni fila pendiente, y el botón
+    /// se vuelve a ofrecer a propósito: la persona ve la falla y puede iniciar de nuevo.</summary>
+    [Fact]
+    public async Task AfterTheFailedStartHandoffTheButtonIsOfferedAgain()
+    {
+        var bed = new Bed(null, ActiveState());
+        bed.Messenger.Failure = new InvalidOperationException("Meta no respondió.");
+        await bed.Processor().ProcessAsync(ManualRow(bed.Inbox), TestContext.Current.CancellationToken);
+        Assert.Single(bed.Conversations.Handoffs);
+        var pausedByHandoff = new AutomationConversationState(
+            "Open", null, "Paused", ChatbotId, ConnectionId, ManualNow, "Laura", "573001234567", null, "Handoff", "WhatsApp", false, ManualNow.AddHours(1));
+        var starter = new ManualRunStarter(
+            new NoUnitOfWork(null, false), new MemoryRuns(), new ServingChatbots(Flow), new RecordingInbox(), new ManualConversations(pausedByHandoff),
+            new ModuleStatus(true), new RunUnitWriter(new ManualRunUnits(), new FixedClock(), NullLogger<RunUnitWriter>.Instance), new FixedClock());
+
+        var verdict = await starter.EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ManualStartVerdict.Available, verdict);
+    }
+
+    /// <summary>Un choque de concurrencia sigue su reintento de 2 s también en la fila manual: no es una falla del arranque.</summary>
+    [Fact]
+    public async Task AManualRowThatHitsAConcurrencyConflictRetriesWithoutHandingOff()
+    {
+        var bed = new Bed(null, ActiveState());
+        bed.Messenger.Failure = new RequestConcurrencyException("concurrency.conflict", "La conversación cambió.");
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Retry, outcome);
+        Assert.Equal([$"retry {row.MessageId} 1 00:00:02"], bed.Inbox.Calls);
+        Assert.Empty(bed.Conversations.Handoffs);
+    }
+
+    /// <summary>Con el token del worker cancelado (el servicio se apaga) la cancelación sube: no se traspasa ni se cierra la fila.</summary>
+    [Fact]
+    public async Task AManualRowWithTheWorkerTokenCancelledPropagatesWithoutHandingOff()
+    {
+        var bed = new Bed(null, ActiveState());
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        bed.Messenger.Failure = new OperationCanceledException(cts.Token);
+        var row = ManualRow(bed.Inbox);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bed.Processor().ProcessAsync(row, cts.Token));
+
+        Assert.Empty(bed.Conversations.Handoffs);
+        Assert.Empty(bed.Inbox.Calls);
+    }
+
     [Fact]
     public async Task AnInboundThatThrowsKeepsItsLeaseRetry()
     {
@@ -240,11 +291,17 @@ public sealed partial class RunProcessorTests
     [Theory]
     [InlineData("advisor")]
     [InlineData("resolved")]
+    [InlineData("paused-manual")]
+    [InlineData("paused-advisor-took")]
     public async Task AManualRowOnAHeldOrResolvedConversationIsSkipped(string scenario)
     {
-        var state = scenario == "advisor"
-            ? ActiveState() with { AssignedMemberId = Guid.CreateVersion7() }
-            : ActiveState() with { Status = "Resolved" };
+        var state = scenario switch
+        {
+            "advisor" => ActiveState() with { AssignedMemberId = Guid.CreateVersion7() },
+            "resolved" => ActiveState() with { Status = "Resolved" },
+            "paused-manual" => ActiveState() with { AutomationStatus = "Paused", AutomationPauseReason = "Manual" },
+            _ => ActiveState() with { AutomationStatus = "Paused", AutomationPauseReason = "AdvisorTook" },
+        };
         var bed = new Bed(null, state);
         var row = ManualRow(bed.Inbox);
 
