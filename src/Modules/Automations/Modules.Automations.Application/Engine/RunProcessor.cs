@@ -48,6 +48,10 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Automation inbox row {MessageId} of tenant {TenantId} was re-claimed after attempt {Attempts}; this result does not count.")]
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
 
+    // Sólo ids y el nombre del tipo de la excepción: su mensaje puede traer datos del cliente.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; handed off instead of retrying.")]
+    private static partial void LogManualStartFailed(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId, string errorType);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
 
@@ -68,6 +72,19 @@ public sealed partial class RunProcessor(
         {
             return await RetryLaterAsync(item, ConcurrencyRetryDelay, RunOutcomes.Retry);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Spec 2026-10-31 D-8: sin mensaje detrás es la fila de un arranque manual. Un entrante que falla sigue por el reintento del
+            // lease (la excepción sube), pero acá reintentar deja la conversación con el asistente activo y mudo hasta que el lease
+            // vuelva, que puede ser media hora. Un mensaje pudo haber salido antes de la excepción, así que tampoco se reabre el botón:
+            // se traspasa a una persona y la fila se cierra.
+            if (await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
+            {
+                throw;
+            }
+
+            return await FailManualStartAsync(item, exception);
+        }
 
         if (outcome == RunOutcomes.Locked)
         {
@@ -85,6 +102,31 @@ public sealed partial class RunProcessor(
         }
 
         return outcome;
+    }
+
+    /// <summary>El traspaso y el cierre de una fila manual que falló. Un <see cref="DomainException"/> del traspaso se ignora: una persona la
+    /// tomó o la resolvió entre el arranque y ahora, así que ya no hay nada que pasarle. Sin cancelación, como el cierre normal de la
+    /// fila: la unidad ya se deshizo y dejar la fila abierta la volvería a procesar.</summary>
+    private async Task<string> FailManualStartAsync(InboundQueueItem item, Exception exception)
+    {
+        LogManualStartFailed(logger, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name);
+        try
+        {
+            await conversations.HandoffAsync(
+                item.TenantId, item.ConversationId, HandoffCause.FlowFailed(AutomationsRunFailures.ManualStartFailed, null, null), null,
+                CancellationToken.None);
+        }
+        catch (DomainException)
+        {
+            // Ya la tiene una persona.
+        }
+
+        if (!await inbox.CompleteAsync(item.TenantId, item.MessageId, item.Attempts, RunOutcomes.RunFailed, CancellationToken.None))
+        {
+            LogReclaimed(logger, item.TenantId, item.MessageId, item.Attempts);
+        }
+
+        return RunOutcomes.RunFailed;
     }
 
     private async Task<string> RetryLaterAsync(InboundQueueItem item, TimeSpan delay, string outcome)
@@ -366,6 +408,14 @@ public sealed partial class RunProcessor(
     private async Task<string?> ContinueAsync(
         InboundQueueItem item, AutomationConversationState conversation, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // Una corrida esperando sólo se mueve con una respuesta del cliente. La fila sin mensaje (el arranque manual que quedó detrás de un
+        // entrante que ya arrancó la corrida) no lo es: se cierra sin enviar y sin pisar el entrante que la corrida tiene registrado (P2-R24).
+        var waitingInbound = run.Status == RunStatus.Waiting ? await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) : null;
+        if (run.Status == RunStatus.Waiting && waitingInbound is null)
+        {
+            return null;
+        }
+
         run.MarkInbound(item.MessageId);
         // Plan D-P4: una corrida Waiting recibe la respuesta; una Running vuelve a pedir el efecto externo en que murió su unidad.
         var trigger = run.Status == RunStatus.Waiting ? RunUnitTriggers.CustomerMessage : RunUnitTriggers.Resume;
@@ -386,13 +436,7 @@ public sealed partial class RunProcessor(
         EngineInput input;
         if (run.Status == RunStatus.Waiting)
         {
-            if (await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) is not { } inbound)
-            {
-                // Sin fila a propósito: la corrida no se movió.
-                return null;
-            }
-
-            var message = await CustomerMessageAsync(item, inbound, flow, run.CurrentNodeId, cancellationToken);
+            var message = await CustomerMessageAsync(item, waitingInbound!, flow, run.CurrentNodeId, cancellationToken);
             if (FlowEngine.IsRestart(settings, message)
                 && await RestartWithLatestAsync(item, conversation, run, now, cancellationToken) is { } restarted)
             {

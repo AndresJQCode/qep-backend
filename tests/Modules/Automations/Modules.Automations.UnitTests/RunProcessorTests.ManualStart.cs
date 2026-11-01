@@ -162,6 +162,100 @@ public sealed partial class RunProcessorTests
         Assert.Empty(bed.Units.Entries);
     }
 
+    /// <summary>La fila de arranque manual: sin mensaje, así que <c>ReadAsync</c> responde <c>null</c> para ella.</summary>
+    private static InboundQueueItem ManualRow(RecordingInbox inbox)
+    {
+        var row = new InboundQueueItem(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, ManualNow, Attempts: 1);
+        inbox.NotInbound.Add(row.MessageId);
+        return row;
+    }
+
+    /// <summary>Review Focus 5: una excepción no prevista no reintenta la fila manual; el lease llegaría a unos 30 minutos con el bot
+    /// activo y mudo. Traspasa y cierra.</summary>
+    [Fact]
+    public async Task AManualStartThatThrowsHandsOffInsteadOfRetrying()
+    {
+        var bed = new Bed(null, ActiveState());
+        bed.Messenger.Failure = new InvalidOperationException("Meta no respondió.");
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.RunFailed, outcome);
+        var handoff = Assert.Single(bed.Conversations.Handoffs);
+        Assert.Equal(HandoffCause.FlowFailed(AutomationsRunFailures.ManualStartFailed, null, null), handoff.Cause);
+        Assert.Null(handoff.Member);
+        Assert.Equal([$"complete {row.MessageId} 1 run_failed"], bed.Inbox.Calls);
+    }
+
+    [Fact]
+    public async Task AnInboundThatThrowsKeepsItsLeaseRetry()
+    {
+        var bed = new Bed(null, ActiveState());
+        bed.Messenger.Failure = new InvalidOperationException("Meta no respondió.");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken));
+
+        Assert.Empty(bed.Conversations.Handoffs);
+        Assert.Empty(bed.Inbox.Calls);
+    }
+
+    [Fact]
+    public async Task AHandoffThatNoLongerAppliesStillClosesTheRow()
+    {
+        var bed = new Bed(null, ActiveState());
+        bed.Messenger.Failure = new InvalidOperationException("Meta no respondió.");
+        bed.Conversations.HandoffFailure = new TestDomainException();
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.RunFailed, outcome);
+        Assert.Equal([$"complete {row.MessageId} 1 run_failed"], bed.Inbox.Calls);
+    }
+
+    /// <summary>Review Focus 4: el entrante encolado antes del arranque ya arrancó una corrida. La fila manual la encuentra viva y se cierra
+    /// sin enviar, sin tocar el entrante que la corrida registró (no es una respuesta del cliente) y sin reintentar.</summary>
+    [Fact]
+    public async Task AManualRowBehindALiveRunClosesWithoutTouchingIt()
+    {
+        var bed = new Bed(null, ActiveState());
+        var run = WaitingRun(ManualNow.AddMinutes(-1));
+        var inboundId = Guid.CreateVersion7();
+        run.MarkInbound(inboundId);
+        bed.Runs.Added.Add(run);
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal([$"complete {row.MessageId} 1 skipped"], bed.Inbox.Calls);
+        Assert.Equal(RunStatus.Waiting, run.Status);
+        Assert.Equal(inboundId, run.LastInboundMessageId);
+        Assert.Empty(bed.Messenger.Sent);
+        Assert.Empty(bed.Conversations.Handoffs);
+    }
+
+    /// <summary>Quien la tome o la resuelva antes de que el worker llegue a la fila manual la deja sin efecto: no envía nada.</summary>
+    [Theory]
+    [InlineData("advisor")]
+    [InlineData("resolved")]
+    public async Task AManualRowOnAHeldOrResolvedConversationIsSkipped(string scenario)
+    {
+        var state = scenario == "advisor"
+            ? ActiveState() with { AssignedMemberId = Guid.CreateVersion7() }
+            : ActiveState() with { Status = "Resolved" };
+        var bed = new Bed(null, state);
+        var row = ManualRow(bed.Inbox);
+
+        var outcome = await bed.Processor().ProcessAsync(row, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Skipped, outcome);
+        Assert.Equal([$"complete {row.MessageId} 1 skipped"], bed.Inbox.Calls);
+        Assert.Empty(bed.Messenger.Sent);
+        Assert.Empty(bed.Runs.Added);
+    }
+
     private sealed class ManualBed
     {
         private readonly AutomationConversationState? state;

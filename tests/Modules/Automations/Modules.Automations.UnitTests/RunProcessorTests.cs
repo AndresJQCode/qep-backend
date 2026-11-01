@@ -1391,8 +1391,16 @@ public sealed partial class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
+        /// <summary>Lo que lanza el traspaso cuando ya no aplica (una persona la tomó o la resolvió).</summary>
+        public Exception? HandoffFailure { get; set; }
+
         public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
         {
+            if (HandoffFailure is not null)
+            {
+                return Task.FromException(HandoffFailure);
+            }
+
             HandedOff++;
             Handoffs.Add((cause, assignToMemberId));
             return Task.CompletedTask;
@@ -1424,8 +1432,16 @@ public sealed partial class RunProcessorTests
         /// <summary>Cómo responde Mensajería a cada texto; sin respuesta, lo da por enviado.</summary>
         public Func<string, BotSendOutcome>? Reply { get; set; }
 
+        /// <summary>Una excepción no prevista del puerto (no un rechazo de Meta), para los caminos que no deben reintentar.</summary>
+        public Exception? Failure { get; set; }
+
         public Task<BotSendOutcome> SendTextAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string text, CancellationToken cancellationToken)
         {
+            if (Failure is not null)
+            {
+                return Task.FromException<BotSendOutcome>(Failure);
+            }
+
             Sent.Add(clientId);
             Texts.Add(text);
             return Task.FromResult(Reply?.Invoke(text) ?? new BotSendOutcome.Sent(Guid.CreateVersion7()));
