@@ -85,7 +85,8 @@ public sealed partial class Conversation
     public Guid? ResolutionReasonId { get; private set; }
 
     /// <summary>Spec 2026-10-21 §4.2: <c>None</c> al nacer. Lo mueven <see cref="StartAutomation"/>, <see cref="PauseAutomation"/>,
-    /// <see cref="ResumeAutomation"/>, tomar/transferir (que pausan un asistente activo) y resolver (que lo borra).</summary>
+    /// <see cref="ResumeAutomation"/>, <see cref="ContinueAutomation"/>, tomar/transferir (que pausan un asistente activo) y resolver (que
+    /// lo borra).</summary>
     public ConversationAutomationStatus AutomationStatus { get; private set; }
 
     public DateTimeOffset? AutomationStartedAt { get; private set; }
@@ -108,7 +109,8 @@ public sealed partial class Conversation
     /// Spec 2026-10-21 D-M15 y ruling P2-R25: cuándo una persona devolvió la conversación al asistente (<see cref="ResumeAutomation"/>). El
     /// motor no ve el ida y vuelta (tomar pausa y no encola entrantes; devolver vuelve a <c>Active</c>), así que compara esta hora con el
     /// arranque de su corrida viva: si es posterior, esa corrida sobrevivió a un humano y termina <c>Interrupted</c>. Arrancar no la
-    /// escribe; se borra con el resto del asistente.
+    /// escribe; se borra con el resto del asistente. <see cref="ContinueAutomation"/> tampoco, a propósito (spec 2026-11-01 D-8): el asesor
+    /// quiere que esa corrida siga, y este sello la mataría.
     /// </summary>
     public DateTimeOffset? AutomationResumedAt { get; private set; }
 
@@ -550,6 +552,40 @@ public sealed partial class Conversation
         HistoryManaged = false;
         Touch(now);
         return new ConversationEvent(ConversationEventType.AutomationStarted, Actor: actorMemberId);
+    }
+
+    /// <summary>Spec 2026-11-01 D-8: un asesor devuelve una pausa manual para que el asistente siga en el paso pendiente. Borra la pausa y
+    /// conserva chatbot, paso y arranque; lo que sigue vive en la corrida. No escribe <see cref="AutomationResumedAt"/>: esa ausencia es
+    /// el marcador, porque con el sello el motor daría la corrida por interrumpida (P2-R25) y reiniciaría el flujo. Rechaza, en este orden:
+    /// conversación cerrada, sin asistente, ya activo, con asesor y cualquier motivo que no sea <c>Manual</c>. Lo que depende de la
+    /// corrida lo decide Automations antes de llegar acá.</summary>
+    public ConversationEvent ContinueAutomation(Guid actorMemberId, DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        switch (AutomationStatus)
+        {
+            case ConversationAutomationStatus.None:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationNotAvailable, "The conversation has no assistant to continue.");
+            case ConversationAutomationStatus.Active:
+                throw new MessagingDomainException(MessagingErrorCodes.AutomationAlreadyActive, "The assistant is already attending the conversation.");
+        }
+
+        if (AssignedMemberId is not null)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationHasAdvisor, "A conversation with an advisor is not attended by the assistant.");
+        }
+
+        if (AutomationPauseReason != Domain.AutomationPauseReason.Manual)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationCannotContinue, "Only a manual pause can continue on its pending step.");
+        }
+
+        AutomationStatus = ConversationAutomationStatus.Active;
+        AutomationPausedAt = null;
+        AutomationPausedByMemberId = null;
+        AutomationPauseReason = null;
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.AutomationContinued, Actor: actorMemberId);
     }
 
     private IReadOnlyList<ConversationEvent> WithAutomationPause(ConversationEvent change, Guid actorMemberId, AutomationPauseReason reason, DateTimeOffset now)

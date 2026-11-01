@@ -78,7 +78,17 @@ public sealed record ConversationSummary(
     /// el chatbot de la conexión ni debe reimplementar la ventana. Se llena sólo en las respuestas de una conversación; <c>null</c> en
     /// el listado y la búsqueda es a propósito (ninguna fila lo dibuja y la bandeja no paga la lectura). Es un estado, no un permiso.</summary>
     public string? AutomationStart { get; init; }
+
+    /// <summary>Spec 2026-11-01 D-6 (BFF): con la conversación pausada y <see cref="AutomationStart"/> en <c>Available</c>, qué hace la
+    /// primera opción del modal; la pantalla no conoce la corrida. <c>null</c> si no hay modal de dos opciones, también si falló la
+    /// evaluación. Se llena donde <see cref="AutomationStart"/>: en las respuestas de una conversación, no en la bandeja.</summary>
+    public AutomationContinueDto? AutomationContinue { get; init; }
 }
+
+/// <summary>Spec 2026-11-01 §5. <c>Mode</c>: <c>PendingStep</c> se retoma con <c>automation/continue</c>; <c>FlowStart</c> no tiene paso que
+/// retomar y su opción llama a <c>automation/resume</c>. <c>CustomerWroteDuringPause</c> (D-10): el cliente escribió después de la pausa,
+/// y esos mensajes el asistente no los lee.</summary>
+public sealed record AutomationContinueDto(string Mode, bool CustomerWroteDuringPause);
 
 /// <summary>Spec 2026-10-21 §4.5: el asistente de la conversación. <c>Status</c> ∈ Active|Paused, por nombre. <c>PausedAt</c>,
 /// <c>PausedBy</c> y <c>PauseReason</c> sólo vienen pausada; <c>PausedBy</c> es <c>null</c> si lo pausó el sistema, y si la membresía

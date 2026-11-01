@@ -24,7 +24,11 @@ public sealed partial class EngineEndToEndTests
 
     private static string ConversationsUrl(Fixture f) => $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/conversations";
 
-    private static async Task<HttpResponseMessage> StartAsync(Fixture f, long? version = null, bool ifMatch = true, HttpClient? client = null)
+    private static Task<HttpResponseMessage> StartAsync(Fixture f, long? version = null, bool ifMatch = true, HttpClient? client = null) =>
+        PostAutomationAsync(f, "start", version, ifMatch, client);
+
+    /// <summary>Los POST de <c>automation/*</c> con versión propia: la de la base si no se pasa, sin <c>If-Match</c> si se pide.</summary>
+    private static async Task<HttpResponseMessage> PostAutomationAsync(Fixture f, string action, long? version, bool ifMatch, HttpClient? client)
     {
         var owned = client is null;
         client ??= CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, MessagingManage);
@@ -32,7 +36,7 @@ public sealed partial class EngineEndToEndTests
         {
             var conversationId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.conversations");
             var current = version ?? await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.conversations");
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"{ConversationsUrl(f)}/{conversationId}/automation/start");
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{ConversationsUrl(f)}/{conversationId}/automation/{action}");
             request.Headers.TryAddWithoutValidation("X-Qep-Client", "web");
             if (ifMatch)
             {

@@ -147,6 +147,19 @@ public sealed class ConversationRun
         FailureCode = failureCode;
     }
 
+    /// <summary>Spec 2026-11-01 D-9: una persona pidió que la corrida siga esperando, así que el reloj del abandono (D-M13) cuenta desde
+    /// ahí. Sin esto, una corrida de 23 h continuada terminaría <c>Abandoned</c> una hora después y el asistente desaparecería de una
+    /// conversación que el asesor acaba de devolver. No toca su estado: ninguna corrida avanza por esto.</summary>
+    public void KeepWaiting(DateTimeOffset now)
+    {
+        if (Status != RunStatus.Waiting)
+        {
+            throw new InvalidOperationException($"La corrida {Id} está en {Status}; sólo una que espera puede seguir esperando.");
+        }
+
+        UpdatedAt = now;
+    }
+
     /// <summary>P2-R24: también sobre una corrida ya terminada en esta unidad (resuelta, interrumpida): el reintento la encuentra por
     /// <c>FindLatestAsync</c>.</summary>
     public void MarkInbound(Guid messageId) => LastInboundMessageId = messageId;

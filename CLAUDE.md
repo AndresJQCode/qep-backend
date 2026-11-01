@@ -553,6 +553,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
   el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
   el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
+- **`Conversation.ContinueAutomation` no escribe `AutomationResumedAt`, y esa ausencia es todo el mecanismo** (spec 2026-11-01). Sellarlo
+  hace que `BotAttendance.HumanTookOver` dé verdadero, la corrida termine `Interrupted` y el flujo reinicie: justo lo que `automation/continue`
+  evita. No hay columna ni bandera de «continuada». Por la misma razón `AutomationPauseReason = Manual` **no** prueba que ningún asesor
+  haya hablado: tomar, transferir o responder sobre una pausa no cambia el motivo, y después de liberar queda igual. Se mide con los
+  eventos del hilo desde `AutomationPausedAt` (`WasTakenSinceAsync`); una regla nueva sobre «sin asesor» tiene que hacer lo mismo. Y la
+  decisión está en un solo lugar para el resumen y el POST (`ManualRunStarter.CanContinueAsync`): si el modal y el botón discrepan,
+  promete lo que no hace.
 - **Un entrante que llega fuera de orden no se encola para el bot** (`InboundIngestion.ShouldEnqueue`, 2026-10-23). La cola
   ordena por llegada y Meta reintenta una entrega fallida hasta horas después: el 2026-10-22, con QEP sin recibir unos diez
   minutos, un «hola» de las 21:42 llegó a las 22:01 detrás de uno de las 21:56 que el bot ya había contestado, y el bot mandó
@@ -725,6 +732,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   arranque dice qué clave usó (`QepDatabaseListener` o `QepDatabase`), nunca el valor. **La causa está inferida, no medida:** se
   verifica tras desplegar con los bytes del WebSocket en el ingress; handshake más pings de 13 bytes y nada más significa que siguen
   sin llegar eventos.
+
+- **`PlatformUsageSource` lee `tenancy.tenants`, `messaging.messages` y `messaging.conversations` por nombre** (spec 2026-11-01). Es SQL crudo en
+  Bootstrapper sobre la conexión de `MessagingDbContext`: una conversación cuenta una vez por canal si tuvo un entrante en vivo (`direction = 1`,
+  `NOT imported`) desde el corte, y el canal sale de `conversations.channel`, no de la conexión. Renombrar una de esas columnas compila y deja
+  `GET …/operator/usage` en 500 (`42703`); lo amarra `PlatformUsageApiTests`, que corre contra el esquema migrado. Si agregas un tipo de mensaje
+  que no deba contar como actividad del cliente, tiene que quedar fuera de `direction = 1` o llevar `imported`, o infla el reporte sin error.
+- **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
+  `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
+  Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
 
 ## Verificación
 

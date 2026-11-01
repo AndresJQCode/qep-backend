@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.SignalR;
+using Modules.Messaging.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 
@@ -12,7 +13,7 @@ namespace Modules.Messaging.Api.Realtime;
 /// criterio de <c>MessagingAuthorization.EnsureAsync</c> con el módulo (decisión 5 del spec de Mensajería) y se exige
 /// membresía activa, porque el grupo del miembro es a quien le suena (decisión 4).
 /// </summary>
-public sealed class MessagingHub(IMembershipDirectory memberships, ITenantModules tenantModules) : Hub
+public sealed class MessagingHub(IMembershipDirectory memberships, ITenantModules tenantModules, IMessagingPresence presence) : Hub
 {
     // Los nombres de las claims son los de Bootstrapper.Authentication.QepClaimTypes, que Modules.Messaging.Api no
     // referencia: `qep_sub` lo pone la cookie de sesión y `sub` el stub de desarrollo (HttpExecutionContext:16-19).
@@ -54,5 +55,12 @@ public sealed class MessagingHub(IMembershipDirectory memberships, ITenantModule
         await Groups.AddToGroupAsync(Context.ConnectionId, MemberGroup(tenantId, memberId.Value), Context.ConnectionAborted);
         await Groups.AddToGroupAsync(Context.ConnectionId, TenantGroup(tenantId), Context.ConnectionAborted);
         await base.OnConnectedAsync();
+        presence.Connected(Context.ConnectionId, tenantId, memberId.Value);
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        presence.Disconnected(Context.ConnectionId);
+        await base.OnDisconnectedAsync(exception);
     }
 }

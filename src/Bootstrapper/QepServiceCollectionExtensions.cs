@@ -115,6 +115,10 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOperatorTenantQuery, OperatorTenantDetailDto>,
             GetOperatorTenantHandler>();
         services.AddScoped<
+            IQueryHandler<GetPlatformUsageQuery, PlatformUsageDto>,
+            GetPlatformUsageHandler>();
+        services.AddScoped<IPlatformUsageSource, PlatformUsageSource>();
+        services.AddScoped<
             ICommandHandler<ChangeTenantModulesCommand, OperatorTenantDetailDto>,
             ChangeTenantModulesHandler>();
         services.AddScoped<
@@ -982,6 +986,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();
         // Spec 2026-10-31: iniciar el asistente desde el hilo. Sin registro, 500.
         services.AddScoped<ICommandHandler<StartAutomationCommand, ConversationSummary>, StartAutomationHandler>();
+        services.AddScoped<ICommandHandler<ContinueAutomationCommand, ConversationSummary>, ContinueAutomationHandler>();
         // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin registro, 500.
         services.AddScoped<ICommandHandler<BlockContactCommand, ConversationSummary>, BlockContactHandler>();
         services.AddScoped<ICommandHandler<UnblockContactCommand, ConversationSummary>, UnblockContactHandler>();
@@ -1086,6 +1091,10 @@ public static class QepServiceCollectionExtensions
         // Messaging (spec 2026-10-09): la bandeja de WhatsApp. Sólo ve Tenancy y Audit; conexiones,
         // clientes y almacenamiento entran por adaptadores que se registran más abajo.
         services.AddMessagingInfrastructure(configuration);
+
+        // Presencia de la bandeja: quién tiene una conexión abierta. Es por proceso, en memoria, y sólo vale con `replicas: 1`;
+        // con más réplicas cada una vería sólo a sus conectados.
+        services.AddSingleton<IMessagingPresence, MessagingPresence>();
 
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.
@@ -1515,6 +1524,8 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-26 §6: la consola de ciudades del operador, con el mismo criterio que las tres de arriba.
                 GeographyOperatorPermissions.CitiesRead,
                 GeographyOperatorPermissions.CitiesManage,
+                // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
+                OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
                 // código, así que no hay migración de datos.
                 IntegrationsPermissions.ConnectionRead,
@@ -2043,6 +2054,14 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+        // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
+        services.AddSingleton(new PermissionDefinition(
+            OperatorPermissions.UsageRead,
+            "Ver el uso de la plataforma",
+            "Permite ver cuántas conversaciones tiene cada tenant, los registros nuevos y quién está conectado.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
 
         // Spec 2026-10-08 (Integraciones), «Permisos»: núcleo, para que el enmascarado por módulos no
         // las toque. Gestionar es "high": cambia las credenciales con las que la empresa le habla a sus
@@ -2531,6 +2550,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 GeographyOperatorPermissions.CitiesManage,
                 policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesManage))
+            // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                OperatorPermissions.UsageRead,
+                policy => AddPermissionRequirement(policy, OperatorPermissions.UsageRead))
             .AddPolicy(
                 IntegrationsPermissions.ConnectionRead,
                 policy => AddPermissionRequirement(policy, IntegrationsPermissions.ConnectionRead))

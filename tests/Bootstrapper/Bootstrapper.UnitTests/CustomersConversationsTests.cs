@@ -27,6 +27,9 @@ public sealed class CustomersConversationsTests
         public Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<bool> HasAdvisorEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<ConversationRow>> FindManyAsync(
             Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

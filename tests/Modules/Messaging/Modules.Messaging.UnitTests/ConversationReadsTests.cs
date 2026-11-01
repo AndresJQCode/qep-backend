@@ -209,4 +209,39 @@ public sealed class ConversationReadsTests
 
         Assert.Equal(AutomationStartStates.WindowClosed, summary.AutomationStart);
     }
+
+    // Spec 2026-11-01 D-6: va al lado de automationStart, con una sola lectura del puerto.
+    [Fact]
+    public async Task BuildOneCarriesTheContinueStateInTheSameRead()
+    {
+        var offer = new AutomationContinueDto(AutomationContinueModes.PendingStep, CustomerWroteDuringPause: true);
+        var manualStart = new FakeAutomationManualStart { State = AutomationStartStates.Available, Continue = offer };
+
+        var summary = await BuilderFor(new FakeCustomerDirectory(), manualStart).BuildOneAsync(Tenant, RowOf(null, "573001234567"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(offer, summary.AutomationContinue);
+        Assert.Equal(1, manualStart.Calls);
+    }
+
+    [Fact]
+    public async Task ASummaryWithoutWaIdStillCarriesTheContinueState()
+    {
+        var offer = new AutomationContinueDto(AutomationContinueModes.FlowStart, CustomerWroteDuringPause: false);
+        var manualStart = new FakeAutomationManualStart { State = AutomationStartStates.Available, Continue = offer };
+
+        var summary = await BuilderFor(new FakeCustomerDirectory(), manualStart).BuildOneAsync(Tenant, RowOf(null, waId: null), TestContext.Current.CancellationToken);
+
+        Assert.Equal(offer, summary.AutomationContinue);
+    }
+
+    [Fact]
+    public async Task TheInboxCarriesNoContinueState()
+    {
+        var manualStart = new FakeAutomationManualStart { Continue = new AutomationContinueDto(AutomationContinueModes.PendingStep, false) };
+
+        var summaries = await BuilderFor(new FakeCustomerDirectory(), manualStart)
+            .BuildAsync(Tenant, [RowOf(null, "573001234567")], TestContext.Current.CancellationToken);
+
+        Assert.Null(summaries[0].AutomationContinue);
+    }
 }

@@ -542,7 +542,45 @@ public sealed class AutomationAdaptersTests
 
         var state = await adapter.FindStateAsync(TenantId, Guid.CreateVersion7(), Ct);
 
-        Assert.Null(state);
+        // Spec 2026-11-01 §5: los dos valores: el modal no ofrece continuar sobre una evaluación que no terminó.
+        Assert.Null(state.Start);
+        Assert.Null(state.Continue);
+    }
+
+    /// <summary>Spec 2026-11-01 D-8: con el candado tomado, 412 como iniciar; no se mira nada más ni se llama a Mensajería.</summary>
+    [Fact]
+    public async Task ContinuingWithTheLockTakenIsAConflict()
+    {
+        var failure = new InvalidOperationException("No debería leer nada con el candado tomado.");
+        var committed = false;
+        var starter = new ManualRunStarter(
+            new BusyUnitOfWork(), Failing<IConversationRunRepository>(failure), Failing<IChatbotRepository>(failure),
+            Failing<IAutomationInboundQueue>(failure), Failing<IAutomationConversations>(failure), Failing<IAutomationsModuleStatus>(failure),
+            new RunUnitWriter(Failing<IRunUnitRepository>(failure), Failing<IClock>(failure), NullLogger<RunUnitWriter>.Instance),
+            Failing<IClock>(failure));
+        var adapter = new AutomationManualStart(starter, NullLogger<AutomationManualStart>.Instance);
+
+        var conflict = await Assert.ThrowsAsync<RequestConcurrencyException>(() => adapter.ContinueAsync(
+            TenantId, Guid.CreateVersion7(), _ =>
+            {
+                committed = true;
+                return Task.CompletedTask;
+            },
+            Ct));
+
+        Assert.Equal("concurrency.conflict", conflict.Code);
+        Assert.False(committed);
+    }
+
+    private sealed class BusyUnitOfWork : IAutomationsUnitOfWork, IAsyncDisposable
+    {
+        public Task SaveChangesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
+
+        public Task<bool> TryLockConversationAsync(Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     /// <summary>La cancelación no se traga: es el request que se abortó.</summary>

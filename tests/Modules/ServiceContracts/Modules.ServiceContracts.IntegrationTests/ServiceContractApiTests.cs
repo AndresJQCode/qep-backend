@@ -986,6 +986,133 @@ public sealed class ServiceContractApiTests
         Assert.Equal((1, 2), (first.Page, first.PageSize));
     }
 
+    [Fact]
+    public async Task SummaryNormalizesEachCycleToAMonthAndKeepsCurrenciesApart()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        var profile = ProfileBody("Email", admin);
+        await CreateAsync(manager, ServiceBody(customerId, profile, name: "Mensual", price: 1000m, currency: "COP"));
+        await CreateAsync(manager, ServiceBody(customerId, null, name: "Semestral", price: 6000m, currency: "COP", cycle: "Semiannual"));
+        await CreateAsync(manager, ServiceBody(customerId, null, name: "Anual", price: 12000m, currency: "COP", cycle: "Annual"));
+        // Tres anuales de 100: redondeados uno por uno darían 24.99.
+        await CreateAsync(manager, ServiceBody(customerId, null, name: "Anual USD 1", price: 100m, currency: "USD", cycle: "Annual"));
+        await CreateAsync(manager, ServiceBody(customerId, null, name: "Anual USD 2", price: 100m, currency: "USD", cycle: "Annual"));
+        await CreateAsync(manager, ServiceBody(customerId, null, name: "Anual USD 3", price: 100m, currency: "USD", cycle: "Annual"));
+
+        var page = await manager.GetFromJsonAsync<ServicePageDto>(ServicesUrl(), Ct);
+
+        Assert.Equal(6, page!.Summary.ActiveCount);
+        Assert.Equal(
+            [new CurrencyAmountDto("COP", 3000.00m), new CurrencyAmountDto("USD", 25.00m)],
+            page.Summary.MonthlyValueByCurrency);
+    }
+
+    // Spec del resumen: un pausado no genera cobros y un cancelado ya terminó, así que ninguno de los dos es valor recurrente.
+    [Fact]
+    public async Task SummaryCountsOnlyActiveContracts()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        await CreateAsync(manager, ServiceBody(customerId, ProfileBody("Email", admin), name: "Activo", price: 1000m, currency: "COP"));
+        var paused = await CreateAsync(manager, ServiceBody(customerId, null, name: "Pausado", price: 2000m, currency: "COP"));
+        var cancelled = await CreateAsync(manager, ServiceBody(customerId, null, name: "Cancelado", price: 4000m, currency: "USD"));
+        await TransitionAsync(manager, paused.Service.Id, "pause", 1);
+        await TransitionAsync(manager, cancelled.Service.Id, "cancel", 1);
+
+        var page = await manager.GetFromJsonAsync<ServicePageDto>(ServicesUrl(), Ct);
+
+        Assert.Equal(1, page!.Summary.ActiveCount);
+        Assert.Equal([new CurrencyAmountDto("COP", 1000.00m)], page.Summary.MonthlyValueByCurrency);
+    }
+
+    // Las dos pantallas leen el mismo cálculo: si la de contratos sumara por su lado, podrían no coincidir con la bandeja.
+    [Fact]
+    public async Task SummaryOverdueFiguresMatchTheChargesInbox()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        await CreateAsync(manager, ServiceBody(
+            customerId, ProfileBody("Email", admin), name: "Vencido", price: 1000m, currency: "COP", firstDueDate: PastAnchor(3)));
+
+        var page = await manager.GetFromJsonAsync<ServicePageDto>(ServicesUrl(), Ct);
+        var charges = await manager.GetFromJsonAsync<ChargePageDto>($"{ServiceContractsUrl()}/charges", Ct);
+
+        Assert.Equal(OverdueOf(3), page!.Summary.OverdueCount);
+        Assert.Equal(charges!.Summary.OverdueCount, page.Summary.OverdueCount);
+        Assert.Equal(charges.Summary.OverdueAmountByCurrency, page.Summary.OverdueAmountByCurrency);
+        Assert.Equal([new CurrencyAmountDto("COP", OverdueOf(3) * 1000m)], page.Summary.OverdueAmountByCurrency);
+    }
+
+    [Fact]
+    public async Task SummaryIsTheWholeTenantRegardlessOfFiltersAndPagination()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var (alfa, admin) = await SeedCustomerAndAdminAsync(factory, "Alfa SAS");
+        var beta = await SeedCustomerAsync(factory, Tenant, "Beta Ltda", "+573001112233", "beta@example.com");
+        using var manager = CreateManager(factory);
+        var profile = ProfileBody("Email", admin);
+        await CreateAsync(manager, ServiceBody(alfa, profile, name: "Hosting", price: 1000m, currency: "COP", firstDueDate: PastAnchor(2)));
+        await CreateAsync(manager, ServiceBody(beta, profile, name: "Soporte", price: 500m, currency: "USD"));
+        var paused = await CreateAsync(manager, ServiceBody(beta, null, name: "Dominio", price: 700m, currency: "USD"));
+        await TransitionAsync(manager, paused.Service.Id, "pause", 1);
+
+        async Task<ServicePageDto> ListAsync(string query) =>
+            (await manager.GetFromJsonAsync<ServicePageDto>($"{ServicesUrl()}{query}", Ct))!;
+
+        var unfiltered = await ListAsync(string.Empty);
+        var filtered = new[]
+        {
+            await ListAsync("?status=cancelled"),
+            await ListAsync("?status=paused"),
+            await ListAsync("?status=all"),
+            await ListAsync($"?status=all&customerId={beta}"),
+            await ListAsync("?status=all&search=no-coincide-con-nada"),
+            await ListAsync("?pageSize=1&page=1"),
+            await ListAsync("?pageSize=1&page=9"),
+        };
+
+        Assert.Equal(2, unfiltered.Summary.ActiveCount);
+        Assert.Equal(OverdueOf(2), unfiltered.Summary.OverdueCount);
+        Assert.Empty(filtered[0].Items);
+        Assert.Empty(filtered[4].Items);
+        Assert.All(filtered, page => Assert.Equal(
+            JsonSerializer.Serialize(unfiltered.Summary), JsonSerializer.Serialize(page.Summary)));
+    }
+
+    [Fact]
+    public async Task SummaryDoesNotLeakAnotherTenantsContracts()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await SeedTenantAsync(factory, ServiceContractsApiHarness.OtherTenantId);
+        var (customerId, admin) = await SeedCustomerAndAdminAsync(factory);
+        using var manager = CreateManager(factory);
+        await CreateAsync(manager, ServiceBody(
+            customerId, ProfileBody("Email", admin), price: 1000m, currency: "COP", firstDueDate: PastAnchor(2)));
+        using var outsider = CreateClient(
+            factory, ServiceContractsApiHarness.OtherSubjectId, ServiceContractsApiHarness.OtherTenantId, ServiceContractsPermissions.Read);
+
+        var theirs = await outsider.GetFromJsonAsync<ServicePageDto>(ServicesUrl(ServiceContractsApiHarness.OtherTenantId), Ct);
+
+        Assert.Equal(0, theirs!.Summary.ActiveCount);
+        Assert.Equal(0, theirs.Summary.OverdueCount);
+        Assert.Empty(theirs.Summary.OverdueAmountByCurrency);
+        Assert.Empty(theirs.Summary.MonthlyValueByCurrency);
+    }
+
     [Theory]
     [InlineData("status=weekly")]
     [InlineData("pageSize=101")]

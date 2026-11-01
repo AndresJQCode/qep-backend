@@ -60,12 +60,26 @@ internal static class QuotationItemEdits
         var desiredVariantIds = desired.Select(line => line.VariantId).ToHashSet();
         var edits = new List<QuotationItemEdit>();
 
+        // Una sola lectura del catálogo para todo el diff: este paso corre también en el cálculo
+        // previo, y una por línea llegó a 130 sentencias por request (cada lectura son varias, por
+        // el AsSplitQuery del agregado). Traerlas juntas no adelanta ningún rechazo: las
+        // comprobaciones siguen abajo, línea por línea, en el mismo orden.
+        var variantIdsToPrice = desired
+            .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
+            .Select(line => line.VariantId)
+            .Distinct()
+            .ToArray();
+        var products = variantIdsToPrice.Length == 0
+            ? new Dictionary<Guid, QuotationVariantPricingRef>()
+            : await pricingLookup.FindManyAsync(tenantId, variantIdsToPrice, cancellationToken);
+
         foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {
             // Rechaza inexistente, inactivo o sin precio en la moneda, con los mismos códigos que
             // POST /quotations/{quotationId}/items.
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.VariantId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(line.VariantId), tenantId, line.VariantId, line.Quantity,
+                quotation.Currency, isRetail);
 
             quotation.AddItem(
                 QuotationItemId.New(), line.VariantId, pricing.ProductId, line.Quantity,
@@ -85,8 +99,9 @@ internal static class QuotationItemEdits
             // Antes de que UpdateItemQuantity la pise: el historial dice de cuánto a cuánto. La
             // escala y el impuesto se vuelven a resolver, igual que en UpdateQuotationItemHandler.
             var previousQuantity = item.Quantity;
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, tenantId, line.VariantId, line.Quantity, quotation.Currency, isRetail, cancellationToken);
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(line.VariantId), tenantId, line.VariantId, line.Quantity,
+                quotation.Currency, isRetail);
 
             quotation.UpdateItemQuantity(
                 item.Id, line.Quantity, pricing.Pricing.DiscountPercentage,

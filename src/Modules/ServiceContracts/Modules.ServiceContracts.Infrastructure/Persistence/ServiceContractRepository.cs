@@ -90,6 +90,20 @@ internal sealed class ServiceContractRepository(ServiceContractsDbContext dbCont
             .Where(service => service.TenantId == tenantId && service.Status == ServiceContractStatus.Active)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        // Se agrupa en SQL sobre el tipo anónimo y se pasa al record después: EF no agrega sobre una proyección a record.
+        var rows = await dbContext.Services
+            .AsNoTracking()
+            .Where(service => service.TenantId == tenantId && service.Status == ServiceContractStatus.Active)
+            .GroupBy(service => new { service.Currency, service.Cycle })
+            .Select(group => new { group.Key.Currency, group.Key.Cycle, Count = group.Count(), Price = group.Sum(service => service.Price) })
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(row => new ActiveServiceTotal(row.Currency, row.Cycle, row.Count, row.Price)).ToList();
+    }
+
     public async Task<IReadOnlyList<ServiceContract>> ListOpenByCustomersAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
     {

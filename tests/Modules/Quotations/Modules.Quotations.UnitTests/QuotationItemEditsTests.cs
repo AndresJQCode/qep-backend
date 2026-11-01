@@ -102,6 +102,7 @@ public sealed class QuotationItemEditsTests
             Assert.Single(edits));
         Assert.Equal(kept, Assert.Single(quotation.Items).ProductId);
         Assert.Empty(catalog.Lookups);
+        Assert.Empty(catalog.ManyLookups);
     }
 
     // El borrador sí puede quedarse sin líneas —nace así— y RemoveItem no tiene la regla del
@@ -156,6 +157,7 @@ public sealed class QuotationItemEditsTests
         Assert.Empty(edits);
         Assert.Equal(versionBefore, quotation.Version);
         Assert.Empty(catalog.Lookups);
+        Assert.Empty(catalog.ManyLookups);
     }
 
     [Fact]
@@ -260,10 +262,162 @@ public sealed class QuotationItemEditsTests
         Assert.Equal((CamisetaM, 5m), (line.VariantId, line.Quantity));
     }
 
+    // ---- Una sola lectura del catálogo por guardado (N+1 de /quotations/preview) ----
+
+    // El cálculo previo corre mientras la persona escribe: una lectura por línea eran hasta 130
+    // sentencias por request en producción. La línea que no cambia no se pide.
+    [Fact]
+    public async Task PricesAdditionsAndQuantityChangesWithOneBatchedLookup()
+    {
+        var unchanged = Guid.CreateVersion7();
+        var changed = Guid.CreateVersion7();
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+        var quotation = EditableQuotation((unchanged, 1m, 100_000m), (changed, 1m, 100_000m));
+        var catalog = new StubPricingCatalog(
+            Product(unchanged, "Vela de soja", 100_000m),
+            Product(changed, "Vela de cera", 100_000m),
+            Product(first, "Difusor", 50_000m),
+            Product(second, "Incienso", 10_000m));
+
+        var edits = await ApplyAsync(
+            quotation,
+            catalog,
+            new QuotationItemAddition(unchanged, 1m),
+            new QuotationItemAddition(first, 2m),
+            new QuotationItemAddition(changed, 4m),
+            new QuotationItemAddition(second, 3m));
+
+        Assert.Empty(catalog.Lookups);
+        Assert.Equal(
+            new[] { changed, first, second }.Order(),
+            Assert.Single(catalog.ManyLookups).Order());
+        Assert.Equal(
+            [
+                new QuotationItemEdit(QuotationItemEditKind.Added, first, "Difusor", null, 2m),
+                new QuotationItemEdit(QuotationItemEditKind.Added, second, "Incienso", null, 3m),
+                new QuotationItemEdit(QuotationItemEditKind.QuantityChanged, changed, "Vela de cera", 1m, 4m),
+            ],
+            edits);
+        Assert.Equal(100_000m + 400_000m + 100_000m + 30_000m, quotation.Total);
+    }
+
+    [Fact]
+    public async Task DoesNotReadTheCatalogWhenNoLineNeedsPricing()
+    {
+        var kept = Guid.CreateVersion7();
+        var removed = Guid.CreateVersion7();
+        var quotation = EditableQuotation((kept, 1m, 100_000m), (removed, 2m, 50_000m));
+        var catalog = new StubPricingCatalog(Product(kept, "Vela de soja", 100_000m));
+
+        await ApplyAsync(quotation, catalog, new QuotationItemAddition(kept, 1m));
+
+        Assert.Empty(catalog.Lookups);
+        Assert.Empty(catalog.ManyLookups);
+    }
+
+    // Traer los precios de una vez no adelanta los rechazos: siguen saliendo línea por línea, en el
+    // mismo punto, así que lo anterior a la línea mala queda aplicado y lo posterior no se toca.
+    [Fact]
+    public async Task TheFirstRejectedAdditionStopsEverythingAfterIt()
+    {
+        var existing = Guid.CreateVersion7();
+        var valid = Guid.CreateVersion7();
+        var inactive = Guid.CreateVersion7();
+        var afterTheBadLine = Guid.CreateVersion7();
+        var quotation = EditableQuotation((existing, 1m, 100_000m));
+        var catalog = new StubPricingCatalog(
+            Product(existing, "Vela de soja", 100_000m),
+            Product(valid, "Difusor", 50_000m),
+            Product(inactive, "Incienso", 10_000m, isActive: false),
+            Product(afterTheBadLine, "Vela de cera", 20_000m));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ApplyAsync(
+            quotation,
+            catalog,
+            new QuotationItemAddition(existing, 5m),
+            new QuotationItemAddition(valid, 1m),
+            new QuotationItemAddition(inactive, 1m),
+            new QuotationItemAddition(afterTheBadLine, 1m)));
+
+        Assert.Equal("quotation.item.product_inactive", error.Code);
+        Assert.Equal(
+            [(existing, 1m), (valid, 1m)],
+            quotation.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.Quantity)));
+    }
+
+    // Las altas van primero aunque el cambio esté antes en la lista: el error que sale es el del alta.
+    [Fact]
+    public async Task ARejectedAdditionWinsOverARejectedChangeListedBeforeIt()
+    {
+        var inactiveExisting = Guid.CreateVersion7();
+        var missing = Guid.CreateVersion7();
+        var quotation = EditableQuotation((inactiveExisting, 1m, 100_000m));
+        var catalog = new StubPricingCatalog(Product(inactiveExisting, "Vela de soja", 100_000m, isActive: false));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ApplyAsync(
+            quotation,
+            catalog,
+            new QuotationItemAddition(inactiveExisting, 5m),
+            new QuotationItemAddition(missing, 1m)));
+
+        Assert.Equal("quotation.item.product_not_found", error.Code);
+        Assert.Equal(1m, Assert.Single(quotation.Items).Quantity);
+    }
+
+    [Fact]
+    public async Task TheFirstRejectedChangeStopsLaterChangesAndTheRemovals()
+    {
+        var valid = Guid.CreateVersion7();
+        var noPrice = Guid.CreateVersion7();
+        var afterTheBadLine = Guid.CreateVersion7();
+        var removed = Guid.CreateVersion7();
+        var quotation = EditableQuotation(
+            (valid, 1m, 100_000m), (noPrice, 1m, 100_000m), (afterTheBadLine, 1m, 100_000m), (removed, 1m, 100_000m));
+        var catalog = new StubPricingCatalog(
+            Product(valid, "Vela de soja", 100_000m),
+            new QuotationVariantPricingRef(
+                noPrice, noPrice, TenantId, "Difusor", "SKU", true,
+                new Dictionary<string, decimal> { ["USD"] = 25m }, [], null),
+            Product(afterTheBadLine, "Incienso", 100_000m, isActive: false));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => ApplyAsync(
+            quotation,
+            catalog,
+            new QuotationItemAddition(valid, 2m),
+            new QuotationItemAddition(noPrice, 2m),
+            new QuotationItemAddition(afterTheBadLine, 2m)));
+
+        Assert.Equal("quotation.item.product_price_unavailable", error.Code);
+        Assert.Equal(
+            [(valid, 2m), (noPrice, 1m), (afterTheBadLine, 1m), (removed, 1m)],
+            quotation.Items.OrderBy(item => item.Position).Select(item => (item.VariantId, item.Quantity)));
+    }
+
+    // La misma respuesta para "no existe" y "es de otro tenant", también por la lectura de varias.
+    [Fact]
+    public async Task AVariantOfAnotherTenantIsNotFound()
+    {
+        var foreign = Guid.CreateVersion7();
+        var quotation = EditableQuotation();
+        var catalog = new StubPricingCatalog(
+            new QuotationVariantPricingRef(
+                foreign, foreign, Guid.CreateVersion7(), "Difusor", "SKU", true,
+                new Dictionary<string, decimal> { ["COP"] = 50_000m }, [], null));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            ApplyAsync(quotation, catalog, new QuotationItemAddition(foreign, 1m)));
+
+        Assert.Equal("quotation.item.product_not_found", error.Code);
+        Assert.Empty(quotation.Items);
+    }
+
     private sealed class StubPricingCatalog(params QuotationVariantPricingRef[] products)
         : IQuotationProductPricingLookup
     {
         public List<Guid> Lookups { get; } = [];
+
+        public List<IReadOnlyCollection<Guid>> ManyLookups { get; } = [];
 
         public Task<QuotationVariantPricingRef?> FindVariantAsync(
             Guid tenantId, Guid productId, CancellationToken cancellationToken)
@@ -276,10 +430,13 @@ public sealed class QuotationItemEditsTests
         public Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindManyAsync(
             Guid tenantId,
             IReadOnlyCollection<Guid> productIds,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
+            CancellationToken cancellationToken)
+        {
+            ManyLookups.Add(productIds);
+            return Task.FromResult<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>>(
                 products
                     .Where(product => productIds.Contains(product.VariantId))
                     .ToDictionary(product => product.VariantId));
+        }
     }
 }
