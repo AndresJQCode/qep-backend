@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Identity.Domain;
 using Modules.Identity.Infrastructure.Persistence;
+using Modules.Loans.Application;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
@@ -24,10 +25,6 @@ internal static class LoansApiHarness
     public const string SubjectId = "01900000-0000-7000-8000-000000000002";
     public const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
     public const string OtherSubjectId = "01900000-0000-7000-8000-0000000000fe";
-
-    // Literales hasta que Application tenga LoansPermissions (Task 5): el harness no puede esperar a ese tipo.
-    private const string ReadPermission = "loans.loan.read";
-    private const string ManagePermission = "loans.loan.manage";
 
     public static string LoansUrl(string tenantId = TenantId) =>
         $"/api/v1/tenants/{tenantId}/loans";
@@ -234,10 +231,10 @@ internal static class LoansApiHarness
     }
 
     public static HttpClient CreateManager(QepApiFactory factory) =>
-        CreateClient(factory, SubjectId, TenantId, ReadPermission, ManagePermission);
+        CreateClient(factory, SubjectId, TenantId, LoansPermissions.Read, LoansPermissions.Manage);
 
     public static HttpClient CreateReader(QepApiFactory factory) =>
-        CreateClient(factory, SubjectId, TenantId, ReadPermission);
+        CreateClient(factory, SubjectId, TenantId, LoansPermissions.Read);
 
     /// <summary>Abre base, fábrica y tenant sembrado: el arranque que repiten todas las pruebas.</summary>
     public static async Task<(PostgreSqlContainer Database, QepApiFactory Factory)> OpenAsync(

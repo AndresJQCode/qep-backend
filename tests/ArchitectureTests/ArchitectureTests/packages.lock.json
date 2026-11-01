@@ -834,6 +834,14 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.loans.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Loans.Application": "[1.0.0, )",
+          "Modules.Loans.Domain": "[1.0.0, )"
+        }
+      },
       "modules.loans.application": {
         "type": "Project",
         "dependencies": {

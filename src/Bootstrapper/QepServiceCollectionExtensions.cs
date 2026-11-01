@@ -62,6 +62,7 @@ using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
+using LoansPermissions = Modules.Loans.Application.LoansPermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -389,6 +390,11 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.ServiceContracts.Application.GetServiceContractsImportTemplateQuery, Modules.ServiceContracts.Application.ServiceContractsImportTemplateFile>,
             Modules.ServiceContracts.Application.GetServiceContractsImportTemplateHandler>();
         services.AddScoped<Modules.ServiceContracts.Application.ServiceContractsImportAnalyzer>();
+
+        // Loans, spec de préstamos 2026-10-31. A mano y con ruta completa, como ServiceContracts: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Loans.Application.ListLoanAssigneesQuery, Modules.Loans.Application.LoanAssigneesDto>,
+            Modules.Loans.Application.ListLoanAssigneesHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1259,6 +1265,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.ServiceContracts.Application.IServiceContractsWhatsAppOutbound, ServiceContractsMetaWhatsAppSender>();
         services.AddScoped<IUserReferenceProbe, ServiceContractsUserReferenceProbe>();
 
+        // Mismo patrón para `loans` (spec de préstamos 2026-10-31): clientes y encargados son ids sueltos y el composition root cablea sus
+        // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
+        services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
+        services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara
@@ -1490,6 +1501,9 @@ public static class QepServiceCollectionExtensions
                 // Spec cobros-recurrentes (owner, 2026-10-29): los servicios que el tenant cobra de forma recurrente los administra quien administra la empresa.
                 ServiceContractsPermissions.Read,
                 ServiceContractsPermissions.Manage,
+                // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
+                LoansPermissions.Read,
+                LoansPermissions.Manage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
                 ApiAccessPermissions.ApiKeyManage
             ]));
@@ -1583,7 +1597,10 @@ public static class QepServiceCollectionExtensions
                 SuppliersPermissions.Manage,
                 // Facturación cobra los servicios recurrentes: ve «Por cobrar» y marca los pagos (owner, 2026-10-29).
                 ServiceContractsPermissions.Read,
-                ServiceContractsPermissions.Manage
+                ServiceContractsPermissions.Manage,
+                // Facturación cobra las cuotas de los préstamos: las ve y las marca pagadas (spec de préstamos, 2026-10-31).
+                LoansPermissions.Read,
+                LoansPermissions.Manage
             ]));
         // Spec 2026-10-07, decisión 4: vende, abre y cierra su caja y lee sus ventas. Sin
         // descuentos ni anulación, y sin catálogo ni clientes: /pos/products le da lo que la caja
@@ -2132,6 +2149,22 @@ public static class QepServiceCollectionExtensions
             "Contratos de servicio",
             "medium",
             RequiredModules: [ModuleKeys.ServiceContracts]));
+        // Spec de préstamos (2026-10-31): nunca se muestran permisos que el tenant no tiene. Con [loans], ModuleEntitlementMask quita el
+        // permiso al apagar el módulo y el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            LoansPermissions.Read,
+            "Ver préstamos",
+            "Permite ver los préstamos, las cuotas por cobrar y los abonos.",
+            "Préstamos",
+            "low",
+            RequiredModules: [ModuleKeys.Loans]));
+        services.AddSingleton(new PermissionDefinition(
+            LoansPermissions.Manage,
+            "Gestionar préstamos",
+            "Permite crear y editar préstamos, marcar cuotas como pagadas y registrar abonos a capital.",
+            "Préstamos",
+            "medium",
+            RequiredModules: [ModuleKeys.Loans]));
     }
 
     private static void AddAuthentication(
@@ -2513,6 +2546,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 ServiceContractsPermissions.Manage,
                 policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage))
+            // Spec de préstamos: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+             .AddPolicy(
+                 LoansPermissions.Read,
+                 policy => AddPermissionRequirement(policy, LoansPermissions.Read))
+             .AddPolicy(
+                 LoansPermissions.Manage,
+                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,
