@@ -39,6 +39,10 @@
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Application\Modules.ServiceContracts.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Domain\Modules.ServiceContracts.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ServiceContracts\Modules.ServiceContracts.Infrastructure\Modules.ServiceContracts.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Api\Modules.Loans.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Application\Modules.Loans.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Domain\Modules.Loans.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Loans\Modules.Loans.Infrastructure\Modules.Loans.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Api\Modules.ApiAccess.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Domain\Modules.ApiAccess.Domain.csproj" />

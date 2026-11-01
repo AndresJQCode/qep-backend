@@ -8,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
+using Modules.Loans.Application;
 using Modules.ServiceContracts.Application;
 using Modules.Customers.Application;
 using Modules.Geography.Application;
@@ -178,9 +179,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSeventyConstants()
+    public void PermissionDiscoveryFindsTheSeventyTwoConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -191,8 +192,9 @@ public sealed class CompositionRootTests
         // + el de revocar la autorización de datos (spec 2026-10-26 D-9)
         // + los dos de ciudades del operador (spec 2026-10-26 §6)
         // + los dos de cobros recurrentes (billing, spec 2026-10-29)
-        // + el de claves de API (developer.api_key.manage, spec 2026-10-30).
-        Assert.Equal(70, PermissionConstants().Length);
+        // + el de claves de API (developer.api_key.manage, spec 2026-10-30)
+        // + los dos de préstamos (loans, spec 2026-10-31).
+        Assert.Equal(72, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -564,6 +566,29 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Spec de préstamos (2026-10-31): los dos permisos exigen el módulo <c>loans</c> (apagado, el editor de roles los oculta y la API
+    /// responde un 403 pelado) y van a admin y a facturación; no a asesor ni cajero.
+    /// </summary>
+    [Fact]
+    public void TheLoansPermissionsRequireTheLoansModuleAndGoToAdminAndBilling()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions()
+            .ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+
+        foreach (var permission in new[] { LoansPermissions.Read, LoansPermissions.Manage })
+        {
+            Assert.Equal("Préstamos", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Loans], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            Assert.Contains(permission, catalog.PermissionsFor("billing"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
+            Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>
     /// Spec de Shopify §5.2: el webhook de Shopify encola y el worker procesa. Sin el worker registrado, o con un
     /// puerto del importador sin adaptador, el webhook responde 200 y nadie procesa nunca, sin error en ningún lado. Esto arma
     /// el contenedor con <c>ValidateOnBuild</c> —lo mismo que hace el host en Development— y resuelve el worker y el importador.
@@ -626,6 +651,27 @@ public sealed class CompositionRootTests
             service => service.GetType().FullName == "Modules.ServiceContracts.Infrastructure.Reminders.ServiceContractsReminderWorker");
         using var scope = provider.CreateScope();
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<IServiceContractsReminderProcessor>());
+    }
+
+    /// <summary>
+    /// Sin el worker registrado, o con un puerto del procesador sin adaptador, ninguna cuota de préstamo se genera al cerrar su
+    /// período, sin error en ningún lado. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheLoansGenerationWorker()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        Assert.Contains(
+            provider.GetServices<IHostedService>(),
+            service => service.GetType().FullName == "Modules.Loans.Infrastructure.Generation.LoansGenerationWorker");
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<Modules.Loans.Application.ILoansGenerationProcessor>());
     }
 
     /// <summary>
