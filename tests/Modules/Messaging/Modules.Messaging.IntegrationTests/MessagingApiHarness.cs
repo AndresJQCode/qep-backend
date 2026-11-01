@@ -219,7 +219,8 @@ internal static class MessagingApiHarness
         {
             builder.UseEnvironment("Development");
             // Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador
-            // a un tenant ajeno (mismo criterio que ShopifyApiHarness).
+            // a un tenant ajeno (mismo criterio que ShopifyApiHarness). Cambia el comportamiento de las pruebas de Messaging que
+            // no lo piden: antes heredaban la clave de la configuración local y ahora corren con operador vacío (decisión de la revisión).
             builder.UseSetting("Platform:OperatorTenantId", operatorTenantId?.ToString() ?? string.Empty);
             // Sin vigilar archivos de configuración: cada host dejaba vivo el FileSystemWatcher de los user-secrets (nadie dispone el
             // PhysicalFileProvider que crea FileConfigurationSource.ResolveFileProvider), y en macOS un proceso admite 512 streams de

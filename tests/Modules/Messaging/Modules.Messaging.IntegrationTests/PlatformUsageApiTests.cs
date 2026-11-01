@@ -62,15 +62,20 @@ public sealed class PlatformUsageApiTests
         await ExecuteAsync(
             f.ConnectionString,
             """
-            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details, wamid, client_id, sent_by_kind, created_at, imported)
-            VALUES (@id, @conversationId, @tenantId, @connectionId, @createdAt, @direction, @kind, @status, @text, @details::jsonb, @wamid, @clientId, @sentByKind, @createdAt, @imported)
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, details, wamid, client_id, sent_by_kind, sent_by_api_key_id, sent_by_api_key_name, created_at, imported)
+            VALUES (@id, @conversationId, @tenantId, @connectionId, @createdAt, @direction, @kind, @status, @text, @details::jsonb, @wamid, @clientId, @sentByKind, @apiKeyId, @apiKeyName, @createdAt, @imported)
             """,
             ("id", id), ("conversationId", conversationId), ("tenantId", f.Tenant.TenantId), ("connectionId", connectionId ?? f.ConnectionId),
             ("createdAt", createdAt), ("direction", direction), ("kind", isEvent ? (short)13 : kind), ("status", isEvent ? (short)2 : (short)1),
             ("text", isEvent ? DBNull.Value : "texto"), ("details", isEvent ? "{\"type\":\"Assigned\"}" : DBNull.Value),
             ("wamid", direction == 1 ? $"wamid.{id:N}" : DBNull.Value),
             ("clientId", direction == 2 ? Guid.CreateVersion7() : DBNull.Value),
-            ("sentByKind", (object?)sentByKind ?? DBNull.Value), ("imported", imported));
+            // sent_by_kind es NOT NULL con default 1: un NULL explícito no toma el default. La clave de API (4) exige id y nombre
+            // (CK_messages_sent_by_api_key) y los demás autores no pueden llevarlos.
+            ("sentByKind", sentByKind ?? (short)1),
+            ("apiKeyId", sentByKind == 4 ? Guid.CreateVersion7() : DBNull.Value),
+            ("apiKeyName", sentByKind == 4 ? "Integración" : DBNull.Value),
+            ("imported", imported));
         return id;
     }
 

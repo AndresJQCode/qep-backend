@@ -9,7 +9,8 @@ namespace Bootstrapper;
 /// Adapta Messaging y su presencia al puerto <see cref="IPlatformUsageSource"/> de Tenancy, que no los referencia. Es SQL crudo
 /// sobre la conexión de <see cref="MessagingDbContext"/> y conoce por nombre <c>tenancy.tenants</c>, <c>messaging.messages</c> y
 /// <c>messaging.conversations</c>. Una conversación cuenta una sola vez por canal si tuvo al menos un entrante en vivo
-/// (<c>direction = 1</c>, no importado) desde el corte; el canal sale de la conversación y no de la conexión, así que una
+/// (<c>direction = 1</c>, no importado) desde el corte, buscado por tenant (un LATERAL por tenant) para que use
+/// <c>IX_messages_tenant_created</c>: sin el <c>tenant_id</c> el filtro por fecha no puede buscar en el índice; el canal sale de la conversación y no de la conexión, así que una
 /// conexión de Instagram borrada no le quita lo que ya contó. Un tenant sin conversaciones sigue en la lista, en cero.
 ///
 /// Renombrar una columna de esas tablas compila y deja <c>/operator/usage</c> respondiendo 500 (<c>42703</c>). Lo amarra
@@ -25,16 +26,15 @@ internal sealed class PlatformUsageSource(
     public async Task<IReadOnlyList<PlatformUsageTenantRow>> ListAsync(DateTimeOffset startUtc, CancellationToken cancellationToken)
     {
         var rows = await messaging.Database.SqlQuery<UsageRow>($"""
-            WITH active AS (
-                SELECT m.tenant_id, m.conversation_id
-                FROM messaging.messages m
-                WHERE m.direction = 1 AND NOT m.imported AND m.created_at >= {startUtc}
-                GROUP BY 1, 2)
             SELECT t.id AS "TenantId", t.display_name AS "Name", t.created_at AS "CreatedAt",
                    (count(*) FILTER (WHERE c.channel = 'WhatsApp'))::int AS "WhatsApp",
                    (count(*) FILTER (WHERE c.channel = 'Instagram'))::int AS "Instagram"
             FROM tenancy.tenants t
-            LEFT JOIN active a ON a.tenant_id = t.id
+            LEFT JOIN LATERAL (
+                SELECT DISTINCT m.conversation_id
+                FROM messaging.messages m
+                WHERE m.tenant_id = t.id AND m.direction = 1 AND NOT m.imported AND m.created_at >= {startUtc.ToUniversalTime()}
+            ) a ON true
             LEFT JOIN messaging.conversations c ON c.id = a.conversation_id
             GROUP BY t.id, t.display_name, t.created_at
             """).ToListAsync(cancellationToken);
@@ -70,7 +70,7 @@ internal sealed class PlatformUsageSource(
         // El snapshot no trae orden: se ordena por nombre para que la lista no baile entre consultas.
         return memberIds
             .Select(id => new PlatformConnectedMemberDto(id, tenantNames.GetValueOrDefault(id, DeletedMemberName)))
-            .OrderBy(member => member.Name, StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(member => member.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
