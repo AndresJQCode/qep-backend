@@ -1,8 +1,8 @@
 # Estado del proyecto `qep-backend`
 
 Archivo vivo: se actualiza al cerrar un trabajo, tomar una decisión o desplegar. **Verificado contra el código el
-2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `5aef67bc` más este
-registro; `origin/develop` en `6899196a`; `origin/main` en `71a29983`). Ante
+2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `019c5259` más este
+registro; `origin/develop` en `9476862b`; `origin/main` en `200feaed`). Ante
 cualquier duda gana el código ([CLAUDE.md](../CLAUDE.md)). La línea `Estado:` de cada spec dice si el diseño se aprobó,
 no si se construyó: varios siguen diciendo «borrador» y están construidos.
 
@@ -11,11 +11,11 @@ no si se construyó: varios siguen diciendo «borrador» y están construidos.
 Estados: **Construido** (mergeado a `develop`) · **En curso** · **Aprobado, sin empezar** · **Por verificar**.
 «Push» dice si el trabajo ya llegó a `origin`. Para comprobarlo: `git log --oneline origin/develop..develop` en cada repo.
 
-**Push al 2026-11-01.** `origin/main` del backend (`71a29983`) ya tiene todo `origin/develop` (`6899196a`), y producción
-corre la imagen `4831`. El frontend tiene un commit de `origin/develop` fuera de `origin/main` (`dea1df49`). Las filas de
-este archivo escritas antes dicen «sin push» o «falta `main`» con la fecha de su merge: esa parte ya no vale. El backend
-tiene sin push continuar el asistente (`5aa25be2`), el arreglo de las vistas previas de cotización (`5aef67bc`) y este
-registro. Ramas del backend sin mergear: `feature/reporte-uso-plataforma` (con su worktree) y
+**Push al 2026-11-01.** `origin/main` del backend (`200feaed`) ya tiene todo `origin/develop` (`9476862b`), y producción
+corre la imagen `4834`. El frontend igual: `origin/main` (`1895200a`) tiene todo `origin/develop` (`44f604d7`). Las filas de
+este archivo escritas antes dicen «sin push» o «falta `main`» con la fecha de su merge: esa parte ya no vale. Sin push
+quedan el N+1 de los pedidos en el backend (`019c5259`) y este registro, y el cargador inicial en el frontend (`e64e2c36`).
+Ramas del backend sin mergear: `feature/api-externa-observabilidad` (con su worktree) y
 `feature/chatbot-transportes-ci` (chatbot de Transportes CI, sin push; handoff en
 `superpowers/plans/2026-10-24-chatbot-transportes-ci.md` §8).
 
@@ -239,6 +239,15 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **el N+1 de editar líneas de un pedido** (merge `019c5259`): `OrderItemEdits` leía el catálogo una
+  vez por línea agregada o cambiada. Ahora es una lectura por edición, con los mismos rechazos y el mismo orden. Medido contra Postgres: `POST orders/{id}/preview` pasó
+  de 46 (2 líneas) y 110 (10 líneas) a 38 en los dos casos; lo amarra `QuotationPreviewStatementCountApiTests`. El guardado usa el mismo código y no se midió. Verificado:
+  Quotations.UnitTests 1.473 de 1.475, `ArchitectureTests` 165/165 y las clases de integración de pedidos, con sólo las tres fallas ya listadas en «Defectos conocidos». Sin
+  suite completa. Siguen leyendo por línea `OrderDraftBuilder`, `AddOrderItems` y `BatchUpdateQuotationItems`.
+- 2026-11-01 — Mergeado a `develop` del frontend (`--no-ff`, sin push) **el cargador estático de la carga inicial** (merge `e64e2c36`): `index.html` pinta un cargador
+  fuera de `#root`, porque React lo vacía al montar y el router no pinta nada mientras bajan los chunks, y `dismissBootLoaderOnFirstRoute` lo quita en el primer `onResolved`.
+  Medido en Chromium, una corrida por caso y 150 ms de retraso por archivo: FCP de 868-1.352 ms a unos 190 ms, sin retrasar el contenido. Sin prueba con sesión iniciada;
+  la API estaba simulada con 401. Agrupar chunks sigue pendiente de una cascada con red real. Worktrees y ramas borrados.
 - 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **«Resueltas por chatbot» en el reporte de mensajería** (backend `95d6f247`, frontend `92ffa5b8`): bloque
   `chatbots` en `GET /messaging/reports/summary` y tarjeta debajo de «Por asesor». El denominador es todo lo resuelto en el canal durante el periodo (decisión del owner:
   mide qué parte del trabajo se quita el equipo), y se cuentan eventos `Resolved`, no conversaciones. Verificado: `MessagingReportAggregatorTests` 34/34, las tres
