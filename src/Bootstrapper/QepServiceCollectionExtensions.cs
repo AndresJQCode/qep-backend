@@ -431,7 +431,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Loans.Application.VoidCapitalPaymentCommand, Modules.Loans.Application.LoanDetailDto>,
             Modules.Loans.Application.VoidCapitalPaymentHandler>();
-        // Lo reutilizan los mutadores de cuotas y abonos de las tareas siguientes.
+        // Lo reutilizan los mutadores de préstamos, cuotas y abonos.
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
@@ -2589,12 +2589,12 @@ public static class QepServiceCollectionExtensions
                 ServiceContractsPermissions.Manage,
                 policy => AddPermissionRequirement(policy, ServiceContractsPermissions.Manage))
             // Spec de préstamos: sin estas políticas, RequireAuthorization no resuelve y el síntoma es 500, no 403.
-             .AddPolicy(
-                 LoansPermissions.Read,
-                 policy => AddPermissionRequirement(policy, LoansPermissions.Read))
-             .AddPolicy(
-                 LoansPermissions.Manage,
-                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            .AddPolicy(
+                LoansPermissions.Read,
+                policy => AddPermissionRequirement(policy, LoansPermissions.Read))
+            .AddPolicy(
+                LoansPermissions.Manage,
+                policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,

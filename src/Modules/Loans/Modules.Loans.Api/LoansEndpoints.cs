@@ -11,13 +11,12 @@ public static class LoansEndpoints
     public static IEndpointRouteBuilder MapLoansEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como billing y suppliers: la política frena a quien no tiene el permiso y el handler
-        // (LoansAuthorization) a quien lo tiene en otro tenant. Las demás rutas del módulo se agregan en las tareas siguientes,
-        // sobre este mismo grupo.
+        // (LoansAuthorization) a quien lo tiene en otro tenant.
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/loans")
             .WithTags("Loans");
 
-        // En el orden del contrato: las rutas literales (/assignees, y /installments cuando llegue) van antes de /{loanId:guid}.
+        // En el orden del contrato: las rutas literales (/assignees y /installments) van antes de /{loanId:guid}.
         group.MapGet("/", ListLoansAsync)
             .RequireAuthorization(LoansPermissions.Read)
             .Produces<LoanPageDto>()
