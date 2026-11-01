@@ -95,8 +95,11 @@ internal sealed partial class LoansGenerationProcessor(
             }
 
             var loanPayments = await payments.ListByLoanAsync(tenantId, loanId, cancellationToken);
+            var advancedFrom = loan.LastGeneratedPeriodEnd;
             var generated = LoanInstallmentGenerator.GenerateClosedPeriods(loan, loanPayments, today, now);
-            if (generated.Count == 0)
+            // Un período con interés 0,00 avanza el préstamo sin producir cuota: ese avance también se guarda, o el período
+            // quedaría «cerrándose» para siempre.
+            if (generated.Count == 0 && loan.LastGeneratedPeriodEnd == advancedFrom)
             {
                 return;
             }

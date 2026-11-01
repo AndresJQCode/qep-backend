@@ -70,6 +70,24 @@ public sealed class LoansGenerationProcessorTests : IAsyncLifetime
         Assert.NotNull(Assert.Single(await RunsAsync()).FinishedAt);
     }
 
+    [Fact]
+    public async Task APeriodWhoseInterestRoundsToZeroIsMarkedGeneratedWithoutAnInstallment()
+    {
+        // 0,01 al 1,5 % mensual causa 0,00015: sin cuota, pero el avance del período tiene que persistirse o el préstamo
+        // quedaría «cerrándose» para siempre y bloquearía los abonos.
+        var loan = await SeedLoanAsync("2026-10-01", principal: 0.01m);
+
+        await ProcessAsync();
+
+        Assert.Empty(await InstallmentsOfAsync(loan));
+        Assert.Equal(Date("2026-10-31"), (await LoanAsync(loan)).LastGeneratedPeriodEnd);
+        using var manager = CreateManager(factory);
+        var response = await manager.GetAsync($"{LoansUrl()}/{loan.Value}", Ct);
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        using var detail = System.Text.Json.JsonDocument.Parse(await BodyAsync(response));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, detail.RootElement.GetProperty("capitalPaymentBlock").ValueKind);
+    }
+
     /// <summary>Review Focus 1: la cuota se genera el día siguiente al corte, no el último día del período.</summary>
     [Fact]
     public async Task APeriodIsNotGeneratedOnItsLastDay()
@@ -226,12 +244,12 @@ public sealed class LoansGenerationProcessorTests : IAsyncLifetime
     /// Un préstamo de sólo interés de 100.000.000 al 1,5 % que cierra a fin de mes. Se crea «hoy» = su desembolso (la fecha de la
     /// prueba no importa para sembrar) y, con <paramref name="outstanding"/> en cero, queda sin capital como tras un abono total.
     /// </summary>
-    private Task<LoanId> SeedLoanAsync(string disbursedOn, decimal? outstanding = null) =>
+    private Task<LoanId> SeedLoanAsync(string disbursedOn, decimal? outstanding = null, decimal principal = 100_000_000m) =>
         WithDbAsync(async db =>
         {
             var now = new DateTimeOffset(2026, 10, 31, 15, 0, 0, TimeSpan.Zero);
             var terms = new LoanTerms(
-                Guid.NewGuid(), 100_000_000m, "COP", 1.5m, Date(disbursedOn), LoanCutoffRule.EndOfMonth);
+                Guid.NewGuid(), principal, "COP", 1.5m, Date(disbursedOn), LoanCutoffRule.EndOfMonth);
             var loan = Loan.Create(LoanId.New(), Tenant, terms, "Novasteel", null, null, Date(disbursedOn), now);
             if (outstanding is { } remaining)
             {

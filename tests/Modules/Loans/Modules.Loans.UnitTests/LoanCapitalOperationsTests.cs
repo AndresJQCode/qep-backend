@@ -255,6 +255,21 @@ public sealed class LoanCapitalOperationsTests
     }
 
     [Fact]
+    public void APaymentBeforeAZeroInterestMarkIsStillBehindAClosedPeriod()
+    {
+        // Con 0,01 de capital el interés del mes redondea a 0,00: el período se marca generado sin cuota. El período cerró igual,
+        // y anular el abono cambiaría un interés ya fijado sin que nadie lo recalcule, así que sigue sin poder anularse.
+        var loan = Loan(principal: 0.02m);
+        var payments = new List<LoanCapitalPayment>();
+        var payment = Add(loan, payments, 0.01m, "2026-10-15").Payment;
+        var generated = LoanInstallmentGenerator.GenerateClosedPeriods(loan, payments, Date("2026-11-01"), Now);
+
+        Assert.Empty(generated);
+        Assert.Equal(Date("2026-10-31"), loan.LastGeneratedPeriodEnd);
+        AssertCode(LoansErrorCodes.CapitalPaymentInstallmentGenerated, () => LoanCapitalOperations.Void(loan, payments, payment.Id, "x", 0, Now));
+    }
+
+    [Fact]
     public void ThePaymentThatGeneratedTheLastInstallmentCannotBeVoided()
     {
         var loan = Loan();
