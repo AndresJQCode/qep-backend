@@ -26,6 +26,12 @@ public interface IApiCaller
     bool CanUseConnection(Guid connectionId);
 }
 
+/// <summary>Lo que un handler de la API externa anota sobre la llamada en curso. Vive acá porque Messaging no ve ApiAccess.</summary>
+public interface IExternalCallNotes
+{
+    void NoteMessage(Guid messageId);
+}
+
 public static class ApiKeyDefaults
 {
     public const string AuthenticationScheme = "ApiKey";

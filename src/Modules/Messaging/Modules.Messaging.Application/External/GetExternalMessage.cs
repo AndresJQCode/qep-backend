@@ -25,7 +25,7 @@ public sealed record ExternalMessageDto(Guid MessageId, Guid ConversationId, str
 /// <summary><c>GET /api/v1/external/whatsapp/messages/{messageId}</c>.</summary>
 public sealed record GetExternalMessageQuery(Guid MessageId) : IQuery<ExternalMessageDto>;
 
-public sealed class GetExternalMessageHandler(IApiCaller caller, ITenantModules tenantModules, IExternalMessageQueries messages)
+public sealed class GetExternalMessageHandler(IApiCaller caller, ITenantModules tenantModules, IExternalMessageQueries messages, IExternalCallNotes notes)
     : IQueryHandler<GetExternalMessageQuery, ExternalMessageDto>
 {
     public async Task<ExternalMessageDto> HandleAsync(GetExternalMessageQuery query, CancellationToken cancellationToken)
@@ -40,6 +40,7 @@ public sealed class GetExternalMessageHandler(IApiCaller caller, ITenantModules 
             throw new ResourceNotFoundException(MessagingErrorCodes.ExternalMessageNotFound, "No encontramos ese mensaje.");
         }
 
+        notes.NoteMessage(row.Id);
         var state = ExternalMessageState.Describe(row.Status, row.FailureCode);
         return new ExternalMessageDto(row.Id, row.ConversationId, state.Status, state.FailureCode, state.FailureReason);
     }
