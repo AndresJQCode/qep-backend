@@ -157,7 +157,7 @@ Un abono anulado cuenta como abono para `canEditTerms` y `canDelete`: su fila no
 | Ruta | Cuerpo |
 | --- | --- |
 | `POST /loans` | `customerId: uuid`, `name: string` (1..150), `principalAmount: money` (> 0), `currency: string?` (`null` = moneda del tenant), `monthlyRatePercent: rate` (> 0 y ≤ 100), `disbursedOn: date` (desde 2000-01-01 hasta hoy), `cutoffRule: CutoffRule`, `assigneeMemberId: uuid?`, `note: string?` (≤ 1000). Sin `type`: es `InterestOnly` |
-| `PUT /loans/{id}` | Los mismos campos, todos. Con `canEditTerms = false`, `customerId`, `principalAmount`, `currency`, `monthlyRatePercent`, `disbursedOn` y `cutoffRule` deben llegar iguales |
+| `PUT /loans/{id}` | Los mismos campos, todos; `currency` null en PUT conserva la moneda actual del préstamo (no la del tenant). Con `canEditTerms = false`, `customerId`, `principalAmount`, `currency`, `monthlyRatePercent`, `disbursedOn` y `cutoffRule` deben llegar iguales |
 | `pay`, `PUT …/payment` | `paidOn: date`, `note: string?` (≤ 1000) |
 | `preview`, `POST capital-payments` | `amount: money` (> 0), `paidOn: date`. `POST` suma `note: string?` (≤ 1000) |
 | `void` | `reason: string` (1..500) |

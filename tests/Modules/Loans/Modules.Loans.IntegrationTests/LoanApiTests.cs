@@ -446,6 +446,64 @@ public sealed class LoanApiTests
     }
 
     [Fact]
+    public async Task CorrectingATinyPrincipalBillsThePeriodThatWasMarkedWithoutInterest()
+    {
+        var (database, factory) = await OpenAtNineAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Novasteel SAS");
+        // 0,01 de capital: septiembre cierra con interés 0,00, sin cuota pero marcado generado. No hay movimiento: se puede editar.
+        var detail = await CreateAsync(manager, LoanBody(customerId, principal: 0.01m, disbursedOn: "2026-09-10"));
+        Assert.Equal(0, detail.GetProperty("installments").GetArrayLength());
+        Assert.True(detail.GetProperty("canEditTerms").GetBoolean());
+
+        var response = await PutAsync(manager, LoanIdOf(detail), LoanBody(customerId, principal: 100_000_000m, disbursedOn: "2026-09-10"), IfMatchOf(detail));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var installment = Assert.Single((await JsonOfAsync(response)).GetProperty("installments").EnumerateArray());
+        Assert.Equal("2026-09-10", installment.GetProperty("periodStart").GetString());
+        Assert.Equal("2026-09-30", installment.GetProperty("periodEnd").GetString());
+        // 21 días de 30 al 1,5 % sobre 100.000.000: 1.500.000 x 21 / 30.
+        Assert.Equal(1_050_000m, installment.GetProperty("amount").GetDecimal());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutACurrencyKeepsTheLoanCurrencyWithoutMovement()
+    {
+        var (database, factory) = await OpenAtNineAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Novasteel SAS");
+        var detail = await CreateAsync(manager, LoanBody(customerId, currency: "USD"));
+
+        var response = await PutAsync(manager, LoanIdOf(detail), LoanBody(customerId, currency: null, name: "Otro"), IfMatchOf(detail));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("USD", (await JsonOfAsync(response)).GetProperty("loan").GetProperty("currency").GetString());
+    }
+
+    [Fact]
+    public async Task UpdatingWithoutACurrencyDoesNotLockTheTermsOfAForeignCurrencyLoanWithMovement()
+    {
+        var (database, factory) = await OpenAtNineAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Novasteel SAS");
+        var detail = await CreateAsync(manager, LoanBody(customerId, currency: "USD", disbursedOn: "2026-09-10"));
+        Assert.False(detail.GetProperty("canEditTerms").GetBoolean());
+
+        var response = await PutAsync(manager, LoanIdOf(detail), LoanBody(customerId, currency: null, disbursedOn: "2026-09-10", name: "Otro"), IfMatchOf(detail));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var loan = (await JsonOfAsync(response)).GetProperty("loan");
+        Assert.Equal("USD", loan.GetProperty("currency").GetString());
+        Assert.Equal("Otro", loan.GetProperty("name").GetString());
+    }
+
+    [Fact]
     public async Task WithMovementOnlyNameAssigneeAndNoteCanChange()
     {
         var (database, factory) = await OpenAtNineAsync();

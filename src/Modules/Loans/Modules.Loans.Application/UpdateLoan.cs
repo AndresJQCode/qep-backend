@@ -77,7 +77,6 @@ public sealed class UpdateLoanHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     ITenantClock tenantClock,
-    ITenantDefaultCurrency tenantDefaultCurrency,
     ILoansCustomerLookup customers,
     ILoansMemberDirectory members,
     ILoanRepository loans,
@@ -106,7 +105,9 @@ public sealed class UpdateLoanHandler(
             throw new RequestConcurrencyException("concurrency.conflict", "The loan changed after it was loaded.");
         }
 
-        var currency = await LoanRules.ResolveCurrencyAsync(command.Currency, command.TenantId, tenantDefaultCurrency, cancellationToken);
+        // En PUT, currency null conserva la moneda del préstamo (no la del tenant, que es el default del alta): si no, un préstamo en
+        // otra moneda se bloquearía con terms_locked o la perdería al editar.
+        var currency = string.IsNullOrWhiteSpace(command.Currency) ? loan.Currency : LoanRules.NormalizeCurrency(command.Currency);
         var terms = new LoanTerms(command.CustomerId, command.PrincipalAmount, currency, command.MonthlyRatePercent, command.DisbursedOn, cutoffRule);
 
         var existingInstallments = await installments.ListByLoanAsync(command.TenantId, loan.Id, cancellationToken);

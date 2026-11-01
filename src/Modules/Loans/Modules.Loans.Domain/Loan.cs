@@ -91,6 +91,9 @@ public sealed class Loan
     public void ChangeTerms(LoanTerms terms, DateOnly today, DateTimeOffset now)
     {
         ApplyTerms(terms, today);
+        // Sin movimiento no hay cuota ni abono, pero puede haber una marca de período con interés 0,00: con otras condiciones
+        // esos períodos se vuelven a cobrar.
+        LastGeneratedPeriodEnd = null;
         Touch(now);
     }
 

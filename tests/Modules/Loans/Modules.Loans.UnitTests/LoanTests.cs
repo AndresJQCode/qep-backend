@@ -87,6 +87,20 @@ public sealed class LoanTests
     }
 
     [Fact]
+    public void ChangeTermsForgetsTheGeneratedPeriods()
+    {
+        // Una marca de período con interés 0,00 sobrevive a HasMovement (no hay cuota ni abono): con otras condiciones el
+        // período hay que volver a cobrarlo.
+        var loan = Loan();
+        loan.MarkGenerated(Date("2026-10-31"), Now);
+
+        loan.ChangeTerms(loan.Terms with { PrincipalAmount = 50m }, Date("2026-10-31"), Now);
+
+        Assert.Null(loan.LastGeneratedPeriodEnd);
+        Assert.Equal(new LoanPeriod(Date("2026-10-01"), Date("2026-10-31")), loan.NextPeriodToGenerate());
+    }
+
+    [Fact]
     public void ChangeTermsReplacesTheTermsAndResetsTheCapital()
     {
         var loan = Loan();
