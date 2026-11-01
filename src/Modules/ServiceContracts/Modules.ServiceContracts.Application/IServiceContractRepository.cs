@@ -2,6 +2,9 @@ using Modules.ServiceContracts.Domain;
 
 namespace Modules.ServiceContracts.Application;
 
+/// <summary><paramref name="Price"/> es la suma de los precios de <paramref name="Count"/> contratos de esa moneda y ciclo, sin normalizar.</summary>
+public sealed record ActiveServiceTotal(string Currency, BillingCycle Cycle, int Count, decimal Price);
+
 public interface IServiceContractRepository
 {
     void Add(ServiceContract service);
@@ -23,6 +26,12 @@ public interface IServiceContractRepository
 
     /// <summary>Los servicios <c>Active</c> del tenant: sobre ellos corre la generación de cobros del worker (§3.3, paso 3).</summary>
     Task<IReadOnlyList<ServiceContract>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los servicios <c>Active</c> del tenant agregados en SQL por moneda y ciclo: el resumen de la lista no depende de sus filtros y
+    /// no trae las filas. Prorratear por mes le toca a <see cref="BillingCycles.MonthlyValue"/>.
+    /// </summary>
+    Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>Los servicios <c>Active</c> o <c>Paused</c> de esos clientes del tenant: la importación rechaza un nombre repetido (§3.2b, <c>service_exists</c>).</summary>
     Task<IReadOnlyList<ServiceContract>> ListOpenByCustomersAsync(

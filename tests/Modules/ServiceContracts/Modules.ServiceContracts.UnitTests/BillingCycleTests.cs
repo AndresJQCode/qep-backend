@@ -32,6 +32,41 @@ public sealed class BillingCycleTests
     }
 
     [Theory]
+    [InlineData(BillingCycle.Monthly, "90000", "90000.00")]
+    [InlineData(BillingCycle.Semiannual, "90000", "15000.00")]
+    [InlineData(BillingCycle.Annual, "90000", "7500.00")]
+    [InlineData(BillingCycle.Annual, "100", "8.33")]
+    [InlineData(BillingCycle.Semiannual, "100", "16.67")]
+    public void MonthlyValueDividesThePriceByTheMonthsOfTheCycle(BillingCycle cycle, string price, string expected)
+    {
+        var result = BillingCycles.MonthlyValue([(cycle, decimal.Parse(price, CultureInfo.InvariantCulture))]);
+
+        Assert.Equal(expected, result.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void MonthlyValueAddsTheCyclesTogether()
+    {
+        var result = BillingCycles.MonthlyValue(
+            [(BillingCycle.Monthly, 1000m), (BillingCycle.Semiannual, 6000m), (BillingCycle.Annual, 12000m)]);
+
+        Assert.Equal(3000m, result);
+    }
+
+    // 100 / 12 redondeado por contrato da 8.33; tres veces, 24.99. Sumado primero da los 25.00 reales.
+    [Fact]
+    public void MonthlyValueRoundsTheTotalNotEachContract()
+    {
+        var result = BillingCycles.MonthlyValue(
+            [(BillingCycle.Annual, 100m), (BillingCycle.Annual, 100m), (BillingCycle.Annual, 100m)]);
+
+        Assert.Equal(25.00m, result);
+    }
+
+    [Fact]
+    public void MonthlyValueOfNothingIsZero() => Assert.Equal(0m, BillingCycles.MonthlyValue([]));
+
+    [Theory]
     [InlineData("Monthly", 1)]
     [InlineData("Semiannual", 6)]
     [InlineData("Annual", 12)]
