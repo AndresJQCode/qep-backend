@@ -413,6 +413,13 @@ public sealed class LoanInstallmentApiTests
         var response = await PayAsync(reader, LoanIdOf(created), installmentId, "2026-10-05");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await BodyAsync(response);
+        if (body.Contains("\"code\"", StringComparison.Ordinal))
+        {
+            using var problem = System.Text.Json.JsonDocument.Parse(body);
+            Assert.Equal("authorization.denied", problem.RootElement.GetProperty("code").GetString());
+        }
+
         // El lector sí puede leer la lista.
         Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"{LoansUrl()}/installments", Ct)).StatusCode);
     }

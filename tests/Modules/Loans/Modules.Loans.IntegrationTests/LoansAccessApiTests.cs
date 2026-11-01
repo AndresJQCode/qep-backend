@@ -54,6 +54,33 @@ public sealed class LoansAccessApiTests
     }
 
     [Fact]
+    public async Task AnotherTenantInTheRouteIs403OnAWriteRouteToo()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await SeedTenantAsync(factory, OtherTenantId);
+        using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, LoansPermissions.Read, LoansPermissions.Manage);
+        var body = new Dictionary<string, object?>
+        {
+            ["customerId"] = Guid.NewGuid(),
+            ["name"] = "Intruso",
+            ["principalAmount"] = 1_000m,
+            ["currency"] = null,
+            ["monthlyRatePercent"] = 1.5m,
+            ["disbursedOn"] = "2026-10-01",
+            ["cutoffRule"] = "EndOfMonth",
+            ["assigneeMemberId"] = null,
+            ["note"] = null,
+        };
+
+        var response = await outsider.PostAsJsonAsync(LoansUrl(), body, Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("authorization.denied", await CodeOfAsync(response));
+    }
+
+    [Fact]
     public async Task WithTheModuleOffTheRouteIs403()
     {
         var (database, factory) = await OpenAsync(TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Loans));

@@ -557,6 +557,35 @@ public sealed class LoanApiTests
     }
 
     [Fact]
+    public async Task UpdatingAnUnknownLoanIs404()
+    {
+        var (database, factory) = await OpenAtNineAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Novasteel SAS");
+
+        var response = await PutAsync(manager, Guid.NewGuid(), LoanBody(customerId), "\"1\"");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("loans.loan.not_found", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task DeletingAnUnknownLoanIs404()
+    {
+        var (database, factory) = await OpenAtNineAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var manager = CreateManager(factory);
+
+        var response = await manager.DeleteAsync($"{LoansUrl()}/{Guid.NewGuid()}", Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("loans.loan.not_found", await CodeOfAsync(response));
+    }
+
+    [Fact]
     public async Task DeleteRemovesALoanWithOnlyPendingInstallments()
     {
         var (database, factory) = await OpenAtNineAsync();
