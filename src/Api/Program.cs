@@ -45,6 +45,7 @@ using Modules.Shopify.Api;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
+using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
@@ -338,6 +339,11 @@ await app.Services.InitializeAutomationsDatabaseAsync(
 
 // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
 await app.Services.InitializeServiceContractsDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
+// referencias blandas.
+await app.Services.InitializeLoansDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y

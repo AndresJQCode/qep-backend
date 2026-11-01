@@ -56,6 +56,7 @@ using Modules.Shopify.Application;
 using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
+using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
@@ -1015,6 +1016,7 @@ public static class QepServiceCollectionExtensions
         services.AddSuppliersInfrastructure(configuration);
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
+        services.AddLoansInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
