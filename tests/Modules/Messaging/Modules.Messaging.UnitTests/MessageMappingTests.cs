@@ -150,6 +150,47 @@ public sealed class MessageMappingTests
         Assert.Equal("Andrés", root.GetProperty("actor").GetProperty("displayName").GetString());
     }
 
+    private static readonly Guid Bot = Guid.CreateVersion7();
+    private static readonly Dictionary<Guid, string> ChatbotNames = new() { [Bot] = "Ventas" };
+
+    private static MessageRow BotResolvedRow() =>
+        Row(MessageDirection.System, MessageKind.Event, details: ConversationEventJson.Serialize(
+            new ConversationEvent(ConversationEventType.Resolved, Actor: null, ChatbotId: Bot)));
+
+    // El bloque «Resolver» del chatbot: sin actor (no es una membresía), con el chatbot nombrado como SentByChatbot.
+    [Fact]
+    public void AResolvedByTheBotCarriesTheChatbotAndNoActor()
+    {
+        var dto = MessageMapping.ToDto(BotResolvedRow(), TenantId, Names, NoTargets, chatbotNames: ChatbotNames);
+
+        Assert.Equal(new MessageEventDto("Resolved", null, null, null, Chatbot: new ChatbotRefDto(Bot, "Ventas")), dto.Event);
+    }
+
+    [Fact]
+    public void AChatbotThatNoLongerExistsSignsWithTheDeletedName() =>
+        Assert.Equal(
+            new ChatbotRefDto(Bot, MessageMapping.DeletedChatbotName),
+            MessageMapping.ToDto(BotResolvedRow(), TenantId, Names, NoTargets).Event!.Chatbot);
+
+    [Fact]
+    public void AResolvedByAMemberHasNoChatbot()
+    {
+        var row = Row(MessageDirection.System, MessageKind.Event, details: ConversationEventJson.Serialize(
+            new ConversationEvent(ConversationEventType.Resolved, Actor: Andres)));
+
+        Assert.Null(MessageMapping.ToDto(row, TenantId, Names, NoTargets, chatbotNames: ChatbotNames).Event!.Chatbot);
+    }
+
+    // Sin esto la página nunca resuelve el nombre: ChatbotIdsOf sólo miraba a los autores de mensajes.
+    [Fact]
+    public void TheChatbotIdsOfAPageIncludeEventChatbots()
+    {
+        var author = Guid.CreateVersion7();
+        var sent = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { SentByChatbotId = author };
+
+        Assert.Equal(new[] { author, Bot }.Order(), MessageMapping.ChatbotIdsOf([sent, BotResolvedRow(), BotResolvedRow()]).Order());
+    }
+
     [Fact]
     public void CustomerIdsAreNeverAskedAsMembers()
     {

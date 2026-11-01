@@ -132,10 +132,13 @@ public sealed record EventCustomerRefDto(Guid Id, string Name);
 /// Previous/Target: son MemberRefDto y el parser del frontend exige memberId en ellos —uno sin memberId lanza y rompe el hilo
 /// entero—, y MemberIdsOf los resuelve como membresías. Con campos aparte, un frontend viejo ignora los nuevos y dibuja
 /// CustomerChanged como evento desconocido, sin romperse. <c>handoff</c> sólo en un <c>AutomationPaused</c> con
-/// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos.</summary>
+/// <c>pauseReason = Handoff</c> (spec 2026-10-24 §6); ausente en eventos viejos. <c>chatbot</c> sólo en un <c>Resolved</c> hecho
+/// por el bot (bloque «Resolver»), con <c>actor</c> null: el hilo dice «El asistente «X» resolvió la conversación» en vez de
+/// «Alguien»; resuelto al leer como <c>SentByChatbot</c>, con «Chatbot» si ya no existe.</summary>
 public sealed record MessageEventDto(
     string Type, MemberRefDto? Actor, MemberRefDto? Target, MemberRefDto? Previous, ResolutionReasonRefDto? Reason = null, string? PauseReason = null,
-    EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null);
+    EventCustomerRefDto? TargetCustomer = null, EventCustomerRefDto? PreviousCustomer = null, AutomationHandoffDto? Handoff = null,
+    ChatbotRefDto? Chatbot = null);
 
 /// <summary>Spec 2026-10-24 (BFF): la causa del traspaso, en códigos; el texto lo arma el frontend, que es dueño del diccionario
 /// (D-T3). <c>Kind</c> viaja por nombre (<c>Block</c>, <c>InvalidReply</c>, <c>SendFailed</c>, <c>FlowFailed</c>, <c>AttemptsExhausted</c>, <c>DataConsentRejected</c>, <c>DataConsentUnavailable</c>): uno desconocido
