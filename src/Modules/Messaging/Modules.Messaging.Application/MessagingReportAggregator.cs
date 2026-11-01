@@ -11,8 +11,11 @@ public static class MessagingReportAggregator
 {
     public const string UnassignedName = "Sin asignar";
     public const string DeletedMemberName = "Miembro eliminado";
+    public const string DeletedChatbotName = "Chatbot eliminado";
 
     private const long FifteenMinutes = 900;
+
+    private static readonly ConversationChannel[] ChannelOrder = [ConversationChannel.WhatsApp, ConversationChannel.Instagram];
 
     private static readonly (string Key, long UpperExclusive)[] BucketEdges =
     [
@@ -28,7 +31,9 @@ public static class MessagingReportAggregator
         TimeZoneInfo timeZone,
         Func<Guid, BusinessHoursSchedule?> scheduleOf,
         IReadOnlyDictionary<Guid, string> memberNames,
-        IReadOnlyCollection<ConversationChannel>? channelsWithData = null)
+        IReadOnlyCollection<ConversationChannel>? channelsWithData = null,
+        IReadOnlyList<ReportResolutionRow>? resolutions = null,
+        IReadOnlyDictionary<Guid, string>? chatbotNames = null)
     {
         var now = Measure(currentData, current, timeZone, scheduleOf);
         var before = Measure(previousData, previous, timeZone, scheduleOf);
@@ -42,14 +47,53 @@ public static class MessagingReportAggregator
             ResponseTime(now.First, before.First),
             ResponseTime(now.Advisor, before.Advisor),
             Advisors(now, memberNames),
-            ChannelNames(channelsWithData));
+            ChannelNames(channelsWithData),
+            Chatbots(resolutions ?? [], chatbotNames ?? new Dictionary<Guid, string>()));
     }
 
     /// <summary>Spec 2026-10-28 D-13: orden fijo WhatsApp, Instagram; sólo los presentes.</summary>
     private static string[] ChannelNames(IReadOnlyCollection<ConversationChannel>? channels) =>
         channels is null
             ? []
-            : [.. new[] { ConversationChannel.WhatsApp, ConversationChannel.Instagram }.Where(channels.Contains).Select(c => c.ToString())];
+            : [.. ChannelOrder.Where(channels.Contains).Select(c => c.ToString())];
+
+    /// <summary>
+    /// Qué parte de las resoluciones de cada canal cerró cada chatbot. El denominador sale de todas las filas del canal, las de miembros
+    /// incluidas, antes de quedarse con las de chatbots: dos chatbots en un canal comparten el mismo total. Un id sin nombre es un chatbot
+    /// borrado (el borrado es físico) y todos los borrados van a una sola fila, siempre la última.
+    /// </summary>
+    private static List<MessagingReportChatbotDto> Chatbots(IReadOnlyList<ReportResolutionRow> resolutions, IReadOnlyDictionary<Guid, string> names)
+    {
+        var totals = resolutions.GroupBy(row => row.Channel).ToDictionary(group => group.Key, group => group.Sum(row => row.Resolved));
+        var byChatbot = resolutions.Where(row => row.ChatbotId is not null).ToLookup(row => row.ChatbotId!.Value);
+
+        var rows = byChatbot
+            .Where(group => names.ContainsKey(group.Key))
+            .Select(group => (Total: group.Sum(row => row.Resolved), Chatbot: new MessagingReportChatbotDto(group.Key, names[group.Key], Bars(group, totals))))
+            .OrderByDescending(row => row.Total)
+            .ThenBy(row => row.Chatbot.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.Chatbot.ChatbotId)
+            .Select(row => row.Chatbot)
+            .ToList();
+
+        var deleted = byChatbot.Where(group => !names.ContainsKey(group.Key)).SelectMany(group => group).ToList();
+        if (deleted.Count > 0)
+        {
+            rows.Add(new MessagingReportChatbotDto(null, DeletedChatbotName, Bars(deleted, totals)));
+        }
+
+        return rows;
+    }
+
+    private static List<MessagingReportChatbotChannelDto> Bars(IEnumerable<ReportResolutionRow> rows, Dictionary<ConversationChannel, int> totals)
+    {
+        var resolved = rows.GroupBy(row => row.Channel).ToDictionary(group => group.Key, group => group.Sum(row => row.Resolved));
+        return ChannelOrder
+            .Where(resolved.ContainsKey)
+            .Select(channel => new MessagingReportChatbotChannelDto(
+                channel.ToString(), resolved[channel], totals[channel], (double)resolved[channel] / totals[channel]))
+            .ToList();
+    }
 
     public static IReadOnlyList<DateOnly> BucketStarts(DateOnly from, DateOnly to, ReportGrouping groupBy)
     {

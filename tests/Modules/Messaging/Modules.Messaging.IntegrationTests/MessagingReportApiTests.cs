@@ -96,6 +96,33 @@ public sealed class MessagingReportApiTests
     private static async Task ReopenedAsync(Fixture f, Guid conversationId, DateTimeOffset at) =>
         await MessageAsync(f, conversationId, at, direction: 3, kind: 13, status: 2, details: """{"type":"Reopened"}""");
 
+    /// <summary>El <c>details</c> sale del serializador real: la consulta lee <c>chatbotId</c> por nombre, y un literal aquí no se enteraría de un renombre.</summary>
+    private static async Task<Guid> ResolvedAsync(Fixture f, Guid conversationId, DateTimeOffset at, Guid? chatbot = null, Guid? member = null, bool instagram = false) =>
+        await MessageAsync(
+            f, conversationId, at, direction: 3, kind: 13, status: 2,
+            details: ConversationEventJson.Serialize(new ConversationEvent(ConversationEventType.Resolved, Actor: member, ChatbotId: chatbot)),
+            instagram: instagram);
+
+    private static async Task MarkImportedAsync(Fixture f, Guid messageId) =>
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.messages SET imported = true WHERE id = @id", ("id", messageId));
+
+    private static async Task<Guid> ChatbotAsync(Fixture f, string name)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO automations.chatbots (id, tenant_id, name, draft_flow, draft_updated_at, draft_updated_by, created_at, created_by, updated_at)
+            VALUES (@id, @t, @name, '{}'::jsonb, now(), @by, now(), @by, now())
+            """,
+            ("id", id), ("t", f.Tenant.TenantId), ("name", name), ("by", Guid.CreateVersion7()));
+        return id;
+    }
+
+    /// <summary>Cada barra como <c>Nombre:Canal:resueltas/total</c>, en el orden del contrato.</summary>
+    private static string[] ChatbotBars(JsonElement report) =>
+        [.. report.GetProperty("chatbots").EnumerateArray().SelectMany(chatbot => chatbot.GetProperty("channels").EnumerateArray().Select(bar =>
+            $"{chatbot.GetProperty("displayName").GetString()}:{bar.GetProperty("channel").GetString()}:{bar.GetProperty("resolvedByChatbot").GetInt32()}/{bar.GetProperty("resolvedTotal").GetInt32()}"))];
+
     private static async Task<Guid> CampaignAsync(Fixture f, Guid createdBy)
     {
         var id = Guid.CreateVersion7();
@@ -262,6 +289,114 @@ public sealed class MessagingReportApiTests
         var first = report.GetProperty("firstResponse");
         Assert.Equal(1, first.GetProperty("answeredSessions").GetInt32());
         Assert.Equal(600, first.GetProperty("medianSeconds").GetInt64());
+    }
+
+    [Fact]
+    public async Task ChatbotsShowTheirShareOfTheResolutionsOfEachChannelInThePeriod()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var (laura, _) = await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Laura Gómez", "advisor");
+        var ventas = await ChatbotAsync(f, "Ventas");
+        var soporte = await ChatbotAsync(f, "Soporte");
+
+        // WhatsApp, 5 resoluciones. B la resuelve el bot, el contacto vuelve y la resuelve Laura: las dos cuentan.
+        var a = await ConversationAsync(f, "573000000031", Bog(10, 5, 9));
+        await ResolvedAsync(f, a, Bog(10, 5, 10), chatbot: ventas);
+        var b = await ConversationAsync(f, "573000000032", Bog(10, 5, 11));
+        await ResolvedAsync(f, b, Bog(10, 5, 12), chatbot: ventas);
+        await ReopenedAsync(f, b, Bog(10, 6, 9));
+        await ResolvedAsync(f, b, Bog(10, 6, 10), member: laura);
+        var c = await ConversationAsync(f, "573000000033", Bog(10, 7, 9));
+        await ResolvedAsync(f, c, Bog(10, 7, 10), chatbot: soporte);
+
+        // El último instante del periodo en Bogotá (23:59 del 11) entra; es la quinta.
+        var d = await ConversationAsync(f, "573000000034", Bog(10, 7, 11));
+        await ResolvedAsync(f, d, Bog(10, 11, 23, 59), member: laura);
+
+        // Instagram, 2 resoluciones: el denominador es por canal.
+        var e = await ConversationAsync(f, "ig-1", Bog(10, 8, 9), instagram: true);
+        await ResolvedAsync(f, e, Bog(10, 8, 10), chatbot: ventas, instagram: true);
+        var g = await ConversationAsync(f, "ig-2", Bog(10, 8, 11), instagram: true);
+        await ResolvedAsync(f, g, Bog(10, 8, 12), member: laura, instagram: true);
+
+        // Fuera del periodo, a ambos lados (04 de octubre y 05:00Z del 12): ni numerador ni denominador.
+        var outside = await ConversationAsync(f, "573000000035", Bog(10, 1, 9));
+        await ResolvedAsync(f, outside, Bog(10, 4, 23, 59), chatbot: ventas);
+        await ResolvedAsync(f, outside, new DateTimeOffset(2026, 10, 12, 5, 0, 0, TimeSpan.Zero), member: laura);
+
+        // Importadas: created_at es la hora de la importación, no una resolución del periodo.
+        var imported = await ConversationAsync(f, "573000000036", Bog(10, 9, 9));
+        await MarkImportedAsync(f, await ResolvedAsync(f, imported, Bog(10, 9, 10), chatbot: ventas));
+        await MarkImportedAsync(f, await ResolvedAsync(f, imported, Bog(10, 9, 11), member: laura));
+
+        var report = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day");
+
+        Assert.Equal(["Ventas:WhatsApp:2/5", "Ventas:Instagram:1/2", "Soporte:WhatsApp:1/5"], ChatbotBars(report));
+        var first = report.GetProperty("chatbots")[0];
+        Assert.Equal(ventas.ToString(), first.GetProperty("chatbotId").GetString());
+        Assert.Equal(0.4, first.GetProperty("channels")[0].GetProperty("ratio").GetDouble(), 6);
+        Assert.Equal(0.5, first.GetProperty("channels")[1].GetProperty("ratio").GetDouble(), 6);
+
+        var instagramOnly = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day&channel=Instagram");
+        Assert.Equal(["Ventas:Instagram:1/2"], ChatbotBars(instagramOnly));
+    }
+
+    [Fact]
+    public async Task ChatbotsAreEmptyWhenOnlyMembersResolvedAndAMemberOnlyChannelHasNoRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var (laura, _) = await SeedMemberAsync(f.ConnectionString, f.Tenant.TenantId, "Laura Gómez", "advisor");
+
+        var report = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day");
+        Assert.Equal(JsonValueKind.Array, report.GetProperty("chatbots").ValueKind);
+        Assert.Empty(ChatbotBars(report));
+
+        var instagram = await ConversationAsync(f, "ig-3", Bog(10, 8, 9), instagram: true);
+        await ResolvedAsync(f, instagram, Bog(10, 8, 10), member: laura, instagram: true);
+        Assert.Empty(ChatbotBars(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+
+        var ventas = await ChatbotAsync(f, "Ventas");
+        var whatsApp = await ConversationAsync(f, "573000000037", Bog(10, 8, 11));
+        await ResolvedAsync(f, whatsApp, Bog(10, 8, 12), chatbot: ventas);
+        Assert.Equal(["Ventas:WhatsApp:1/1"], ChatbotBars(await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+    }
+
+    [Fact]
+    public async Task DeletedChatbotsMergeIntoTheLastRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var ventas = await ChatbotAsync(f, "Ventas");
+
+        // Los ids sin fila en automations.chatbots son chatbots borrados: el borrado es físico.
+        var conversation = await ConversationAsync(f, "573000000038", Bog(10, 5, 9));
+        await ResolvedAsync(f, conversation, Bog(10, 5, 10), chatbot: Guid.CreateVersion7());
+        await ResolvedAsync(f, conversation, Bog(10, 5, 11), chatbot: Guid.CreateVersion7());
+        await ResolvedAsync(f, conversation, Bog(10, 5, 12), chatbot: ventas);
+
+        var report = await GetOkAsync(f, "from=2026-10-05&to=2026-10-11&groupBy=day");
+
+        Assert.Equal(["Ventas:WhatsApp:1/3", "Chatbot eliminado:WhatsApp:2/3"], ChatbotBars(report));
+        Assert.Equal(JsonValueKind.Null, report.GetProperty("chatbots")[1].GetProperty("chatbotId").ValueKind);
+    }
+
+    [Fact]
+    public async Task ChatbotResolutionsDoNotLeakAcrossTenants()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var mine = await ArrangeAsync(database);
+        using var other = await ArrangeAsync(database, line: 2);
+        var ventas = await ChatbotAsync(mine, "Ventas");
+        var ajeno = await ChatbotAsync(other, "Ajeno");
+
+        await ResolvedAsync(mine, await ConversationAsync(mine, "573000000039", Bog(10, 5, 9)), Bog(10, 5, 10), chatbot: ventas);
+        await ResolvedAsync(other, await ConversationAsync(other, "573000000040", Bog(10, 5, 9)), Bog(10, 5, 10), chatbot: ajeno);
+        await ResolvedAsync(other, await ConversationAsync(other, "573000000041", Bog(10, 5, 11)), Bog(10, 5, 12));
+
+        Assert.Equal(["Ventas:WhatsApp:1/1"], ChatbotBars(await GetOkAsync(mine, "from=2026-10-05&to=2026-10-11&groupBy=day")));
+        Assert.Equal(["Ajeno:WhatsApp:1/2"], ChatbotBars(await GetOkAsync(other, "from=2026-10-05&to=2026-10-11&groupBy=day")));
     }
 
     private static string[] Channels(JsonElement report) =>

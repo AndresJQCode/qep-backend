@@ -48,7 +48,9 @@ public sealed class MessagingReportAggregatorTests
         ReportData? previous = null,
         Func<Guid, BusinessHoursSchedule?>? scheduleOf = null,
         IReadOnlyDictionary<Guid, string>? names = null,
-        IReadOnlyCollection<ConversationChannel>? channelsWithData = null)
+        IReadOnlyCollection<ConversationChannel>? channelsWithData = null,
+        IReadOnlyList<ReportResolutionRow>? resolutions = null,
+        IReadOnlyDictionary<Guid, string>? chatbotNames = null)
     {
         var f = from ?? new DateOnly(2026, 10, 5);
         var t = to ?? new DateOnly(2026, 10, 11);
@@ -56,7 +58,131 @@ public sealed class MessagingReportAggregatorTests
         var prevWindow = Window(f.AddDays(-days), f.AddDays(-1));
         return MessagingReportAggregator.Build(
             Window(f, t), current, prevWindow, previous ?? Data(), groupBy, Bogota,
-            scheduleOf ?? (_ => null), names ?? new Dictionary<Guid, string>(), channelsWithData);
+            scheduleOf ?? (_ => null), names ?? new Dictionary<Guid, string>(), channelsWithData, resolutions, chatbotNames);
+    }
+
+    private static readonly Guid VentasBot = Guid.Parse("01900000-0000-7000-8000-0000000000d1");
+    private static readonly Guid SoporteBot = Guid.Parse("01900000-0000-7000-8000-0000000000d2");
+    private static readonly Guid DeletedBotA = Guid.Parse("01900000-0000-7000-8000-0000000000d3");
+    private static readonly Guid DeletedBotB = Guid.Parse("01900000-0000-7000-8000-0000000000d4");
+
+    private static readonly Dictionary<Guid, string> BotNames = new()
+    {
+        [VentasBot] = "Ventas",
+        [SoporteBot] = "Soporte",
+    };
+
+    private static ReportResolutionRow Resolved(ConversationChannel channel, Guid? chatbot, int count) => new(channel, chatbot, count);
+
+    private static MessagingReportChatbotChannelDto Bar(ConversationChannel channel, int resolvedByChatbot, int resolvedTotal, double ratio) =>
+        new(channel.ToString(), resolvedByChatbot, resolvedTotal, ratio);
+
+    [Fact]
+    public void ChatbotsAreEmptyWithoutResolutions()
+    {
+        Assert.Empty(Build(Data()).Chatbots);
+        Assert.Empty(Build(Data(), resolutions: [], chatbotNames: BotNames).Chatbots);
+    }
+
+    [Fact]
+    public void ChatbotsAreEmptyWhenOnlyMembersResolved()
+    {
+        var report = Build(Data(), resolutions: [Resolved(ConversationChannel.WhatsApp, null, 12)], chatbotNames: BotNames);
+
+        Assert.Empty(report.Chatbots);
+    }
+
+    [Fact]
+    public void TheRatioIsTheChatbotShareOfAllTheResolutionsOfItsChannel()
+    {
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.WhatsApp, null, 420),
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 180),
+        ], chatbotNames: BotNames);
+
+        var chatbot = Assert.Single(report.Chatbots);
+        Assert.Equal(VentasBot, chatbot.ChatbotId);
+        Assert.Equal("Ventas", chatbot.DisplayName);
+        Assert.Equal([Bar(ConversationChannel.WhatsApp, 180, 600, 0.3)], chatbot.Channels);
+    }
+
+    [Fact]
+    public void TwoChatbotsInAChannelShareOneDenominator()
+    {
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.WhatsApp, null, 5),
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 3),
+            Resolved(ConversationChannel.WhatsApp, SoporteBot, 2),
+        ], chatbotNames: BotNames);
+
+        Assert.Equal([Bar(ConversationChannel.WhatsApp, 3, 10, 0.3)], report.Chatbots[0].Channels);
+        Assert.Equal([Bar(ConversationChannel.WhatsApp, 2, 10, 0.2)], report.Chatbots[1].Channels);
+    }
+
+    [Fact]
+    public void AChatbotAppearsOnlyInTheChannelsWhereItResolved()
+    {
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.Instagram, null, 7),
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 1),
+        ], chatbotNames: BotNames);
+
+        Assert.Equal([Bar(ConversationChannel.WhatsApp, 1, 1, 1.0)], Assert.Single(report.Chatbots).Channels);
+    }
+
+    [Fact]
+    public void ChannelsGoWhatsAppBeforeInstagram()
+    {
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.Instagram, VentasBot, 1),
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 3),
+        ], chatbotNames: BotNames);
+
+        Assert.Equal(["WhatsApp", "Instagram"], Assert.Single(report.Chatbots).Channels.Select(c => c.Channel));
+    }
+
+    [Fact]
+    public void ChatbotsGoByTotalResolvedAcrossChannelsThenByName()
+    {
+        var names = new Dictionary<Guid, string>(BotNames) { [DeletedBotA] = "Agenda" };
+
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 3),
+            Resolved(ConversationChannel.WhatsApp, SoporteBot, 2),
+            Resolved(ConversationChannel.Instagram, SoporteBot, 2),
+            Resolved(ConversationChannel.WhatsApp, DeletedBotA, 3),
+        ], chatbotNames: names);
+
+        Assert.Equal(["Soporte", "Agenda", "Ventas"], report.Chatbots.Select(c => c.DisplayName));
+    }
+
+    [Fact]
+    public void DeletedChatbotsMergeIntoOneRowThatGoesLastAndSumsPerChannel()
+    {
+        var report = Build(Data(), resolutions:
+        [
+            Resolved(ConversationChannel.Instagram, DeletedBotA, 3),
+            Resolved(ConversationChannel.WhatsApp, DeletedBotA, 5),
+            Resolved(ConversationChannel.WhatsApp, DeletedBotB, 7),
+            Resolved(ConversationChannel.WhatsApp, VentasBot, 1),
+            Resolved(ConversationChannel.WhatsApp, null, 3),
+        ], chatbotNames: BotNames);
+
+        Assert.Equal(2, report.Chatbots.Count);
+        Assert.Equal("Ventas", report.Chatbots[0].DisplayName);
+        Assert.Equal([Bar(ConversationChannel.WhatsApp, 1, 16, 1.0 / 16)], report.Chatbots[0].Channels);
+
+        var deleted = report.Chatbots[1];
+        Assert.Null(deleted.ChatbotId);
+        Assert.Equal("Chatbot eliminado", deleted.DisplayName);
+        Assert.Equal(
+            [Bar(ConversationChannel.WhatsApp, 12, 16, 12.0 / 16), Bar(ConversationChannel.Instagram, 3, 3, 1.0)],
+            deleted.Channels);
     }
 
     [Fact]

@@ -2987,8 +2987,8 @@ desde la app.
 - **El historial importado no cuenta en el reporte de mensajería** (decisión del owner del 2026-10-30). Lo
   importado lleva la marca `imported`, en `messaging.conversations` y en `messaging.messages`, y esa marca
   no se apaga nunca, a diferencia de `history_managed`. Su `created_at` es la hora de la importación, así que
-  `MessagingReportSource` lo deja fuera de las sesiones, de los entrantes de arranque y de las respuestas: el
-  día de la conexión no se infla con contactos nuevos ni con sesiones sin responder. Lo que pasa en vivo
+  `MessagingReportSource` lo deja fuera de las sesiones, de los entrantes de arranque, de las respuestas y de
+  las resoluciones que cuenta el bloque `chatbots`: el día de la conexión no se infla con contactos nuevos ni con sesiones sin responder. Lo que pasa en vivo
   después cuenta como siempre: una conversación importada arranca sesión con su primer entrante en vivo, o
   con su `Reopened` si se reabrió. Para saber si un contacto es nuevo o vuelve, un entrante importado sí
   cuenta, con su `occurred_at`: un contacto que ya escribía por la app no es nuevo por escribir en vivo. Los
