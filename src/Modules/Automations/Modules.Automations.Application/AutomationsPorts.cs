@@ -277,11 +277,13 @@ public interface IAutomationInboundQueue
 /// <c>AdvisorTransferred</c>, <c>Manual</c> o <c>Handoff</c>) y es <c>null</c> si el asistente no está pausado.
 /// <see cref="Channel"/> (<c>WhatsApp</c> o <c>Instagram</c>), <see cref="Blocked"/> (el contacto está bloqueado) y
 /// <see cref="WindowExpiresAt"/> (cuándo se cierra la ventana de 24 h; <c>null</c> si el cliente nunca escribió) son lo que hace falta para
-/// decidir si una persona puede iniciar el asistente desde el hilo (spec 2026-10-31).</summary>
+/// decidir si una persona puede iniciar el asistente desde el hilo (spec 2026-10-31). <see cref="AutomationPausedAt"/> (spec 2026-11-01)
+/// es cuándo se pausó, <c>null</c> sin pausa: desde ahí se miden los eventos de un asesor y los entrantes de la pausa.</summary>
 public sealed record AutomationConversationState(
     string Status, Guid? AssignedMemberId, string AutomationStatus, Guid? AutomationChatbotId, Guid ConnectionId,
     DateTimeOffset? LastInboundAt, string? CustomerName, string? Phone, DateTimeOffset? AutomationResumedAt = null,
-    string? AutomationPauseReason = null, string Channel = "WhatsApp", bool Blocked = false, DateTimeOffset? WindowExpiresAt = null);
+    string? AutomationPauseReason = null, string Channel = "WhatsApp", bool Blocked = false, DateTimeOffset? WindowExpiresAt = null,
+    DateTimeOffset? AutomationPausedAt = null);
 
 /// <summary>Spec 2026-10-21 §5.3, D-M5 y D-M14: lo que el motor le hace a la conversación (adaptador en Bootstrapper sobre el agregado
 /// <c>Conversation</c> de Mensajería). Cada cambio se guarda y se notifica antes de volver. Una regla del agregado que no se cumple
@@ -296,6 +298,11 @@ public interface IAutomationConversations
     /// <paramref name="since"/>? Se mide con la historia y no con el estado actual: una conversación puede figurar <c>Open</c> porque la
     /// ingesta la reabrió, y aun así haber sido resuelta después de que terminó la última corrida.</summary>
     Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-01 D-5: ¿un asesor tuvo la conversación (eventos <c>Taken</c>, <c>AutoTaken</c> o <c>Transferred</c> del hilo)
+    /// después de <paramref name="since"/>? Se mide con la historia porque el motivo de pausa no lo dice: tomar o responder sobre una pausa
+    /// no lo cambia, y al liberar queda igual que si nadie hubiera hablado.</summary>
+    Task<bool> WasTakenSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken);
 
     /// <summary><c>None → Active</c> con el chatbot y el primer paso. Spec 2026-10-26 D-3b: también <c>Paused → Active</c> cuando la
     /// pausa es automática (<c>AdvisorTook</c>, <c>AdvisorReplied</c>, <c>AdvisorTransferred</c>) y la conversación ya no tiene asesor.</summary>

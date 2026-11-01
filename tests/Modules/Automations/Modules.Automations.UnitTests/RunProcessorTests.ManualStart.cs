@@ -36,7 +36,7 @@ public sealed partial class RunProcessorTests
         var bed = ManualBed.For(verdict);
         var committed = 0;
 
-        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+        var evaluated = (await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken)).Verdict;
         var started = await bed.Starter().StartAsync(
             TenantId, ConversationId, (_, _) =>
             {
@@ -175,7 +175,7 @@ public sealed partial class RunProcessorTests
     {
         var bed = ManualBed.For(verdict, deadRun: true);
 
-        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+        var evaluated = (await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken)).Verdict;
 
         Assert.Equal(verdict, evaluated);
         Assert.Equal(0, bed.Runs.LatestReads);
@@ -188,7 +188,7 @@ public sealed partial class RunProcessorTests
     {
         var bed = ManualBed.For(ManualStartVerdict.Available, deadRun: true);
 
-        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+        var evaluated = (await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken)).Verdict;
 
         Assert.Equal(ManualStartVerdict.Available, evaluated);
         Assert.Equal(1, bed.Runs.LatestReads);
@@ -202,7 +202,7 @@ public sealed partial class RunProcessorTests
         completed.Finish(RunStatus.Completed, null, ManualNow.AddHours(-1));
         await bed.Runs.AddAsync(completed, TestContext.Current.CancellationToken);
 
-        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+        var evaluated = (await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken)).Verdict;
 
         Assert.Equal(ManualStartVerdict.Available, evaluated);
     }
@@ -248,7 +248,7 @@ public sealed partial class RunProcessorTests
             new NoUnitOfWork(null, false), new MemoryRuns(), new ServingChatbots(Flow), new RecordingInbox(), new ManualConversations(pausedByHandoff),
             new ModuleStatus(true), new RunUnitWriter(new ManualRunUnits(), new FixedClock(), NullLogger<RunUnitWriter>.Instance), new FixedClock());
 
-        var verdict = await starter.EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+        var verdict = (await starter.EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken)).Verdict;
 
         Assert.Equal(ManualStartVerdict.Available, verdict);
     }
@@ -415,10 +415,19 @@ public sealed partial class RunProcessorTests
             new ModuleStatus(moduleEnabled), new RunUnitWriter(Units, new FixedClock(), NullLogger<RunUnitWriter>.Instance), new FixedClock());
     }
 
-    private sealed class ManualConversations(AutomationConversationState? state) : IAutomationConversations
+    private sealed class ManualConversations(AutomationConversationState? state, bool taken = false) : IAutomationConversations
     {
+        /// <summary>Spec 2026-11-01 D-5: desde cuándo se preguntó si un asesor la tuvo.</summary>
+        public List<DateTimeOffset> TakenChecks { get; } = [];
+
         public Task<AutomationConversationState?> GetAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             Task.FromResult(state);
+
+        public Task<bool> WasTakenSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken)
+        {
+            TakenChecks.Add(since);
+            return Task.FromResult(taken);
+        }
 
         public Task<bool> WasResolvedSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

@@ -982,6 +982,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();
         // Spec 2026-10-31: iniciar el asistente desde el hilo. Sin registro, 500.
         services.AddScoped<ICommandHandler<StartAutomationCommand, ConversationSummary>, StartAutomationHandler>();
+        services.AddScoped<ICommandHandler<ContinueAutomationCommand, ConversationSummary>, ContinueAutomationHandler>();
         // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin registro, 500.
         services.AddScoped<ICommandHandler<BlockContactCommand, ConversationSummary>, BlockContactHandler>();
         services.AddScoped<ICommandHandler<UnblockContactCommand, ConversationSummary>, UnblockContactHandler>();

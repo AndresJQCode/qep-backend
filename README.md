@@ -1029,7 +1029,7 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
 | `/api/v1/tenants/{tenantId}/integrations`          | `catalog` (`GET`), `connections` (`GET`, `POST`), y por conexión `GET`, `PUT` (`If-Match`), `test` (`POST`), `pause` y `resume` (`POST`, `If-Match`), `DELETE` (`If-Match`) | `integrations.connection.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/integrations/whatsapp/embedded-signup` | `POST` | `integrations.connection.manage` |
-| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause` y `automation/resume` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10)) | `messaging.conversation.read` / `.manage` |
+| `/api/v1/tenants/{tenantId}/messaging` | `conversations` (`GET`), por conversación `GET`, `messages` (`GET`, `POST`), `messages/audio` (`POST`, multipart), `read` (`POST`), `resolve` (`POST`, `If-Match`, cuerpo opcional `{ reasonId }` o `{ reasonName }`) y `reopen` (`POST`, `If-Match`), `automation/pause`, `automation/resume`, `automation/start` y `automation/continue` (`POST`, `If-Match`, `.manage`; ver [Asistente en la conversación](#asistente-en-la-conversación)); `messages/search` (`GET`); `media/{messageId}` (`GET`); `conversations/{id}/customer` (`PUT`, `If-Match`, cuerpo `{ customerId }`, `.manage`; ver [Identidad, clientes y asignación](#identidad-clientes-y-asignación-spec-2026-10-10)) | `messaging.conversation.read` / `.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/quick-replies` | `GET`, `POST`; por respuesta `PUT` (`version` en el cuerpo) y `DELETE` (`?version=`) | `messaging.conversation.read` (`GET`) / `messaging.quick_reply.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/resolution-reasons` | `GET`; por motivo `PATCH` (`If-Match`) y `DELETE` (archiva). Se crean al resolver | `messaging.conversation.read` (`GET`) / `messaging.resolution_reason.manage` |
 | `/api/v1/tenants/{tenantId}/messaging/business-hours` | `GET`, `POST`; por horario `PUT` (`If-Match`), `DELETE` (`If-Match`), `duplicate` (`POST`) y `default` (`POST`, `If-Match`) (ver [Horarios de atención](#horarios-de-atención)) | `messaging.conversation.read` (`GET`) / `messaging.business_hours.manage` |
@@ -3283,6 +3283,30 @@ atiende o un arranque está en cola), `messaging.automation.no_chatbot` (la cone
 candado de la conversación mientras se decidía. `ConversationSummary.automationStart` es `Available` | `WindowClosed` | `NoChatbot` o `null` (BFF: el
 encabezado decide si dibuja «Iniciar asistente» activo, apagado o nada); sólo se llena en las respuestas de una conversación, no en el
 listado ni en la búsqueda.
+
+`POST …/conversations/{id}/automation/continue` devuelve una pausa manual para que el asistente siga en el paso pendiente (spec
+2026-11-01). Sin cuerpo; pide `messaging.conversation.manage` y `If-Match` (428 sin él, 412 si la versión cambió o si otro request tenía el
+candado de la conversación) y responde 200 con el `ConversationSummary`. **No manda nada:** deja la conversación `Active` con el evento
+`AutomationContinued` y la auditoría `messaging.conversation.automation_continued`, no escribe `automation_resumed_at` y no arranca ni
+avanza ninguna corrida; sólo renueva el reloj de 24 h del barrido. El siguiente entrante sigue la misma corrida, en su versión y con
+sus variables e intentos. Lo que el cliente escribió durante la pausa no se reprocesa. Los 422 son los de `automation/start` y
+`messaging.automation.cannot_continue` (no hay paso que retomar: no cae a `resume`; se relee el resumen).
+
+`ConversationSummary.automationContinue` va al lado de `automationStart`, con la misma regla de dónde se llena:
+
+```jsonc
+"automationContinue": { "mode": "PendingStep", "customerWroteDuringPause": false } // o null
+```
+
+| Estado | `mode` | Primera opción del modal | POST |
+|---|---|---|---|
+| `Paused`, `automationStart: Available`, se puede continuar | `PendingStep` | «Continuar donde iba» | `automation/continue` |
+| `Paused`, `automationStart: Available`, no se puede | `FlowStart` | Empieza el flujo cuando el cliente escriba | `automation/resume` |
+| Cualquier otro caso, o falló la evaluación | `automationContinue: null` | Sin modal de dos opciones | — |
+
+Se puede continuar con pausa `Manual`, corrida `Waiting`, nadie devolvió la conversación después de que la corrida arrancó, el chatbot de la
+conexión es el de la corrida y ningún evento `Taken`, `AutoTaken` o `Transferred` desde la pausa. `customerWroteDuringPause` es
+`lastInboundAt > automationPausedAt`, en los dos modos: esos mensajes el asistente no los lee en ninguno.
 
 Tomar, transferir y responder una conversación pausan el asistente (`AdvisorTook`, `AdvisorTransferred`, `AdvisorReplied`); soltarla lo
 deja en pausa; reanudarlo libera al asesor asignado; resolver lo devuelve a `None`. Cada cambio deja el evento `AutomationPaused` /
