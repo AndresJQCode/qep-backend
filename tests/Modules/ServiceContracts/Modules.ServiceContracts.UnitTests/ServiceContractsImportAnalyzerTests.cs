@@ -239,6 +239,9 @@ public sealed class ServiceContractsImportAnalyzerTests
 
         public Task<IReadOnlyList<ServiceContract>> ListActiveAsync(Guid tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ActiveServiceTotal>> ActiveTotalsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class AnaManages : IServiceContractsMemberDirectory

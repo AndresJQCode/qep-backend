@@ -33,6 +33,13 @@ public static class BillingCycles
     public static DateOnly FirstDueDateOnOrAfter(DateOnly firstDueDate, BillingCycle cycle, DateOnly date) =>
         firstDueDate >= date ? firstDueDate : NextDueDate(firstDueDate, cycle, date.AddDays(-1));
 
+    /// <summary>
+    /// Lo que unos precios valen por mes: cada uno dividido por los meses de su ciclo. Se suma primero y se redondea el total, con
+    /// la escala de <c>numeric(18,2)</c>: redondear contrato por contrato acumula el error (tres anuales de 100 darían 24.99, no 25.00).
+    /// </summary>
+    public static decimal MonthlyValue(IEnumerable<(BillingCycle Cycle, decimal Price)> prices) =>
+        decimal.Round(prices.Sum(price => price.Price / (int)price.Cycle), 2) + 0.00m;
+
     public static BillingCycle Parse(string wire) => wire switch
     {
         "Monthly" => BillingCycle.Monthly,

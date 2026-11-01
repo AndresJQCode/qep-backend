@@ -62,4 +62,52 @@ public sealed class BotAttendanceTests
     [InlineData("None")]
     public void APausedOrOffAssistantIsNotAttending(string automation) =>
         Assert.False(BotAttendance.IsAttending(State(automation: automation), Run()));
+
+    private static AutomationConversationState PausedByHand(DateTimeOffset? resumedAt = null, string reason = "Manual") =>
+        State(automation: "Paused", resumedAt: resumedAt) with { AutomationPauseReason = reason, AutomationPausedAt = StartedAt.AddMinutes(30) };
+
+    /// <summary>Spec 2026-11-01 D-4: pausa manual, corrida esperando y nadie la devolvió después de que arrancó.</summary>
+    [Fact]
+    public void AManualPauseWithAWaitingRunCanContinue() =>
+        Assert.True(BotAttendance.CanContinue(PausedByHand(), Run()));
+
+    [Theory]
+    [InlineData(-5, true)]
+    [InlineData(0, true)]
+    [InlineData(5, false)]
+    public void AResumeAfterTheRunStartedForbidsContinuing(int resumedOffsetSeconds, bool expected) =>
+        Assert.Equal(expected, BotAttendance.CanContinue(PausedByHand(StartedAt.AddSeconds(resumedOffsetSeconds)), Run()));
+
+    /// <summary>D-4.2: <c>Handoff</c> no tiene corrida viva, y los motivos automáticos son una persona que ya intervino.</summary>
+    [Theory]
+    [InlineData("Handoff")]
+    [InlineData("AdvisorTook")]
+    [InlineData("AdvisorReplied")]
+    [InlineData("AdvisorTransferred")]
+    public void AnyOtherPauseReasonCannotContinue(string reason) =>
+        Assert.False(BotAttendance.CanContinue(PausedByHand(reason: reason), Run()));
+
+    [Theory]
+    [InlineData("Active")]
+    [InlineData("None")]
+    public void AnAssistantThatIsNotPausedCannotContinue(string automation) =>
+        Assert.False(BotAttendance.CanContinue(PausedByHand() with { AutomationStatus = automation }, Run()));
+
+    /// <summary>D-4.3: una <c>Running</c> con el candado libre es una unidad muerta.</summary>
+    [Fact]
+    public void ARunningRunCannotContinue() =>
+        Assert.False(BotAttendance.CanContinue(PausedByHand(), Run(RunStatus.Running)));
+
+    [Fact]
+    public void WithoutARunThereIsNothingToContinue() =>
+        Assert.False(BotAttendance.CanContinue(PausedByHand(), null));
+
+    [Fact]
+    public void AFinishedRunCannotContinue()
+    {
+        var run = Run();
+        run.Finish(RunStatus.Interrupted, null, StartedAt.AddMinutes(1));
+
+        Assert.False(BotAttendance.CanContinue(PausedByHand(), run));
+    }
 }

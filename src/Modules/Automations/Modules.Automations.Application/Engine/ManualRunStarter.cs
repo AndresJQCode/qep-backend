@@ -20,14 +20,36 @@ public enum ManualStartVerdict
     NoChatbot,
     WindowClosed,
     Busy,
+
+    /// <summary>Spec 2026-11-01: sólo al continuar. El asistente se podría iniciar, pero no hay paso pendiente que retomar.</summary>
+    CannotContinue,
 }
+
+/// <summary>Spec 2026-11-01 §5: qué hace la primera opción del modal.</summary>
+public enum ManualContinueMode
+{
+    /// <summary>Hay paso pendiente: «Continuar donde iba».</summary>
+    PendingStep,
+
+    /// <summary>Sin paso que retomar (D-7): el flujo empieza cuando el cliente escriba.</summary>
+    FlowStart,
+}
+
+/// <summary>Spec 2026-11-01 D-6: lo que el resumen le dice al modal. <paramref name="CustomerWroteDuringPause"/> (D-10) avisa que hay
+/// entrantes que el asistente no va a leer.</summary>
+public sealed record ManualContinueOffer(ManualContinueMode Mode, bool CustomerWroteDuringPause);
+
+/// <summary>Una sola evaluación para los dos campos del resumen: <paramref name="Continue"/> es <c>null</c> si no hay modal de dos
+/// opciones.</summary>
+public sealed record ManualStartEvaluation(ManualStartVerdict Verdict, ManualContinueOffer? Continue);
 
 /// <summary>
 /// Spec 2026-10-31 D-6 y D-7: decide y resguarda el arranque manual del asistente. <see cref="EvaluateAsync"/> es una lectura sin
 /// transacción (el resumen de la conversación la llama en cada detalle); <see cref="StartAsync"/> repite la misma decisión bajo el
 /// candado de la conversación, cierra la corrida muerta y deja que Mensajería confirme el cambio. No es un mismo guardado: son dos
 /// <c>DbContext</c> y Mensajería confirma primero; si el guardado de Automations falla después, la corrida muerta queda abierta y el
-/// worker la cierra por <c>AutomationResumedAt</c> (<see cref="BotAttendance.HumanTookOver"/>).
+/// worker la cierra por <c>AutomationResumedAt</c> (<see cref="BotAttendance.HumanTookOver"/>). <see cref="ContinueAsync"/> (spec
+/// 2026-11-01) hace lo mismo para retomar el paso pendiente de una pausa manual, sin cerrar ni arrancar ninguna corrida.
 /// </summary>
 public sealed class ManualRunStarter(
     IAutomationsUnitOfWork unitOfWork,
@@ -40,17 +62,79 @@ public sealed class ManualRunStarter(
     IClock clock)
 {
     /// <summary>Sin transacción ni candado: a lo sumo hay una corrida viva y es la última (D-6).</summary>
-    public async Task<ManualStartVerdict> EvaluateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    public async Task<ManualStartEvaluation> EvaluateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
-        // La corrida se lee sólo si la decisión llega a necesitarla (BotAttending); los veredictos de la conversación no la leen.
+        // La corrida se lee sólo si la decisión llega a necesitarla (BotAttending); los veredictos de la conversación no la leen. Se guarda
+        // porque continuar pregunta por la misma: con el botón disponible ya se leyó, y el resumen no paga una segunda lectura.
+        ConversationRun? live = null;
         async Task<ConversationRun?> LoadLiveAsync(CancellationToken token)
         {
             var latest = await runs.FindLatestAsync(tenantId, conversationId, token);
-            return latest is { IsLive: true } ? latest : null;
+            live = latest is { IsLive: true } ? latest : null;
+            return live;
         }
 
-        return (await DecideAsync(tenantId, conversationId, LoadLiveAsync, cancellationToken)).Verdict;
+        var (verdict, conversation, chatbot) = await DecideAsync(tenantId, conversationId, LoadLiveAsync, cancellationToken);
+        if (verdict != ManualStartVerdict.Available || conversation is not { AutomationStatus: AutomationStates.Paused })
+        {
+            return new ManualStartEvaluation(verdict, null);
+        }
+
+        var mode = await CanContinueAsync(tenantId, conversationId, conversation, live, chatbot!, cancellationToken)
+            ? ManualContinueMode.PendingStep
+            : ManualContinueMode.FlowStart;
+        return new ManualStartEvaluation(verdict, new ManualContinueOffer(mode, conversation.LastInboundAt > conversation.AutomationPausedAt));
     }
+
+    /// <summary>Spec 2026-11-01 D-8: como <see cref="StartAsync"/>, repite la decisión bajo el candado y sólo entonces deja que Mensajería
+    /// confirme. El barrido no sube la versión de la conversación, así que una corrida cerrada con el modal abierto sólo se ve aquí. Son
+    /// dos <c>DbContext</c> y Mensajería confirma primero; si el guardado de Automations falla, la corrida sigue viva y el continuar
+    /// funciona: sólo queda sin renovar su reloj del barrido (D-9), y eso se acepta.</summary>
+    /// <param name="commit">Sólo corre con <see cref="ManualStartVerdict.Available"/>, bajo el candado.</param>
+    public async Task<ManualStartVerdict> ContinueAsync(
+        Guid tenantId, Guid conversationId, Func<CancellationToken, Task> commit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await unitOfWork.TryLockConversationAsync(conversationId, cancellationToken))
+        {
+            return ManualStartVerdict.Busy;
+        }
+
+        var live = await runs.FindLiveForUpdateAsync(tenantId, conversationId, cancellationToken);
+        var (verdict, conversation, chatbot) = await DecideAsync(tenantId, conversationId, _ => Task.FromResult(live), cancellationToken);
+        if (verdict != ManualStartVerdict.Available)
+        {
+            return verdict;
+        }
+
+        if (!await CanContinueAsync(tenantId, conversationId, conversation!, live, chatbot!, cancellationToken))
+        {
+            return ManualStartVerdict.CannotContinue;
+        }
+
+        // La versión es la de la corrida, no la publicada (D-C1), y se lee ya con el candado: el resumen no la lee para no cargar el flujo
+        // en cada detalle (D-12). Si no se puede leer, el siguiente entrante fallaría, así que no se promete nada.
+        if (await LoadFlowAsync(tenantId, live!.ChatbotVersionId, cancellationToken) is null)
+        {
+            return ManualStartVerdict.CannotContinue;
+        }
+
+        live.KeepWaiting(clock.UtcNow);
+        await commit(cancellationToken);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return ManualStartVerdict.Available;
+    }
+
+    /// <summary>Spec 2026-11-01 D-4, con <see cref="ManualStartVerdict.Available"/> ya decidido: la regla de <see cref="BotAttendance"/>, el
+    /// chatbot de la corrida atiende la conexión (P2-R26 sólo aplica al arrancar) y ningún asesor la tuvo desde la pausa (D-5). La consulta
+    /// de eventos va al final: corre sólo si el resto ya dio verdadero.</summary>
+    private async Task<bool> CanContinueAsync(
+        Guid tenantId, Guid conversationId, AutomationConversationState conversation, ConversationRun? run, ServingChatbot chatbot,
+        CancellationToken cancellationToken) =>
+        BotAttendance.CanContinue(conversation, run)
+        && chatbot.ChatbotId == run!.ChatbotId
+        && !await conversations.WasTakenSinceAsync(tenantId, conversationId, conversation.AutomationPausedAt!.Value, cancellationToken);
 
     /// <param name="commit">Recibe el chatbot; sólo corre con <see cref="ManualStartVerdict.Available"/>, bajo el candado.</param>
     public async Task<ManualStartVerdict> StartAsync(

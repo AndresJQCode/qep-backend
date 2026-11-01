@@ -94,7 +94,23 @@ public sealed record ChargePageDto(
     int PageSize,
     ChargeSummaryDto Summary);
 
-public sealed record ServicePageDto(IReadOnlyList<ServiceDto> Items, int Total, int Page, int PageSize);
+/// <summary>
+/// La franja de la lista de contratos: el tenant entero, sin los filtros ni la página, un total por moneda sin convertir.
+/// Lo vencido es el mismo cálculo de <see cref="ChargeSummaryDto"/>, para que esta pantalla y la bandeja de cobros no puedan
+/// discrepar. <c>MonthlyValueByCurrency</c> cuenta sólo los contratos <c>Active</c>, prorrateados por mes.
+/// </summary>
+public sealed record ServiceSummaryDto(
+    int ActiveCount,
+    int OverdueCount,
+    IReadOnlyList<CurrencyAmountDto> OverdueAmountByCurrency,
+    IReadOnlyList<CurrencyAmountDto> MonthlyValueByCurrency);
+
+public sealed record ServicePageDto(
+    IReadOnlyList<ServiceDto> Items,
+    int Total,
+    int Page,
+    int PageSize,
+    ServiceSummaryDto Summary);
 
 /// <summary>Lo que <c>POST /services</c> crearía hoy con esos datos, sin escribir: el aviso «Se van a crear N cobros vencidos» del formulario.</summary>
 public sealed record ChargesPreviewDto(int ChargesToGenerate, int OverdueCharges);

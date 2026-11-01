@@ -46,8 +46,10 @@ public sealed class ListServicesValidator : AbstractValidator<ListServicesQuery>
 public sealed class ListServicesHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
+    ITenantClock tenantClock,
     IServiceContractsCustomerLookup customers,
     IServiceContractRepository services,
+    IChargeRepository charges,
     ServiceDetailComposer composer,
     IValidator<ListServicesQuery> validator)
     : IQueryHandler<ListServicesQuery, ServicePageDto>
@@ -108,6 +110,33 @@ public sealed class ListServicesHandler(
 
         var items = await composer.ComposeSummariesAsync(query.TenantId, page, customerRefs, cancellationToken);
 
-        return new ServicePageDto(items, ordered.Count, query.Page, query.PageSize);
+        var summary = await SummarizeAsync(query.TenantId, cancellationToken);
+
+        return new ServicePageDto(items, ordered.Count, query.Page, query.PageSize, summary);
+    }
+
+    /// <summary>
+    /// El tenant entero: no usa <c>filtered</c>, que viene con los filtros de la lista. Lo vencido sale de
+    /// <see cref="IChargeRepository.SummaryAsync"/> con la misma «hoy» que usa la bandeja de cobros. <c>Paused</c> y <c>Cancelled</c>
+    /// no entran en el valor mensual porque no generan cobros.
+    /// </summary>
+    private async Task<ServiceSummaryDto> SummarizeAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var today = (await tenantClock.GetAsync(tenantId, cancellationToken)).Today;
+        var chargeSummary = await charges.SummaryAsync(tenantId, today, cancellationToken);
+        var activeTotals = await services.ActiveTotalsAsync(tenantId, cancellationToken);
+
+        var monthlyValue = activeTotals
+            .GroupBy(total => total.Currency)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new CurrencyAmountDto(
+                group.Key, BillingCycles.MonthlyValue(group.Select(total => (total.Cycle, total.Price)))))
+            .ToList();
+
+        return new ServiceSummaryDto(
+            activeTotals.Sum(total => total.Count),
+            chargeSummary.OverdueCount,
+            chargeSummary.OverdueAmountByCurrency,
+            monthlyValue);
     }
 }

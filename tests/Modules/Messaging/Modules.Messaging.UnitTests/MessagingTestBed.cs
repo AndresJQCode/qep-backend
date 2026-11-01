@@ -350,6 +350,9 @@ internal sealed class InMemoryConversationQueries : IConversationQueries
     public Task<bool> HasResolvedEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
         Task.FromResult(false);
 
+    public Task<bool> HasAdvisorEventSinceAsync(Guid tenantId, Guid conversationId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(false);
+
     public Task<IReadOnlyList<ConversationRow>> FindManyAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ConversationRow>>(Rows.Where(row => row.TenantId == tenantId && ids.Contains(row.Id)).ToList());
 }
@@ -863,19 +866,25 @@ internal sealed class FakeAutomationManualStart : IAutomationManualStart
 {
     public string? State { get; set; }
 
+    /// <summary>Spec 2026-11-01 D-6: viaja en la misma lectura que <see cref="State"/>.</summary>
+    public AutomationContinueDto? Continue { get; set; }
+
     public int Calls { get; private set; }
 
     public List<Guid> Asked { get; } = [];
 
-    public Task<string?> FindStateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    public Task<AutomationAssistantState> FindStateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
         Calls++;
         Asked.Add(conversationId);
-        return Task.FromResult(State);
+        return Task.FromResult(new AutomationAssistantState(State, Continue));
     }
 
     public Task StartAsync(Guid tenantId, Guid conversationId, Func<Guid, CancellationToken, Task> commit, CancellationToken cancellationToken) =>
         commit(Guid.CreateVersion7(), cancellationToken);
+
+    public Task ContinueAsync(Guid tenantId, Guid conversationId, Func<CancellationToken, Task> commit, CancellationToken cancellationToken) =>
+        commit(cancellationToken);
 }
 
 internal sealed class FakeMemberNames(Guid memberId) : IMessagingMemberNames

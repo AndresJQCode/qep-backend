@@ -353,4 +353,86 @@ public sealed class ConversationAutomationTests
 
         Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, error.Code);
     }
+
+    // Spec 2026-11-01: continuar donde iba. Es la pausa manual sin asesor y nada más; no sella AutomationResumedAt, y esa ausencia es el
+    // marcador: BotAttendance.HumanTookOver da falso y el siguiente entrante sigue la corrida viva.
+    private static Conversation PausedByHand(DateTimeOffset pausedAt)
+    {
+        var conversation = WithOpenWindow();
+        conversation.StartAutomation(ChatbotId, Now.AddMinutes(-30));
+        conversation.SetAutomationStep("Número de documento");
+        conversation.PauseAutomation(Member, AutomationPauseReason.Manual, pausedAt);
+        return conversation;
+    }
+
+    [Fact]
+    public void ContinueClearsThePauseAndKeepsTheFlowWithoutAStamp()
+    {
+        var conversation = PausedByHand(Now.AddMinutes(-20));
+        var startedAt = conversation.AutomationStartedAt;
+        var version = conversation.Version;
+        var at = Now.AddMinutes(1);
+
+        var change = conversation.ContinueAutomation(Member, at);
+
+        Assert.Equal(ConversationAutomationStatus.Active, conversation.AutomationStatus);
+        Assert.Null(conversation.AutomationPausedAt);
+        Assert.Null(conversation.AutomationPausedByMemberId);
+        Assert.Null(conversation.AutomationPauseReason);
+        Assert.Null(conversation.AutomationResumedAt);
+        Assert.Equal(startedAt, conversation.AutomationStartedAt);
+        Assert.Equal(ChatbotId, conversation.AutomationChatbotId);
+        Assert.Equal("Número de documento", conversation.AutomationStep);
+        Assert.Equal(new ConversationEvent(ConversationEventType.AutomationContinued, Actor: Member), change);
+        Assert.Equal(version + 1, conversation.Version);
+    }
+
+    /// <summary>Un regreso anterior se conserva tal cual: continuar no lo mueve ni lo borra.</summary>
+    [Fact]
+    public void ContinueKeepsAnEarlierResumeStamp()
+    {
+        var conversation = PausedByHand(Now.AddMinutes(-20));
+        var resumedAt = Now.AddMinutes(-10);
+        conversation.ResumeAutomation(Member, resumedAt);
+        conversation.PauseAutomation(Member, AutomationPauseReason.Manual, Now.AddMinutes(-5));
+
+        conversation.ContinueAutomation(Member, Now);
+
+        Assert.Equal(resumedAt, conversation.AutomationResumedAt);
+    }
+
+    [Theory]
+    [InlineData(AutomationPauseReason.Handoff)]
+    [InlineData(AutomationPauseReason.AdvisorTook)]
+    [InlineData(AutomationPauseReason.AdvisorReplied)]
+    [InlineData(AutomationPauseReason.AdvisorTransferred)]
+    public void ContinueRejectsEveryOtherPauseReason(AutomationPauseReason reason)
+    {
+        var conversation = WithOpenWindow();
+        conversation.StartAutomation(ChatbotId, Now.AddMinutes(-30));
+        conversation.PauseAutomation(null, reason, Now.AddMinutes(-20));
+        var version = conversation.Version;
+
+        var error = Assert.Throws<MessagingDomainException>(() => conversation.ContinueAutomation(Member, Now));
+
+        Assert.Equal(MessagingErrorCodes.AutomationCannotContinue, error.Code);
+        Assert.Equal(ConversationAutomationStatus.Paused, conversation.AutomationStatus);
+        Assert.Equal(version, conversation.Version);
+    }
+
+    [Fact]
+    public void ContinueRejectsActiveNoneAdvisorAndResolved()
+    {
+        var active = WithOpenWindow();
+        active.StartAutomation(ChatbotId, Now);
+        var withAdvisor = PausedByHand(Now.AddMinutes(-20));
+        withAdvisor.Take(Member, Now.AddMinutes(-10));
+        var resolved = PausedByHand(Now.AddMinutes(-20));
+        resolved.Resolve(Now.AddMinutes(-10));
+
+        Assert.Equal(MessagingErrorCodes.AutomationAlreadyActive, Assert.Throws<MessagingDomainException>(() => active.ContinueAutomation(Member, Now)).Code);
+        Assert.Equal(MessagingErrorCodes.AutomationNotAvailable, Assert.Throws<MessagingDomainException>(() => WithOpenWindow().ContinueAutomation(Member, Now)).Code);
+        Assert.Equal(MessagingErrorCodes.AutomationHasAdvisor, Assert.Throws<MessagingDomainException>(() => withAdvisor.ContinueAutomation(Member, Now)).Code);
+        Assert.Equal(MessagingErrorCodes.ConversationNotOpen, Assert.Throws<MessagingDomainException>(() => resolved.ContinueAutomation(Member, Now)).Code);
+    }
 }

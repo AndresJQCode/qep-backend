@@ -236,6 +236,16 @@ public static class MessagingEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-11-01: seguir en el paso pendiente de una pausa manual, con If-Match y las respuestas de iniciar.
+        group.MapPost("/conversations/{conversationId:guid}/automation/continue", ContinueAutomationAsync)
+            .RequireAuthorization(MessagingPermissions.ConversationManage)
+            .Produces<ConversationSummary>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin If-Match: repetir responde el estado actual sin Meta.
         // El 412 no es por If-Match: sube si el guardado choca con otro request en todos los reintentos (CommitWithRetryAsync).
         group.MapPost("/conversations/{conversationId:guid}/block", BlockContactAsync)
@@ -543,6 +553,9 @@ public static class MessagingEndpoints
 
     private static async Task<IResult> StartAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new StartAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
+
+    private static async Task<IResult> ContinueAutomationAsync(Guid tenantId, Guid conversationId, HttpContext httpContext, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(new ContinueAutomationCommand(tenantId, conversationId, RequireVersion(httpContext)), cancellationToken));
 
     private static async Task<IResult> BlockContactAsync(Guid tenantId, Guid conversationId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.SendAsync(new BlockContactCommand(tenantId, conversationId), cancellationToken));

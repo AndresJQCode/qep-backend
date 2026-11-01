@@ -27,6 +27,22 @@ internal static class QuotationProductPricingResolver
     {
         var product = await lookup.FindVariantAsync(tenantId, variantId, cancellationToken);
 
+        return Resolve(product, tenantId, variantId, quantity, currency, isRetail);
+    }
+
+    /// <summary>
+    /// Las mismas comprobaciones y el mismo precio sobre una variante ya leída, para quien pide varias
+    /// de una vez y las valoriza línea por línea (<see cref="QuotationItemEdits"/>). <paramref name="product"/>
+    /// null es lo que devuelve la lectura para una variante que no encontró.
+    /// </summary>
+    public static QuotationPricedProduct Resolve(
+        QuotationVariantPricingRef? product,
+        Guid tenantId,
+        Guid variantId,
+        decimal quantity,
+        string currency,
+        bool isRetail)
+    {
         // Mismo código para "no existe" y "es de otro tenant" — la frontera de tenant no se
         // distingue desde afuera.
         if (product is null || product.TenantId != tenantId)
