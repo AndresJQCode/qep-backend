@@ -1,5 +1,9 @@
+using System.Reflection;
 using Bootstrapper;
+using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Automations.Application;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain.Engine;
 using Modules.Integrations.Application;
 using Modules.Integrations.Domain;
@@ -424,6 +428,12 @@ public sealed class AutomationAdaptersTests
         public Task<Guid?> FindLastInboundIdAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        {
+        }
+
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
+
         public int Purged { get; init; }
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken)
@@ -521,6 +531,57 @@ public sealed class AutomationAdaptersTests
         }
 
         public Task<IReadOnlyList<ConnectionSummary>> ListActiveAsync(Guid tenantId, string providerKey, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    /// <summary>Mejor esfuerzo: el resumen se arma después del commit de varios cambios, así que si la evaluación falla el hilo sale sin
+    /// botón (<c>null</c>) en vez de contestar 500 por un cambio ya hecho.</summary>
+    [Fact]
+    public async Task FindStateReturnsNullWhenTheEvaluationFails()
+    {
+        var adapter = ManualStartWithFailingDependencies();
+
+        var state = await adapter.FindStateAsync(TenantId, Guid.CreateVersion7(), Ct);
+
+        Assert.Null(state);
+    }
+
+    /// <summary>La cancelación no se traga: es el request que se abortó.</summary>
+    [Fact]
+    public async Task FindStateLetsACancellationPropagate()
+    {
+        var adapter = ManualStartWithFailingDependencies();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.FindStateAsync(TenantId, Guid.CreateVersion7(), cancelled.Token));
+    }
+
+    private static AutomationManualStart ManualStartWithFailingDependencies()
+    {
+        var failure = new InvalidOperationException("La base no responde.");
+        var starter = new ManualRunStarter(
+            Failing<IAutomationsUnitOfWork>(failure), Failing<IConversationRunRepository>(failure), Failing<IChatbotRepository>(failure),
+            Failing<IAutomationInboundQueue>(failure), Failing<IAutomationConversations>(failure), Failing<IAutomationsModuleStatus>(failure),
+            new RunUnitWriter(Failing<IRunUnitRepository>(failure), Failing<IClock>(failure), NullLogger<RunUnitWriter>.Instance),
+            Failing<IClock>(failure));
+        return new AutomationManualStart(starter, NullLogger<AutomationManualStart>.Instance);
+    }
+
+    /// <summary>Un puerto cuyas operaciones lanzan siempre la misma excepción.</summary>
+    public class FailingProxy<T> : DispatchProxy
+        where T : class
+    {
+        public Exception Failure { get; set; } = new InvalidOperationException();
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => throw Failure;
+    }
+
+    private static T Failing<T>(Exception failure)
+        where T : class
+    {
+        var port = DispatchProxy.Create<T, FailingProxy<T>>();
+        ((FailingProxy<T>)(object)port).Failure = failure;
+        return port;
     }
 
     private sealed class StubBusinessHours(IReadOnlyDictionary<Guid, BusinessHoursStatus> statuses) : IBusinessHours

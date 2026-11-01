@@ -48,6 +48,10 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Automation inbox row {MessageId} of tenant {TenantId} was re-claimed after attempt {Attempts}; this result does not count.")]
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
 
+    // El mensaje lleva sólo ids; la excepción va aparte para conservar la traza, como AutomationInboxWorker.LogUnitFailed.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; closed without retrying (handed off to a person: {HandedOff}).")]
+    private static partial void LogManualStartFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
 
@@ -68,6 +72,20 @@ public sealed partial class RunProcessor(
         {
             return await RetryLaterAsync(item, ConcurrencyRetryDelay, RunOutcomes.Retry);
         }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Spec 2026-10-31 §7: sin mensaje detrás es la fila de un arranque manual. Un entrante que falla sigue por el reintento del
+            // lease (la excepción sube), pero acá reintentar deja la conversación con el asistente activo y mudo hasta que el lease
+            // vuelva, que puede ser media hora. Se traspasa para que una persona vea la falla y pueda iniciar de nuevo (queda Paused
+            // Handoff, sin corrida viva ni fila pendiente, y el spec D-3 deja que el botón se ofrezca): ese nuevo intento sabiendo que
+            // un mensaje pudo haber salido antes de la excepción. La fila se cierra.
+            if (await inbox.ReadAsync(item.TenantId, item.MessageId, CancellationToken.None) is not null)
+            {
+                throw;
+            }
+
+            return await FailManualStartAsync(item, exception);
+        }
 
         if (outcome == RunOutcomes.Locked)
         {
@@ -85,6 +103,34 @@ public sealed partial class RunProcessor(
         }
 
         return outcome;
+    }
+
+    /// <summary>El traspaso y el cierre de una fila manual que falló. Un <see cref="DomainException"/> del traspaso se ignora: una persona la
+    /// tomó o la resolvió entre el arranque y ahora, así que ya no hay nada que pasarle. Sin cancelación, como el cierre normal de la
+    /// fila: la unidad ya se deshizo y dejar la fila abierta la volvería a procesar.</summary>
+    private async Task<string> FailManualStartAsync(InboundQueueItem item, Exception exception)
+    {
+        var handedOff = true;
+        try
+        {
+            await conversations.HandoffAsync(
+                item.TenantId, item.ConversationId, HandoffCause.FlowFailed(AutomationsRunFailures.ManualStartFailed, null, null), null,
+                CancellationToken.None);
+        }
+        catch (DomainException)
+        {
+            // Ya la tiene una persona.
+            handedOff = false;
+        }
+
+        LogManualStartFailed(logger, exception, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name, handedOff);
+
+        if (!await inbox.CompleteAsync(item.TenantId, item.MessageId, item.Attempts, RunOutcomes.RunFailed, CancellationToken.None))
+        {
+            LogReclaimed(logger, item.TenantId, item.MessageId, item.Attempts);
+        }
+
+        return RunOutcomes.RunFailed;
     }
 
     private async Task<string> RetryLaterAsync(InboundQueueItem item, TimeSpan delay, string outcome)
@@ -120,7 +166,9 @@ public sealed partial class RunProcessor(
         var conversation = await conversations.GetAsync(item.TenantId, item.ConversationId, cancellationToken);
         // Después del lock y de leer la conversación: si una persona la devolvió al asistente mientras la unidad esperaba el lock, la
         // corrida nueva no puede quedar con un StartedAt anterior a ese regreso (P2-R25), o el siguiente entrante la interrumpiría.
-        var now = clock.UtcNow;
+        // Piso: el POST que devolvió la conversación y este worker pueden ser pods distintos, con relojes distintos; si el del worker va
+        // detrás del que selló AutomationResumedAt, leer el reloj a secas dejaría la corrida naciendo antes del regreso que la originó.
+        var now = conversation?.AutomationResumedAt is { } resumedAt && resumedAt > clock.UtcNow ? resumedAt : clock.UtcNow;
 
         if (!await modules.IsEnabledAsync(item.TenantId, cancellationToken))
         {
@@ -129,7 +177,7 @@ public sealed partial class RunProcessor(
 
         // D-M15: una acción humana termina la corrida viva; Mensajería no conoce Automations, así que se detecta acá.
         var interrupted = false;
-        if (run is not null && (conversation is null || HumanTookOver(conversation, run)))
+        if (run is not null && (conversation is null || BotAttendance.HumanTookOver(conversation, run)))
         {
             run.Finish(RunStatus.Interrupted, null, now);
             run.MarkInbound(item.MessageId);
@@ -210,7 +258,7 @@ public sealed partial class RunProcessor(
         // humana, así que la corrida termina Interrupted como en ProcessUnitAsync, sin auditoría, y la conversación no se toca: una devuelta
         // queda Active para que el siguiente entrante arranque desde el primer nodo. Leerla va después del lock (P2-R20).
         var conversation = await conversations.GetAsync(run.TenantId, run.ConversationId, cancellationToken);
-        if (conversation is null || HumanTookOver(conversation, run))
+        if (conversation is null || BotAttendance.HumanTookOver(conversation, run))
         {
             run.Finish(RunStatus.Interrupted, null, now);
             recorder?.WriteClosed(run, null, RunCloseReasons.HumanTookOver, now);
@@ -234,14 +282,6 @@ public sealed partial class RunProcessor(
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }
-
-    /// <summary>D-M15. Tomar y devolver al asistente no deja rastro en el estado (tomar pausa y no encola, devolver vuelve a
-    /// <c>Active</c>): por eso P2-R25 compara la hora en que una persona la devolvió con el arranque de la corrida.</summary>
-    private static bool HumanTookOver(AutomationConversationState conversation, ConversationRun run) =>
-        conversation.AssignedMemberId is not null
-        || conversation.Status == ConversationStates.Resolved
-        || conversation.AutomationStatus is AutomationStates.Paused or AutomationStates.None
-        || conversation.AutomationResumedAt > run.StartedAt;
 
     /// <summary>§5.2 pasos 2 a 4; <c>null</c> = el entrante no le toca al bot.</summary>
     private async Task<string?> DecideAsync(
@@ -372,6 +412,14 @@ public sealed partial class RunProcessor(
     private async Task<string?> ContinueAsync(
         InboundQueueItem item, AutomationConversationState conversation, ConversationRun run, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // Una corrida esperando sólo se mueve con una respuesta del cliente. La fila sin mensaje (el arranque manual que quedó detrás de un
+        // entrante que ya arrancó la corrida) no lo es: se cierra sin enviar y sin pisar el entrante que la corrida tiene registrado (P2-R24).
+        var waitingInbound = run.Status == RunStatus.Waiting ? await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) : null;
+        if (run.Status == RunStatus.Waiting && waitingInbound is null)
+        {
+            return null;
+        }
+
         run.MarkInbound(item.MessageId);
         // Plan D-P4: una corrida Waiting recibe la respuesta; una Running vuelve a pedir el efecto externo en que murió su unidad.
         var trigger = run.Status == RunStatus.Waiting ? RunUnitTriggers.CustomerMessage : RunUnitTriggers.Resume;
@@ -392,13 +440,7 @@ public sealed partial class RunProcessor(
         EngineInput input;
         if (run.Status == RunStatus.Waiting)
         {
-            if (await inbox.ReadAsync(item.TenantId, item.MessageId, cancellationToken) is not { } inbound)
-            {
-                // Sin fila a propósito: la corrida no se movió.
-                return null;
-            }
-
-            var message = await CustomerMessageAsync(item, inbound, flow, run.CurrentNodeId, cancellationToken);
+            var message = await CustomerMessageAsync(item, waitingInbound!, flow, run.CurrentNodeId, cancellationToken);
             if (FlowEngine.IsRestart(settings, message)
                 && await RestartWithLatestAsync(item, conversation, run, now, cancellationToken) is { } restarted)
             {

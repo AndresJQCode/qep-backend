@@ -39,7 +39,8 @@ public sealed class ConversationSummaryBuilder(
     IMessagingMemberNames memberNames,
     IResolutionReasonNames reasonNames,
     CallerMembership caller,
-    IAutomationsChatbotNames chatbotNames)
+    IAutomationsChatbotNames chatbotNames,
+    IAutomationManualStart manualStart)
 {
     public const string DeletedConnectionName = "Conexión eliminada";
 
@@ -52,7 +53,11 @@ public sealed class ConversationSummaryBuilder(
     public async Task<ConversationSummary> BuildOneAsync(Guid tenantId, ConversationRow row, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(row);
-        var summary = (await BuildAsync(tenantId, [row], cancellationToken))[0];
+        // Spec 2026-10-31 D-13: antes de la salida temprana por canal o wa_id, para que toda respuesta de una conversación lo lleve.
+        var summary = (await BuildAsync(tenantId, [row], cancellationToken))[0] with
+        {
+            AutomationStart = await manualStart.FindStateAsync(tenantId, row.Id, cancellationToken),
+        };
         if (row.Channel != ConversationChannel.WhatsApp || row.WaId is not { } waId)
         {
             return summary;

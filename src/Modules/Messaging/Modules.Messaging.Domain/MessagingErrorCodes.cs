@@ -161,6 +161,12 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-21 §4.2: la conversación no admite esa operación del asistente (sin asistente, con asesor o ya pausado).</summary>
     public const string AutomationNotAvailable = "messaging.automation.not_available";
 
+    /// <summary>Spec 2026-10-31: un asesor no puede arrancar el asistente en una conversación que tiene asesor asignado.</summary>
+    public const string AutomationHasAdvisor = "messaging.automation.has_advisor";
+
+    /// <summary>Spec 2026-10-31: la conexión de la conversación no tiene un chatbot activo que arrancar.</summary>
+    public const string AutomationNoChatbot = "messaging.automation.no_chatbot";
+
     /// <summary>Spec 2026-10-21 §4.2: el asistente ya está pausado.</summary>
     public const string AutomationAlreadyPaused = "messaging.automation.already_paused";
 

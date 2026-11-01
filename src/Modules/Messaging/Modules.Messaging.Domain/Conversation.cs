@@ -509,6 +509,49 @@ public sealed partial class Conversation
         return events;
     }
 
+    /// <summary>Spec 2026-10-31: un asesor arranca el asistente desde el hilo. A diferencia de <see cref="StartAutomation"/> (la orden
+    /// del motor, que no reactiva lo que una persona pausó), esto es una decisión de una persona: sirve desde <c>None</c>, <c>Active</c>
+    /// o cualquier pausa, y la borra. Rechaza, en este orden: conversación cerrada, con asesor, contacto bloqueado, canal distinto de
+    /// WhatsApp y ventana de 24 horas cerrada (el bot contesta con texto libre, que Meta sólo acepta dentro de la ventana).
+    /// <c>AutomationResumedAt = now</c> mata una corrida vieja aunque el guardado de Automations falle después de este cambio; la
+    /// corrida nueva sobrevive porque el motor la compara contra ese piso. <c>HistoryManaged = false</c> porque es una acción del
+    /// asesor: sin eso, una parte tardía del historial de coexistencia le pisaría el estado.</summary>
+    public ConversationEvent StartAutomationByMember(Guid actorMemberId, Guid chatbotId, DateTimeOffset now)
+    {
+        EnsureOpenForAutomation();
+        if (AssignedMemberId is not null)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.AutomationHasAdvisor, "A conversation with an advisor is not attended by the assistant.");
+        }
+
+        if (IsBlocked)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ContactBlocked, "The contact is blocked.");
+        }
+
+        if (Channel != ConversationChannel.WhatsApp)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ChannelUnsupported, "Only a WhatsApp conversation can start the assistant.");
+        }
+
+        if (!IsWindowOpen(now))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.WindowClosed, "The customer window is closed.");
+        }
+
+        AutomationStatus = ConversationAutomationStatus.Active;
+        AutomationStartedAt = now;
+        AutomationChatbotId = chatbotId;
+        AutomationPausedAt = null;
+        AutomationPausedByMemberId = null;
+        AutomationPauseReason = null;
+        AutomationStep = null;
+        AutomationResumedAt = now;
+        HistoryManaged = false;
+        Touch(now);
+        return new ConversationEvent(ConversationEventType.AutomationStarted, Actor: actorMemberId);
+    }
+
     private IReadOnlyList<ConversationEvent> WithAutomationPause(ConversationEvent change, Guid actorMemberId, AutomationPauseReason reason, DateTimeOffset now)
     {
         if (AutomationStatus != ConversationAutomationStatus.Active)

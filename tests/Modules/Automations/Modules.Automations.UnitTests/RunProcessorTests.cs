@@ -13,7 +13,7 @@ namespace Modules.Automations.UnitTests;
 /// Spec 2026-10-21 §5.2 y D-M4: los caminos del arranque que de punta a punta no se pueden provocar a voluntad (el cambio de la
 /// conversación tiene que caer entre la lectura del procesador y el guardado de Mensajería). Con dobles en memoria de todos los puertos.
 /// </summary>
-public sealed class RunProcessorTests
+public sealed partial class RunProcessorTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly Guid ConnectionId = Guid.CreateVersion7();
@@ -446,6 +446,38 @@ public sealed class RunProcessorTests
         Assert.Equal(RunOutcomes.Ended, outcome);
         var run = Assert.Single(bed.Runs.Added);
         Assert.True(run.StartedAt >= resumedAt, $"La corrida arrancó a las {run.StartedAt:O}, antes del regreso de las {resumedAt:O}.");
+    }
+
+    /// <summary>
+    /// Review Focus 1 (spec 2026-10-31): el POST que devolvió la conversación sella <c>AutomationResumedAt</c> con el reloj de su pod, y este
+    /// worker puede ir detrás. Sin piso, la corrida nacería antes del regreso y el siguiente entrante la interrumpiría como si una persona
+    /// la hubiera devuelto después.
+    /// </summary>
+    [Fact]
+    public async Task ARunStartedBehindTheResumeClockStaysAlive()
+    {
+        const string flow = """
+            { "schema": 1, "start": { "firstNodeId": "b" }, "variables": [],
+              "nodes": [
+                { "id": "b", "kind": "buttons", "title": "¿Cómo seguimos?", "text": "¿Qué prefieres?", "buttons": [ { "id": "si", "label": "Sí" } ],
+                  "saveTo": null, "fallback": "repeat", "outputs": { "si": null } }
+              ] }
+            """;
+        var resumedAt = DateTimeOffset.UtcNow.AddSeconds(2);
+        var bed = new Bed(
+            startFailure: null,
+            new AutomationConversationState("Open", null, "Active", ChatbotId, ConnectionId, DateTimeOffset.UtcNow, "Laura", "573001234567", resumedAt),
+            flow: flow);
+
+        await bed.Processor().ProcessAsync(Item, TestContext.Current.CancellationToken);
+
+        var run = Assert.Single(bed.Runs.Added);
+        Assert.Equal(resumedAt, run.StartedAt);
+
+        var second = await bed.Processor().ProcessAsync(Item with { MessageId = Guid.CreateVersion7(), Opened = false }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(RunOutcomes.Advanced, second);
+        Assert.NotEqual(RunStatus.Interrupted, run.Status);
     }
 
     /// <summary>D-M13 y D-M14: la candidata sigue esperando desde hace más de 24 h bajo el lock: termina <c>Abandoned</c>, la conversación
@@ -1186,7 +1218,13 @@ public sealed class RunProcessorTests
     /// <param name="busy">Ruling P2-R45: otra unidad tiene el lock de la conversación.</param>
     private sealed class NoUnitOfWork(Action? onLock, bool busy) : IAutomationsUnitOfWork, IAsyncDisposable
     {
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public int Saves { get; private set; }
+
+        public Task SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            Saves++;
+            return Task.CompletedTask;
+        }
 
         public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable>(this);
 
@@ -1211,8 +1249,13 @@ public sealed class RunProcessorTests
             return Task.FromResult(Added.FirstOrDefault(run => run.IsLive));
         }
 
-        public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult(Added.LastOrDefault());
+        public int LatestReads { get; private set; }
+
+        public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            LatestReads++;
+            return Task.FromResult(Added.LastOrDefault());
+        }
 
         public Task AddAsync(ConversationRun run, CancellationToken cancellationToken)
         {
@@ -1241,11 +1284,12 @@ public sealed class RunProcessorTests
     }
 
     /// <param name="flow"><c>null</c>: la versión de la corrida ya no existe (P2-R6).</param>
-    private sealed class ServingChatbots(string? flow, EngineSettings? settings = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation) : IChatbotRepository
+    private sealed class ServingChatbots(
+        string? flow, EngineSettings? settings = null, ChatbotTrigger trigger = ChatbotTrigger.NewConversation, ChatbotStatus status = ChatbotStatus.Active) : IChatbotRepository
     {
         public Task<ServingChatbot?> FindServingByConnectionAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
             Task.FromResult<ServingChatbot?>(new ServingChatbot(
-                ChatbotId, "Servicio", ChatbotStatus.Active, trigger, ["hola"], Chatbot.DefaultRestartKeyword, 3, VersionId));
+                ChatbotId, "Servicio", status, trigger, ["hola"], Chatbot.DefaultRestartKeyword, 3, VersionId));
 
         public Task<string?> GetVersionFlowAsync(Guid tenantId, Guid versionId, CancellationToken cancellationToken) => Task.FromResult(flow);
 
@@ -1291,10 +1335,20 @@ public sealed class RunProcessorTests
             return Task.FromResult(true);
         }
 
+        /// <summary>Los ids de filas sin mensaje (arranque manual, spec 2026-10-31): <c>ReadAsync</c> responde <c>null</c> para ellos.</summary>
+        public HashSet<Guid> NotInbound { get; } = [];
+
         public Task<InboundMessage?> ReadAsync(Guid tenantId, Guid messageId, CancellationToken cancellationToken) =>
-            Task.FromResult<InboundMessage?>(Messages.TryGetValue(messageId, out var message)
-                ? message
-                : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+            Task.FromResult<InboundMessage?>(NotInbound.Contains(messageId)
+                ? null
+                : Messages.TryGetValue(messageId, out var message)
+                    ? message
+                    : new InboundMessage(messageId, CustomerMessageKinds.Text, "Hola", null, null, DateTimeOffset.UtcNow));
+
+        /// <summary>Spec 2026-10-31: hay una fila de arranque manual sin procesar.</summary>
+        public bool PendingManualStart { get; set; }
+
+        public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(PendingManualStart);
 
         public Task<int> PurgeProcessedBeforeAsync(DateTimeOffset cutoff, int batch, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
@@ -1342,8 +1396,16 @@ public sealed class RunProcessorTests
 
         public Task SetChatbotAsync(Guid tenantId, Guid conversationId, Guid chatbotId, CancellationToken cancellationToken) => Task.CompletedTask;
 
+        /// <summary>Lo que lanza el traspaso cuando ya no aplica (una persona la tomó o la resolvió).</summary>
+        public Exception? HandoffFailure { get; set; }
+
         public Task HandoffAsync(Guid tenantId, Guid conversationId, HandoffCause cause, Guid? assignToMemberId, CancellationToken cancellationToken)
         {
+            if (HandoffFailure is not null)
+            {
+                return Task.FromException(HandoffFailure);
+            }
+
             HandedOff++;
             Handoffs.Add((cause, assignToMemberId));
             return Task.CompletedTask;
@@ -1375,8 +1437,16 @@ public sealed class RunProcessorTests
         /// <summary>Cómo responde Mensajería a cada texto; sin respuesta, lo da por enviado.</summary>
         public Func<string, BotSendOutcome>? Reply { get; set; }
 
+        /// <summary>Una excepción no prevista del puerto (no un rechazo de Meta), para los caminos que no deben reintentar.</summary>
+        public Exception? Failure { get; set; }
+
         public Task<BotSendOutcome> SendTextAsync(Guid tenantId, Guid conversationId, Guid chatbotId, Guid clientId, string text, CancellationToken cancellationToken)
         {
+            if (Failure is not null)
+            {
+                return Task.FromException<BotSendOutcome>(Failure);
+            }
+
             Sent.Add(clientId);
             Texts.Add(text);
             return Task.FromResult(Reply?.Invoke(text) ?? new BotSendOutcome.Sent(Guid.CreateVersion7()));

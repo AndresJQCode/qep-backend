@@ -933,6 +933,8 @@ public static class QepServiceCollectionExtensions
         // Spec 2026-10-21: pausar y devolver el asistente. Sin registro, 500.
         services.AddScoped<ICommandHandler<PauseAutomationCommand, ConversationSummary>, PauseAutomationHandler>();
         services.AddScoped<ICommandHandler<ResumeAutomationCommand, ConversationSummary>, ResumeAutomationHandler>();
+        // Spec 2026-10-31: iniciar el asistente desde el hilo. Sin registro, 500.
+        services.AddScoped<ICommandHandler<StartAutomationCommand, ConversationSummary>, StartAutomationHandler>();
         // Spec 2026-10-26 §3.2: bloquear y desbloquear el contacto en Meta. Sin registro, 500.
         services.AddScoped<ICommandHandler<BlockContactCommand, ConversationSummary>, BlockContactHandler>();
         services.AddScoped<ICommandHandler<UnblockContactCommand, ConversationSummary>, UnblockContactHandler>();
@@ -1144,6 +1146,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IMessagingMemberNames, MessagingMemberNames>();
         // Spec 2026-10-21 D-I3: el nombre de los chatbots que firman mensajes, leído de Automations.
         services.AddScoped<IAutomationsChatbotNames, AutomationsChatbotNames>();
+        // Spec 2026-10-31: iniciar el asistente desde el hilo; la decisión es de Automations (ManualRunStarter).
+        services.AddScoped<IAutomationManualStart, AutomationManualStart>();
         // Spec 2026-10-21 §5.5: «Datos capturados» del asesor, leído de la corrida más reciente de Automations.
         services.AddScoped<IConversationAutomationDetails, AutomationConversationDetails>();
         // Spec 2026-10-21 §5.3: lo que Automations necesita de Mensajería e Integrations, por adaptadores.
@@ -1174,6 +1178,7 @@ public static class QepServiceCollectionExtensions
         // y nada se pone rojo. CompositionRootTests lo amarra.
         services.AddScoped<RunUnitWriter>();
         services.AddScoped<RunProcessor>();
+        services.AddScoped<ManualRunStarter>();
         // Spec 2026-10-21 §8: el simulador usa el mismo ejecutor HTTP y el mismo puerto de horario que el motor.
         services.AddScoped<SimulationRunner>();
         // Spec 2026-10-12 §3.3 (D-Q5): el nombre del tenant para las variables de las respuestas rápidas, por Tenancy.

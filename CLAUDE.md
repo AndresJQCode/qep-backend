@@ -293,7 +293,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El historial de coexistencia no pasa por `IngestOnceAsync`; `history_managed` decide si la regla de abiertas corre**
   (spec 2026-10-29). La apagan: el entrante en vivo (`InboundIngestion`), `Resolve` y `Reopen`, la respuesta desde QEP
   (`OutboundMessages`), toda asignación (`Conversation.Assign` —tomar, transferir—, el traspaso del bot y
-  `TryAutoAssignAsync`), el eco (`CoexistenceIngestion`, R11) y marcar leída o no leída (`MarkReadAsync`, `MarkUnreadAsync`,
+  `TryAutoAssignAsync`), iniciar el asistente desde el hilo (`StartAutomationByMember`), el eco (`CoexistenceIngestion`, R11) y marcar leída o no leída (`MarkReadAsync`, `MarkUnreadAsync`,
   `MarkUnreadFromAsync`). La campaña no. Una acción nueva del asesor sobre una conversación tiene que decidir qué hace con la
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`
@@ -545,6 +545,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
+- **Una fila de `automation_inbox` sin mensaje es un arranque manual** (spec 2026-10-31). `POST …/automation/start` encola una fila
+  cuyo `message_id` **no siempre existe en `messages`**: no hay entrante, lo inició una persona. Por eso `run_units.inbound_message_id` y
+  `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
+  el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
+  el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
 - **Un entrante que llega fuera de orden no se encola para el bot** (`InboundIngestion.ShouldEnqueue`, 2026-10-23). La cola
   ordena por llegada y Meta reintenta una entrega fallida hasta horas después: el 2026-10-22, con QEP sin recibir unos diez
   minutos, un «hola» de las 21:42 llegó a las 22:01 detrás de uno de las 21:56 que el bot ya había contestado, y el bot mandó
