@@ -25,7 +25,9 @@ public enum ManualStartVerdict
 /// <summary>
 /// Spec 2026-10-31 D-6 y D-7: decide y resguarda el arranque manual del asistente. <see cref="EvaluateAsync"/> es una lectura sin
 /// transacción (el resumen de la conversación la llama en cada detalle); <see cref="StartAsync"/> repite la misma decisión bajo el
-/// candado de la conversación, cierra la corrida muerta y deja que Mensajería confirme el cambio en el mismo guardado.
+/// candado de la conversación, cierra la corrida muerta y deja que Mensajería confirme el cambio. No es un mismo guardado: son dos
+/// <c>DbContext</c> y Mensajería confirma primero; si el guardado de Automations falla después, la corrida muerta queda abierta y el
+/// worker la cierra por <c>AutomationResumedAt</c> (<see cref="BotAttendance.HumanTookOver"/>).
 /// </summary>
 public sealed class ManualRunStarter(
     IAutomationsUnitOfWork unitOfWork,
@@ -40,9 +42,14 @@ public sealed class ManualRunStarter(
     /// <summary>Sin transacción ni candado: a lo sumo hay una corrida viva y es la última (D-6).</summary>
     public async Task<ManualStartVerdict> EvaluateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
     {
-        var latest = await runs.FindLatestAsync(tenantId, conversationId, cancellationToken);
-        var live = latest is { IsLive: true } ? latest : null;
-        return (await DecideAsync(tenantId, conversationId, live, cancellationToken)).Verdict;
+        // La corrida se lee sólo si la decisión llega a necesitarla (BotAttending); los veredictos de la conversación no la leen.
+        async Task<ConversationRun?> LoadLiveAsync(CancellationToken token)
+        {
+            var latest = await runs.FindLatestAsync(tenantId, conversationId, token);
+            return latest is { IsLive: true } ? latest : null;
+        }
+
+        return (await DecideAsync(tenantId, conversationId, LoadLiveAsync, cancellationToken)).Verdict;
     }
 
     /// <param name="commit">Recibe el chatbot; sólo corre con <see cref="ManualStartVerdict.Available"/>, bajo el candado.</param>
@@ -57,7 +64,7 @@ public sealed class ManualRunStarter(
         }
 
         var live = await runs.FindLiveForUpdateAsync(tenantId, conversationId, cancellationToken);
-        var (verdict, _, chatbot) =await DecideAsync(tenantId, conversationId, live, cancellationToken);
+        var (verdict, _, chatbot) = await DecideAsync(tenantId, conversationId, _ => Task.FromResult(live), cancellationToken);
         if (verdict != ManualStartVerdict.Available)
         {
             return verdict;
@@ -82,8 +89,10 @@ public sealed class ManualRunStarter(
         return ManualStartVerdict.Available;
     }
 
+    /// <param name="loadLive">La corrida viva, perezosa: <see cref="EvaluateAsync"/> la lee de la última y <see cref="StartAsync"/> ya la
+    /// tiene bloqueada. Sólo se llama si la decisión llega a <see cref="BotAttendance.IsAttending"/>.</param>
     private async Task<(ManualStartVerdict Verdict, AutomationConversationState? Conversation, ServingChatbot? Chatbot)> DecideAsync(
-        Guid tenantId, Guid conversationId, ConversationRun? live, CancellationToken cancellationToken)
+        Guid tenantId, Guid conversationId, Func<CancellationToken, Task<ConversationRun?>> loadLive, CancellationToken cancellationToken)
     {
         var conversation = await conversations.GetAsync(tenantId, conversationId, cancellationToken);
         if (conversation is null)
@@ -91,7 +100,8 @@ public sealed class ManualRunStarter(
             return (ManualStartVerdict.NotFound, null, null);
         }
 
-        // Lo barato primero: el resumen de la conversación lo llama en cada detalle.
+        // Lo barato primero: el resumen de la conversación lo llama en cada detalle, así que lo que sólo depende de la conversación
+        // se decide antes de leer la corrida.
         if (conversation.Status != ConversationStates.Open)
         {
             return (ManualStartVerdict.NotOpen, conversation, null);
@@ -117,7 +127,7 @@ public sealed class ManualRunStarter(
             return (ManualStartVerdict.ModuleDisabled, conversation, null);
         }
 
-        if (BotAttendance.IsAttending(conversation, live))
+        if (BotAttendance.IsAttending(conversation, await loadLive(cancellationToken)))
         {
             return (ManualStartVerdict.BotAttending, conversation, null);
         }

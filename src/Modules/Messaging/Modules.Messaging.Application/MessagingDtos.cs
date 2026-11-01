@@ -71,7 +71,7 @@ public sealed record ConversationSummary(
     /// «arregles». Siempre vacía en Instagram y sin wa_id.</summary>
     public IReadOnlyList<CustomerRefDto> SharedPhoneCustomers { get; init; } = [];
 
-    /// <summary>Spec 2026-10-31 D-8 (BFF): si el encabezado ofrece «Iniciar asistente» y, si no puede, por qué: <c>Available</c>,
+    /// <summary>Spec 2026-10-31 D-13 (BFF): si el encabezado ofrece «Iniciar asistente» y, si no puede, por qué: <c>Available</c>,
     /// <c>WindowClosed</c> (se ve apagado con «Ya pasaron 24 horas desde el último mensaje del cliente») o <c>NoChatbot</c> («Esta
     /// conexión no tiene un chatbot activo»); <c>null</c> si no hay nada que ofrecer (asesor, resuelta, bloqueada, otro canal, el
     /// asistente ya atiende o un arranque ya está en cola). Lo decide Automations con la misma regla del motor: la pantalla no conoce

@@ -173,7 +173,7 @@ public sealed class ConversationReadsTests
         Assert.Equal(customers.ByPhone.Take(10).Select(customer => customer.Id), summary.SharedPhoneCustomers.Select(customer => customer.Id));
     }
 
-    // Spec 2026-10-31 D-8: el estado del botón viaja en el resumen de una sola conversación.
+    // Spec 2026-10-31 D-13: el estado del botón viaja en el resumen de una sola conversación.
     [Fact]
     public async Task BuildOneCarriesTheStartState()
     {

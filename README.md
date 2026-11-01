@@ -3274,11 +3274,11 @@ suma las conversaciones con asistente (activo o en pausa) y `GET …/conversatio
 `If-Match` (428 sin él, 412 si la versión cambió, también si la ingesta tocó la conversación mientras se decidía) y responde 200 con el
 `ConversationSummary`. **Responde antes del envío:** deja la conversación `Active` con el evento `AutomationStarted` y encola una fila
 manual en `automation_inbox` (sin mensaje, ver `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
-después de la respuesta. La decisión es la de `ManualRunStarter` (la misma del motor). Los 422, en este orden: `messaging.conversation.not_open`,
-`messaging.contact.blocked`, `messaging.channel_unsupported` (sólo WhatsApp), `messaging.window_closed` (pasaron 24 horas desde el último
-mensaje del cliente), `messaging.automation.already_active` (el asistente ya atiende o un arranque está en cola),
-`messaging.automation.not_available` (el módulo no está activo para el tenant), `messaging.automation.has_advisor` y
-`messaging.automation.no_chatbot` (la conexión no tiene un chatbot activo). Un 412 `concurrency.conflict` también sale si otro request tenía el
+después de la respuesta. La decisión es la de `ManualRunStarter` (la misma del motor). Los 422, en el orden en que se deciden: `messaging.conversation.not_open`,
+`messaging.automation.has_advisor`, `messaging.contact.blocked`, `messaging.channel_unsupported` (sólo WhatsApp),
+`messaging.automation.not_available` (el módulo no está activo para el tenant), `messaging.automation.already_active` (el asistente ya
+atiende o un arranque está en cola), `messaging.automation.no_chatbot` (la conexión no tiene un chatbot activo) y
+`messaging.window_closed` (pasaron 24 horas desde el último mensaje del cliente). Un 412 `concurrency.conflict` también sale si otro request tenía el
 candado de la conversación mientras se decidía. `ConversationSummary.automationStart` es `Available` | `WindowClosed` | `NoChatbot` o `null` (BFF: el
 encabezado decide si dibuja «Iniciar asistente» activo, apagado o nada); sólo se llena en las respuestas de una conversación, no en el
 listado ni en la búsqueda.

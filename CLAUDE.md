@@ -293,7 +293,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El historial de coexistencia no pasa por `IngestOnceAsync`; `history_managed` decide si la regla de abiertas corre**
   (spec 2026-10-29). La apagan: el entrante en vivo (`InboundIngestion`), `Resolve` y `Reopen`, la respuesta desde QEP
   (`OutboundMessages`), toda asignación (`Conversation.Assign` —tomar, transferir—, el traspaso del bot y
-  `TryAutoAssignAsync`), el eco (`CoexistenceIngestion`, R11) y marcar leída o no leída (`MarkReadAsync`, `MarkUnreadAsync`,
+  `TryAutoAssignAsync`), iniciar el asistente desde el hilo (`StartAutomationByMember`), el eco (`CoexistenceIngestion`, R11) y marcar leída o no leída (`MarkReadAsync`, `MarkUnreadAsync`,
   `MarkUnreadFromAsync`). La campaña no. Una acción nueva del asesor sobre una conversación tiene que decidir qué hace con la
   bandera: si no la apaga, la siguiente parte del historial le pisa el estado o los no leídos sin error (precedente: marcar
   leída faltaba y el contador volvía). Y el resumen de la importación sólo escribe si la parte cambia algo: subir `version`

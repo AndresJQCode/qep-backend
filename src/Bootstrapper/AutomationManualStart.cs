@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Automations.Application.Engine;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -8,16 +9,33 @@ namespace Bootstrapper;
 /// <summary>Spec 2026-10-31: adaptador del puerto de arranque manual. Mensajería no ve Automations; aquí se traduce el veredicto de
 /// <see cref="ManualRunStarter"/> a los errores de Mensajería (decisión 7). Corre con el tracker del request a propósito: sólo lee y
 /// sostiene el candado; la unidad corre en el worker.</summary>
-internal sealed class AutomationManualStart(ManualRunStarter starter) : IAutomationManualStart
+internal sealed partial class AutomationManualStart(ManualRunStarter starter, ILogger<AutomationManualStart> logger) : IAutomationManualStart
 {
-    public async Task<string?> FindStateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-        await starter.EvaluateAsync(tenantId, conversationId, cancellationToken) switch
+    // Sin el contenido de ningún mensaje: sólo ids; la excepción va aparte para conservar la traza.
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The assistant start state of conversation {ConversationId} of tenant {TenantId} could not be evaluated; the thread is returned without the start button.")]
+    private static partial void LogStateFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId);
+
+    /// <summary>Mejor esfuerzo, como <c>AutomationConversations.NotifyAsync</c> (P2-R22): el resumen se arma después del commit de tomar,
+    /// devolver, pausar, reanudar, resolver, reabrir y enviar una plantilla, y un fallo aquí contestaría 500 por un cambio ya hecho (y
+    /// tumbaría el detalle del hilo). <c>null</c> es la dirección segura: sin botón, queda «Devolver al asistente». La cancelación sube.</summary>
+    public async Task<string?> FindStateAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+    {
+        try
         {
-            ManualStartVerdict.Available => AutomationStartStates.Available,
-            ManualStartVerdict.WindowClosed => AutomationStartStates.WindowClosed,
-            ManualStartVerdict.NoChatbot => AutomationStartStates.NoChatbot,
-            _ => null,
-        };
+            return await starter.EvaluateAsync(tenantId, conversationId, cancellationToken) switch
+            {
+                ManualStartVerdict.Available => AutomationStartStates.Available,
+                ManualStartVerdict.WindowClosed => AutomationStartStates.WindowClosed,
+                ManualStartVerdict.NoChatbot => AutomationStartStates.NoChatbot,
+                _ => null,
+            };
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogStateFailed(logger, exception, tenantId, conversationId);
+            return null;
+        }
+    }
 
     public async Task StartAsync(
         Guid tenantId, Guid conversationId, Func<Guid, CancellationToken, Task> commit, CancellationToken cancellationToken)

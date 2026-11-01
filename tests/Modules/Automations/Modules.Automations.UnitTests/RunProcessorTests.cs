@@ -1249,8 +1249,13 @@ public sealed partial class RunProcessorTests
             return Task.FromResult(Added.FirstOrDefault(run => run.IsLive));
         }
 
-        public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
-            Task.FromResult(Added.LastOrDefault());
+        public int LatestReads { get; private set; }
+
+        public Task<ConversationRun?> FindLatestAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken)
+        {
+            LatestReads++;
+            return Task.FromResult(Added.LastOrDefault());
+        }
 
         public Task AddAsync(ConversationRun run, CancellationToken cancellationToken)
         {

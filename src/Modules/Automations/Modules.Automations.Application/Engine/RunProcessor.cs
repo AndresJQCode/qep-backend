@@ -48,9 +48,9 @@ public sealed partial class RunProcessor(
     [LoggerMessage(Level = LogLevel.Information, Message = "Automation inbox row {MessageId} of tenant {TenantId} was re-claimed after attempt {Attempts}; this result does not count.")]
     private static partial void LogReclaimed(ILogger logger, Guid tenantId, Guid messageId, int attempts);
 
-    // Sólo ids y el nombre del tipo de la excepción: su mensaje puede traer datos del cliente.
+    // El mensaje lleva sólo ids; la excepción va aparte para conservar la traza, como AutomationInboxWorker.LogUnitFailed.
     [LoggerMessage(Level = LogLevel.Error, Message = "Manual assistant start row {MessageId} of conversation {ConversationId} (tenant {TenantId}) failed with {ErrorType}; closed without retrying (handed off to a person: {HandedOff}).")]
-    private static partial void LogManualStartFailed(ILogger logger, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
+    private static partial void LogManualStartFailed(ILogger logger, Exception exception, Guid tenantId, Guid conversationId, Guid messageId, string errorType, bool handedOff);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot version {VersionId} of tenant {TenantId} has a flow that cannot be read; the bot does not run it.")]
     private static partial void LogUnreadableFlow(ILogger logger, Guid tenantId, Guid versionId);
@@ -123,7 +123,7 @@ public sealed partial class RunProcessor(
             handedOff = false;
         }
 
-        LogManualStartFailed(logger, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name, handedOff);
+        LogManualStartFailed(logger, exception, item.TenantId, item.ConversationId, item.MessageId, exception.GetType().Name, handedOff);
 
         if (!await inbox.CompleteAsync(item.TenantId, item.MessageId, item.Attempts, RunOutcomes.RunFailed, CancellationToken.None))
         {

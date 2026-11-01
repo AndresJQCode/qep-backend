@@ -84,7 +84,8 @@ public sealed partial class RunProcessorTests
     }
 
     /// <summary>La corrida muerta (una persona pausó el asistente) se cierra antes de que Mensajería cambie la conversación: el veredicto
-    /// sale del estado de antes, y el cierre y el cambio viajan en el mismo guardado.</summary>
+    /// sale del estado de antes. No es un mismo guardado: Mensajería confirma primero y, si el de Automations falla, el worker cierra la
+    /// corrida por <c>AutomationResumedAt</c>.</summary>
     [Fact]
     public async Task ADeadRunIsClosedBeforeTheConversationChanges()
     {
@@ -160,6 +161,50 @@ public sealed partial class RunProcessorTests
         Assert.Equal(ManualStartVerdict.Available, verdict);
         Assert.True(committed);
         Assert.Empty(bed.Units.Entries);
+    }
+
+    /// <summary>Los veredictos que sólo dependen de la conversación se deciden sin leer <c>conversation_runs</c>: el resumen de cada detalle
+    /// los evalúa y una conversación resuelta o con asesor no necesita esa lectura.</summary>
+    [Theory]
+    [InlineData(ManualStartVerdict.NotFound)]
+    [InlineData(ManualStartVerdict.NotOpen)]
+    [InlineData(ManualStartVerdict.HasAdvisor)]
+    [InlineData(ManualStartVerdict.Blocked)]
+    [InlineData(ManualStartVerdict.UnsupportedChannel)]
+    public async Task EvaluatingAConversationOnlyVerdictReadsNoRun(ManualStartVerdict verdict)
+    {
+        var bed = ManualBed.For(verdict, deadRun: true);
+
+        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(verdict, evaluated);
+        Assert.Equal(0, bed.Runs.LatestReads);
+        Assert.Equal(0, bed.Runs.Reads);
+    }
+
+    /// <summary>D-6: una corrida que figura viva pero que una persona interrumpió (pausa manual) no es el bot atendiendo.</summary>
+    [Fact]
+    public async Task EvaluatingADeadRunIsAvailable()
+    {
+        var bed = ManualBed.For(ManualStartVerdict.Available, deadRun: true);
+
+        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ManualStartVerdict.Available, evaluated);
+        Assert.Equal(1, bed.Runs.LatestReads);
+    }
+
+    [Fact]
+    public async Task EvaluatingALatestCompletedRunIsAvailable()
+    {
+        var bed = ManualBed.For(ManualStartVerdict.Available);
+        var completed = WaitingRun(ManualNow.AddHours(-2));
+        completed.Finish(RunStatus.Completed, null, ManualNow.AddHours(-1));
+        await bed.Runs.AddAsync(completed, TestContext.Current.CancellationToken);
+
+        var evaluated = await bed.Starter().EvaluateAsync(TenantId, ConversationId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(ManualStartVerdict.Available, evaluated);
     }
 
     /// <summary>La fila de arranque manual: sin mensaje, así que <c>ReadAsync</c> responde <c>null</c> para ella.</summary>
