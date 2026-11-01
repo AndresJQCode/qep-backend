@@ -173,6 +173,59 @@ public sealed class MessagingHubTests
         Assert.Equal(HubConnectionState.Disconnected, moduleOff.State);
     }
 
+    [Fact]
+    public async Task AConnectedMemberAppearsInPresenceAndLeavesOnStop()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var factory = f.Factory;
+        var ownerMembership = await OwnerMembershipIdAsync(f.ConnectionString, f.Tenant);
+        var presence = factory.Services.GetRequiredService<IMessagingPresence>();
+        await using var connection = Connect(factory, f.Tenant.TenantId, f.Tenant.OwnerUserId, MessagingPermissions.ConversationRead);
+        var received = Listen(connection);
+
+        await connection.StartAsync(Ct);
+        await WaitUntilJoinedAsync(factory, f.Tenant.TenantId, received);
+        await WaitUntilAsync(() => presence.Snapshot().TryGetValue(f.Tenant.TenantId, out var members) && members.Contains(ownerMembership));
+
+        await connection.StopAsync(Ct);
+
+        await WaitUntilAsync(() => !presence.Snapshot().ContainsKey(f.Tenant.TenantId));
+    }
+
+    [Fact]
+    public async Task ARejectedConnectionIsNotRegistered()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database, enableMessaging: false);
+        using var factory = f.Factory;
+        var presence = factory.Services.GetRequiredService<IMessagingPresence>();
+        await using var moduleOff = Connect(factory, f.Tenant.TenantId, f.Tenant.OwnerUserId, MessagingPermissions.ConversationRead);
+
+        await TryStartAsync(moduleOff);
+
+        // El cierre llega al cliente cuando el servidor ya abortó: sólo falta que su OnDisconnectedAsync termine.
+        await WaitUntilAsync(() => moduleOff.State == HubConnectionState.Disconnected);
+        Assert.Empty(presence.Snapshot());
+    }
+
+    /// <summary>Sondea una condición del servidor hasta 10 s; el registro se escribe después de que el cliente ve el handshake.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        throw new TimeoutException("The condition never became true.");
+    }
+
     /// <summary>El hub corta en <c>OnConnectedAsync</c>: según el momento, el cliente ve el cierre durante el <c>StartAsync</c> o justo
     /// después. Las dos formas terminan en <c>Closed</c>, que es lo que la prueba espera.</summary>
     private static async Task TryStartAsync(HubConnection connection)
