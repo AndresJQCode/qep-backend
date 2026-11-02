@@ -1,0 +1,173 @@
+using Modules.Wms.Domain.Inventory;
+using Modules.Wms.Domain.Warehousing;
+
+namespace Modules.Wms.Application;
+
+/// <summary>Una sola unidad de trabajo por módulo: los repositorios sólo acumulan cambios y el handler guarda una vez, así el
+/// cambio, su auditoría y su outbox commitean o se revierten juntos.</summary>
+public interface IWmsUnitOfWork
+{
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+}
+
+public enum WmsActorType
+{
+    Human,
+    System,
+    ApiKey,
+}
+
+/// <summary>
+/// Auditoría atómica (RF-102): la entrada se acumula en el <c>WmsDbContext</c> y commitea con el cambio. <c>changedFields</c> viaja
+/// como objeto JSON (S23): el recorder de otros módulos guarda <c>[]</c>, pero acá el reporte de auditoría necesita saber qué campo
+/// cambió.
+/// </summary>
+public interface IWmsAuditRecorder
+{
+    void Record(
+        Guid tenantId,
+        Guid actorId,
+        WmsActorType actorType,
+        string action,
+        string resourceType,
+        string resourceId,
+        IReadOnlyDictionary<string, string?> changedFields,
+        DateTimeOffset occurredAt);
+}
+
+public static class WmsAuditActions
+{
+    public static class Resources
+    {
+        public const string Warehouse = "wms.warehouse";
+        public const string Location = "wms.location";
+        public const string Owner = "wms.owner";
+        public const string Profile = "wms.variant_profile";
+        public const string Uom = "wms.uom";
+    }
+
+    public const string WarehouseCreated = "wms.warehouse.created";
+    public const string WarehouseUpdated = "wms.warehouse.updated";
+    public const string LocationCreated = "wms.location.created";
+    public const string LocationUpdated = "wms.location.updated";
+    public const string LocationDeleted = "wms.location.deleted";
+    public const string OwnerCreated = "wms.owner.created";
+    public const string OwnerUpdated = "wms.owner.updated";
+    public const string ProfileCreated = "wms.profile.created";
+    public const string ProfileUpdated = "wms.profile.updated";
+    public const string UomCreated = "wms.uom.created";
+}
+
+public interface IWarehouseRepository
+{
+    void Add(Warehouse warehouse);
+
+    /// <summary>Con sus ubicaciones y rastreada: el agregado necesita el árbol entero para sus reglas.</summary>
+    Task<Warehouse?> GetAsync(Guid tenantId, WarehouseId id, CancellationToken ct);
+
+    /// <summary>Con sus ubicaciones, sin rastreo.</summary>
+    Task<IReadOnlyList<Warehouse>> ListAsync(Guid tenantId, bool includeInactive, CancellationToken ct);
+
+    Task<Location?> GetLocationAsync(Guid tenantId, LocationId id, CancellationToken ct);
+
+    Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct);
+
+    void RemoveLocation(Location location);
+}
+
+public interface IOwnerRepository
+{
+    void Add(Owner owner);
+
+    Task<Owner?> FindAsync(Guid tenantId, OwnerId id, CancellationToken ct);
+
+    /// <summary>Lanza <see cref="InvalidOperationException"/> si falta: sólo <see cref="IWmsProvisioner"/> escribe el Self (S5), así
+    /// que quien llama tiene que haber provisionado antes.</summary>
+    Task<Owner> GetSelfAsync(Guid tenantId, CancellationToken ct);
+
+    /// <summary>El Self primero, luego por nombre.</summary>
+    Task<IReadOnlyList<Owner>> ListAsync(Guid tenantId, CancellationToken ct);
+}
+
+public interface IUnitOfMeasureRepository
+{
+    void Add(UnitOfMeasure uom);
+
+    Task<UnitOfMeasure?> FindAsync(Guid tenantId, UomCode code, CancellationToken ct);
+
+    /// <summary>Las de sistema primero, luego por código.</summary>
+    Task<IReadOnlyList<UnitOfMeasure>> ListAsync(Guid tenantId, CancellationToken ct);
+}
+
+public interface IVariantProfileRepository
+{
+    void Add(VariantLogisticsProfile profile);
+
+    Task<VariantLogisticsProfile?> FindAsync(Guid tenantId, Guid variantId, CancellationToken ct);
+
+    Task<IReadOnlyList<VariantLogisticsProfile>> ListAsync(Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct);
+
+    /// <summary>P-8: el perfil por defecto nace al primer acceso. Crea con <c>CreateDefault</c> más los identificadores de la variante
+    /// y audita <c>ProfileCreated</c> como System; lanza <c>wms.profile.variant_unknown</c> si Catalog no conoce la variante. El
+    /// llamador guarda.</summary>
+    Task<VariantLogisticsProfile> GetOrCreateDefaultAsync(Guid tenantId, Guid variantId, CancellationToken ct);
+}
+
+public interface IIdentifierRepository
+{
+    void AddRange(IEnumerable<Identifier> identifiers);
+
+    Task<IReadOnlyList<Identifier>> ListByTargetAsync(Guid tenantId, Guid targetId, CancellationToken ct);
+
+    void RemoveRange(IEnumerable<Identifier> identifiers);
+}
+
+/// <summary>
+/// El único escritor del Self y de las seis unidades de sistema (S5): <c>INSERT … ON CONFLICT DO NOTHING</c> en una transacción
+/// propia. Tenancy no avisa al prender un módulo, así que se provisiona en el primer acceso; los handlers de dueños, unidades y
+/// perfiles lo llaman tras autorizar, listados incluidos (única excepción a «un GET no escribe», P-8).
+/// </summary>
+public interface IWmsProvisioner
+{
+    Task EnsureAsync(Guid tenantId, CancellationToken ct);
+}
+
+/// <summary>Existencia de la variante en el libro de inventario. WMS-B no tiene libro: la implementación por defecto responde
+/// <c>false</c> y WMS-D la reemplaza.</summary>
+public interface IVariantStockProbe
+{
+    Task<bool> HasStockAsync(Guid tenantId, Guid variantId, CancellationToken ct);
+}
+
+public interface ILocationStockProbe
+{
+    Task<bool> HasStockAsync(Guid tenantId, Guid locationId, CancellationToken ct);
+}
+
+public interface IOwnerStockProbe
+{
+    Task<bool> HasStockAsync(Guid tenantId, Guid ownerId, CancellationToken ct);
+}
+
+/// <summary>Lo que Bodegas copia de una variante de Catalog. Ids desconocidos o de otro tenant no aparecen.</summary>
+public sealed record WmsVariantSnapshot(
+    Guid VariantId,
+    Guid ProductId,
+    string ProductName,
+    string VariantName,
+    string Code,
+    string? Barcode,
+    IReadOnlyList<int> PackagingUnits,
+    bool IsActive);
+
+public interface IWmsCatalogReader
+{
+    Task<IReadOnlyList<WmsVariantSnapshot>> GetVariantsAsync(Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct);
+}
+
+public sealed record WmsCityRef(Guid CityId, string Name);
+
+public interface IWmsGeographyReader
+{
+    Task<IReadOnlyDictionary<Guid, WmsCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken ct);
+}

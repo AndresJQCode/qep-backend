@@ -1339,6 +1339,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
 
+        // Wms (spec WMS 2026-10-31 §1.3): variantes y ciudades entran por puertos propios; Wms no referencia Catalog ni Geography.
+        services.AddScoped<Modules.Wms.Application.IWmsCatalogReader, WmsCatalogReader>();
+        services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara
