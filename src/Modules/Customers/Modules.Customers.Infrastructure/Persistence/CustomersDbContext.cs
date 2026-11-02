@@ -33,12 +33,13 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
     internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
 
-    /// <summary>Spec 2026-10-10 §7.2 (D-A11): exactamente las columnas que antes eran NOT NULL. Teléfono, correo y
-    /// ciudad siguen exigidos por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19
-    /// (decisión del owner): una ficha completa puede no tenerla, y su CUC va sin prefijo.</summary>
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. Teléfono y ciudad siguen exigidos
+    /// por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
+    /// ficha completa puede no tenerla, y su CUC va sin prefijo. La dirección salió el 2026-11-01: es opcional, y sin
+    /// ella la ficha guarda <c>null</c> y nace sin libreta.</summary>
     public const string CompleteFieldsCheck =
         "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
-        + "AND address IS NOT NULL AND country IS NOT NULL)";
+        + "AND country IS NOT NULL)";
 
     /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>

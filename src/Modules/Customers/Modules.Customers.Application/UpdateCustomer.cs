@@ -104,15 +104,7 @@ public sealed class UpdateCustomerHandler(
                 cuc,
                 command.Name,
                 command.BusinessName,
-                city is null
-                    ? null
-                    : new CustomerAddressDetails
-                    {
-                        Name = command.Name,
-                        Address = command.Address ?? string.Empty,
-                        CityId = city.CityId,
-                        Phone = command.Phone
-                    },
+                CustomerMapping.ToFirstAddress(command.Name, command.Address, city, command.Phone),
                 CustomerMapping.ToIdentification(
                     command.IdentificationType, command.IdentificationNumber),
                 PersonTypeParser.ParseOptional(command.PersonType),
@@ -120,7 +112,7 @@ public sealed class UpdateCustomerHandler(
                 {
                     Phone = command.Phone,
                     Email = command.Email,
-                    Address = command.Address ?? string.Empty,
+                    Address = command.Address,
                     Country = command.Country,
                     CityId = command.CityId,
                     CityName = command.CityName
@@ -164,7 +156,7 @@ public sealed class UpdateCustomerHandler(
             {
                 Phone = command.Phone,
                 Email = command.Email,
-                Address = command.Address ?? string.Empty,
+                Address = command.Address,
                 Country = command.Country,
                 CityId = command.CityId,
                 CityName = command.CityName

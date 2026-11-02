@@ -107,6 +107,34 @@ public sealed class CustomerCompletenessMigrationTests
             "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'customers' AND table_name = 'customers' AND column_name = 'cuc'"));
     }
 
+    // La dirección salió de CK_customers_complete_fields, y sólo ella: el CUC sigue exigido. Revertir tiene que poder
+    // con las fichas que ya nacieron sin dirección, o el AddCheckConstraint de Down falla y la reversión queda a medias.
+    [Fact]
+    public async Task ACompleteCustomerWithoutAddressFitsAndRevertingFillsTheColumn()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateGeographyToLatestAsync(connectionString);
+        await using var context = NewCustomersContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        var migrations = context.Database.GetMigrations().ToList();
+        var allowed = MigrationId(context, "_AllowCustomerWithoutAddress");
+        await migrator.MigrateAsync(allowed, TestContext.Current.CancellationToken);
+
+        await ExecuteAsync(connectionString, OldCustomerSql(afterCompleteness: true).Replace("'Calle Gran Via 28'", "NULL", StringComparison.Ordinal));
+
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString,
+            $"SELECT count(address) FROM customers.customers WHERE id = '{OldCustomerId}'"));
+        var withoutCuc = await Assert.ThrowsAsync<PostgresException>(() =>
+            ExecuteAsync(connectionString, $"UPDATE customers.customers SET cuc = NULL WHERE id = '{OldCustomerId}'"));
+        Assert.Equal("CK_customers_complete_fields", withoutCuc.ConstraintName);
+
+        await migrator.MigrateAsync(migrations[migrations.IndexOf(allowed) - 1], TestContext.Current.CancellationToken);
+
+        Assert.Equal(string.Empty, await ScalarAsync<string>(connectionString,
+            $"SELECT address FROM customers.customers WHERE id = '{OldCustomerId}'"));
+    }
+
     private static async Task MigrateGeographyToLatestAsync(string connectionString)
     {
         await using var geography = new GeographyDbContext(

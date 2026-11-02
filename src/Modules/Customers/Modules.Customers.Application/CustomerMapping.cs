@@ -5,6 +5,24 @@ namespace Modules.Customers.Application;
 internal static class CustomerMapping
 {
     /// <summary>
+    /// La primera fila de la libreta que siembran el alta y el completar una ficha, con el mismo par que el domicilio (spec
+    /// 2026-09-18, decisión 3). <c>null</c> si no hay qué sembrar, y el cliente nace sin libreta: uno de afuera no tiene
+    /// ciudad para la FK a <c>geography.cities</c>, y sin calle la fila no existe (<c>customers.address.address_required</c>
+    /// sigue vigente para la libreta). Una fila inventada sería peor que no tenerla.
+    /// </summary>
+    public static CustomerAddressDetails? ToFirstAddress(
+        string name, string? address, CustomerCityRef? city, string? phone) =>
+        city is null || string.IsNullOrWhiteSpace(address)
+            ? null
+            : new CustomerAddressDetails
+            {
+                Name = name,
+                Address = address,
+                CityId = city.CityId,
+                Phone = phone
+            };
+
+    /// <summary>
     /// Del agregado al DTO, con la ciudad, el departamento y la clasificacion ya resueltos por el
     /// llamador. No los resuelve esta funcion: cada handler decide como (una consulta puntual en
     /// Get/Create/Update/Activate/Deactivate, un lote en List) y esto solo ensambla.

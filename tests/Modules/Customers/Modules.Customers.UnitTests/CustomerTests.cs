@@ -402,17 +402,49 @@ public sealed class CustomerTests
         Assert.True(stillPrincipal.IsPrincipal);
     }
 
-    // Codigo nuevo, mismo estilo que customers.address.address_required: la calle del domicilio
-    // es obligatoria, como antes de CLI-DIR-01.
+    // La calle del domicilio es opcional: en blanco y ausente son lo mismo y se guardan como null,
+    // nunca como cadena vacia. Sin calle tampoco hay fila que sembrar en la libreta (la de
+    // CustomerAddress sigue siendo obligatoria), y la ficha igual nace completa.
     [Theory]
+    [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void ContactInfoRejectsAnEmptyAddress(string address)
+    public void ABlankContactAddressIsStoredAsNull(string? address)
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: ValidContact() with { Address = address }));
+        var customer = Create(
+            contact: ValidContact() with { Address = address },
+            seedAddressBook: false);
 
-        Assert.Equal("customers.customer.address_required", exception.Code);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
+        Assert.True(customer.IsComplete);
+    }
+
+    // El domicilio se puede limpiar, y limpiarlo no toca la libreta: son dos datos (decision 4 del
+    // spec 2026-09-18).
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateClearsTheContactAddressAndLeavesTheAddressBookUntouched(string? address)
+    {
+        var customer = Create();
+        var principal = Assert.Single(customer.Addresses);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            Identification(),
+            null,
+            ValidContact() with { Address = address },
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.Address);
+        Assert.Same(principal, Assert.Single(customer.Addresses));
+        Assert.Equal("Calle 10 # 45-12", principal.Address);
+        Assert.True(principal.IsPrincipal);
     }
 
     // El codigo existente de Customer.EnsureValidCityId, que desde CLI-DIR-01 no tenia caller.

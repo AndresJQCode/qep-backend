@@ -100,20 +100,11 @@ public sealed class CreateCustomerHandler(
             command.BusinessName,
             // La primera direccion de envio nace con el request de alta, con el mismo par que el
             // domicilio de abajo (spec 2026-09-18, decision 3): su ciudad es la que acaba de
-            // emitir el CUC, y sin ella la cotizacion no tendria nada que preseleccionar. Desde
-            // aca son dos datos distintos: editar la ficha no la toca.
+            // emitir el CUC, y con ella la cotizacion tiene algo que preseleccionar. Desde aca son
+            // dos datos distintos: editar la ficha no la toca.
             //
-            // `null` para un cliente de afuera: CustomerAddress.CityId es una FK a
-            // geography.cities y no hay ciudad colombiana que ponerle. Nace sin libreta.
-            city is null
-                ? null
-                : new CustomerAddressDetails
-                {
-                    Name = command.Name,
-                    Address = command.Address ?? string.Empty,
-                    CityId = city.CityId,
-                    Phone = command.Phone
-                },
+            // Sin ciudad DIVIPOLA (un cliente de afuera) o sin calle nace sin libreta.
+            CustomerMapping.ToFirstAddress(command.Name, command.Address, city, command.Phone),
             CustomerMapping.ToIdentification(
                 command.IdentificationType, command.IdentificationNumber),
             PersonTypeParser.ParseOptional(command.PersonType),
@@ -121,7 +112,7 @@ public sealed class CreateCustomerHandler(
             {
                 Phone = command.Phone,
                 Email = command.Email,
-                Address = command.Address ?? string.Empty,
+                Address = command.Address,
                 Country = command.Country,
                 CityId = command.CityId,
                 CityName = command.CityName

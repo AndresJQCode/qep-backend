@@ -110,7 +110,7 @@ internal static class ServiceContractsApiHarness
         insert.Parameters.AddWithValue("tenantId", tenantId);
         insert.Parameters.AddWithValue("name", name);
         // 'Incomplete' porque CK_customers_complete_fields (CustomersDbContext.CompleteFieldsCheck) exige CUC, documento,
-        // dirección y país a una ficha 'Complete'; ServiceContracts sólo necesita nombre, teléfono y correo.
+        // y país a una ficha 'Complete'; ServiceContracts sólo necesita nombre, teléfono y correo.
         // Único por llamada: Customers puede exigir un whatsapp_user_id distinto por cliente.
         insert.Parameters.AddWithValue("whatsAppUserId", $"CO.{id:N}");
         insert.Parameters.AddWithValue("phone", (object?)phoneE164 ?? DBNull.Value);

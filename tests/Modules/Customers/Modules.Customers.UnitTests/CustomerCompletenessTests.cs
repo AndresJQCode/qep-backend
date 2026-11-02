@@ -121,6 +121,32 @@ public sealed class CustomerCompletenessTests
         Assert.Equal(Now.AddHours(1), customer.UpdatedAt);
     }
 
+    // Sin calle no hay fila de libreta que sembrar: el handler manda el principalAddress en null.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CompletingWithoutAnAddressKeepsItNullAndTheBookEmpty(string? address)
+    {
+        var customer = Incomplete();
+
+        customer.Complete(
+            "CLI08000001",
+            "Laura Pérez",
+            null,
+            null,
+            new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" },
+            null,
+            ColombianContact() with { Address = address },
+            Commercial(ClassificationId),
+            Now.AddHours(1),
+            new FakeNormalizer());
+
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.Address);
+        Assert.Empty(customer.Addresses);
+    }
+
     [Fact]
     public void CompletingWithAMissingFieldLeavesTheCustomerUntouched()
     {

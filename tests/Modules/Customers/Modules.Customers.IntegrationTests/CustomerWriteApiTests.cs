@@ -388,12 +388,10 @@ public sealed class CustomerWriteApiTests
         Assert.Contains("ClassificationId", fields);
     }
 
-    // La direccion es obligatoria: es el domicilio del cliente (spec 2026-09-18) y ademas
-    // siembra la primera fila de la libreta, cuya ciudad emite el CUC. El rechazo tiene que
-    // llegar como validation.failed con el mapa errors, no como el 422 pelado del dominio: es el
-    // unico que el formulario sabe leer para marcar el input.
+    // La direccion es opcional. Sin ella el cliente es completo, guarda null (no '': esto pasa por
+    // CK_customers_complete_fields de verdad) y nace sin libreta, cuya fila si exige la calle.
     [Fact]
-    public async Task CreateWithoutAnAddressMarksTheAddressField()
+    public async Task CreateWithoutAnAddressIsACompleteCustomerWithAnEmptyBook()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -411,10 +409,39 @@ public sealed class CustomerWriteApiTests
                 phone = "310 935 2187",
                 email = "compras@verde.co",
                 address = "",
+                country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 withRetention = false
             },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<CustomerResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(created);
+        var reread = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl()}/{created.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(reread);
+        Assert.Null(reread.Address);
+        Assert.Empty(reread.Addresses);
+        Assert.True(reread.IsComplete);
+    }
+
+    // El largo sigue limitado, y el rechazo llega como validation.failed con el mapa errors: es el
+    // unico 422 que el formulario sabe leer para marcar el input.
+    [Fact]
+    public async Task CreateWithAnAddressTooLongMarksTheAddressField()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(city.CityId, classification.Id, address: new string('d', 201)),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -786,6 +813,34 @@ public sealed class CustomerWriteApiTests
         Assert.Equal(principal.Id, stillPrincipal.Id);
         Assert.Equal("Calle 10 # 45-12", stillPrincipal.Address);
         Assert.Equal(cities[0].CityId, stillPrincipal.CityId);
+        Assert.True(stillPrincipal.IsPrincipal);
+    }
+
+    // Limpiar el domicilio guarda null y no toca la libreta: son dos datos desde el alta.
+    [Fact]
+    public async Task UpdateClearingTheAddressKeepsTheAddressBook()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var created = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var principal = Assert.Single(created.Addresses);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{created.Id}",
+            NewCustomerBody(city.CityId, classification.Id, address: ""),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var reread = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl()}/{created.Id}", TestContext.Current.CancellationToken);
+        Assert.NotNull(reread);
+        Assert.Null(reread.Address);
+        var stillPrincipal = Assert.Single(reread.Addresses);
+        Assert.Equal(principal.Id, stillPrincipal.Id);
+        Assert.Equal("Calle 10 # 45-12", stillPrincipal.Address);
         Assert.True(stillPrincipal.IsPrincipal);
     }
 
