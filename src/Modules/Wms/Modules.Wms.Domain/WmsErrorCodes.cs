@@ -38,6 +38,7 @@ public static class WmsErrorCodes
 
     public const string ProfileVariantUnknown = "wms.profile.variant_unknown";
     public const string ProfileTrackingChangeRequiresIdentification = "wms.profile.tracking_change_requires_identification";
+    public const string ProfileBaseUomChangeRequiresIdentification = "wms.profile.base_uom_change_requires_identification";
     public const string ProfileConversionDuplicate = "wms.profile.conversion_duplicate";
     public const string ProfileConversionFactorInvalid = "wms.profile.conversion_factor_invalid";
     public const string ProfileMeasureInvalid = "wms.profile.measure_invalid";

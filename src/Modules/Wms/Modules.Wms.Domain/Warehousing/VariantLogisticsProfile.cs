@@ -104,8 +104,31 @@ public sealed class VariantLogisticsProfile
                 "The tracking policy cannot change while the variant has stock.");
         }
 
+        // I4 (pendiente de confirmación del owner; RF-010 sólo nombra el rastreo): el saldo se guarda en la unidad base, así que con
+        // saldo cambiar la unidad, bajar la precisión o cambiar el factor de una presentación que ya existía reinterpreta los saldos
+        // sin avisar. Agregar o quitar una presentación y cambiar su código de barras no toca ningún saldo.
+        if (hasStock && ChangesHowStockIsMeasured(changes))
+        {
+            throw new WmsDomainException(
+                WmsErrorCodes.ProfileBaseUomChangeRequiresIdentification,
+                "The base unit, a lower precision or the factor of an existing conversion cannot change while the variant has stock.");
+        }
+
         Apply(changes, now);
         Version++;
+    }
+
+    private bool ChangesHowStockIsMeasured(ProfileChanges changes)
+    {
+        if (changes.BaseUom != BaseUom || changes.BaseUomPrecision < BaseUomPrecision)
+        {
+            return true;
+        }
+
+        // El código se compara sin distinguir mayúsculas, igual que BuildConversions.
+        return changes.Conversions.Any(requested => _conversions.Any(existing =>
+            string.Equals(existing.Code.Trim(), requested.Code.Trim(), StringComparison.OrdinalIgnoreCase)
+            && existing.Factor != requested.Factor));
     }
 
     private void Apply(ProfileChanges changes, DateTimeOffset now)

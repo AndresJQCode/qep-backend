@@ -164,11 +164,13 @@ public interface IWmsProvisioner
     Task EnsureAsync(Guid tenantId, CancellationToken ct);
 }
 
-/// <summary>Existencia de la variante en el libro de inventario. WMS-B no tiene libro: la implementación por defecto responde
-/// <c>false</c> y WMS-D la reemplaza.</summary>
+/// <summary>Existencia de la variante en el libro de inventario: saldo físico (no virtual) distinto de cero.</summary>
 public interface IVariantStockProbe
 {
     Task<bool> HasStockAsync(Guid tenantId, Guid variantId, CancellationToken ct);
+
+    /// <summary>Las variantes de <paramref name="variantIds"/> que tienen existencias, en una sola consulta (listado de perfiles).</summary>
+    Task<IReadOnlySet<Guid>> HasStockForManyAsync(Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct);
 }
 
 public interface ILocationStockProbe

@@ -19,6 +19,9 @@ public sealed class VariantProfileApiTests
     private sealed class VariantWithStockProbe : IVariantStockProbe
     {
         public Task<bool> HasStockAsync(Guid tenantId, Guid variantId, CancellationToken ct) => Task.FromResult(true);
+
+        public Task<IReadOnlySet<Guid>> HasStockForManyAsync(Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct) =>
+            Task.FromResult<IReadOnlySet<Guid>>(variantIds.ToHashSet());
     }
 
     private static object Body(
@@ -302,6 +305,41 @@ public sealed class VariantProfileApiTests
         var stored = await GetOneAsync(client, variantId);
         Assert.Equal("None", stored.GetProperty("tracking").GetString());
         Assert.True(stored.GetProperty("hasStock").GetBoolean());
+    }
+
+    // I4 (pendiente de confirmación del owner): con saldo la unidad base no cambia; sin saldo, sí.
+    [Fact]
+    public async Task WithStockChangingTheBaseUomIs422()
+    {
+        var (database, factory) = await OpenAsync(configureServices: services => services.AddScoped<IVariantStockProbe, VariantWithStockProbe>());
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", null, []);
+        using var client = CreateManager(factory);
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Put(variantId, Body(0)), Ct)).StatusCode);
+
+        var response = await client.SendAsync(Put(variantId, Body(1, baseUom: "KG")), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.profile.base_uom_change_requires_identification", await CodeOfAsync(response));
+        Assert.Equal("UND", (await GetOneAsync(client, variantId)).GetProperty("baseUom").GetString());
+    }
+
+    [Fact]
+    public async Task WithoutStockChangingTheBaseUomIs200()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", null, []);
+        using var client = CreateManager(factory);
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(Put(variantId, Body(0)), Ct)).StatusCode);
+
+        var response = await client.SendAsync(Put(variantId, Body(1, baseUom: "KG")), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        Assert.Equal("KG", document.RootElement.GetProperty("baseUom").GetString());
     }
 
     [Fact]

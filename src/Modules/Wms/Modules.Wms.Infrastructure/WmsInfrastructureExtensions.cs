@@ -63,10 +63,10 @@ public static class WmsInfrastructureExtensions
         services.AddSingleton<PartitionMaintenanceWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<PartitionMaintenanceWorker>());
 
-        // Sin libro de inventario no hay existencias: WMS-D reemplaza estas tres por consultas al libro.
-        services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();
-        services.AddScoped<ILocationStockProbe, NoLocationStockProbe>();
-        services.AddScoped<IOwnerStockProbe, NoOwnerStockProbe>();
+        // Las sondas de «con existencias» leen el libro de saldos. Las pruebas las sustituyen con configureServices para ejercer las reglas.
+        services.AddScoped<IVariantStockProbe, VariantStockProbe>();
+        services.AddScoped<ILocationStockProbe, LocationStockProbe>();
+        services.AddScoped<IOwnerStockProbe, OwnerStockProbe>();
 
         // El gateway hacia qcode-pdf lo registra el composition root: la clave es de Quotations y este módulo no la ve.
         services.AddScoped<IWmsLabelRenderer, LocationLabelRenderer>();

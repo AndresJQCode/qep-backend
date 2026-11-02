@@ -64,6 +64,58 @@ public sealed class VariantLogisticsProfileTests
         Assert.Equal(2m, profile.WeightKg);
     }
 
+    // I4 (pendiente de confirmación del owner): el saldo se guarda en la unidad base, así que con saldo cambiar la unidad,
+    // bajar la precisión o cambiar el factor de una presentación existente reinterpreta los saldos sin avisar.
+    [Theory]
+    [InlineData("baseUom")]
+    [InlineData("precisionDown")]
+    [InlineData("existingFactor")]
+    [InlineData("existingFactorCaseInsensitive")]
+    public void WithStockChangingTheBaseUomOrAnExistingFactorIsRejected(string change)
+    {
+        var profile = VariantLogisticsProfile.Create(
+            Tenant,
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            new ProfileChanges(UomCode.Parse("KG"), 3, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 6m, null)]),
+            Now);
+
+        var changes = change switch
+        {
+            "baseUom" => new ProfileChanges(UomCode.Parse("UND"), 3, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 6m, null)]),
+            "precisionDown" => new ProfileChanges(UomCode.Parse("KG"), 2, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 6m, null)]),
+            "existingFactor" => new ProfileChanges(UomCode.Parse("KG"), 3, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 12m, null)]),
+            _ => new ProfileChanges(UomCode.Parse("KG"), 3, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("CAJA", 12m, null)]),
+        };
+
+        var error = Assert.Throws<WmsDomainException>(() => profile.Update(changes, true, Now));
+
+        Assert.Equal(WmsErrorCodes.ProfileBaseUomChangeRequiresIdentification, error.Code);
+        Assert.Equal("KG", profile.BaseUom.Value);
+        Assert.Equal(3, profile.BaseUomPrecision);
+        Assert.Equal(6m, profile.Conversions.Single().Factor);
+    }
+
+    [Fact]
+    public void WithStockANewRemovedOrRebarcodedConversionAndRaisedPrecisionPass()
+    {
+        var profile = VariantLogisticsProfile.Create(
+            Tenant,
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            new ProfileChanges(UomCode.Parse("KG"), 3, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 6m, null), ("Bulto", 20m, null)]),
+            Now);
+
+        // Caja conserva el factor y gana código de barras; Bulto se quita; Pallet es nueva; la precisión sube.
+        profile.Update(
+            new ProfileChanges(UomCode.Parse("KG"), 4, TrackingPolicy.None, false, null, null, null, null, null, null, null, [("Caja", 6m, "7701"), ("Pallet", 400m, null)]),
+            true,
+            Now.AddHours(1));
+
+        Assert.Equal(4, profile.BaseUomPrecision);
+        Assert.Equal(["Caja", "Pallet"], profile.Conversions.Select(c => c.Code));
+    }
+
     [Fact]
     public void DuplicateConversionCodesAreRejected()
     {

@@ -48,6 +48,8 @@ public sealed class GetVariantProfilesHandler(
         var snapshots = (await catalog.GetVariantsAsync(query.TenantId, ids, cancellationToken)).ToDictionary(variant => variant.VariantId);
         var saved = (await profiles.ListAsync(query.TenantId, ids, cancellationToken)).ToDictionary(profile => profile.VariantId);
         var now = clock.UtcNow;
+        // Una consulta para todo el lote y no una por variante (hasta 200).
+        var withStock = await stockProbe.HasStockForManyAsync(query.TenantId, snapshots.Keys.ToArray(), cancellationToken);
 
         var items = new List<VariantProfileDto>(snapshots.Count);
         // En el orden en que se pidieron: la pantalla alinea la respuesta con su lista.
@@ -58,7 +60,7 @@ public sealed class GetVariantProfilesHandler(
                 continue;
             }
 
-            var hasStock = await stockProbe.HasStockAsync(query.TenantId, id, cancellationToken);
+            var hasStock = withStock.Contains(id);
             if (saved.TryGetValue(id, out var profile))
             {
                 items.Add(VariantProfileDtoMapper.ToDto(profile, variant, hasStock, stored: true));

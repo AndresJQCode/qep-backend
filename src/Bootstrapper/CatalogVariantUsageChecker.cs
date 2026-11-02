@@ -28,6 +28,12 @@ namespace Bootstrapper;
 /// ejecución con <c>42703 undefined_column</c>: las pruebas gemelas contra el esquema migrado son
 /// <c>VariantLinesMigrationTests</c> y <c>SaleLinesVariantMigrationTests</c>
 /// (<c>TheCatalogUsageQueryFindsTheBackfilledVariant</c>).
+///
+/// **El ledger de WMS también cuenta como uso** (spec WMS 2026-10-31 §17): <c>wms.stock_movements</c> y <c>wms.stock_balances</c>
+/// llevan <c>tenant_id</c> y <c>variant_id</c> propios, sin join. Una variante con un solo movimiento —aunque su saldo haya vuelto a
+/// cero— no se borra, se desactiva: el historial del ledger es inmutable y no puede quedar apuntando a una variante que no existe.
+/// Renombrar esas columnas compila y rompe esta consulta con <c>42703</c>; la amarran <c>CatalogVariantUsageCheckerTests</c> (réplica
+/// a mano) y <c>StockProbeTests.TheRealCheckerSeesAWmsMovementAgainstTheMigratedSchema</c> (esquema migrado).
 /// </summary>
 internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVariantUsageChecker
 {
@@ -44,7 +50,7 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
 
         var ids = variantIds.Distinct().ToArray();
 
-        // UNION ya deduplica: es el SELECT DISTINCT de las tres tablas en una sola ida.
+        // UNION ya deduplica: es el SELECT DISTINCT de las cinco tablas en una sola ida.
         var used = await catalog.Database.SqlQuery<Guid>($"""
             SELECT qi.variant_id AS "Value"
             FROM quotations.quotation_items qi
@@ -60,6 +66,14 @@ internal sealed class CatalogVariantUsageChecker(CatalogDbContext catalog) : IVa
             FROM pos.sale_lines sl
             JOIN pos.sales s ON s.id = sl.sale_id
             WHERE s.tenant_id = {tenantId} AND sl.variant_id = ANY({ids})
+            UNION
+            SELECT m.variant_id
+            FROM wms.stock_movements m
+            WHERE m.tenant_id = {tenantId} AND m.variant_id = ANY({ids})
+            UNION
+            SELECT b.variant_id
+            FROM wms.stock_balances b
+            WHERE b.tenant_id = {tenantId} AND b.variant_id = ANY({ids})
             """).ToListAsync(cancellationToken);
 
         return used.ToHashSet();

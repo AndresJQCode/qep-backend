@@ -50,6 +50,31 @@ public sealed class CatalogVariantUsageCheckerTests
         Assert.Equal(new HashSet<Guid> { quoted, ordered, sold }, used.ToHashSet());
     }
 
+    // WMS-D: una variante con movimientos o saldos en el ledger no se borra (spec 2026-10-31 §17), aunque ninguna línea la venda.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAWmsMovementOrBalance()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var moved = Guid.CreateVersion7();
+        var balanced = Guid.CreateVersion7();
+        var unused = Guid.CreateVersion7();
+        var otherTenantMoved = Guid.CreateVersion7();
+        var otherTenantBalanced = Guid.CreateVersion7();
+
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.stock_movements (tenant_id, variant_id) VALUES ('{TenantId}', '{moved}'), ('{OtherTenantId}', '{otherTenantMoved}');
+            INSERT INTO wms.stock_balances (tenant_id, variant_id) VALUES ('{TenantId}', '{balanced}'), ('{OtherTenantId}', '{otherTenantBalanced}');
+            """);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId, [moved, balanced, unused, otherTenantMoved, otherTenantBalanced], TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { moved, balanced }, used.ToHashSet());
+    }
+
     // Sin ids no consulta: ni siquiera hacen falta las tablas.
     [Fact]
     public async Task NoVariantsGiveNothingWithoutQuerying()
@@ -104,6 +129,9 @@ public sealed class CatalogVariantUsageCheckerTests
             CREATE TABLE quotations.order_items (order_id uuid NOT NULL REFERENCES quotations.orders (id), variant_id uuid NOT NULL);
             CREATE TABLE pos.sales (id uuid PRIMARY KEY, tenant_id uuid NOT NULL);
             CREATE TABLE pos.sale_lines (sale_id uuid NOT NULL REFERENCES pos.sales (id), variant_id uuid NOT NULL);
+            CREATE SCHEMA wms;
+            CREATE TABLE wms.stock_movements (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.stock_balances (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
             """);
 
     private static Task AddQuotationLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
