@@ -160,6 +160,35 @@ public sealed class StockProbeTests
         Assert.Empty(fromAnotherTenant);
     }
 
+    // Un ajuste Proposed sobre una variante sin movimientos: sin esto Catalog borraba la variante y el posteo escribía después un
+    // movimiento inmutable sobre una variante inexistente. Un ajuste Posted ya lo cubre su movimiento; uno Rejected no escribe nada.
+    [Fact]
+    public async Task TheRealCheckerSeesAnOpenAdjustmentLineAndALotAgainstTheMigratedSchema()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var proposedVariant = await CreateVariantAsync(factory, "V-PROPOSED", null, [12]);
+        var rejectedVariant = await CreateVariantAsync(factory, "V-REJECTED", null, [12]);
+        var lotVariant = await CreateVariantAsync(factory, "V-LOT", null, [12]);
+        var untouched = await CreateVariantAsync(factory, "V-FREE", null, [12]);
+        await ProposeAsync(s.Manager, Body(s, [Line(s.BinA, proposedVariant, 3m)]));
+        var rejected = await ProposeAsync(s.Manager, Body(s, [Line(s.BinA, rejectedVariant, 3m)]));
+        var rejection = await ActionRawAsync(s.Manager, rejected.Id, "reject", new { version = rejected.Version, note = "no" });
+        Assert.Equal(HttpStatusCode.OK, rejection.StatusCode);
+        await CreateLotAsync(factory, s, lotVariant, "LOT-1");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var checker = scope.ServiceProvider.GetRequiredService<Modules.Catalog.Application.IVariantUsageChecker>();
+        var used = await checker.FindUsedAsync(
+            s.TenantId, [proposedVariant, rejectedVariant, lotVariant, untouched], Ct);
+        var fromAnotherTenant = await checker.FindUsedAsync(Guid.CreateVersion7(), [proposedVariant, lotVariant], Ct);
+
+        Assert.Equal(new HashSet<Guid> { proposedVariant, lotVariant }, used.ToHashSet());
+        Assert.Empty(fromAnotherTenant);
+    }
+
     private static object UpdateBody(string name, bool isActive) =>
         new { name, identification = "900123", contactEmail = "acme@example.com", isActive, version = 1 };
 

@@ -75,6 +75,42 @@ public sealed class CatalogVariantUsageCheckerTests
         Assert.Equal(new HashSet<Guid> { moved, balanced }, used.ToHashSet());
     }
 
+    // Un ajuste abierto (Proposed o Approved) todavía puede contabilizarse y escribiría un movimiento inmutable sobre la variante: no se
+    // borra aunque aún no tenga movimientos. Uno Posted ya dejó su movimiento (lo cubre stock_movements) y uno Rejected no escribe nada.
+    // Un lote también ata a la variante.
+    [Fact]
+    public async Task CheckerFindsVariantUsedOnlyByAnOpenAdjustmentLineOrALot()
+    {
+        await using var database = await StartDatabaseAsync();
+        await CreateLineTablesAsync(database);
+
+        var proposed = Guid.CreateVersion7();
+        var approved = Guid.CreateVersion7();
+        var posted = Guid.CreateVersion7();
+        var rejected = Guid.CreateVersion7();
+        var lotted = Guid.CreateVersion7();
+        var unused = Guid.CreateVersion7();
+        var otherTenantProposed = Guid.CreateVersion7();
+        var otherTenantLotted = Guid.CreateVersion7();
+
+        await AddAdjustmentLineAsync(database, TenantId, "Proposed", proposed);
+        await AddAdjustmentLineAsync(database, TenantId, "Approved", approved);
+        await AddAdjustmentLineAsync(database, TenantId, "Posted", posted);
+        await AddAdjustmentLineAsync(database, TenantId, "Rejected", rejected);
+        await AddAdjustmentLineAsync(database, OtherTenantId, "Proposed", otherTenantProposed);
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.lots (tenant_id, variant_id) VALUES ('{TenantId}', '{lotted}'), ('{OtherTenantId}', '{otherTenantLotted}');
+            """);
+
+        await using var catalog = CatalogFor(database);
+        var used = await new CatalogVariantUsageChecker(catalog).FindUsedAsync(
+            TenantId,
+            [proposed, approved, posted, rejected, lotted, unused, otherTenantProposed, otherTenantLotted],
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(new HashSet<Guid> { proposed, approved, lotted }, used.ToHashSet());
+    }
+
     // Sin ids no consulta: ni siquiera hacen falta las tablas.
     [Fact]
     public async Task NoVariantsGiveNothingWithoutQuerying()
@@ -132,6 +168,9 @@ public sealed class CatalogVariantUsageCheckerTests
             CREATE SCHEMA wms;
             CREATE TABLE wms.stock_movements (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
             CREATE TABLE wms.stock_balances (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.lots (tenant_id uuid NOT NULL, variant_id uuid NOT NULL);
+            CREATE TABLE wms.adjustments (id uuid PRIMARY KEY, tenant_id uuid NOT NULL, status text NOT NULL);
+            CREATE TABLE wms.adjustment_lines (adjustment_id uuid NOT NULL REFERENCES wms.adjustments (id), variant_id uuid NOT NULL);
             """);
 
     private static Task AddQuotationLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
@@ -142,6 +181,15 @@ public sealed class CatalogVariantUsageCheckerTests
 
     private static Task AddSaleLineAsync(PostgreSqlContainer database, Guid tenantId, Guid variantId) =>
         AddLineAsync(database, "pos.sales", "pos.sale_lines", "sale_id", tenantId, variantId);
+
+    private static async Task AddAdjustmentLineAsync(PostgreSqlContainer database, Guid tenantId, string status, Guid variantId)
+    {
+        var adjustment = Guid.CreateVersion7();
+        await ExecuteAsync(database, $"""
+            INSERT INTO wms.adjustments (id, tenant_id, status) VALUES ('{adjustment}', '{tenantId}', '{status}');
+            INSERT INTO wms.adjustment_lines (adjustment_id, variant_id) VALUES ('{adjustment}', '{variantId}');
+            """);
+    }
 
     // Los nombres de tabla son constantes de esta clase, nunca entrada: por eso van interpolados.
     private static async Task AddLineAsync(
