@@ -48,6 +48,18 @@ public sealed class InventoryLedgerMigrationTests
             database,
             "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'wms' AND table_name = 'stock_movements' AND column_name = 'reverses_occurred_at'"));
 
+        // §11.2: los dos índices del saldo y las FKs internas RESTRICT ('r'); ninguna FK apunta a stock_movements.
+        Assert.Equal(2L, await ScalarAsync<long>(
+            database,
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname IN ('IX_stock_balances_tenant_variant_status', 'IX_stock_balances_location')"));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname = 'IX_stock_balances_warehouse_variant'"));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            database,
+            "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND conname LIKE 'FK_stock_movements_%' AND confdeltype <> 'r'"));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'wms.stock_movements'::regclass"));
+
         await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
     }
 }

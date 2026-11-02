@@ -10,6 +10,7 @@ public sealed class LedgerPartitionTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
         // Los nombres salen del mes UTC: la migración calcula con now() en UTC (S26).
         var now = DateTimeOffset.UtcNow;
         var next = now.AddMonths(1);
@@ -29,9 +30,10 @@ public sealed class LedgerPartitionTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
         var farFuture = DateTimeOffset.UtcNow.AddMonths(6);
 
-        var id = await InsertRawMovementAsync(database, farFuture);
+        var id = await InsertRawMovementAsync(database, anchors, farFuture);
 
         Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements_default WHERE id = @id", ("id", id)));
         Assert.Equal(1L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE id = @id", ("id", id)));
@@ -44,10 +46,11 @@ public sealed class LedgerPartitionTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
         var now = DateTimeOffset.UtcNow;
         var lastInstantOfMonth = new DateTimeOffset(now.Year, now.Month, DateTime.DaysInMonth(now.Year, now.Month), 23, 30, 0, TimeSpan.Zero);
 
-        var id = await InsertRawMovementAsync(database, lastInstantOfMonth);
+        var id = await InsertRawMovementAsync(database, anchors, lastInstantOfMonth);
 
         Assert.Equal(1L, await ScalarAsync<long>(database, $"SELECT count(*) FROM wms.stock_movements_y{now:yyyy}m{now:MM} WHERE id = @id", ("id", id)));
     }

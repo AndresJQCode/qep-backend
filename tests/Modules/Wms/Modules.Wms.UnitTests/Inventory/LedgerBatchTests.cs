@@ -91,7 +91,7 @@ public sealed class LedgerBatchTests
     [Fact]
     public void AReversalReferenceWithoutItsDateIsRejected() =>
         Assert.Throws<ArgumentException>(() => new LedgerEntry(
-            Key(LocationA), Key(LocationB), 1m, null, MovementReason.Reversal, null, Now, ReversesMovementId: Guid.CreateVersion7()));
+            Key(LocationA), Key(LocationB), 1m, null, MovementReason.Reversal, null, Now, reversesMovementId: Guid.CreateVersion7()));
 
     private static LedgerBatch NewBatch(IReadOnlyList<LedgerEntry> entries) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), "key-1", new LedgerActor(Guid.CreateVersion7(), LedgerActorType.System, null), entries);

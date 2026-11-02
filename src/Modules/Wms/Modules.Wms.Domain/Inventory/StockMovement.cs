@@ -2,7 +2,7 @@ namespace Modules.Wms.Domain.Inventory;
 
 /// <summary>
 /// Una fila del ledger (<c>wms.stock_movements</c>, append-only): doble partida de una sola fila, de <c>From</c> a <c>To</c>.
-/// Sin setters públicos y sin <c>DbSet</c>: se escribe por SQL crudo desde el ledger. Un trigger rechaza UPDATE y DELETE.
+/// La bodega de cada lado no se guarda: se deduce de la ubicación, que no cambia de bodega. Sin setters públicos y sin <c>DbSet</c>: se escribe por SQL crudo desde el ledger. Un trigger rechaza UPDATE y DELETE.
 /// </summary>
 public sealed class StockMovement
 {
@@ -15,10 +15,6 @@ public sealed class StockMovement
     public Guid TenantId { get; private set; }
 
     public Guid OwnerId { get; private set; }
-
-    public Guid WarehouseIdFrom { get; private set; }
-
-    public Guid WarehouseIdTo { get; private set; }
 
     public Guid VariantId { get; private set; }
 
@@ -76,8 +72,6 @@ public sealed class StockMovement
     internal static StockMovement Record(
         Guid id,
         Guid tenantId,
-        Guid warehouseIdFrom,
-        Guid warehouseIdTo,
         StockKey from,
         StockKey to,
         decimal quantity,
@@ -120,8 +114,6 @@ public sealed class StockMovement
             Id = id,
             TenantId = tenantId,
             OwnerId = from.OwnerId,
-            WarehouseIdFrom = warehouseIdFrom,
-            WarehouseIdTo = warehouseIdTo,
             VariantId = from.VariantId,
             LotId = from.LotId,
             SerialUnitId = serialUnitId,

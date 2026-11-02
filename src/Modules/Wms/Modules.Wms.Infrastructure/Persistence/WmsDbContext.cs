@@ -39,6 +39,20 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public const string ReservationOpenIndex = "IX_reservations_open_key";
     public const string AdjustmentNumberIndex = "IX_adjustments_tenant_number";
 
+    // FKs internas del ledger hacia ubicaciones y dueños (spec §11.2, creadas por InventoryLedgerSql.CreateInternalForeignKeys). Borrar
+    // una ubicación o un dueño con historia da 23001 (RESTRICT): WmsUnitOfWork lo traduce por nombre.
+    public static readonly string[] LocationReferenceForeignKeys =
+    [
+        "FK_stock_movements_from_location", "FK_stock_movements_to_location", "FK_stock_balances_location", "FK_serial_units_location",
+        "FK_reservations_location", "FK_adjustment_lines_location",
+    ];
+
+    public static readonly string[] OwnerReferenceForeignKeys =
+    [
+        "FK_stock_movements_owner", "FK_stock_balances_owner", "FK_lots_owner", "FK_serial_units_owner", "FK_reservations_owner",
+        "FK_adjustments_owner",
+    ];
+
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
 
     public DbSet<Location> Locations => Set<Location>();

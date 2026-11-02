@@ -12,7 +12,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             // El ledger, su trigger, las particiones y la cola son SQL crudo e idempotente: EF no sabe particionar. Va antes de las
-            // tablas de EF; las vistas, al final, cuando stock_balances ya existe.
+            // tablas de EF; las vistas y las FKs internas, al final, cuando las tablas de EF ya existen.
             migrationBuilder.Sql(InventoryLedgerSql.CreateStockMovements);
             migrationBuilder.Sql(InventoryLedgerSql.CreateImmutabilityTrigger);
             migrationBuilder.Sql(InventoryLedgerSql.CreateEnsurePartitionFunction);
@@ -300,10 +300,16 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_stock_balances_warehouse_variant",
+                name: "IX_stock_balances_location",
                 schema: "wms",
                 table: "stock_balances",
-                columns: new[] { "tenant_id", "warehouse_id", "variant_id" });
+                column: "location_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_stock_balances_tenant_variant_status",
+                schema: "wms",
+                table: "stock_balances",
+                columns: new[] { "tenant_id", "variant_id", "status" });
 
             migrationBuilder.CreateIndex(
                 name: "UQ_stock_balances_key",
@@ -315,6 +321,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
             migrationBuilder.Sql(InventoryLedgerSql.CreateStockRowsView);
             migrationBuilder.Sql(InventoryLedgerSql.CreateStockSummaryView);
+            migrationBuilder.Sql(InventoryLedgerSql.CreateInternalForeignKeys);
         }
 
         /// <inheritdoc />

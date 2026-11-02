@@ -8,7 +8,9 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// <summary>
 /// El mapeo del ledger y los saldos (plan WMS-D, Task 3), aparte de <see cref="WmsDbContext"/> para que el contexto no crezca el
 /// doble. Los enums van como texto y los decimales como <c>numeric(18,6)</c>, fijados a mano. <c>stock_movements</c> y
-/// <c>stock_balances</c> no tienen <c>DbSet</c>: se escriben por SQL desde el ledger y nadie las toca con el change tracker.
+/// <c>stock_balances</c> no tienen <c>DbSet</c>: se escriben por SQL desde el ledger y nadie las toca con el change tracker. Las
+/// FKs internas (spec §11.2) no están aquí: EF no puede declararlas con ids convertidos a <c>Guid</c> y las de
+/// <c>stock_movements</c> caen sobre una tabla que EF no migra; las crea <c>InventoryLedgerSql.CreateInternalForeignKeys</c>.
 /// </summary>
 internal static class InventoryLedgerModel
 {
@@ -62,9 +64,6 @@ internal static class InventoryLedgerModel
         movement.Property(value => value.ReversesMovementId).HasColumnName("reverses_movement_id");
         movement.Property(value => value.ReversesOccurredAt).HasColumnName("reverses_occurred_at");
         movement.Property(value => value.OverrideReason).HasColumnName("override_reason");
-        // La bodega de cada lado se deduce de la ubicación: la tabla no guarda una copia que pueda divergir.
-        movement.Ignore(value => value.WarehouseIdFrom);
-        movement.Ignore(value => value.WarehouseIdTo);
     }
 
     private static void ConfigureStockBalance(ModelBuilder modelBuilder)
@@ -95,7 +94,10 @@ internal static class InventoryLedgerModel
             .IsUnique()
             .AreNullsDistinct(false)
             .HasDatabaseName(WmsDbContext.StockBalanceKeyIndex);
-        balance.HasIndex(value => new { value.TenantId, value.WarehouseId, value.VariantId }, "IX_stock_balances_warehouse_variant");
+        // §11.2: ninguna lectura del plan filtra por (tenant, bodega, variante) sobre el saldo; sí por variante y estado (probe de
+        // variante, resumen) y por ubicación (probe de ubicación, borrado).
+        balance.HasIndex(value => new { value.TenantId, value.VariantId, value.Status }, "IX_stock_balances_tenant_variant_status");
+        balance.HasIndex(value => value.LocationId, "IX_stock_balances_location");
     }
 
     private static void ConfigureLot(ModelBuilder modelBuilder)

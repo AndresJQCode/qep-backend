@@ -3,7 +3,9 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// <summary>
 /// El SQL del ledger que EF no genera: la tabla particionada, el trigger de inmutabilidad, la función de particiones, la cola de
 /// cambios de saldo y las dos vistas. Todo el SQL del <c>Up</c> es idempotente (<c>IF NOT EXISTS</c>, <c>OR REPLACE</c>) para que un
-/// <c>Up</c> interrumpido se pueda repetir; las vistas se crean al final, cuando EF ya creó <c>stock_balances</c>.
+/// <c>Up</c> interrumpido se pueda repetir; las vistas y las FKs se crean al final, cuando EF ya creó las tablas.
+/// <b>Estas constantes son historia de AddInventoryLedger:</b> un cambio posterior va en una migración nueva con su propio SQL, no
+/// editando aquí, o una base nueva quedaría distinta de una ya migrada.
 /// </summary>
 internal static class InventoryLedgerSql
 {
@@ -88,6 +90,39 @@ internal static class InventoryLedgerSql
                sum(CASE WHEN r.location_role = 'Transit' THEN r.on_hand ELSE 0 END)                                             AS in_transit
           FROM wms.v_stock_rows r
          GROUP BY r.tenant_id, r.owner_id, r.warehouse_id, r.variant_id;
+        """;
+
+    // Spec §11.2: las FKs internas son ON DELETE RESTRICT (una ubicación con movimientos no se borra, se desactiva). Salen de una
+    // tabla particionada hacia tablas normales, que PostgreSQL permite; ninguna apunta a stock_movements. Sin FKs a otros esquemas.
+    public const string CreateInternalForeignKeys = """
+        ALTER TABLE wms.stock_movements
+            ADD CONSTRAINT "FK_stock_movements_from_location" FOREIGN KEY (from_location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_movements_to_location" FOREIGN KEY (to_location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_movements_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_movements_lot" FOREIGN KEY (lot_id) REFERENCES wms.lots (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_movements_serial_unit" FOREIGN KEY (serial_unit_id) REFERENCES wms.serial_units (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.stock_balances
+            ADD CONSTRAINT "FK_stock_balances_location" FOREIGN KEY (location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_balances_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_balances_warehouse" FOREIGN KEY (warehouse_id) REFERENCES wms.warehouses (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_stock_balances_lot" FOREIGN KEY (lot_id) REFERENCES wms.lots (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.lots
+            ADD CONSTRAINT "FK_lots_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.serial_units
+            ADD CONSTRAINT "FK_serial_units_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_serial_units_location" FOREIGN KEY (current_location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_serial_units_lot" FOREIGN KEY (lot_id) REFERENCES wms.lots (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.reservations
+            ADD CONSTRAINT "FK_reservations_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_reservations_location" FOREIGN KEY (location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_reservations_warehouse" FOREIGN KEY (warehouse_id) REFERENCES wms.warehouses (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_reservations_lot" FOREIGN KEY (lot_id) REFERENCES wms.lots (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.adjustments
+            ADD CONSTRAINT "FK_adjustments_owner" FOREIGN KEY (owner_id) REFERENCES wms.owners (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_adjustments_warehouse" FOREIGN KEY (warehouse_id) REFERENCES wms.warehouses (id) ON DELETE RESTRICT;
+        ALTER TABLE wms.adjustment_lines
+            ADD CONSTRAINT "FK_adjustment_lines_location" FOREIGN KEY (location_id) REFERENCES wms.locations (id) ON DELETE RESTRICT,
+            ADD CONSTRAINT "FK_adjustment_lines_lot" FOREIGN KEY (lot_id) REFERENCES wms.lots (id) ON DELETE RESTRICT;
         """;
 
     public static string EnsurePartition(DateOnly month) => $"SELECT wms.ensure_movement_partition('{month:yyyy-MM-01}')";

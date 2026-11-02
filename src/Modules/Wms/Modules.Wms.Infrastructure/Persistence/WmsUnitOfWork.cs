@@ -67,6 +67,15 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new WmsDomainException(WmsErrorCodes.LocationHasChildren, "The location still has child locations.", exception);
         }
+        // Una ubicación o un dueño con movimientos no se borra, se desactiva (§11.2): aunque el saldo sea cero, el historial la usa.
+        catch (DbUpdateException exception) when (WmsDbContext.LocationReferenceForeignKeys.Any(name => ForeignKeyViolation.Is(exception, name)))
+        {
+            throw new WmsDomainException(WmsErrorCodes.LocationHasStock, "The location has stock movements and cannot be removed.", exception);
+        }
+        catch (DbUpdateException exception) when (WmsDbContext.OwnerReferenceForeignKeys.Any(name => ForeignKeyViolation.Is(exception, name)))
+        {
+            throw new WmsDomainException(WmsErrorCodes.OwnerHasStock, "The owner has stock movements and cannot be removed.", exception);
+        }
     }
 
     private static RequestConcurrencyException LostProfileRace(DbUpdateException exception) =>

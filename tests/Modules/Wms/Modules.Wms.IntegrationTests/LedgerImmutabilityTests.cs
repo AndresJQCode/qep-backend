@@ -17,7 +17,8 @@ public sealed class LedgerImmutabilityTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
-        var id = await InsertRawMovementAsync(database, DateTimeOffset.UtcNow);
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
+        var id = await InsertRawMovementAsync(database, anchors, DateTimeOffset.UtcNow);
 
         var exception = await Assert.ThrowsAsync<PostgresException>(() =>
             ExecuteAsync(database, "UPDATE wms.stock_movements SET quantity = 1 WHERE id = @id", ("id", id)));
@@ -31,7 +32,8 @@ public sealed class LedgerImmutabilityTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
-        var id = await InsertRawMovementAsync(database, DateTimeOffset.UtcNow);
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
+        var id = await InsertRawMovementAsync(database, anchors, DateTimeOffset.UtcNow);
 
         var exception = await Assert.ThrowsAsync<PostgresException>(() =>
             ExecuteAsync(database, "DELETE FROM wms.stock_movements WHERE id = @id", ("id", id)));
@@ -48,7 +50,8 @@ public sealed class LedgerImmutabilityTests
         var (database, factory) = await OpenAsync();
         await using var _ = database;
         using var __ = factory;
-        var id = await InsertRawMovementAsync(database, DateTimeOffset.UtcNow);
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
+        var id = await InsertRawMovementAsync(database, anchors, DateTimeOffset.UtcNow);
         await using var scope = factory.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
         var migrator = context.GetService<IMigrator>();

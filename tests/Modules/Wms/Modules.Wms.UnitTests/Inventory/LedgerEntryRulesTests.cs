@@ -35,7 +35,7 @@ public sealed class LedgerEntryRulesTests
             reason,
             null,
             occurredAt ?? Now,
-            SerialUnitId: serialUnitId);
+            serialUnitId: serialUnitId);
 
     private static void Validate(LedgerEntry entry, LedgerVariantRules rules, LedgerLocationInfo? from = null, LedgerLocationInfo? to = null) =>
         LedgerEntryRules.Validate(entry, rules, from ?? FromLocation, to ?? ToLocation, Now);

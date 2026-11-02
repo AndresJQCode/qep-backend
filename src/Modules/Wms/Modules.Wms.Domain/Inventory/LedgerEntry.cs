@@ -22,10 +22,10 @@ public sealed record LedgerEntry
         MovementReason reason,
         LedgerDocument? document,
         DateTimeOffset occurredAt,
-        Guid? ReversesMovementId = null,
-        DateTimeOffset? ReversesOccurredAt = null,
-        string? OverrideReason = null,
-        Guid? SerialUnitId = null)
+        Guid? reversesMovementId = null,
+        DateTimeOffset? reversesOccurredAt = null,
+        string? overrideReason = null,
+        Guid? serialUnitId = null)
     {
         if (quantity <= 0)
         {
@@ -44,9 +44,9 @@ public sealed record LedgerEntry
                 "El movimiento tiene que conservar la variante, el dueño y el lote: sólo cambian la ubicación y el estado.");
         }
 
-        if (ReversesMovementId.HasValue != ReversesOccurredAt.HasValue)
+        if (reversesMovementId.HasValue != reversesOccurredAt.HasValue)
         {
-            throw new ArgumentException("The reversal reference needs both the movement id and its date, or neither.", nameof(ReversesOccurredAt));
+            throw new ArgumentException("The reversal reference needs both the movement id and its date, or neither.", nameof(reversesOccurredAt));
         }
 
         From = from;
@@ -55,11 +55,12 @@ public sealed record LedgerEntry
         Captured = captured;
         Reason = reason;
         Document = document;
-        OccurredAt = occurredAt;
-        this.ReversesMovementId = ReversesMovementId;
-        this.ReversesOccurredAt = ReversesOccurredAt;
-        this.OverrideReason = OverrideReason;
-        this.SerialUnitId = SerialUnitId;
+        // timestamptz sólo acepta offset cero en Npgsql: un occurredAt con -05:00 del cliente sería un 500 en la base.
+        OccurredAt = occurredAt.ToUniversalTime();
+        ReversesMovementId = reversesMovementId;
+        ReversesOccurredAt = reversesOccurredAt?.ToUniversalTime();
+        OverrideReason = overrideReason;
+        SerialUnitId = serialUnitId;
     }
 
     public StockKey From { get; }

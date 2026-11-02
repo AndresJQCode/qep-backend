@@ -93,9 +93,31 @@ internal static partial class WmsApiHarness
         return command;
     }
 
-    /// <summary>Inserta una fila del ledger con todos los <c>NOT NULL</c> y devuelve su <c>id</c>. Para las pruebas del trigger y de
-    /// las particiones, que no pasan por el ledger.</summary>
-    public static async Task<Guid> InsertRawMovementAsync(PostgreSqlContainer database, DateTimeOffset occurredAt)
+    /// <summary>Lo que las FKs internas del ledger exigen que exista (spec §11.2): un dueño y las dos ubicaciones de un movimiento.</summary>
+    internal sealed record MovementAnchors(Guid OwnerId, Guid FromLocationId, Guid ToLocationId, Guid WarehouseId);
+
+    /// <summary>Crea por la API una bodega con dos bins y por SQL un dueño <c>Client</c>: el mínimo para insertar movimientos crudos.</summary>
+    public static async Task<MovementAnchors> SeedMovementAnchorsAsync(QepApiFactory factory, PostgreSqlContainer database)
+    {
+        using var manager = CreateManager(factory);
+        var warehouse = await CreateWarehouseAsync(manager, "ANC");
+        var from = await CreateBinAsync(manager, warehouse.Id, "Z1", "B1");
+        var to = await CreateBinAsync(manager, warehouse.Id, "Z1", "B2");
+        var ownerId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            database,
+            """
+            INSERT INTO wms.owners (id, tenant_id, kind, name, is_active, version, created_at, updated_at)
+            VALUES (@id, @tenant, 'Client', 'Dueño de prueba', true, 1, now(), now())
+            """,
+            ("id", ownerId),
+            ("tenant", Guid.Parse(TenantId)));
+        return new MovementAnchors(ownerId, from.Id, to.Id, warehouse.Id);
+    }
+
+    /// <summary>Inserta una fila del ledger con todos los <c>NOT NULL</c> y devuelve su <c>id</c>. Para las pruebas del trigger, de
+    /// las particiones y de las FKs, que no pasan por el ledger.</summary>
+    public static async Task<Guid> InsertRawMovementAsync(PostgreSqlContainer database, MovementAnchors anchors, DateTimeOffset occurredAt)
     {
         var id = Guid.CreateVersion7();
         await ExecuteAsync(
@@ -110,10 +132,10 @@ internal static partial class WmsApiHarness
             """,
             ("id", id),
             ("tenant", Guid.Parse(TenantId)),
-            ("owner", Guid.CreateVersion7()),
+            ("owner", anchors.OwnerId),
             ("variant", Guid.CreateVersion7()),
-            ("from", Guid.CreateVersion7()),
-            ("to", Guid.CreateVersion7()),
+            ("from", anchors.FromLocationId),
+            ("to", anchors.ToLocationId),
             ("batch", Guid.CreateVersion7()),
             ("key", id.ToString()),
             ("actor", Guid.CreateVersion7()),

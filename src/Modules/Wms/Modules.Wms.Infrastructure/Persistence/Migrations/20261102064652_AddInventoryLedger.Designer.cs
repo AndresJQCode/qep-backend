@@ -13,7 +13,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Modules.Wms.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    [Migration("20261102062902_AddInventoryLedger")]
+    [Migration("20261102064652_AddInventoryLedger")]
     partial class AddInventoryLedger
     {
         /// <inheritdoc />
@@ -634,7 +634,9 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("TenantId", "OwnerId", "LocationId", "VariantId", "LotId", "Status"), false);
 
-                    b.HasIndex(new[] { "TenantId", "WarehouseId", "VariantId" }, "IX_stock_balances_warehouse_variant");
+                    b.HasIndex(new[] { "LocationId" }, "IX_stock_balances_location");
+
+                    b.HasIndex(new[] { "TenantId", "VariantId", "Status" }, "IX_stock_balances_tenant_variant_status");
 
                     b.ToTable("stock_balances", "wms", t =>
                         {

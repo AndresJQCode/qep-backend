@@ -26,6 +26,11 @@ public sealed class OperationReceipt
             throw new ArgumentException($"The idempotency key must have between 1 and {KeyMaxLength} characters.", nameof(key));
         }
 
+        if (hash is null || hash.Length != 64 || !hash.All(char.IsAsciiHexDigit))
+        {
+            throw new ArgumentException("The request hash must be 64 hexadecimal characters.", nameof(hash));
+        }
+
         return new OperationReceipt
         {
             TenantId = tenantId,
