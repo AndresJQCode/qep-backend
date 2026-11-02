@@ -1336,7 +1336,7 @@ sobre un documento existente, el servidor deriva la clave `"{documento}:{id}:{ac
 | `wms.lot.expiry_required` | 422 | Perfil `tracks_expiry` y lote nuevo sin fecha |
 | `wms.serial.required` / `wms.serial.duplicate` / `wms.serial.not_at_location` | 422 | Serializados |
 | `wms.document.invalid_transition` | 422 | Transición no permitida; extensiones `{ from, action }` |
-| `wms.document.busy` | 409 | Advisory lock tomado |
+| `wms.document.busy` | 409 | Advisory lock tomado. **Reintentable**: la app repite la petición con la misma clave y recibe el 200 guardado si la otra ya confirmó; no es un fallo terminal |
 | `wms.receipt.already_open` | 422 | Segundo `Receipt` en `Counting` |
 | `wms.receipt.line_not_in_document` | 422 | Conteo sobre línea ajena |
 | `wms.discrepancy.unresolved` | 422 | Cerrar documento con novedades abiertas |
