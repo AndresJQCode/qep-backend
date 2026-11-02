@@ -94,3 +94,10 @@ public sealed record UpdateOwnerRequest(string Name, string? Identification, str
 public sealed record OwnerDto(Guid Id, string Kind, string Name, string? Identification, string? ContactEmail, bool IsActive, long Version);
 
 public sealed record OwnersDto(IReadOnlyList<OwnerDto> Items);
+
+/// <summary>Cuerpo de <c>POST /uoms</c>. El código lo normaliza el dominio (P-4): «caja» queda «CAJA».</summary>
+public sealed record CreateUomRequest(string Code, string Name, int Precision);
+
+public sealed record UomDto(string Code, string Name, int Precision, bool IsSystem);
+
+public sealed record UomsDto(IReadOnlyList<UomDto> Items);
