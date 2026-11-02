@@ -64,14 +64,13 @@ internal static class QuotationItemEdits
         // previo, y una por línea llegó a 130 sentencias por request (cada lectura son varias, por
         // el AsSplitQuery del agregado). Traerlas juntas no adelanta ningún rechazo: las
         // comprobaciones siguen abajo, línea por línea, en el mismo orden.
-        var variantIdsToPrice = desired
-            .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
-            .Select(line => line.VariantId)
-            .Distinct()
-            .ToArray();
-        var products = variantIdsToPrice.Length == 0
-            ? new Dictionary<Guid, QuotationVariantPricingRef>()
-            : await pricingLookup.FindManyAsync(tenantId, variantIdsToPrice, cancellationToken);
+        var products = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup,
+            tenantId,
+            desired
+                .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
+                .Select(line => line.VariantId),
+            cancellationToken);
 
         foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {

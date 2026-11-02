@@ -31,9 +31,28 @@ internal static class QuotationProductPricingResolver
     }
 
     /// <summary>
+    /// Una sola lectura del catálogo para todas las líneas de una operación: cada lectura son varias
+    /// sentencias, por el AsSplitQuery del agregado, y una por línea llegó a 130 por request. Sin ids no
+    /// consulta. No rechaza nada: quien la llama pasa cada variante por <see cref="Resolve"/>, línea por
+    /// línea, y así los rechazos no se adelantan ni cambian de orden.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<Guid, QuotationVariantPricingRef>> FindVariantsAsync(
+        IQuotationProductPricingLookup lookup,
+        Guid tenantId,
+        IEnumerable<Guid> variantIds,
+        CancellationToken cancellationToken)
+    {
+        var distinct = variantIds.Distinct().ToArray();
+
+        return distinct.Length == 0
+            ? new Dictionary<Guid, QuotationVariantPricingRef>()
+            : await lookup.FindManyAsync(tenantId, distinct, cancellationToken);
+    }
+
+    /// <summary>
     /// Las mismas comprobaciones y el mismo precio sobre una variante ya leída, para quien pide varias
-    /// de una vez y las valoriza línea por línea (<see cref="QuotationItemEdits"/>). <paramref name="product"/>
-    /// null es lo que devuelve la lectura para una variante que no encontró.
+    /// de una vez (<see cref="FindVariantsAsync"/>) y las valoriza línea por línea.
+    /// <paramref name="product"/> null es lo que devuelve la lectura para una variante que no encontró.
     /// </summary>
     public static QuotationPricedProduct Resolve(
         QuotationVariantPricingRef? product,

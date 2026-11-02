@@ -116,16 +116,20 @@ public sealed class OrderDraftBuilder(
     private async Task<(OrderHeader Header, QuotationParties Parties, List<OrderLineInput> Lines)> PriceAsync(
         OrderDraftInput input, QuotationCustomerRef customer, string currency, CancellationToken cancellationToken)
     {
-        // Línea por línea, como el alta de una línea en la cotización: un producto ausente, de otro
-        // tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja pasar el
-        // inactivo a propósito, porque sirve al cambio de moneda de líneas que ya existen).
+        // Una lectura del catálogo con precio para todo el pedido (el preview corre mientras se escribe)
+        // y la comprobación línea por línea, como el alta de una línea en la cotización: un producto
+        // ausente, de otro tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja
+        // pasar el inactivo a propósito, porque sirve al cambio de moneda de líneas que ya existen).
+        var pricedVariants = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup, input.TenantId, input.Items.Select(item => item.VariantId), cancellationToken);
         var products = await productLookup.FindManyAsync(
             input.TenantId, input.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
         var lines = new List<OrderLineInput>(input.Items.Count);
         foreach (var item in input.Items)
         {
-            var priced = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, input.TenantId, item.VariantId, item.Quantity, currency, input.IsRetail, cancellationToken);
+            var priced = QuotationProductPricingResolver.Resolve(
+                pricedVariants.GetValueOrDefault(item.VariantId), input.TenantId, item.VariantId, item.Quantity,
+                currency, input.IsRetail);
             products.TryGetValue(item.VariantId, out var product);
             lines.Add(new OrderLineInput(
                 item.VariantId,

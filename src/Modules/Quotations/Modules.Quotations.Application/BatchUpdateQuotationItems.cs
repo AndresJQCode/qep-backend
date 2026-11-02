@@ -128,18 +128,25 @@ public sealed class BatchUpdateQuotationItemsHandler(
                 now);
         }
 
+        // Una sola lectura del catálogo para todas las altas, y ninguna si la tanda sólo saca. Va
+        // después de las bajas para que un itemId desconocido siga rechazando primero.
+        var products = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup,
+            command.TenantId,
+            command.ToAdd.Select(addition => addition.VariantId),
+            cancellationToken);
+
         foreach (var addition in command.ToAdd)
         {
             // US-3/US-4: precio base, descuento por escala e impuesto del producto, resueltos
             // contra el catálogo del tenant para la cantidad pedida — y en la moneda de la
             // cotización, que fija su cuenta de cobro.
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup,
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(addition.VariantId),
                 command.TenantId,
                 addition.VariantId,
                 addition.Quantity,
-                quotation.Currency, quotation.IsRetail,
-                cancellationToken);
+                quotation.Currency, quotation.IsRetail);
 
             quotation.AddItem(
                 QuotationItemId.New(),

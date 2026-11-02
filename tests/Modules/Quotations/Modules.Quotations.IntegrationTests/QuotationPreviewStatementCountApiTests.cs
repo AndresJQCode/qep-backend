@@ -135,10 +135,130 @@ public sealed class QuotationPreviewStatementCountApiTests
         Assert.Equal(fewStatements.Count, manyStatements.Count);
     }
 
+    // OrderDraftBuilder precia el pedido nuevo: el mismo camino de «Nuevo pedido» y de guardarlo.
+    [Fact]
+    public async Task ThePreviewOfANewOrderDoesNotReadMoreForMoreLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var products = await CreateProductsAsync(client, tenantId);
+        var billing = await BillingAccountOfNewCompanyAsync(client, tenantId);
+        var url = $"{OrdersUrl(tenantId)}/preview";
+
+        CreateOrderRequest BodyWith(int lines) => OrderWith(clientId, billing, products.Take(lines));
+
+        await StatementsOfAsync(client, url, BodyWith(1));
+        var few = await StatementsOfAsync(client, url, BodyWith(FewLines));
+        var many = await StatementsOfAsync(client, url, BodyWith(ManyLines));
+
+        Report(few, many);
+        Assert.Equal(few.Count, many.Count);
+    }
+
+    // Agregar sí escribe más con más líneas, y eso es legítimo: lo que no debe crecer es lo que lee.
+    [Fact]
+    public async Task AddingItemsToAnOrderDoesNotReadMoreForMoreLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var products = await CreateProductsAsync(client, tenantId);
+        var billing = await BillingAccountOfNewCompanyAsync(client, tenantId);
+
+        async Task<string> ItemsUrlOfNewOrderAsync()
+        {
+            using var response = await client.PostAsJsonAsync(
+                OrdersUrl(tenantId),
+                OrderWith(clientId, billing, products.Take(1)),
+                TestContext.Current.CancellationToken);
+            response.EnsureSuccessStatusCode();
+            var saved = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+            Assert.NotNull(saved);
+
+            return $"{OrdersUrl(tenantId)}/{saved.Order.Id}/items";
+        }
+
+        AddOrderItemsRequest BodyWith(int lines) => new(
+            products.Skip(1).Take(lines).Select(product => new OrderItemAdditionRequest(product, 2m)).ToArray());
+
+        var warmUp = await ItemsUrlOfNewOrderAsync();
+        var fewUrl = await ItemsUrlOfNewOrderAsync();
+        var manyUrl = await ItemsUrlOfNewOrderAsync();
+
+        await StatementsOfAsync(client, warmUp, BodyWith(1));
+        var few = ReadsOf(await StatementsOfAsync(client, fewUrl, BodyWith(FewLines)));
+        var many = ReadsOf(await StatementsOfAsync(client, manyUrl, BodyWith(ManyLines)));
+
+        Report(few, many);
+        Assert.Equal(few.Length, many.Length);
+    }
+
+    [Fact]
+    public async Task TheQuotationBatchDoesNotReadMoreForMoreLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var products = await CreateProductsAsync(client, tenantId);
+
+        async Task<string> BatchUrlOfNewQuotationAsync()
+        {
+            using var response = await client.PostAsJsonAsync(
+                QuotationsUrl(tenantId),
+                new CreateQuotationRequest(
+                    clientId, null, null, null, null, null,
+                    Items: [new QuotationEditItemRequest(products[0], 2m)]),
+                TestContext.Current.CancellationToken);
+            response.EnsureSuccessStatusCode();
+            var saved = await response.Content.ReadFromJsonAsync<QuotationResponse>(TestContext.Current.CancellationToken);
+            Assert.NotNull(saved);
+
+            return $"{QuotationsUrl(tenantId)}/{saved.Id}/items/batch";
+        }
+
+        BatchUpdateQuotationItemsRequest BodyWith(int lines) => new(
+            products.Skip(1).Take(lines).Select(product => new BatchQuotationItemAdditionRequest(product, 2m)).ToArray(),
+            []);
+
+        var warmUp = await BatchUrlOfNewQuotationAsync();
+        var fewUrl = await BatchUrlOfNewQuotationAsync();
+        var manyUrl = await BatchUrlOfNewQuotationAsync();
+
+        await StatementsOfAsync(client, warmUp, BodyWith(1));
+        var few = ReadsOf(await StatementsOfAsync(client, fewUrl, BodyWith(FewLines)));
+        var many = ReadsOf(await StatementsOfAsync(client, manyUrl, BodyWith(ManyLines)));
+
+        Report(few, many);
+        Assert.Equal(few.Length, many.Length);
+    }
+
+    private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
+
+    private static async Task<QuotationBillingAccountRequest> BillingAccountOfNewCompanyAsync(HttpClient client, Guid tenantId)
+    {
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        return new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency);
+    }
+
+    private static CreateOrderRequest OrderWith(
+        Guid clientId, QuotationBillingAccountRequest billing, IEnumerable<Guid> products) => new(
+            clientId, "Transferencia", null, false, null, null, billing,
+            products.Select(product => new OrderEditItemRequest(product, 2m)).ToArray(),
+            "PaymentPending",
+            []);
+
+    // Una línea base más que ManyLines: las rutas que agregan parten de un documento con una línea.
     private static async Task<Guid[]> CreateProductsAsync(HttpClient client, Guid tenantId)
     {
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19", 19);
-        var products = new Guid[ManyLines];
+        var products = new Guid[ManyLines + 1];
         for (var index = 0; index < products.Length; index++)
         {
             products[index] = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
@@ -185,6 +305,20 @@ public sealed class QuotationPreviewStatementCountApiTests
         Assert.NotEmpty(statements);
 
         return statements.ToArray();
+    }
+
+    /// <summary>
+    /// Sólo las lecturas. El filtro va por el texto, así que depende de que <c>db.query.text</c> traiga el
+    /// SQL: si dejara de traerlo no quedaría ninguna y la prueba compararía 0 con 0, por eso lo exige.
+    /// </summary>
+    private static string[] ReadsOf(IReadOnlyList<string> statements)
+    {
+        var reads = statements
+            .Where(statement => statement.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Assert.NotEmpty(reads);
+
+        return reads;
     }
 
     private static void Report(IReadOnlyList<string> few, IReadOnlyList<string> many)
