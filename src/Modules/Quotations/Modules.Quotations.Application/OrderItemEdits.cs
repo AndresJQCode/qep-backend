@@ -43,14 +43,13 @@ internal static class OrderItemEdits
         // Una sola lectura del catálogo para todo el diff, como en QuotationItemEdits: el cálculo
         // previo corre mientras se escribe, y una lectura por línea son varias sentencias por línea.
         // Los rechazos no se adelantan: siguen abajo, línea por línea, en el mismo orden.
-        var variantIdsToPrice = desired
-            .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
-            .Select(line => line.VariantId)
-            .Distinct()
-            .ToArray();
-        var products = variantIdsToPrice.Length == 0
-            ? new Dictionary<Guid, QuotationVariantPricingRef>()
-            : await pricingLookup.FindManyAsync(tenantId, variantIdsToPrice, cancellationToken);
+        var products = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup,
+            tenantId,
+            desired
+                .Where(line => !current.TryGetValue(line.VariantId, out var item) || item.Quantity != line.Quantity)
+                .Select(line => line.VariantId),
+            cancellationToken);
 
         foreach (var line in desired.Where(line => !current.ContainsKey(line.VariantId)))
         {

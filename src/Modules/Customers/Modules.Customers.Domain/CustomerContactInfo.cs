@@ -2,8 +2,9 @@ namespace Modules.Customers.Domain;
 
 /// <summary>
 /// Los datos de contacto del cliente, agrupados: teléfono, correo y su domicilio (calle y
-/// ciudad). Todos son obligatorios al escribir salvo el correo: hay clientes que no tienen uno
-/// (venta de mostrador, contacto sólo por WhatsApp) y exigirlo producía correos inventados.
+/// ciudad). Al escribir son obligatorios el teléfono y la ciudad; el correo y la calle no: hay
+/// clientes que no tienen correo o cuya calle no se conoce (venta de mostrador, contacto sólo por
+/// WhatsApp), y exigirlos producía datos inventados.
 ///
 /// Van juntos y no como parámetros sueltos de <c>Create</c>/<c>Update</c> por la misma razón por
 /// la que existe <c>CompanyContactInfo</c>. Las propiedades son <c>init</c> y no posicionales, así
@@ -23,7 +24,7 @@ public sealed record CustomerContactInfo
 
     public string? Email { get; init; }
 
-    public required string Address { get; init; }
+    public string? Address { get; init; }
 
     /// <summary>
     /// El pais del cliente, ISO-3166-1 alpha-2 (<c>CO</c>, <c>ES</c>). Decide cual de los dos
@@ -80,13 +81,7 @@ public sealed record CustomerContactInfo
             "customers.customer.phone_too_long",
             $"The customer phone cannot exceed {PhoneMaxLength} characters."),
         Email = NormalizeEmail(Email),
-        Address = NormalizeRequired(
-            Address,
-            AddressMaxLength,
-            "customers.customer.address_required",
-            "The customer address is required.",
-            "customers.customer.address_too_long",
-            $"The customer address cannot exceed {AddressMaxLength} characters."),
+        Address = NormalizeAddress(Address),
         Country = NormalizeCountry(Country),
         CityId = CityId,
         CityName = NormalizeCityName(CityName)
@@ -127,6 +122,24 @@ public sealed record CustomerContactInfo
             ? throw new CustomersDomainException(
                 "customers.customer.city_name_too_long",
                 $"The customer city cannot exceed {CityNameMaxLength} characters.")
+            : trimmed;
+    }
+
+    // Vacio y ausente son lo mismo, igual que con el correo y la ciudad escrita: el formulario que
+    // deja la calle en blanco no esta guardando una cadena vacia, y consumidores como el PDF o el
+    // Excel distinguen por null.
+    private static string? NormalizeAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return null;
+        }
+
+        var trimmed = address.Trim();
+        return trimmed.Length > AddressMaxLength
+            ? throw new CustomersDomainException(
+                "customers.customer.address_too_long",
+                $"The customer address cannot exceed {AddressMaxLength} characters.")
             : trimmed;
     }
 

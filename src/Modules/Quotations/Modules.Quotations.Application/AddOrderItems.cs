@@ -68,13 +68,17 @@ public sealed class AddOrderItemsHandler(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
+        // Una sola lectura del catálogo para toda la tanda. Los rechazos no se adelantan: siguen
+        // abajo, línea por línea, en el mismo orden.
+        var products = await QuotationProductPricingResolver.FindVariantsAsync(
+            pricingLookup, command.TenantId, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);
         foreach (var addition in command.ToAdd)
         {
             // Misma resolución que el cotizador: precio en la moneda del pedido, descuento por
             // escala para esa cantidad y tasa del producto.
-            var pricing = await QuotationProductPricingResolver.ResolveAsync(
-                pricingLookup, command.TenantId, addition.VariantId, addition.Quantity,
-                order.Currency, order.IsRetail, cancellationToken);
+            var pricing = QuotationProductPricingResolver.Resolve(
+                products.GetValueOrDefault(addition.VariantId), command.TenantId, addition.VariantId,
+                addition.Quantity, order.Currency, order.IsRetail);
             order.AddItem(
                 OrderItemId.New(), addition.VariantId, pricing.ProductId, addition.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,

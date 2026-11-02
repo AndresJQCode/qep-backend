@@ -1,8 +1,8 @@
 # Estado del proyecto `qep-backend`
 
 Archivo vivo: se actualiza al cerrar un trabajo, tomar una decisión o desplegar. **Verificado contra el código el
-2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `019c5259` más este
-registro; `origin/develop` en `9476862b`; `origin/main` en `200feaed`). Ante
+2026-10-21**; push, ramas y merges del backend verificados contra git el 2026-11-01 (`develop` en `adb183d4` más este
+registro; `origin/develop` en `f1732b3b`; `origin/main` en `0c16be9d`). Ante
 cualquier duda gana el código ([CLAUDE.md](../CLAUDE.md)). La línea `Estado:` de cada spec dice si el diseño se aprobó,
 no si se construyó: varios siguen diciendo «borrador» y están construidos.
 
@@ -11,10 +11,11 @@ no si se construyó: varios siguen diciendo «borrador» y están construidos.
 Estados: **Construido** (mergeado a `develop`) · **En curso** · **Aprobado, sin empezar** · **Por verificar**.
 «Push» dice si el trabajo ya llegó a `origin`. Para comprobarlo: `git log --oneline origin/develop..develop` en cada repo.
 
-**Push al 2026-11-01.** `origin/main` del backend (`200feaed`) ya tiene todo `origin/develop` (`9476862b`), y producción
-corre la imagen `4834`. El frontend igual: `origin/main` (`1895200a`) tiene todo `origin/develop` (`44f604d7`). Las filas de
-este archivo escritas antes dicen «sin push» o «falta `main`» con la fecha de su merge: esa parte ya no vale. Sin push
-quedan el N+1 de los pedidos en el backend (`019c5259`) y este registro, y el cargador inicial en el frontend (`e64e2c36`).
+**Push al 2026-11-01.** `origin/main` del backend (`0c16be9d`) tiene todo `origin/develop` (`f1732b3b`) salvo un commit de
+`docs/estado.md`, y producción corre la imagen `4835`. El frontend tiene `origin/main` (`1895200a`) con todo `origin/develop`
+(`44f604d7`). Las filas de este archivo escritas antes dicen «sin push» o «falta `main`» con la fecha de su merge: esa parte ya
+no vale. Sin push quedan, en el backend, las lecturas del catálogo por línea (`adb183d4`) y este registro, y en el frontend el
+cargador inicial (`e64e2c36`), que por eso no está en producción.
 Ramas del backend sin mergear: `feature/api-externa-observabilidad` (con su worktree) y
 `feature/chatbot-transportes-ci` (chatbot de Transportes CI, sin push; handoff en
 `superpowers/plans/2026-10-24-chatbot-transportes-ci.md` §8).
@@ -239,6 +240,13 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **las últimas lecturas del catálogo por línea** (merge `adb183d4`): `OrderDraftBuilder`, `AddOrderItems` y
+  `BatchUpdateQuotationItems` hacen una lectura por operación con `QuotationProductPricingResolver.FindVariantsAsync`, con los mismos rechazos y el mismo orden; también
+  la usan `QuotationItemEdits` y `OrderItemEdits`. Medido contra Postgres con 2 y 10 líneas: `POST orders/preview` de 53 y 117 sentencias a 45; `POST orders/{id}/items` de
+  52 y 116 `SELECT` a 44; `POST quotations/{id}/items/batch` de 47 y 111 `SELECT` a 39. `POST orders` comparte el código y no tiene prueba de conteo. Verificado:
+  Quotations.UnitTests 1.476 de 1.478, `ArchitectureTests` 165/165, conteo de sentencias 6/6 y clases de flujo 127 de 128, con sólo las tres fallas de «Defectos conocidos». Sin
+  suite completa. Cascada real de `/login` en producción, cinco cargas en frío: HTTP/2 y 117 JS casi en paralelo, último chunk a 700-850 ms y FCP a 900-1.040 ms, así que
+  agrupar chunks ahorraría poco y no se hizo; una carga tuvo TTFB de 3,5 s, sin explicar. Worktree y rama borrados.
 - 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **el N+1 de editar líneas de un pedido** (merge `019c5259`): `OrderItemEdits` leía el catálogo una
   vez por línea agregada o cambiada. Ahora es una lectura por edición, con los mismos rechazos y el mismo orden. Medido contra Postgres: `POST orders/{id}/preview` pasó
   de 46 (2 líneas) y 110 (10 líneas) a 38 en los dos casos; lo amarra `QuotationPreviewStatementCountApiTests`. El guardado usa el mismo código y no se midió. Verificado:

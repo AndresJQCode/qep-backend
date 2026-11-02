@@ -31,7 +31,7 @@ public sealed class CustomerAnomaliesApiTests
     private static async Task<Guid> InsertAsync(string connectionString, Seed seed)
     {
         var id = Guid.NewGuid();
-        // Una ficha completa exige CUC, documento, dirección y país (CK_customers_complete_fields): si la prueba no pide
+        // Una ficha completa exige CUC, documento y país (CK_customers_complete_fields): si la prueba no pide
         // documento, se le da uno que no se repita para que no arme otro grupo.
         var type = seed.Type ?? (seed.Complete ? "Nit" : null);
         var number = seed.Number ?? (seed.Complete ? id.ToString("N")[..30] : null);
