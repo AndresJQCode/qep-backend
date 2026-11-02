@@ -40,6 +40,7 @@ public sealed class CommitInitialBalancesHandler(
     IAdjustmentRepository adjustments,
     IImportPreviewStore store,
     IInventoryLedger ledger,
+    IStockReadQueries stockQueries,
     WmsCaller caller,
     IWmsEventPublisher events,
     IWmsConfirmMetrics metrics)
@@ -84,6 +85,12 @@ public sealed class CommitInitialBalancesHandler(
 
         var rows = JsonSerializer.Deserialize<List<InitialBalanceStoredRow>>(preview.RowsJson, InitialBalanceJson.Options)
             ?? throw new InvalidOperationException($"Import preview '{preview.Id}' has no rows.");
+        // I-7: el preview ya revisó el saldo, pero dos previews hechos antes del primer commit pasan los dos. El lock es por tenant e
+        // importación y va antes de cualquier escritura (lotes, numeración, ledger) para no cruzarse con ellas; el segundo commit espera
+        // al primero y entonces ve su saldo. Falla como un commit con problemas, y el preview queda disponible.
+        await unitOfWork.LockAsync("import:" + command.TenantId.ToString("D"), cancellationToken);
+        await EnsureNoStockYetAsync(command.TenantId, preview.OwnerId.Value, rows, cancellationToken);
+
         var lines = await BuildLinesAsync(command.TenantId, preview.OwnerId.Value, warehouse, rows, now, cancellationToken);
 
         var number = await adjustments.NextNumberAsync(command.TenantId, DateOnly.FromDateTime(now.UtcDateTime), cancellationToken);
@@ -159,6 +166,47 @@ public sealed class CommitInitialBalancesHandler(
 
         metrics.RecordConfirmDuration(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         return dto;
+    }
+
+    private async Task EnsureNoStockYetAsync(
+        Guid tenantId, Guid ownerId, List<InitialBalanceStoredRow> rows, CancellationToken cancellationToken)
+    {
+        var variantIds = rows.Select(stored => stored.Row.VariantId!.Value).Distinct().ToList();
+        var locationIds = rows.Select(stored => stored.Row.LocationId!.Value).Distinct().ToList();
+        var withStock = await stockQueries.FindNonZeroBalanceKeysAsync(tenantId, ownerId, variantIds, locationIds, cancellationToken);
+        if (withStock.Count == 0)
+        {
+            return;
+        }
+
+        // Un lote que todavía no existe no puede tener saldo: solo los que ya existen se comparan por id.
+        var lotIds = new Dictionary<(Guid VariantId, string LotCode), Guid?>();
+        foreach (var stored in rows)
+        {
+            var row = stored.Row;
+            Guid? lotId = null;
+            if (row.LotCode is { } lotCode)
+            {
+                var key = (row.VariantId!.Value, lotCode);
+                if (!lotIds.TryGetValue(key, out lotId))
+                {
+                    lotId = (await lots.FindAsync(tenantId, ownerId, key.Item1, lotCode, cancellationToken))?.Id.Value;
+                    lotIds[key] = lotId;
+                }
+
+                if (lotId is null)
+                {
+                    continue;
+                }
+            }
+
+            if (withStock.Contains((row.VariantId!.Value, row.LocationId!.Value, lotId)))
+            {
+                throw new WmsDomainException(
+                    WmsErrorCodes.ImportInvalidFile,
+                    $"La fila {row.Row} ya tiene saldo: otra carga se confirmó antes que esta. Sube el archivo de nuevo.");
+            }
+        }
     }
 
     private async Task<List<AdjustmentLine>> BuildLinesAsync(

@@ -39,6 +39,18 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
         return taken.Single();
     }
 
+    public async Task LockAsync(string key, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockAsync requires the transaction from BeginTransactionAsync.");
+        }
+
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({WmsLockNamespace}, hashtext({key}))", cancellationToken);
+    }
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         var written = await PersistAsync(cancellationToken);

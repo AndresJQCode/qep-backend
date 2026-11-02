@@ -503,6 +503,54 @@ public sealed class InitialBalanceImportTests
         Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
     }
 
+    // I-7, segunda mitad: dos previews hechos antes del primer commit pasan los dos el chequeo del preview. El commit vuelve a revisar el
+    // saldo dentro de su transacción, y el segundo no duplica; su preview queda disponible, como en cualquier commit que falla.
+    [Fact]
+    public async Task TwoPreviewsOfTheSameFileCannotBothCommit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var file = Workbook([new SheetRow("V1", "A-01-02", 5m)]);
+        var first = await PreviewAsync(s.Manager, s.WarehouseId, file);
+        var second = await PreviewAsync(s.Manager, s.WarehouseId, file);
+        Assert.True(first.CanCommit);
+        Assert.True(second.CanCommit);
+
+        var one = await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-1");
+        var two = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-2");
+
+        Assert.Equal(HttpStatusCode.Created, one.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, two.StatusCode);
+        Assert.Equal("wms.import.invalid_file", await CodeOfAsync(two));
+        Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+        Assert.Equal(
+            1L,
+            await ScalarAsync<long>(database, "SELECT count(*) FROM wms.import_previews WHERE id = @id", ("id", second.PreviewId)));
+    }
+
+    // Los dos commits a la vez: el segundo espera el lock de la importación hasta que el primero confirma, y entonces ve el saldo.
+    [Fact]
+    public async Task TwoSimultaneousCommitsOfTheSameFileLoadTheBalanceOnce()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var file = Workbook([new SheetRow("V1", "A-01-02", 5m)]);
+        var first = await PreviewAsync(s.Manager, s.WarehouseId, file);
+        var second = await PreviewAsync(s.Manager, s.WarehouseId, file);
+
+        var results = await Task.WhenAll(
+            CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-C1"),
+            CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-C2"));
+
+        Assert.Single(results, response => response.StatusCode == HttpStatusCode.Created);
+        Assert.Single(results, response => response.StatusCode == HttpStatusCode.UnprocessableEntity);
+        Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+    }
+
     // M-6: la auditoría dice quién preparó la carga además de quién la confirmó.
     [Fact]
     public async Task TheAuditEntryRecordsWhoPreparedThePreview()

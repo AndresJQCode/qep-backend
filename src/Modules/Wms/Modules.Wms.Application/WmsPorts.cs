@@ -18,6 +18,10 @@ public interface IWmsUnitOfWork
     /// lo suelta el fin de la transacción. Exige la de <see cref="BeginTransactionAsync"/>.</summary>
     Task<bool> TryLockDocumentAsync(Guid documentId, CancellationToken cancellationToken);
 
+    /// <summary>Lock de transacción <b>bloqueante</b> sobre una clave de negocio (no un documento): quien llega segundo espera a que el
+    /// primero confirme en vez de recibir un 409. Exige la de <see cref="BeginTransactionAsync"/> y lo suelta el fin de ella.</summary>
+    Task LockAsync(string key, CancellationToken cancellationToken);
+
     /// <summary>Guarda. Con una transacción abierta, además la confirma.</summary>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }
