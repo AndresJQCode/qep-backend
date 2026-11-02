@@ -57,6 +57,7 @@ public sealed class PreviewInitialBalancesHandler(
     ILotRepository lots,
     IWmsCatalogReader catalog,
     IInitialBalanceSheetReader reader,
+    IStockReadQueries stockQueries,
     IImportPreviewStore store)
     : ICommandHandler<PreviewInitialBalancesCommand, InitialBalancePreviewDto>
 {
@@ -158,23 +159,74 @@ public sealed class PreviewInitialBalancesHandler(
             ? new Dictionary<Guid, VariantLogisticsProfile>()
             : (await profiles.ListAsync(tenantId, variantIds, cancellationToken)).ToDictionary(profile => profile.VariantId);
 
-        var seen = new HashSet<(Guid VariantId, Guid LocationId, string? LotCode)>();
-        var result = new List<InitialBalanceStoredRow>(sheetRows.Count);
+        // Primero se resuelve cada fila (variante, ubicación y lote que ya existe) y después se juzga: el saldo existente se consulta una
+        // sola vez para toda la hoja.
+        var resolvedRows = new List<ResolvedRow>(sheetRows.Count);
+        var existingLots = new Dictionary<(Guid VariantId, string LotCode), Lot?>();
         foreach (var row in sheetRows)
         {
             var code = row.Code?.Trim() ?? string.Empty;
             var rowCandidates = candidates[code].ToList();
-            var resolved = InitialBalanceRowRules.FindExact(code, rowCandidates);
-            var profile = resolved is null ? null : variantProfiles.GetValueOrDefault(resolved.VariantId);
-            var rules = resolved is null ? null : RulesFor(resolved, profile);
+            var variant = InitialBalanceRowRules.FindExact(code, rowCandidates);
             var location = row.Location is null ? null : locations.GetValueOrDefault(row.Location.Trim());
 
-            var tracksExpiry = await NeedsExpirationAsync(tenantId, ownerId, resolved, profile, rules, row, cancellationToken);
-            var classified = InitialBalanceRowRules.ClassifyDetailed(row, rowCandidates, location, rules, tracksExpiry, seen);
+            Lot? existingLot = null;
+            if (variant is not null && !string.IsNullOrWhiteSpace(row.Lot))
+            {
+                var key = (variant.VariantId, row.Lot.Trim());
+                if (!existingLots.TryGetValue(key, out existingLot))
+                {
+                    existingLot = await lots.FindAsync(tenantId, ownerId, key.VariantId, key.Item2, cancellationToken);
+                    existingLots[key] = existingLot;
+                }
+            }
+
+            resolvedRows.Add(new ResolvedRow(row, rowCandidates, variant, location, existingLot));
+        }
+
+        var withStock = await FindStockAsync(tenantId, ownerId, resolvedRows, cancellationToken);
+
+        var seen = new HashSet<(Guid VariantId, Guid LocationId, string? LotCode)>();
+        var newLotDates = new Dictionary<(Guid VariantId, string LotCode), DateOnly?>();
+        var result = new List<InitialBalanceStoredRow>(sheetRows.Count);
+        foreach (var resolved in resolvedRows)
+        {
+            var profile = resolved.Variant is null ? null : variantProfiles.GetValueOrDefault(resolved.Variant.VariantId);
+            var rules = resolved.Variant is null ? null : RulesFor(resolved.Variant, profile);
+
+            // Un lote que ya existe conserva su fecha de vencimiento: pedírsela de nuevo a la fila sería rechazar una hoja correcta.
+            var tracksExpiry = profile?.TracksExpiry == true && resolved.ExistingLot is null;
+            var stockExists = resolved.Variant is not null
+                && resolved.Location is not null
+                && withStock.Contains((resolved.Variant.VariantId, resolved.Location.Id.Value, resolved.ExistingLot?.Id.Value));
+            var context = new InitialBalanceRowContext(resolved.ExistingLot, stockExists, newLotDates);
+
+            var classified = InitialBalanceRowRules.ClassifyDetailed(
+                resolved.Row, resolved.Candidates, resolved.Location, rules, tracksExpiry, seen, context);
             result.Add(new InitialBalanceStoredRow(classified.Row, classified.CapturedQuantity));
         }
 
         return result;
+    }
+
+    private sealed record ResolvedRow(
+        InitialBalanceSheetRow Row,
+        IReadOnlyList<WmsVariantSnapshot> Candidates,
+        WmsVariantSnapshot? Variant,
+        Location? Location,
+        Lot? ExistingLot);
+
+    private async Task<IReadOnlySet<(Guid VariantId, Guid LocationId, Guid? LotId)>> FindStockAsync(
+        Guid tenantId, Guid ownerId, List<ResolvedRow> rows, CancellationToken cancellationToken)
+    {
+        var variantIds = rows.Where(item => item.Variant is not null).Select(item => item.Variant!.VariantId).Distinct().ToList();
+        var locationIds = rows.Where(item => item.Location is not null).Select(item => item.Location!.Id.Value).Distinct().ToList();
+        if (variantIds.Count == 0 || locationIds.Count == 0)
+        {
+            return new HashSet<(Guid, Guid, Guid?)>();
+        }
+
+        return await stockQueries.FindNonZeroBalanceKeysAsync(tenantId, ownerId, variantIds, locationIds, cancellationToken);
     }
 
     // El perfil por defecto nace al primer movimiento, no en el preview (un preview no escribe): aquí se arma en memoria con los mismos
@@ -197,23 +249,5 @@ public sealed class PreviewInitialBalancesHandler(
         }
 
         return new LedgerVariantRules("UND", 0, TrackingPolicy.None, factors);
-    }
-
-    // Un lote que ya existe conserva su fecha de vencimiento: pedírsela de nuevo a la fila sería rechazar una hoja correcta.
-    private async Task<bool> NeedsExpirationAsync(
-        Guid tenantId,
-        Guid ownerId,
-        WmsVariantSnapshot? variant,
-        VariantLogisticsProfile? profile,
-        LedgerVariantRules? rules,
-        InitialBalanceSheetRow row,
-        CancellationToken cancellationToken)
-    {
-        if (variant is null || profile?.TracksExpiry != true || rules?.Tracking != TrackingPolicy.Lot || string.IsNullOrWhiteSpace(row.Lot))
-        {
-            return false;
-        }
-
-        return await lots.FindAsync(tenantId, ownerId, variant.VariantId, row.Lot.Trim(), cancellationToken) is null;
     }
 }

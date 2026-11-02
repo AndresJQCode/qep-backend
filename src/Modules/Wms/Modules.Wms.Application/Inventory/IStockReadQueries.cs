@@ -100,4 +100,13 @@ public interface IStockReadQueries
     Task<StockSummaryRow> SummarizeAsync(Guid tenantId, Guid? warehouseId, Guid? ownerId, Guid? variantId, CancellationToken cancellationToken);
 
     Task<MovementSearchResult> ListMovementsAsync(MovementFilter filter, CancellationToken cancellationToken);
+
+    /// <summary>Las claves <c>(variante, ubicación, lote)</c> de ese dueño que ya tienen saldo distinto de cero en algún estado: la carga
+    /// inicial las bloquea para no duplicarlo. Sólo mira las variantes y ubicaciones que se le pasan.</summary>
+    Task<IReadOnlySet<(Guid VariantId, Guid LocationId, Guid? LotId)>> FindNonZeroBalanceKeysAsync(
+        Guid tenantId,
+        Guid ownerId,
+        IReadOnlyCollection<Guid> variantIds,
+        IReadOnlyCollection<Guid> locationIds,
+        CancellationToken cancellationToken);
 }

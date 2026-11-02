@@ -91,6 +91,28 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
         return new StockSearchResult(rows, totalsRow.Total, new StockTotalsDto(totalsRow.OnHand, totalsRow.Reserved, totalsRow.Available, totalsRow.Pickable));
     }
 
+    private sealed record BalanceKeyRow(Guid VariantId, Guid LocationId, Guid? LotId);
+
+    public async Task<IReadOnlySet<(Guid VariantId, Guid LocationId, Guid? LotId)>> FindNonZeroBalanceKeysAsync(
+        Guid tenantId,
+        Guid ownerId,
+        IReadOnlyCollection<Guid> variantIds,
+        IReadOnlyCollection<Guid> locationIds,
+        CancellationToken cancellationToken)
+    {
+        var variants = variantIds.ToArray();
+        var locations = locationIds.ToArray();
+        var rows = await dbContext.Database.SqlQuery<BalanceKeyRow>(
+            $"""
+            SELECT DISTINCT variant_id AS "VariantId", location_id AS "LocationId", lot_id AS "LotId"
+            FROM wms.stock_balances
+            WHERE tenant_id = {tenantId} AND owner_id = {ownerId}
+              AND variant_id = ANY({variants}) AND location_id = ANY({locations}) AND on_hand <> 0
+            """).ToListAsync(cancellationToken);
+
+        return rows.Select(row => (row.VariantId, row.LocationId, row.LotId)).ToHashSet();
+    }
+
     public async Task<StockSummaryRow> SummarizeAsync(
         Guid tenantId, Guid? warehouseId, Guid? ownerId, Guid? variantId, CancellationToken cancellationToken)
     {

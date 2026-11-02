@@ -44,6 +44,7 @@ public sealed class IssueDownloadUrlHandler(
 
         // Sólo un recurso disponible se puede descargar (invariante de la capacidad).
         resource.EnsureDownloadable();
+        resource.EnsureNotExpired(clock.UtcNow);
 
         string url;
         if (string.IsNullOrWhiteSpace(command.Variant)

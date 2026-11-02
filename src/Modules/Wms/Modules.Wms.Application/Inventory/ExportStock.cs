@@ -31,9 +31,9 @@ public sealed record ExportStockCommand(
     bool IncludeVirtual,
     string? Search) : ICommand<StockExportAcceptedDto>
 {
-    public static ExportStockCommand From(Guid tenantId, ExportStockRequest request)
+    public static ExportStockCommand From(Guid tenantId, ExportStockRequest? request)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        request ??= new ExportStockRequest(null, null, null, null, null, null, null, null, null);
 
         return new(
             tenantId,

@@ -11,7 +11,8 @@ using static Modules.Wms.Application.WmsAuditActions;
 
 namespace Modules.Wms.Application;
 
-/// <summary>Ruta IK: <c>Version</c> es la de la bodega que el preview devolvió; si cambió desde entonces, 412 sin tocar nada.</summary>
+/// <summary>Ruta IK, permiso <c>wms.adjustment.propose</c> (§24.2 y §24.3): aprobar y postear no hace falta, el ajuste de la carga nace
+/// aprobado y posteado por el mismo camino. <c>Version</c> es la de la bodega que el preview devolvió; si cambió desde entonces, 412 sin tocar nada.</summary>
 public sealed record CommitInitialBalancesRequest(Guid PreviewId, long Version) : IIdempotentRequest;
 
 public sealed record CommitInitialBalancesCommand(Guid TenantId, Guid PreviewId, long Version) : ICommand<InitialBalanceCommitDto>;
@@ -47,7 +48,7 @@ public sealed class CommitInitialBalancesHandler(
     public async Task<InitialBalanceCommitDto> HandleAsync(CommitInitialBalancesCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        await authorization.EnsureAsync(executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, ct: cancellationToken);
+        await authorization.EnsureAsync(executionContext, command.TenantId, WmsPermissions.AdjustmentPropose, ct: cancellationToken);
         var key = scope.Key ?? throw new InvalidOperationException("Committing an import must run behind the Idempotency-Key.");
 
         var started = Stopwatch.GetTimestamp();
@@ -63,7 +64,7 @@ public sealed class CommitInitialBalancesHandler(
         var preview = await store.GetAsync(command.TenantId, command.PreviewId, cancellationToken)
             ?? throw WmsNotFound.ImportPreview(command.PreviewId);
         await authorization.EnsureAsync(
-            executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, preview.OwnerId.Value, preview.WarehouseId.Value, cancellationToken);
+            executionContext, command.TenantId, WmsPermissions.AdjustmentPropose, preview.OwnerId.Value, preview.WarehouseId.Value, cancellationToken);
 
         if (preview.IsExpiredAt(now))
         {
@@ -73,7 +74,7 @@ public sealed class CommitInitialBalancesHandler(
         if (!preview.CanCommit)
         {
             throw new WmsDomainException(
-                WmsErrorCodes.ImportPreviewNotCommittable, "La vista previa tiene filas con problemas. Corrige el archivo y súbelo de nuevo.");
+                WmsErrorCodes.ImportInvalidFile, "La vista previa tiene filas con problemas. Corrige el archivo y súbelo de nuevo.");
         }
 
         var warehouse = await warehouses.GetAsync(command.TenantId, preview.WarehouseId, cancellationToken)
@@ -129,6 +130,8 @@ public sealed class CommitInitialBalancesHandler(
                 ["ownerId"] = preview.OwnerId.Value.ToString(),
                 ["warehouseId"] = preview.WarehouseId.Value.ToString(),
                 ["adjustmentId"] = adjustment.Id.ToString(),
+                // Quien confirma puede no ser quien preparó la carga: la auditoría tiene que decir las dos cosas.
+                ["preparedBy"] = preview.RequestedBy.ToString(),
                 ["rowCount"] = rows.Count.ToString(CultureInfo.InvariantCulture),
             },
             now);

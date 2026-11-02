@@ -31,9 +31,10 @@ internal static class StockEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // Como la exportación de Suppliers: 202 y el archivo llega por correo (RF-030). Los filtros son los de GET /stock, por query.
+        // Como la exportación de Suppliers: 202 y el archivo llega por correo (RF-030). Los filtros son los de GET /stock, en el cuerpo (§24.3); sin cuerpo no hay filtro.
         group.MapPost("/stock/export", ExportStockAsync)
             .RequireAuthorization(WmsPermissions.StockExport)
+            .Accepts<ExportStockRequest>(isOptional: true, "application/json")
             .Produces<StockExportAcceptedDto>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
@@ -60,7 +61,7 @@ internal static class StockEndpoints
     }
 
     private static async Task<IResult> ExportStockAsync(
-        Guid tenantId, [AsParameters] ExportStockRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Guid tenantId, ExportStockRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Accepted(value: await dispatcher.SendAsync(ExportStockCommand.From(tenantId, request), cancellationToken));
 
     private static async Task<IResult> ListStockAsync(

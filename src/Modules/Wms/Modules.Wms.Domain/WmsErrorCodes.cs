@@ -88,10 +88,17 @@ public static class WmsErrorCodes
     public const string ImportDuplicateRow = "wms.import.duplicate_row";
     public const string ImportInvalidFile = "wms.import.invalid_file";
 
+    /// <summary>Fila de la carga inicial: el mismo lote nuevo con dos fechas de vencimiento, o una distinta de la de un lote que ya existe.
+    /// Sólo es un <c>issue</c> por fila dentro del 200 del preview.</summary>
+    public const string ImportLotExpiryConflict = "wms.import.lot_expiry_conflict";
+
+    /// <summary>Fila de la carga inicial sobre una clave (dueño, ubicación, variante, lote) que ya tiene saldo: cargarla otra vez lo
+    /// duplicaría. Pendiente de confirmación del owner (P-12).</summary>
+    public const string ImportStockExists = "wms.import.stock_exists";
+
     /// <summary>S21, nuevo en §24.2.</summary>
     public const string ImportTooManyRows = "wms.import.too_many_rows";
     public const string ImportPreviewNotFound = "wms.import.preview_not_found";
-    public const string ImportPreviewNotCommittable = "wms.import.preview_not_committable";
     public const string ImportPreviewExpired = "wms.import.preview_expired";
     public const string ExportEmpty = "wms.export.empty";
     public const string ExportTooManyRows = "wms.export.too_many_rows";

@@ -24,7 +24,7 @@ internal static class ImportEndpoints
 
         group.MapPost("/imports/initial-balances/commit", CommitAsync)
             .RequireIdempotencyKey()
-            .RequireAuthorization(WmsPermissions.AdjustmentApprove)
+            .RequireAuthorization(WmsPermissions.AdjustmentPropose)
             .Accepts<CommitInitialBalancesRequest>("application/json")
             .Produces<InitialBalanceCommitDto>(StatusCodes.Status201Created)
             .Produces<InitialBalanceCommitDto>()

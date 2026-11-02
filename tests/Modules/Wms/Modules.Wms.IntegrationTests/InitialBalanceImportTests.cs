@@ -153,7 +153,7 @@ public sealed class InitialBalanceImportTests
         var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-1");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
-        Assert.Equal("wms.import.preview_not_committable", await CodeOfAsync(commit));
+        Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed class InitialBalanceImportTests
         Assert.Equal([WmsErrorCodesLiteral.UnknownCode], preview.Rows[0].Issues);
         var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-2");
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
-        Assert.Equal("wms.import.preview_not_committable", await CodeOfAsync(commit));
+        Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
     }
 
     [Fact]
@@ -379,6 +379,147 @@ public sealed class InitialBalanceImportTests
         var response = await PreviewRawAsync(reader, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // I-1: el spec exige wms.adjustment.propose para importar (§24.2 y §24.3); approve solo no alcanza.
+    [Fact]
+    public async Task AProposeOnlyRoleCanPreviewAndCommit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        using var proposer = CreateClient(factory, SubjectId, TenantId, WmsPermissions.AdjustmentPropose);
+
+        var preview = await PreviewAsync(proposer, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
+        var commit = await CommitRawAsync(proposer, preview.PreviewId, preview.WarehouseVersion, "IMP-PROPOSE");
+
+        Assert.True(commit.StatusCode == HttpStatusCode.Created, await BodyAsync(commit));
+        Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+    }
+
+    [Fact]
+    public async Task AnApproveOnlyRoleCannotCommit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
+        using var approver = CreateClient(factory, SubjectId, TenantId, WmsPermissions.AdjustmentApprove);
+
+        var commit = await CommitRawAsync(approver, preview.PreviewId, preview.WarehouseVersion, "IMP-APPROVE");
+
+        Assert.Equal(HttpStatusCode.Forbidden, commit.StatusCode);
+    }
+
+    // I-5: ni un zip que declara demasiado ni uno que miente sobre su tamaño llegan a ClosedXML.
+    [Fact]
+    public async Task AZipBombIs422InvalidFileBeforeClosedXmlSeesIt()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+
+        var response = await PreviewRawAsync(s.Manager, s.WarehouseId, ZipBytes(entryBytes: 30 * 1024 * 1024));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.import.invalid_file", await CodeOfAsync(response));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.import_previews"));
+    }
+
+    private static byte[] ZipBytes(int entryBytes)
+    {
+        using var stream = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry("xl/worksheets/sheet1.xml", System.IO.Compression.CompressionLevel.SmallestSize);
+            using var writer = entry.Open();
+            writer.Write(new byte[entryBytes]);
+        }
+
+        return stream.ToArray();
+    }
+
+    // I-6: la fecha de vencimiento de un lote la fija la primera fila que lo crea; otra distinta en la hoja, o distinta de la de un lote
+    // que ya existe, se perdería en silencio.
+    [Fact]
+    public async Task ALotWithTwoExpiryDatesInTheFileOrDifferentFromTheExistingOneIsAnIssue()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await CreateBinAsync(s.Manager, s.WarehouseId, "A", "A-01-03");
+        var lotted = await CreateVariantAsync(factory, "V2", null, [1]);
+        await SetTrackingAsync(s.Manager, lotted, "Lot", tracksExpiry: true);
+        var january = new DateOnly(2027, 1, 31);
+
+        var twoDates = await PreviewAsync(
+            s.Manager,
+            s.WarehouseId,
+            Workbook([
+                new SheetRow("V2", "A-01-02", 1m, Lot: "L-1", Expiration: january),
+                new SheetRow("V2", "A-01-03", 1m, Lot: "L-1", Expiration: new DateOnly(2027, 6, 30)),
+            ]));
+
+        Assert.False(twoDates.CanCommit);
+        Assert.Empty(twoDates.Rows[0].Issues);
+        Assert.Equal(["wms.import.lot_expiry_conflict"], twoDates.Rows[1].Issues);
+
+        var first = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V2", "A-01-02", 1m, Lot: "L-1", Expiration: january)]));
+        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-LOT")).EnsureSuccessStatusCode();
+
+        var different = await PreviewAsync(
+            s.Manager, s.WarehouseId, Workbook([new SheetRow("V2", "A-01-03", 1m, Lot: "L-1", Expiration: new DateOnly(2028, 1, 31))]));
+        var same = await PreviewAsync(
+            s.Manager, s.WarehouseId, Workbook([new SheetRow("V2", "A-01-03", 1m, Lot: "L-1", Expiration: january)]));
+
+        Assert.Equal(["wms.import.lot_expiry_conflict"], different.Rows[0].Issues);
+        Assert.Empty(same.Rows[0].Issues);
+        Assert.True(same.CanCommit);
+    }
+
+    // I-7 (pendiente de confirmación del owner): subir dos veces el mismo archivo duplicaría el saldo, así que la segunda carga se bloquea.
+    [Fact]
+    public async Task UploadingTheSameFileTwiceBlocksTheSecondCommit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var file = Workbook([new SheetRow("V1", "A-01-02", 5m)]);
+        var first = await PreviewAsync(s.Manager, s.WarehouseId, file);
+        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-A")).EnsureSuccessStatusCode();
+
+        var second = await PreviewAsync(s.Manager, s.WarehouseId, file);
+
+        Assert.False(second.CanCommit);
+        Assert.Equal(["wms.import.stock_exists"], second.Rows[0].Issues);
+        var commit = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-B");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
+        Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
+        Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+    }
+
+    // M-6: la auditoría dice quién preparó la carga además de quién la confirmó.
+    [Fact]
+    public async Task TheAuditEntryRecordsWhoPreparedThePreview()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
+        (await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-AUDIT")).EnsureSuccessStatusCode();
+
+        var prepared = await ScalarAsync<string>(
+            database,
+            "SELECT changed_fields ->> 'preparedBy' FROM audit.entries WHERE action = 'wms.stock.imported' AND resource_id = @id",
+            ("id", preview.PreviewId.ToString()));
+
+        Assert.Equal(SubjectId, prepared);
     }
 
     private static IEnumerable<SheetRow> LotRows(int count) =>

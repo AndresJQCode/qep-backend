@@ -38,8 +38,11 @@ public sealed class StockExportApiTests
         return (database, factory, storage);
     }
 
-    private static Task<HttpResponseMessage> ExportAsync(HttpClient client, string query = "") =>
-        client.PostAsync($"{WmsUrl()}/stock/export{query}", content: null, Ct);
+    // §24.3: los filtros viajan en el cuerpo. Sin cuerpo se exporta sin filtros.
+    private static Task<HttpResponseMessage> ExportAsync(HttpClient client, object? filters = null) =>
+        filters is null
+            ? client.PostAsync($"{WmsUrl()}/stock/export", content: null, Ct)
+            : client.PostAsJsonAsync($"{WmsUrl()}/stock/export", filters, Ct);
 
     [Fact]
     public async Task ExportingAcceptsUploadsAndQueuesTheEmail()
@@ -128,14 +131,23 @@ public sealed class StockExportApiTests
         await using var _ = database;
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
+        var second = await CreateVariantAsync(factory, "V2", null, [1]);
         await StockAsync(factory, s, s.BinA, 10m);
+        await StockAsync(factory, s, s.BinA, 4m, variant: second);
 
-        var other = await ExportAsync(s.Manager, $"?variantId={Guid.CreateVersion7()}");
-        var matching = await ExportAsync(s.Manager, $"?variantId={s.VariantId}&warehouseId={s.WarehouseId}");
+        var everything = await ExportAsync(s.Manager);
+        var other = await ExportAsync(s.Manager, new { variantId = Guid.CreateVersion7() });
+        var matching = await ExportAsync(s.Manager, new { variantId = s.VariantId, warehouseId = s.WarehouseId });
 
+        // I-4: sin filtro salen las dos variantes; el filtro del cuerpo deja una sola. Un filtro que se ignorara exportaría todo.
+        Assert.Equal(HttpStatusCode.Accepted, everything.StatusCode);
+        Assert.Equal(2, (await everything.Content.ReadFromJsonAsync<StockExportAcceptedDto>(Ct))!.RowCount);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, other.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, matching.StatusCode);
         Assert.Equal(1, (await matching.Content.ReadFromJsonAsync<StockExportAcceptedDto>(Ct))!.RowCount);
-        Assert.NotNull(storage.Content);
+        using var stream = new MemoryStream(storage.Content!);
+        using var workbook = new XLWorkbook(stream);
+        Assert.Equal("V1", workbook.Worksheets.First().Cell(2, 5).GetString());
+        Assert.True(workbook.Worksheets.First().Cell(3, 1).IsEmpty());
     }
 }

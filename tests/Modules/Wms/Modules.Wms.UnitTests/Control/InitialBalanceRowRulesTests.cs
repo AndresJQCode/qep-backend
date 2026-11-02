@@ -152,6 +152,81 @@ public sealed class InitialBalanceRowRulesTests
         Assert.Equal(new DateOnly(2027, 3, 31), given.ExpirationDate);
     }
 
+    private static InitialBalancePreviewRowDto WithContext(
+        InitialBalanceSheetRow row, WmsVariantSnapshot variant, InitialBalanceRowContext context, Location? location = null) =>
+        InitialBalanceRowRules.ClassifyDetailed(row, [variant], location ?? Bin, Rules(TrackingPolicy.Lot), false, Seen(), context).Row;
+
+    // I-6: dos fechas para el mismo lote nuevo en la hoja, o una distinta de la de un lote que ya existe.
+    [Fact]
+    public void TheSameNewLotWithTwoExpiryDatesIsAConflict()
+    {
+        var variant = Variant("ABC");
+        var dates = new Dictionary<(Guid VariantId, string LotCode), DateOnly?>();
+        var context = new InitialBalanceRowContext(NewLotDates: dates);
+
+        var first = WithContext(Row(lot: "L-1", expiration: "2027-01-31"), variant, context);
+        var sameDate = WithContext(Row(lot: "L-1", expiration: "2027-01-31", location: "A-02"), variant, context, OtherBin);
+        var otherDate = WithContext(Row(lot: "L-1", expiration: "2027-06-30", location: "A-02"), variant, context, OtherBin);
+
+        Assert.Empty(first.Issues);
+        Assert.Empty(sameDate.Issues);
+        Assert.Equal([WmsErrorCodes.ImportLotExpiryConflict], otherDate.Issues);
+    }
+
+    [Fact]
+    public void AnExistingLotWithAnotherExpiryIsAConflictAndWithTheSameOneIsNot()
+    {
+        var variant = Variant("ABC");
+        var existing = Lot.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), variant.VariantId, "L-1", new DateOnly(2027, 1, 31), null, true, Now);
+        var context = new InitialBalanceRowContext(ExistingLot: existing);
+
+        var conflict = WithContext(Row(lot: "L-1", expiration: "2028-01-31"), variant, context);
+        var same = WithContext(Row(lot: "L-1", expiration: "2027-01-31"), variant, context);
+        var blank = WithContext(Row(lot: "L-1"), variant, context);
+
+        Assert.Equal([WmsErrorCodes.ImportLotExpiryConflict], conflict.Issues);
+        Assert.Empty(same.Issues);
+        Assert.Empty(blank.Issues);
+    }
+
+    // I-7: ya hay saldo en esa clave.
+    [Fact]
+    public void AKeyThatAlreadyHasStockIsBlocked()
+    {
+        var result = InitialBalanceRowRules.ClassifyDetailed(
+            Row(), [Variant("ABC")], Bin, Rules(), false, Seen(), new InitialBalanceRowContext(StockExists: true)).Row;
+
+        Assert.Equal([WmsErrorCodes.ImportStockExists], result.Issues);
+    }
+
+    // M-1: una ubicación bloqueada o en conteo no admite la carga; mejor decirlo en el preview que en el commit.
+    [Theory]
+    [InlineData(LocationStatus.Blocked, WmsErrorCodes.LocationBlocked)]
+    [InlineData(LocationStatus.Counting, WmsErrorCodes.LocationCounting)]
+    public void ABlockedOrCountingLocationIsAnIssue(LocationStatus status, string expected)
+    {
+        var warehouse = WarehouseTests.NewWarehouse();
+        var bin = warehouse.AddLocation(
+            LocationId.New(), null, "B-01", LocationKind.Zone, LocationRole.Storage, true, true, LocationCapacity.None, 0, [], Now);
+        warehouse.UpdateLocation(
+            bin.Id, null, bin.Code, bin.Kind, bin.Role, bin.AllowsStorage, bin.AllowsPicking, bin.Capacity, bin.PutawayPriority, bin.StorageClasses, status, Now);
+
+        var result = Classify(Row(location: "B-01"), [Variant("ABC")], bin, Rules());
+
+        Assert.Equal([expected], result.Issues);
+    }
+
+    // M-2: más de lo que cabe en numeric(18,6), o una conversión que desborda, es una fila inválida y no un 500.
+    [Theory]
+    [InlineData("1000000000000")]
+    [InlineData("79228162514264337593543950335")]
+    public void AQuantityBeyondTheColumnIsInvalid(string quantity)
+    {
+        var result = Classify(Row(quantity: quantity, uom: "CAJA"), [Variant("ABC")], Bin, Rules());
+
+        Assert.Contains(WmsErrorCodes.MovementQuantityInvalid, result.Issues);
+    }
+
     [Theory]
     [InlineData("abc")]
     [InlineData("0")]
