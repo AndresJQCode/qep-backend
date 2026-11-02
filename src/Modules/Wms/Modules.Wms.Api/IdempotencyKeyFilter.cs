@@ -61,6 +61,15 @@ public sealed class IdempotencyKeyFilter(IdempotencyKeySource source, string? do
                     WmsErrorCodes.IdempotencyKeyRequired, "Esta operación necesita el header Idempotency-Key.");
             }
 
+            // El spec fija `Idempotency-Key: <uuid>`. Una clave libre compartiría espacio con las que deriva el servidor
+            // (`adjustment:<id>:post:3`): un cliente podría fabricarla y bloquear esa acción durante los 45 días del recibo.
+            // No hay un código propio para «clave inválida»; la respuesta es la misma 428 que la clave ausente.
+            if (!Guid.TryParse(key, out _))
+            {
+                throw new PreconditionRequiredException(
+                    WmsErrorCodes.IdempotencyKeyRequired, "El header Idempotency-Key debe ser un UUID.");
+            }
+
             hash = RequestHasher.Hash(method, path, context.Arguments.OfType<IIdempotentRequest>().FirstOrDefault());
         }
         else

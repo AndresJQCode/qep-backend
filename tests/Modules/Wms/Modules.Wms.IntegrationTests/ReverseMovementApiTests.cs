@@ -47,7 +47,7 @@ public sealed class ReverseMovementApiTests
         var (posted, movementId) = await PostedMovementAsync(factory, database, s, 10);
         Assert.Equal(10m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
 
-        var response = await ReverseRawAsync(s.Manager, movementId, "R-1");
+        var response = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         var reversal = (await response.Content.ReadFromJsonAsync<MovementDto>(Ct))!;
@@ -82,10 +82,10 @@ public sealed class ReverseMovementApiTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
         var (_, movementId) = await PostedMovementAsync(factory, database, s, 10);
-        var first = await ReverseRawAsync(s.Manager, movementId, "R-1");
+        var first = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
 
-        var second = await ReverseRawAsync(s.Manager, movementId, "R-2");
+        var second = await ReverseRawAsync(s.Manager, movementId, "88e2a550-cdbf-59c7-9914-aaf3f15099aa");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
         Assert.Equal("wms.movement.already_reversed", await CodeOfAsync(second));
@@ -100,10 +100,10 @@ public sealed class ReverseMovementApiTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
         var (_, movementId) = await PostedMovementAsync(factory, database, s, 10);
-        var first = await ReverseRawAsync(s.Manager, movementId, "R-1");
+        var first = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
         var reversal = (await first.Content.ReadFromJsonAsync<MovementDto>(Ct))!;
 
-        var response = await ReverseRawAsync(s.Manager, reversal.Id, "R-2");
+        var response = await ReverseRawAsync(s.Manager, reversal.Id, "88e2a550-cdbf-59c7-9914-aaf3f15099aa");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("wms.movement.already_reversed", await CodeOfAsync(response));
@@ -134,8 +134,8 @@ public sealed class ReverseMovementApiTests
         var s = await ArrangeAsync(database, factory);
         var (_, movementId) = await PostedMovementAsync(factory, database, s, 10);
 
-        var first = await ReverseRawAsync(s.Manager, movementId, "R-1");
-        var second = await ReverseRawAsync(s.Manager, movementId, "R-1");
+        var first = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
+        var second = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
@@ -156,13 +156,13 @@ public sealed class ReverseMovementApiTests
         var (_, movementId) = await PostedMovementAsync(factory, database, s, 10);
         await PostedAsync(s.Manager, s, s.BinA, -8);
 
-        var response = await ReverseRawAsync(s.Manager, movementId, "R-1");
+        var response = await ReverseRawAsync(s.Manager, movementId, "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         using var problem = JsonDocument.Parse(await BodyAsync(response));
         Assert.Equal("wms.stock.insufficient", problem.RootElement.GetProperty("code").GetString());
         Assert.Equal(2m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
-        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.operation_receipts WHERE idempotency_key = 'R-1'"));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.operation_receipts WHERE idempotency_key = 'c7ef0e43-20e4-5fd1-a849-5c110e73ea69'"));
     }
 
     [Fact]
@@ -175,8 +175,8 @@ public sealed class ReverseMovementApiTests
         var (_, movementId) = await PostedMovementAsync(factory, database, s, 10);
         using var reader = CreateReader(factory);
 
-        var missing = await ReverseRawAsync(s.Manager, Guid.CreateVersion7(), "R-1");
-        var denied = await ReverseRawAsync(reader, movementId, "R-2");
+        var missing = await ReverseRawAsync(s.Manager, Guid.CreateVersion7(), "c7ef0e43-20e4-5fd1-a849-5c110e73ea69");
+        var denied = await ReverseRawAsync(reader, movementId, "88e2a550-cdbf-59c7-9914-aaf3f15099aa");
 
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
         Assert.Equal("wms.movement.not_found", await CodeOfAsync(missing));
@@ -208,7 +208,7 @@ public sealed class ReverseMovementApiTests
             $"{WmsUrl()}/variant-profiles/{s.VariantId}", ProfileBody(Array.Empty<object>(), saved), Ct);
         removed.EnsureSuccessStatusCode();
 
-        var response = await ReverseRawAsync(s.Manager, movementId, "R-CAP");
+        var response = await ReverseRawAsync(s.Manager, movementId, "669d006e-514d-5a83-a3c1-e967ced3f57d");
 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         Assert.Equal(0m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));

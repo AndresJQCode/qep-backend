@@ -72,7 +72,7 @@ public sealed class AuthorizationScopeTests
         {
             Content = JsonContent.Create(new { note = "x" }),
         };
-        request.Headers.Add("Idempotency-Key", "R-SPY");
+        request.Headers.Add("Idempotency-Key", "7a0d1104-5722-5077-8079-b85c6aa90199");
         var reverse = await s.Manager.SendAsync(request, Ct);
         Assert.Equal(HttpStatusCode.Created, reverse.StatusCode);
         Assert.True(Scoped(calls, WmsPermissions.AdjustmentApprove, s), "reverse");

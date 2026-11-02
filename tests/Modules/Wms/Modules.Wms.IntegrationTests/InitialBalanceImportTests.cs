@@ -150,7 +150,7 @@ public sealed class InitialBalanceImportTests
         Assert.Equal([WmsErrorCodesLiteral.Ambiguous], preview.Rows[0].Issues);
         Assert.Equal([WmsErrorCodesLiteral.UnknownLocation], preview.Rows[1].Issues);
 
-        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-1");
+        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "2eae1c2c-1da5-5f89-9feb-4faad316be1e");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
         Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
@@ -170,7 +170,7 @@ public sealed class InitialBalanceImportTests
         var preview = (await response.Content.ReadFromJsonAsync<InitialBalancePreviewDto>(Ct))!;
         Assert.False(preview.CanCommit);
         Assert.Equal([WmsErrorCodesLiteral.UnknownCode], preview.Rows[0].Issues);
-        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-2");
+        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "4638d991-5a23-5591-96ab-74c1a94affcc");
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
         Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
     }
@@ -223,7 +223,7 @@ public sealed class InitialBalanceImportTests
             Workbook([new SheetRow("V1", "A-01-02", 5m), new SheetRow("V1", "A-01-03", 3m, Uom: "EMPAQUE x12")]));
         Assert.True(preview.CanCommit);
 
-        var first = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-3");
+        var first = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "99ffeff6-0b32-5152-a527-3cc4d2f3ece4");
 
         Assert.True(first.StatusCode == HttpStatusCode.Created, await BodyAsync(first));
         var commit = (await first.Content.ReadFromJsonAsync<InitialBalanceCommitDto>(Ct))!;
@@ -248,7 +248,7 @@ public sealed class InitialBalanceImportTests
                 ("batch", commit.BatchId)));
         Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.stock.imported", preview.PreviewId.ToString()));
 
-        var again = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-3");
+        var again = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "99ffeff6-0b32-5152-a527-3cc4d2f3ece4");
 
         Assert.Equal(HttpStatusCode.OK, again.StatusCode);
         Assert.Equal(commit.BatchId, (await again.Content.ReadFromJsonAsync<InitialBalanceCommitDto>(Ct))!.BatchId);
@@ -256,7 +256,7 @@ public sealed class InitialBalanceImportTests
         Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
 
         // Otra clave sobre el mismo preview ya consumido no carga el saldo dos veces.
-        var other = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-3-OTHER");
+        var other = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "4c1c12c2-866d-5167-ba54-855591f61443");
         Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
         Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
     }
@@ -270,7 +270,7 @@ public sealed class InitialBalanceImportTests
         var s = await ArrangeAsync(database, factory);
         var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
 
-        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion + 1, "IMP-4");
+        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion + 1, "f690a1d7-5bef-5e95-885e-5b1b383b7898");
 
         Assert.Equal(HttpStatusCode.PreconditionFailed, commit.StatusCode);
         Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.stock_movements WHERE reason = 'InitialLoad'"));
@@ -286,7 +286,7 @@ public sealed class InitialBalanceImportTests
         var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
         await ExecuteAsync(database, "UPDATE wms.import_previews SET expires_at = now() - interval '1 minute'");
 
-        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-5");
+        var commit = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "59e62394-9e30-5e94-997f-4574d3ce0264");
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
         Assert.Equal("wms.import.preview_expired", await CodeOfAsync(commit));
@@ -326,7 +326,7 @@ public sealed class InitialBalanceImportTests
         var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook(LotRows(500)));
         Assert.True(preview.CanCommit);
 
-        var response = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-500");
+        var response = await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "924f0b54-01a4-5671-a656-2232807ffd44");
 
         Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
         var commit = (await response.Content.ReadFromJsonAsync<InitialBalanceCommitDto>(Ct))!;
@@ -392,7 +392,7 @@ public sealed class InitialBalanceImportTests
         using var proposer = CreateClient(factory, SubjectId, TenantId, WmsPermissions.AdjustmentPropose);
 
         var preview = await PreviewAsync(proposer, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
-        var commit = await CommitRawAsync(proposer, preview.PreviewId, preview.WarehouseVersion, "IMP-PROPOSE");
+        var commit = await CommitRawAsync(proposer, preview.PreviewId, preview.WarehouseVersion, "3ea4f27e-c876-5e2d-a6cb-7dac0b4181f1");
 
         Assert.True(commit.StatusCode == HttpStatusCode.Created, await BodyAsync(commit));
         Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
@@ -408,7 +408,7 @@ public sealed class InitialBalanceImportTests
         var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
         using var approver = CreateClient(factory, SubjectId, TenantId, WmsPermissions.AdjustmentApprove);
 
-        var commit = await CommitRawAsync(approver, preview.PreviewId, preview.WarehouseVersion, "IMP-APPROVE");
+        var commit = await CommitRawAsync(approver, preview.PreviewId, preview.WarehouseVersion, "8ec200fa-59e1-5a63-b2a6-6e37ab1fd0a7");
 
         Assert.Equal(HttpStatusCode.Forbidden, commit.StatusCode);
     }
@@ -469,7 +469,7 @@ public sealed class InitialBalanceImportTests
         Assert.Equal(["wms.import.lot_expiry_conflict"], twoDates.Rows[1].Issues);
 
         var first = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V2", "A-01-02", 1m, Lot: "L-1", Expiration: january)]));
-        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-LOT")).EnsureSuccessStatusCode();
+        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "33f97aba-6ab5-5853-9a8f-82cf8c32666f")).EnsureSuccessStatusCode();
 
         var different = await PreviewAsync(
             s.Manager, s.WarehouseId, Workbook([new SheetRow("V2", "A-01-03", 1m, Lot: "L-1", Expiration: new DateOnly(2028, 1, 31))]));
@@ -491,13 +491,13 @@ public sealed class InitialBalanceImportTests
         var s = await ArrangeAsync(database, factory);
         var file = Workbook([new SheetRow("V1", "A-01-02", 5m)]);
         var first = await PreviewAsync(s.Manager, s.WarehouseId, file);
-        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-A")).EnsureSuccessStatusCode();
+        (await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "e6cb8a14-3639-5848-b33c-012ce6a07bab")).EnsureSuccessStatusCode();
 
         var second = await PreviewAsync(s.Manager, s.WarehouseId, file);
 
         Assert.False(second.CanCommit);
         Assert.Equal(["wms.import.stock_exists"], second.Rows[0].Issues);
-        var commit = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-B");
+        var commit = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "e4103539-1738-5ed0-a1c5-1f9290b9fa4f");
         Assert.Equal(HttpStatusCode.UnprocessableEntity, commit.StatusCode);
         Assert.Equal("wms.import.invalid_file", await CodeOfAsync(commit));
         Assert.Equal(5m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
@@ -518,8 +518,8 @@ public sealed class InitialBalanceImportTests
         Assert.True(first.CanCommit);
         Assert.True(second.CanCommit);
 
-        var one = await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-1");
-        var two = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-2");
+        var one = await CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "2eae1c2c-1da5-5f89-9feb-4faad316be1e");
+        var two = await CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "4638d991-5a23-5591-96ab-74c1a94affcc");
 
         Assert.Equal(HttpStatusCode.Created, one.StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, two.StatusCode);
@@ -543,8 +543,8 @@ public sealed class InitialBalanceImportTests
         var second = await PreviewAsync(s.Manager, s.WarehouseId, file);
 
         var results = await Task.WhenAll(
-            CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "IMP-C1"),
-            CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "IMP-C2"));
+            CommitRawAsync(s.Manager, first.PreviewId, first.WarehouseVersion, "9e191c33-0eb9-5d95-b72b-2bd4dc1be6ab"),
+            CommitRawAsync(s.Manager, second.PreviewId, second.WarehouseVersion, "8c90c422-503c-5b86-b277-30c253a01154"));
 
         Assert.Single(results, response => response.StatusCode == HttpStatusCode.Created);
         Assert.Single(results, response => response.StatusCode == HttpStatusCode.UnprocessableEntity);
@@ -560,7 +560,7 @@ public sealed class InitialBalanceImportTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
         var preview = await PreviewAsync(s.Manager, s.WarehouseId, Workbook([new SheetRow("V1", "A-01-02")]));
-        (await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "IMP-AUDIT")).EnsureSuccessStatusCode();
+        (await CommitRawAsync(s.Manager, preview.PreviewId, preview.WarehouseVersion, "4f7832c6-8c03-5e44-b02c-afb87a0bb29e")).EnsureSuccessStatusCode();
 
         var prepared = await ScalarAsync<string>(
             database,

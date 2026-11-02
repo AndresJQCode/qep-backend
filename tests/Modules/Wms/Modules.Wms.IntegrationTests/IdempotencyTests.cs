@@ -72,8 +72,8 @@ public sealed class IdempotencyTests
         var s = await ArrangeAsync(database, factory);
         var body = Body(s, [Line(s.BinA, s.VariantId, 5)]);
 
-        var first = await ProposeRawAsync(s.Manager, body, "K-1");
-        var second = await ProposeRawAsync(s.Manager, body, "K-1");
+        var first = await ProposeRawAsync(s.Manager, body, "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
+        var second = await ProposeRawAsync(s.Manager, body, "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
@@ -90,8 +90,8 @@ public sealed class IdempotencyTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
 
-        await ProposeRawAsync(s.Manager, Body(s, [Line(s.BinA, s.VariantId, 5)]), "K-1");
-        var second = await ProposeRawAsync(s.Manager, Body(s, [Line(s.BinA, s.VariantId, 6)]), "K-1");
+        await ProposeRawAsync(s.Manager, Body(s, [Line(s.BinA, s.VariantId, 5)]), "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
+        var second = await ProposeRawAsync(s.Manager, Body(s, [Line(s.BinA, s.VariantId, 6)]), "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
 
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
         Assert.Equal("wms.idempotency_key_reused", await CodeOfAsync(second));
@@ -106,7 +106,7 @@ public sealed class IdempotencyTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
         var body = Body(s, [Line(s.BinA, s.VariantId, 5)]);
-        var first = await ProposeRawAsync(s.Manager, body, "K-1");
+        var first = await ProposeRawAsync(s.Manager, body, "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
 
         // Las mismas propiedades al revés, enviadas como texto: el hash sale del cuerpo ya enlazado, no de los bytes.
         var original = JsonSerializer.SerializeToNode(body, JsonSerializerOptions.Web)!.AsObject();
@@ -120,7 +120,7 @@ public sealed class IdempotencyTests
         {
             Content = new StringContent(reversed.ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        request.Headers.Add("Idempotency-Key", "K-1");
+        request.Headers.Add("Idempotency-Key", "b72d8fb5-23ea-56d6-a974-c4d8757d9bf8");
         var second = await s.Manager.SendAsync(request, Ct);
 
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
@@ -137,7 +137,7 @@ public sealed class IdempotencyTests
         var s = await ArrangeAsync(database, factory);
         var body = Body(s, [Line(s.BinA, s.VariantId, 5)]);
 
-        var responses = await Task.WhenAll(ProposeRawAsync(s.Manager, body, "K-RACE"), ProposeRawAsync(s.Manager, body, "K-RACE"));
+        var responses = await Task.WhenAll(ProposeRawAsync(s.Manager, body, "575a63f4-5eeb-5b3e-9681-6e7c9a79448d"), ProposeRawAsync(s.Manager, body, "575a63f4-5eeb-5b3e-9681-6e7c9a79448d"));
 
         // La perdedora esperó el lock de numeración y después chocó con la PK del recibo, que el filtro convirtió en la respuesta
         // guardada de la ganadora.
@@ -158,10 +158,10 @@ public sealed class IdempotencyTests
         using var __ = factory;
         var s = await ArrangeAsync(database, factory);
         var body = Body(s, [Line(s.BinA, s.VariantId, 5)]);
-        await ProposeAsync(s.Manager, body, "K-OTHER");
+        await ProposeAsync(s.Manager, body, "abb393db-b777-5c9f-b489-cab0d70a6b2d");
         using var intruder = CreateClient(factory, OtherSubjectId, OtherTenantId, AllPermissions);
 
-        var response = await ProposeRawAsync(intruder, body, "K-OTHER");
+        var response = await ProposeRawAsync(intruder, body, "abb393db-b777-5c9f-b489-cab0d70a6b2d");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal("authorization.denied", await CodeOfAsync(response));
@@ -180,7 +180,7 @@ public sealed class IdempotencyTests
 
         var first = await PostRawAsync(s.Manager, approved.Id, approved.Version);
         var second = await PostRawAsync(s.Manager, approved.Id, approved.Version);
-        var third = await PostRawAsync(s.Manager, approved.Id, approved.Version, headerKey: "otra");
+        var third = await PostRawAsync(s.Manager, approved.Id, approved.Version, headerKey: "609618e5-7701-544a-a83a-9025f18034df");
 
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         var firstJson = await BodyAsync(first);
