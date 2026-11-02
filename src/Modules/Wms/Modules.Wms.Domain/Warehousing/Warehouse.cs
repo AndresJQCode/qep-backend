@@ -138,6 +138,13 @@ public sealed class Warehouse
             throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, "A virtual location cannot be removed.");
         }
 
+        // RF-003: la zona de recepción y su muelle nacen con la bodega y se tratan como las virtuales. WMS-C y WMS-D asumen que
+        // REC-01 existe; si se pudiera borrar, la recepción quedaría sin dónde descargar.
+        if (location.Code is LocationCodes.ReceivingZone or LocationCodes.ReceivingDock)
+        {
+            throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, "The receiving zone and its dock cannot be removed.");
+        }
+
         if (_locations.Any(l => l.ParentId == id))
         {
             throw new WmsDomainException(WmsErrorCodes.LocationHasChildren, "The location has children and cannot be removed.");

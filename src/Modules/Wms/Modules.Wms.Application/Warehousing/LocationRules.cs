@@ -42,6 +42,18 @@ internal static class LocationRules
         rule.Must(value => TryParse<TEnum>(value, out _))
             .WithMessage($"Must be one of: {string.Join(", ", Enum.GetNames<TEnum>())}.");
 
+    /// <summary>Tope superior por la precisión de la columna (peso <c>numeric(12,3)</c>); sin él, un número que no cabe es 22003 y
+    /// 500. Lo negativo sigue siendo del dominio, que da <c>wms.location.capacity_invalid</c>.</summary>
+    public static IRuleBuilderOptions<T, decimal?> MustFitTheWeightColumn<T>(this IRuleBuilder<T, decimal?> rule) =>
+        rule.LessThanOrEqualTo(MaxWeightKg).WithMessage($"The weight cannot exceed {MaxWeightKg}.");
+
+    /// <summary>Ídem para el volumen (<c>numeric(12,6)</c>).</summary>
+    public static IRuleBuilderOptions<T, decimal?> MustFitTheVolumeColumn<T>(this IRuleBuilder<T, decimal?> rule) =>
+        rule.LessThanOrEqualTo(MaxVolumeM3).WithMessage($"The volume cannot exceed {MaxVolumeM3}.");
+
+    private const decimal MaxWeightKg = 999_999_999.999m;
+    private const decimal MaxVolumeM3 = 999_999.999999m;
+
     public static IRuleBuilderOptions<T, int> MustBeAPutawayPriority<T>(this IRuleBuilder<T, int> rule) =>
         rule.GreaterThanOrEqualTo(0);
 

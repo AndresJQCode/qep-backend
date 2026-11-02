@@ -56,6 +56,12 @@ public sealed class RenderLocationLabelsHandler(
         {
             var location = warehouse.FindLocation(new LocationId(id))
                 ?? throw new WmsDomainException(WmsErrorCodes.LocationNotFound, $"Location '{id}' does not belong to this warehouse.");
+            // Una virtual no se escanea (ToScannable la excluye): su etiqueta impresa nunca resolvería en la app.
+            if (location.IsVirtual)
+            {
+                throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, $"Location '{id}' is virtual and has no label.");
+            }
+
             labels.Add(new LocationLabel(location.Code, location.Path, warehouse.Code));
         }
 

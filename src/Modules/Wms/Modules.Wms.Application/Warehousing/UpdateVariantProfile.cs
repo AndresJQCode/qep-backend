@@ -93,9 +93,12 @@ public sealed class UpdateVariantProfileValidator : AbstractValidator<UpdateVari
             conversion.RuleFor(item => item.Code)
                 .Must(code => !string.IsNullOrWhiteSpace(code) && code.Trim().Length <= UomConversion.CodeMaxLength)
                 .WithMessage($"The conversion code is required and has at most {UomConversion.CodeMaxLength} characters.");
+            // numeric(18,6): más de seis decimales se redondea a 0 al guardar y dispara CK_uom_conversions_factor (500).
             conversion.RuleFor(item => item.Factor)
                 .GreaterThan(0m)
-                .LessThan(1_000_000_000_000m);
+                .LessThan(1_000_000_000_000m)
+                .Must(factor => decimal.Round(factor, 6) == factor)
+                .WithMessage("The factor has at most 6 decimals.");
             conversion.RuleFor(item => item.Barcode)
                 .MaximumLength(BarcodeMaxLength);
         });

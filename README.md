@@ -4222,8 +4222,9 @@ Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, cl
 existencias llegan con WMS-D, y hasta entonces los tres `*StockProbe` responden «sin saldo». Rutas bajo
 `/api/v1/tenants/{tenantId}/wms` (`X-Tenant-Id`).
 
-**Cómo se prende.** No hay endpoint: es una fila en `tenancy.tenant_modules` con `module_key = 'wms'` (y `catalog` ya prendido). Sin ella,
-todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
+**Cómo se prende.** Por la consola de operador: `POST /api/v1/tenants/{tenantId}/operator/tenants/{targetTenantId}/modules/changes`, que escribe
+la fila de `tenancy.tenant_modules` con `module_key = 'wms'` (con `catalog` ya prendido). Mientras el frontend no conozca la clave `wms`, la
+pantalla del operador oculta el módulo y se prende llamando a la API. Sin la fila, todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
 
 **Permisos.** Dieciséis, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
 `RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Hoy las rutas usan cuatro: `wms.warehouse.manage`,
@@ -4232,9 +4233,11 @@ todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la r
 **Lo que nace solo.**
 
 - **Con cada bodega:** las ubicaciones virtuales `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT` y `TRANSIT`, y la zona `RECEIVING` con el muelle
-  `REC-01`. Las virtuales son de solo lectura: **cualquier** `PUT` sobre una responde 422 `wms.location.virtual_immutable`, y no se
-  borran. Un nodo con hijos o con saldo tampoco se borra.
-- **En el primer acceso del tenant** (cualquier `GET` de listado, no al prender el módulo: Tenancy no avisa): el dueño `Self` y las seis
+  `REC-01`. Las virtuales son de solo lectura: un `PUT` sobre una con cuerpo válido responde 422 `wms.location.virtual_immutable` (un
+  cuerpo inválido responde antes `validation.failed`, también 422), y no se borran ni se les imprime etiqueta. `RECEIVING` y `REC-01`
+  tampoco se borran (mismo código). Un nodo con hijos o con saldo tampoco se borra.
+- **En el primer acceso del tenant** (los `GET` de bodegas, dueños, unidades y perfiles, y sus `POST`/`PUT`; no `GET …/locations` ni `scannable`, y no al prender el módulo:
+  Tenancy no avisa): el dueño `Self` y las seis
   unidades `UND, KG, G, L, ML, M`. Lo escribe `IWmsProvisioner` con `INSERT … ON CONFLICT DO NOTHING`; una consulta directa a
   `wms.owners` de un tenant que nunca entró devuelve cero filas, y no es un error.
 - **Perfil sin fila:** el `GET /variant-profiles` lo calcula en memoria con `version: 0`; el `PUT` con `version: 0` lo crea.

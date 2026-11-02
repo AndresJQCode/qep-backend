@@ -77,4 +77,29 @@ public sealed class CreateLocationValidatorTests
 
         Assert.Contains(new UpdateLocationValidator().Validate(command).Errors, error => error.PropertyName == "Status");
     }
+
+    [Theory]
+    [InlineData("MaxWeightKg", 1_000_000_000)]
+    [InlineData("MaxVolumeM3", 1_000_000)]
+    public void ACapacityBeyondTheColumnPrecisionIsInvalidInsteadOfOverflowingTheDatabase(string field, double amount)
+    {
+        var value = (decimal)amount;
+        var create = field == "MaxWeightKg" ? Valid with { MaxWeightKg = value } : Valid with { MaxVolumeM3 = value };
+        var update = new UpdateLocationCommand(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null, "A", "Zone", "Storage", true, false,
+            field == "MaxWeightKg" ? value : null, field == "MaxVolumeM3" ? value : null, null, 0, null, "Active", 1);
+
+        Assert.Contains(Validate(create).Errors, error => error.PropertyName == field);
+        Assert.Contains(new UpdateLocationValidator().Validate(update).Errors, error => error.PropertyName == field);
+    }
+
+    [Fact]
+    public void TheLargestCapacitiesThatFitTheColumnsPass()
+    {
+        Assert.True(Validate(Valid with { MaxWeightKg = 999_999_999.999m, MaxVolumeM3 = 999_999.999999m }).IsValid);
+    }
+
+    [Fact]
+    public void ANegativeCapacityStaysForTheDomainToRejectWithItsOwnCode() =>
+        Assert.True(Validate(Valid with { MaxWeightKg = -1m }).IsValid);
 }

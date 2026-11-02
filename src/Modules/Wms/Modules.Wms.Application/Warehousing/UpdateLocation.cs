@@ -60,6 +60,8 @@ public sealed class UpdateLocationValidator : AbstractValidator<UpdateLocationCo
         RuleFor(command => command.Role).MustBeAnEnumName<UpdateLocationCommand, LocationRole>();
         RuleFor(command => command.Status).MustBeAnEnumName<UpdateLocationCommand, LocationStatus>();
         RuleFor(command => command.PutawayPriority).MustBeAPutawayPriority();
+        RuleFor(command => command.MaxWeightKg).MustFitTheWeightColumn();
+        RuleFor(command => command.MaxVolumeM3).MustFitTheVolumeColumn();
         RuleForEach(command => command.StorageClasses).MustBeAStorageClass();
     }
 }

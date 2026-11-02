@@ -44,6 +44,21 @@ public sealed class LocationLabelRendererTests
     }
 
     [Fact]
+    public async Task TheTemplateKeepsEachLabelOnExactlyOnePage()
+    {
+        var gateway = new CapturingGateway();
+
+        await new LocationLabelRenderer(gateway).RenderLocationLabelsAsync(Labels, TestContext.Current.CancellationToken);
+
+        // El área útil es de 24 mm: sin quitar el espacio entre párrafos, el código de barras y las dos líneas se parten en dos
+        // páginas y la ruta cae sola en la etiqueta siguiente. El bloque de altura fija es lo que lo impide.
+        Assert.Contains("#set par(spacing: 1mm", gateway.Source);
+        Assert.Contains("#set block(spacing: 1mm)", gateway.Source);
+        Assert.Contains("block(height: 100%", gateway.Source);
+        Assert.Contains("clip: true", gateway.Source);
+    }
+
+    [Fact]
     public async Task TheDataCarriesOneEntryPerLabelInCamelCase()
     {
         var gateway = new CapturingGateway();

@@ -351,6 +351,57 @@ public sealed class LocationApiTests
         Assert.Equal(1, await CountAuditEntriesAsync(factory, "wms.location.deleted", binId.ToString()));
     }
 
+    [Theory]
+    [InlineData("RECEIVING")]
+    [InlineData("REC-01")]
+    public async Task TheReceivingZoneAndItsDockCannotBeDeleted(string code)
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var warehouseId = await CreateWarehouseAsync(client);
+        var location = ByCode(await ListAsync(client, warehouseId), code);
+
+        var response = await client.SendAsync(
+            Write(HttpMethod.Delete, $"{LocationsUrl(warehouseId)}/{location.GetProperty("id").GetGuid()}"), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.location.virtual_immutable", await CodeOfAsync(response));
+        Assert.Contains(await ListAsync(client, warehouseId), item => item.GetProperty("code").GetString() == code);
+    }
+
+    [Theory]
+    [InlineData("1000000000", null)]
+    [InlineData(null, "1000000")]
+    public async Task ACapacityThatOverflowsTheColumnIs422InsteadOf500(string? weight, string? volume)
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var warehouseId = await CreateWarehouseAsync(client);
+        var body = new
+        {
+            parentId = (Guid?)null,
+            code = "A",
+            kind = "Zone",
+            role = "Storage",
+            allowsStorage = true,
+            allowsPicking = false,
+            maxWeightKg = weight is null ? (decimal?)null : decimal.Parse(weight, System.Globalization.CultureInfo.InvariantCulture),
+            maxVolumeM3 = volume is null ? (decimal?)null : decimal.Parse(volume, System.Globalization.CultureInfo.InvariantCulture),
+            maxUnits = (int?)null,
+            putawayPriority = 0,
+            storageClasses = new[] { "SECO" },
+        };
+
+        var response = await client.SendAsync(Write(HttpMethod.Post, LocationsUrl(warehouseId), body), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+    }
+
     [Fact]
     public async Task DeletingAZoneWithChildrenIs422HasChildren()
     {

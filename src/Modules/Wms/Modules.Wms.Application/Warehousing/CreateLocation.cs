@@ -56,6 +56,8 @@ public sealed class CreateLocationValidator : AbstractValidator<CreateLocationCo
         RuleFor(command => command.Kind).MustBeAnEnumName<CreateLocationCommand, LocationKind>();
         RuleFor(command => command.Role).MustBeAnEnumName<CreateLocationCommand, LocationRole>();
         RuleFor(command => command.PutawayPriority).MustBeAPutawayPriority();
+        RuleFor(command => command.MaxWeightKg).MustFitTheWeightColumn();
+        RuleFor(command => command.MaxVolumeM3).MustFitTheVolumeColumn();
         RuleForEach(command => command.StorageClasses).MustBeAStorageClass();
     }
 }

@@ -139,6 +139,24 @@ public sealed class VariantLogisticsProfileTests
     }
 
     [Fact]
+    public void ForVariantWritesASingleRowWhenTheCodeEqualsTheBarcode()
+    {
+        // SKU = EAN es válido en Catalog; dos filas con el mismo valor chocarían con IX_identifiers_tenant_value contra sí mismas.
+        var identifiers = Identifier.ForVariant(Tenant, Guid.CreateVersion7(), "7701234567890", "7701234567890", Now);
+
+        var only = Assert.Single(identifiers);
+        Assert.Equal(IdentifierSymbology.Gtin, only.Symbology);
+        Assert.True(only.IsPrimary);
+        Assert.Equal("7701234567890", only.Value);
+    }
+
+    [Fact]
+    public void ForVariantComparesTheTrimmedValues()
+    {
+        Assert.Single(Identifier.ForVariant(Tenant, Guid.CreateVersion7(), " 770 ", "770", Now));
+    }
+
+    [Fact]
     public void AnEmptyIdentifierValueIsRejected()
     {
         var error = Assert.Throws<WmsDomainException>(() =>

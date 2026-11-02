@@ -66,15 +66,19 @@ public sealed class WarehouseTests
         Assert.Equal(WmsErrorCodes.LocationVirtualImmutable, error.Code);
     }
 
-    [Fact]
-    public void RemovingTheReceivingZoneWithItsDockIsRejected()
+    [Theory]
+    [InlineData("RECEIVING")]
+    [InlineData("REC-01")]
+    public void RemovingTheReceivingZoneOrItsDockIsRejectedAsImmutable(string code)
     {
         var warehouse = NewWarehouse();
-        var zone = warehouse.Locations.Single(l => l.Code == "RECEIVING");
+        var location = warehouse.Locations.Single(l => l.Code == code);
 
-        var error = Assert.Throws<WmsDomainException>(() => warehouse.RemoveLocation(zone.Id));
+        var error = Assert.Throws<WmsDomainException>(() => warehouse.RemoveLocation(location.Id));
 
-        Assert.Equal(WmsErrorCodes.LocationHasChildren, error.Code);
+        // RF-003: la zona y el muelle de recepción nacen con la bodega y no se borran, igual que las virtuales.
+        Assert.Equal(WmsErrorCodes.LocationVirtualImmutable, error.Code);
+        Assert.NotNull(warehouse.FindLocation(location.Id));
     }
 
     [Fact]

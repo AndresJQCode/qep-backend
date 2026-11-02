@@ -34,7 +34,23 @@ internal sealed class WmsPdfGateway(HttpClient httpClient, IOptions<QuotationsOp
         };
         request.Headers.TryAddWithoutValidation("X-Api-Key", settings.ApiKey);
 
-        using var response = await httpClient.SendAsync(request, ct);
+        // Red caída o timeout de 30 s: sin esto escapan HttpRequestException/TaskCanceledException y la API responde 500, no lo que
+        // promete IWmsPdfGateway. Una cancelación del llamador (token vivo = falso) no se traga: sigue siendo cancelación.
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.SendAsync(request, ct);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new WmsDomainException(WmsErrorCodes.LabelRenderFailed, $"qcode-pdf was unreachable: {exception.Message}");
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new WmsDomainException(WmsErrorCodes.LabelRenderFailed, "qcode-pdf did not answer before the timeout.");
+        }
+
+        using var _ = response;
         if (!response.IsSuccessStatusCode)
         {
             // El 400 trae `{ error, details }` con el mensaje del compilador de Typst: si `@preview/tiaoma` no resuelve en el

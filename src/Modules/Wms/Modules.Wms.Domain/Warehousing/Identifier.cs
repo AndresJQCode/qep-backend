@@ -59,17 +59,22 @@ public sealed class Identifier
     }
 
     /// <summary>Los identificadores que nacen con el perfil: el código de la variante como <c>Internal</c> y, si hay código de
-    /// barras, ese como <c>Gtin</c> primario.</summary>
+    /// barras, ese como <c>Gtin</c> primario. Si ambos valen lo mismo (SKU = EAN, válido en Catalog) queda una sola fila, la
+    /// <c>Gtin</c> primaria: dos filas con el mismo valor chocarían contra <c>IX_identifiers_tenant_value</c> y esa variante nunca
+    /// podría tener perfil.</summary>
     public static IReadOnlyList<Identifier> ForVariant(Guid tenantId, Guid variantId, string code, string? barcode, DateTimeOffset now)
     {
-        var identifiers = new List<Identifier>(2)
-        {
-            Create(Guid.CreateVersion7(), tenantId, IdentifierKind.Variant, IdentifierSymbology.Internal, code, variantId, null, false, now),
-        };
+        var identifiers = new List<Identifier>(2);
+        var gtin = string.IsNullOrWhiteSpace(barcode) ? null : barcode;
 
-        if (!string.IsNullOrWhiteSpace(barcode))
+        if (gtin is null || !string.Equals(code?.Trim(), gtin.Trim(), StringComparison.Ordinal))
         {
-            identifiers.Add(Create(Guid.CreateVersion7(), tenantId, IdentifierKind.Variant, IdentifierSymbology.Gtin, barcode, variantId, null, true, now));
+            identifiers.Add(Create(Guid.CreateVersion7(), tenantId, IdentifierKind.Variant, IdentifierSymbology.Internal, code!, variantId, null, false, now));
+        }
+
+        if (gtin is not null)
+        {
+            identifiers.Add(Create(Guid.CreateVersion7(), tenantId, IdentifierKind.Variant, IdentifierSymbology.Gtin, gtin, variantId, null, true, now));
         }
 
         return identifiers;

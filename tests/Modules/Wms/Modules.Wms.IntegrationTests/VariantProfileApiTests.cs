@@ -234,6 +234,41 @@ public sealed class VariantProfileApiTests
     }
 
     [Fact]
+    public async Task AVariantWhoseCodeEqualsItsBarcodeCanSaveItsProfileTwice()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        // SKU = EAN es válido en Catalog (los chequea en conjuntos separados) y es común en retail.
+        var variantId = await CreateVariantAsync(factory, "7701234567890", "7701234567890", []);
+        using var client = CreateManager(factory);
+
+        var first = await client.SendAsync(Put(variantId, Body(0)), Ct);
+        var second = await client.SendAsync(Put(variantId, Body(1)), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var identifier = Assert.Single(await IdentifiersAsync(factory, variantId));
+        Assert.Equal(("Variant", "Gtin", "7701234567890", true), (identifier.Kind, identifier.Symbology, identifier.Value, identifier.IsPrimary));
+    }
+
+    [Fact]
+    public async Task AFactorFinerThanTheColumnScaleIs422InsteadOf500()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", null, []);
+        using var client = CreateManager(factory);
+
+        var response = await client.SendAsync(
+            Put(variantId, Body(0, conversions: [new { code = "CAJA", factor = 0.0000001m, barcode = (string?)null }])), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("validation.failed", await CodeOfAsync(response));
+    }
+
+    [Fact]
     public async Task ChangingTrackingWithoutStockIsAllowed()
     {
         var (database, factory) = await OpenAsync();

@@ -104,4 +104,20 @@ public sealed class UpdateVariantProfileValidatorTests
     [InlineData(1_000_000_000)]
     public void AWeightOutsideTheColumnRangeIsInvalidInsteadOfOverflowingTheDatabase(double weight) =>
         AssertInvalid(Valid with { WeightKg = (decimal)weight }, "WeightKg");
+
+    [Theory]
+    [InlineData("0.0000001")]
+    [InlineData("0.0000004")]
+    [InlineData("12.1234567")]
+    public void AFactorFinerThanTheColumnScaleIsInvalidInsteadOfTrippingTheCheck(string factor) =>
+        AssertInvalid(
+            Valid with { Conversions = [new UomConversionRequest("A", decimal.Parse(factor, System.Globalization.CultureInfo.InvariantCulture), null)] },
+            "Conversions[0].Factor");
+
+    [Theory]
+    [InlineData("0.000001")]
+    [InlineData("12.123456")]
+    public void AFactorWithUpToSixDecimalsPasses(string factor) =>
+        Assert.True(Validate(
+            Valid with { Conversions = [new UomConversionRequest("A", decimal.Parse(factor, System.Globalization.CultureInfo.InvariantCulture), null)] }).IsValid);
 }

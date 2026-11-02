@@ -105,6 +105,30 @@ public sealed class LocationLabelApiTests
     }
 
     [Fact]
+    public async Task AVirtualLocationHasNoLabelAndIs422VirtualImmutable()
+    {
+        var renderer = new FakeLabelRenderer();
+        var (database, factory) = await OpenAsync(configureServices: services =>
+        {
+            services.RemoveAll<IWmsLabelRenderer>();
+            services.AddSingleton<IWmsLabelRenderer>(renderer);
+        });
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateManager(factory);
+        var warehouseId = await CreateWarehouseAsync(client, "BOG");
+        var ids = await LocationIdsAsync(client, warehouseId);
+
+        // Una virtual no se escanea (ToScannable la excluye): su etiqueta impresa nunca resolvería en la app.
+        var response = await client.SendAsync(
+            Write(LabelsUrl(warehouseId), new { locationIds = new[] { ids["REC-01"], ids["SUPPLIER"] } }), Ct);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.location.virtual_immutable", await CodeOfAsync(response));
+        Assert.Null(renderer.Received);
+    }
+
+    [Fact]
     public async Task AnEmptyListIs422ValidationFailed()
     {
         var (database, factory) = await OpenAsync();
