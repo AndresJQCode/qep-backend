@@ -258,4 +258,23 @@ public sealed class AdjustmentApiTests
         Assert.Equal(HttpStatusCode.Forbidden, propose.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, post.StatusCode);
     }
+
+    [Theory]
+    [InlineData("ADJUSTMENT")]
+    [InlineData("TRANSIT")]
+    [InlineData("SUPPLIER")]
+    public async Task ALineOnAVirtualLocationIs422(string virtualCode)
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var virtualId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.locations WHERE code = @code", ("code", virtualCode));
+
+        var response = await ProposeRawAsync(s.Manager, Body(s, [Line(virtualId, s.VariantId, 5)]));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("wms.location.virtual_immutable", await CodeOfAsync(response));
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.adjustments"));
+    }
 }

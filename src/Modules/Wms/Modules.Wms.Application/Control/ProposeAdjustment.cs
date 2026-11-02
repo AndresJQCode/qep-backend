@@ -65,6 +65,7 @@ public sealed class ProposeAdjustmentValidator : AbstractValidator<ProposeAdjust
                 .WithMessage($"The status must be one of: {string.Join(", ", Enum.GetNames<StockStatus>())}.");
             line.RuleFor(item => item.QuantityDelta).NotEqual(0m).WithMessage("The quantity cannot be zero.");
             line.RuleFor(item => item.LotCode).MaximumLength(Lot.CodeMaxLength);
+            line.RuleFor(item => item.CapturedUom).MaximumLength(AdjustmentLine.CapturedUomMaxLength);
         });
     }
 }
@@ -91,8 +92,8 @@ public sealed class ProposeAdjustmentHandler(
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        // Quien sólo aprueba también puede proponer: la política de la ruta pide proponer, pero el handler no debe cerrarle la puerta
-        // a un cliente que llegue por otro camino.
+        // Hoy la ruta exige proponer (§24.3), así que la rama de «sólo aprueba» no se alcanza por HTTP: queda para cuando otro
+        // camino (un worker, una API externa) llame al caso de uso sin pasar por la política de la ruta.
         var permission = executionContext.HasPermission(WmsPermissions.AdjustmentPropose)
             ? WmsPermissions.AdjustmentPropose
             : WmsPermissions.AdjustmentApprove;
@@ -112,6 +113,8 @@ public sealed class ProposeAdjustmentHandler(
 
         var now = clock.UtcNow;
         var ownerId = await ResolveOwnerAsync(command, cancellationToken);
+        await authorization.EnsureAsync(
+            executionContext, command.TenantId, permission, ownerId, command.WarehouseId, cancellationToken);
         var warehouse = await warehouses.GetAsync(command.TenantId, new WarehouseId(command.WarehouseId), cancellationToken)
             ?? throw WmsNotFound.Warehouse(command.WarehouseId);
 
@@ -200,6 +203,13 @@ public sealed class ProposeAdjustmentHandler(
         foreach (var request in command.Lines)
         {
             var location = warehouse.FindLocation(new LocationId(request.LocationId)) ?? throw WmsNotFound.Location(request.LocationId);
+
+            // Las virtuales son contrapartidas del ledger (ADJUSTMENT) o no son existencia real: una línea sobre ellas no se podría
+            // contabilizar (from == to) o inventaría stock en tránsito, de proveedor o de cliente.
+            if (location.IsVirtual)
+            {
+                throw new WmsDomainException(WmsErrorCodes.LocationVirtualImmutable, $"La ubicación '{location.Code}' es virtual y no admite ajustes.");
+            }
 
             LotId? lotId = null;
             if (!string.IsNullOrWhiteSpace(request.LotCode))

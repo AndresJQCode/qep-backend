@@ -45,6 +45,8 @@ public sealed class RejectAdjustmentHandler(
 
         var adjustment = await adjustments.GetAsync(command.TenantId, command.AdjustmentId, cancellationToken)
             ?? throw WmsNotFound.Adjustment(command.AdjustmentId);
+        await authorization.EnsureAsync(
+            executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, adjustment.OwnerId.Value, adjustment.WarehouseId.Value, cancellationToken);
         WmsVersions.Ensure(adjustment.Version, command.Version);
 
         var now = clock.UtcNow;

@@ -43,6 +43,24 @@ public sealed class LedgerEntryRulesTests
     private static string CodeOf(Action action) => Assert.Throws<WmsDomainException>(action).Code;
 
     [Fact]
+    public void AReversalDoesNotRevalidateTheCaptureOfTheOriginal()
+    {
+        // La captura es historia: el perfil pudo perder la conversión después. La cantidad base ya está en el movimiento.
+        var original = Entry(24m, capture: new LedgerCapture("CAJA", 2m, 12m), reason: MovementReason.Adjustment);
+        var reversal = LedgerEntry.Reverse(original, Guid.CreateVersion7(), Now.AddDays(-1), Now, null);
+
+        Validate(reversal, Rules(precision: 0), ToLocation, FromLocation);
+
+        Assert.Equal(original.Captured, reversal.Captured);
+    }
+
+    [Fact]
+    public void ANewMovementWithAnUnknownCaptureIsStillRejected() =>
+        Assert.Equal(
+            "wms.uom.factor_mismatch",
+            CodeOf(() => Validate(Entry(24m, capture: new LedgerCapture("CAJA", 2m, 12m)), Rules(precision: 0))));
+
+    [Fact]
     public void ADecimalQuantityOnAZeroPrecisionProfileIsRejected() =>
         Assert.Equal("wms.uom.precision_exceeded", CodeOf(() => Validate(Entry(1.5m), Rules(precision: 0))));
 

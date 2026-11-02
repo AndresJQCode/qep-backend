@@ -44,7 +44,12 @@ public static class LedgerEntryRules
         }
 
         EnsureTracking(entry, variant);
-        EnsureCapture(entry, variant);
+        // Una compensación conserva la captura del original sólo para trazarla: la cantidad base ya está en el movimiento y el perfil
+        // pudo cambiar después, así que revalidarla dejaría el reverso imposible para siempre.
+        if (entry.ReversesMovementId is null)
+        {
+            EnsureCapture(entry, variant);
+        }
 
         if (from.IsBlocked || to.IsBlocked)
         {

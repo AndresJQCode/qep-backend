@@ -101,6 +101,11 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The lot was created by another request.", exception);
         }
+        // Último recurso: el lock bloqueante de la numeración serializa las propuestas, así que sólo llega si algo numeró por fuera.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.AdjustmentNumberIndex))
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The adjustment number was taken by another request.", exception);
+        }
         // Dos peticiones con la misma Idempotency-Key a la vez: la PK del recibo frena a la segunda. El filtro del API releerá el recibo
         // de la ganadora cuando el handler haya deshecho su transacción.
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.OperationReceiptPrimaryKey))

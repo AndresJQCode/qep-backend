@@ -67,6 +67,11 @@ public sealed class ReverseMovementHandler(
         var movement = await movements.GetAsync(command.TenantId, command.MovementId, cancellationToken)
             ?? throw WmsNotFound.Movement(command.MovementId);
 
+        var origin = await warehouses.GetLocationAsync(command.TenantId, new LocationId(movement.FromLocationId), cancellationToken)
+            ?? throw WmsNotFound.Location(movement.FromLocationId);
+        await authorization.EnsureAsync(
+            executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, movement.OwnerId, origin.WarehouseId.Value, cancellationToken);
+
         // Reversar un compensatorio sería reaplicar el original por la puerta de atrás: el camino es proponer otro ajuste.
         if (movement.Reason == MovementReason.Reversal
             || await movements.IsReversedAsync(command.TenantId, command.MovementId, cancellationToken))

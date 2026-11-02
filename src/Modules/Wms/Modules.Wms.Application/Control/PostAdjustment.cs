@@ -43,11 +43,13 @@ public sealed class PostAdjustmentHandler(
 
         if (!await unitOfWork.TryLockDocumentAsync(command.AdjustmentId, cancellationToken))
         {
-            throw new ResourceConflictException(WmsErrorCodes.DocumentBusy, "Alguien más está posteando este ajuste. Intenta de nuevo en un momento.");
+            throw new ResourceConflictException(WmsErrorCodes.DocumentBusy, "Este ajuste se está procesando en este momento. Intenta de nuevo en unos segundos.");
         }
 
         var adjustment = await adjustments.GetAsync(command.TenantId, command.AdjustmentId, cancellationToken)
             ?? throw WmsNotFound.Adjustment(command.AdjustmentId);
+        await authorization.EnsureAsync(
+            executionContext, command.TenantId, WmsPermissions.AdjustmentApprove, adjustment.OwnerId.Value, adjustment.WarehouseId.Value, cancellationToken);
         WmsVersions.Ensure(adjustment.Version, command.Version);
         adjustment.EnsurePostable();
 

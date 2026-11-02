@@ -182,4 +182,48 @@ public sealed class ReverseMovementApiTests
         Assert.Equal("wms.movement.not_found", await CodeOfAsync(missing));
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
     }
+
+    [Fact]
+    public async Task ReversingDoesNotRevalidateACaptureWhoseConversionWasRemoved()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var created = await s.Manager.PutAsJsonAsync(
+            $"{WmsUrl()}/variant-profiles/{s.VariantId}",
+            ProfileBody(new[] { new { code = "CAJA", factor = 12m, barcode = (string?)null } }, version: 0),
+            Ct);
+        created.EnsureSuccessStatusCode();
+        var saved = JsonDocument.Parse(await BodyAsync(created)).RootElement.GetProperty("version").GetInt64();
+        var adjustment = await ProposeAsync(
+            s.Manager,
+            Body(
+                s,
+                [new { locationId = s.BinA, variantId = s.VariantId, status = "Available", quantityDelta = 24m, capturedUom = "CAJA", capturedQty = 2m }],
+                autoApprove: true));
+        Assert.Equal(HttpStatusCode.OK, (await PostRawAsync(s.Manager, adjustment.Id, adjustment.Version)).StatusCode);
+        var movementId = await ScalarAsync<Guid>(database, "SELECT id FROM wms.stock_movements WHERE document_id = @id", ("id", adjustment.Id));
+        var removed = await s.Manager.PutAsJsonAsync(
+            $"{WmsUrl()}/variant-profiles/{s.VariantId}", ProfileBody(Array.Empty<object>(), saved), Ct);
+        removed.EnsureSuccessStatusCode();
+
+        var response = await ReverseRawAsync(s.Manager, movementId, "R-CAP");
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created, await BodyAsync(response));
+        Assert.Equal(0m, await OnHandAsync(database, s.BinA, s.VariantId, StockStatus.Available));
+    }
+
+    private static object ProfileBody(object conversions, long version) =>
+        new
+        {
+            baseUom = "UND",
+            baseUomPrecision = 0,
+            tracking = "None",
+            tracksExpiry = false,
+            weightKg = 1.5m,
+            storageClass = "FRIO",
+            conversions,
+            version,
+        };
 }

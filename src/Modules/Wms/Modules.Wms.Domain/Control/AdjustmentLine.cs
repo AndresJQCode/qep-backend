@@ -10,6 +10,8 @@ public sealed class AdjustmentLine
     {
     }
 
+    public const int CapturedUomMaxLength = 32;
+
     public Guid Id { get; private set; }
 
     public LocationId LocationId { get; private set; }

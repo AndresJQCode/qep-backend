@@ -11,9 +11,9 @@ namespace Modules.Wms.Application;
 /// <c>warehouseId</c> son la firma definitiva para cuando la fase 3 restrinja por alcance, y hasta entonces se ignoran —
 /// <c>member_scopes</c> nace vacía y nadie la lee—, así que los handlers de WMS-D no tendrán que cambiar la llamada.
 /// </summary>
-public sealed class WmsAuthorization(ITenantModules tenantModules)
+public class WmsAuthorization(ITenantModules tenantModules)
 {
-    public async Task EnsureAsync(
+    public virtual async Task EnsureAsync(
         IExecutionContext ctx,
         Guid tenantId,
         string permission,
