@@ -4213,6 +4213,48 @@ viven en memoria:** hoy hay una réplica, y con más el límite efectivo se mult
 `sentByApiKey`. Un intento rechazado no va a auditoría sino al log, con el prefijo y nunca el secreto (`Information` si la clave existe y está revocada, vencida o con secreto errado; `Debug` si es desconocida o malformada); la creación y la revocación sí
 se auditan (`api_access.key.created`, `api_access.key.revoked`).
 
+### Módulo Wms (bodegas)
+
+Módulo `Modules.Wms.{Domain,Application,Infrastructure,Api}`, esquema `wms`, clave de módulo `wms` (`Dependencies = [Catalog]`, última de
+`TenantModuleKeys.All`, fuera de `DefaultForNewTenants`: nace apagado). Es la fase 1 de
+[`docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md`](docs/superpowers/specs/2026-10-31-wms-arquitectura-design.md): bodegas,
+árbol de ubicaciones, dueños, unidades de medida y perfil logístico de las variantes. Todavía **no hay libro de inventario**: las
+existencias llegan con WMS-D, y hasta entonces los tres `*StockProbe` responden «sin saldo». Rutas bajo
+`/api/v1/tenants/{tenantId}/wms` (`X-Tenant-Id`).
+
+**Cómo se prende.** No hay endpoint: es una fila en `tenancy.tenant_modules` con `module_key = 'wms'` (y `catalog` ya prendido). Sin ella,
+todo `/wms/*` responde 403 `tenancy.module_not_enabled`; con otro tenant en la ruta, 403 `authorization.denied`, nunca 404.
+
+**Permisos.** Dieciséis, `wms.<recurso>.<acción>` (`WmsPermissions`), cada uno con su política en `AddAuthorization` y
+`RequiredModules: [wms]`. Sólo el rol de sistema `admin` los trae; ningún otro. Hoy las rutas usan cuatro: `wms.warehouse.manage`,
+`wms.owner.manage`, `wms.profile.manage` y `wms.document.read`; el resto es para WMS-D.
+
+**Lo que nace solo.**
+
+- **Con cada bodega:** las ubicaciones virtuales `SUPPLIER`, `CUSTOMER`, `ADJUSTMENT` y `TRANSIT`, y la zona `RECEIVING` con el muelle
+  `REC-01`. Las virtuales son de solo lectura: **cualquier** `PUT` sobre una responde 422 `wms.location.virtual_immutable`, y no se
+  borran. Un nodo con hijos o con saldo tampoco se borra.
+- **En el primer acceso del tenant** (cualquier `GET` de listado, no al prender el módulo: Tenancy no avisa): el dueño `Self` y las seis
+  unidades `UND, KG, G, L, ML, M`. Lo escribe `IWmsProvisioner` con `INSERT … ON CONFLICT DO NOTHING`; una consulta directa a
+  `wms.owners` de un tenant que nunca entró devuelve cero filas, y no es un error.
+- **Perfil sin fila:** el `GET /variant-profiles` lo calcula en memoria con `version: 0`; el `PUT` con `version: 0` lo crea.
+
+**`scannable` y el `ETag`.** `GET …/locations/scannable` devuelve `{ id, code, path, role }` de las ubicaciones no virtuales de la bodega y
+un `etag` que cambia cuando cambia cualquiera. La app lo guarda y manda `If-None-Match`: igual → 304 sin cuerpo. Es la cache con la que
+el escáner resuelve un código contra su bodega.
+
+**P-1: los identificadores de ubicación no se escriben.** `wms.identifiers` es único por `(tenant_id, value)` y el código de una
+ubicación es único **por bodega**: la segunda bodega repetiría `SUPPLIER` o `REC-01`. La app resuelve el código contra el `scannable` de
+su bodega, no contra `identifiers`. El spec §25 queda por corregir.
+
+**Etiquetas (RF-004).** `POST …/locations/labels` con `{ locationIds }` (1 a 500; uno ajeno a la bodega es 422 `wms.location.not_found`)
+devuelve un PDF con una etiqueta de 60×30 mm por ubicación, en Code 128 (paquete `@preview/tiaoma` de Typst). Sale por `qcode-pdf` con la
+**misma clave de cotizaciones** (`Quotations:Pdf`), desde `WmsPdfGateway` en Bootstrapper: el módulo no ve esa clave. Si el servicio no
+resuelve el paquete o cae, la respuesta es 422 `wms.label.render_failed` con el mensaje del compilador. La prueba contra el servicio real
+es manual (se necesita la clave del developer, nunca en un log); las automáticas sustituyen el renderer.
+
+**Migraciones:** `Tenancy` `AddWmsModuleKey` (el CHECK de `tenant_modules` admite `wms`) y `Wms` `InitialWms` (esquema `wms`).
+
 ## Verificación
 
 ```powershell
