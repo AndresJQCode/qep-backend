@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -5,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Domain;
 using Modules.Messaging.Application;
@@ -279,21 +281,80 @@ public sealed class ExternalApiRequestLogTests
     }
 
     [Fact]
-    public async Task AThrowingLogDoesNotBreakTheSend()
+    public async Task AThrowingLogIsLoggedAndTheWriterKeepsWriting()
     {
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
-        using var failing = f.Factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
-        {
-            services.RemoveAll<IApiKeyRequestLog>();
-            services.AddScoped<IApiKeyRequestLog, ThrowingLog>();
-        }));
+        var probe = new LogProbe { FailFirst = true };
+        var logs = new CapturedErrors();
+        using var failing = WithProbe(f.Factory, probe, logs);
         using var client = CreateExternalClient(failing, f.Plaintext);
 
-        var response = await PostAsync(client, Body(Guid.CreateVersion7(), f.ConnectionId));
+        // La primera fila falla; la segunda tiene que escribirse igual. Las dos llamadas responden bien. (Un segundo envío chocaría con el wamid fijo del fake.)
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(client, Body(Guid.CreateVersion7(), f.ConnectionId))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(ExternalConnectionsUrl, Ct)).StatusCode);
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        await WaitUntilAsync(() => probe.Written >= 1, "El escritor no siguió con la fila siguiente a la que falló.");
+        await WaitUntilAsync(() => logs.Errors.Any(error => error is InvalidOperationException), "El fallo del registro no se logueó.");
+        Assert.Equal(2, probe.Attempts);
+    }
+
+    /// <summary>
+    /// Regresión de «el registro no demora un envío»: con la escritura bloqueada, la respuesta y la llamada siguiente salen igual.
+    /// TestServer entrega la respuesta antes de correr <c>OnCompleted</c>, así que esta prueba sola no ve el callback de Kestrel; esa
+    /// parte la cubre <c>ExternalApiCallLoggingMiddlewareTests</c>. Acá se comprueba que el escritor, de punta a punta, no frena nada.
+    /// </summary>
+    [Fact]
+    public async Task ABlockedLogWriteDoesNotDelayTheNextCall()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var probe = new LogProbe { Blocked = true };
+        using var blocked = WithProbe(f.Factory, probe, new CapturedErrors());
+        using var client = CreateExternalClient(blocked, f.Plaintext);
+
+        try
+        {
+            var first = await PostAsync(client, Body(Guid.CreateVersion7(), f.ConnectionId)).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+            var second = await client.GetAsync(ExternalConnectionsUrl, Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+            Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+            Assert.Equal(0, probe.Written);
+        }
+        finally
+        {
+            probe.Release();
+        }
+
+        await WaitUntilAsync(() => probe.Written >= 2, "Soltada la escritura, las dos filas tenían que escribirse.");
+    }
+
+    private static WebApplicationFactory<Program> WithProbe(QepApiFactory factory, LogProbe probe, CapturedErrors logs) =>
+        factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IApiKeyRequestLog>();
+            services.AddSingleton(probe);
+            services.AddScoped<IApiKeyRequestLog, ProbeLog>();
+            services.AddSingleton<ILoggerProvider>(logs);
+        }));
+
+    private static async Task WaitUntilAsync(Func<bool> condition, string failure)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        Assert.Fail(failure);
     }
 
     [Fact]
@@ -311,9 +372,72 @@ public sealed class ExternalApiRequestLogTests
         Assert.Equal(traceId, row.TraceId);
     }
 
-    private sealed class ThrowingLog : IApiKeyRequestLog
+    /// <summary>Estado compartido entre el host y la prueba: el registro de prueba es scoped, así que lo que cuenta vive acá.</summary>
+    private sealed class LogProbe
     {
-        public Task RecordAsync(ApiKeyRequest request, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("El registro falló a propósito.");
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _attempts;
+        private int _written;
+
+        public bool FailFirst { get; init; }
+
+        public bool Blocked { get; init; }
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public int Written => Volatile.Read(ref _written);
+
+        public void Release() => _gate.TrySetResult();
+
+        public async Task RecordAsync()
+        {
+            var attempt = Interlocked.Increment(ref _attempts);
+            if (Blocked)
+            {
+                await _gate.Task;
+            }
+
+            if (FailFirst && attempt == 1)
+            {
+                throw new InvalidOperationException("El registro falló a propósito.");
+            }
+
+            Interlocked.Increment(ref _written);
+        }
+    }
+
+    private sealed class ProbeLog(LogProbe probe) : IApiKeyRequestLog
+    {
+        public Task RecordAsync(ApiKeyRequest request, CancellationToken cancellationToken) => probe.RecordAsync();
+    }
+
+    /// <summary>Guarda las excepciones de los logs de nivel Error o más.</summary>
+    private sealed class CapturedErrors : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<Exception> _errors = new();
+
+        public IReadOnlyCollection<Exception> Errors => [.. _errors];
+
+        public ILogger CreateLogger(string categoryName) => new Capture(_errors);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Capture(ConcurrentQueue<Exception> errors) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (logLevel >= LogLevel.Error && exception is not null)
+                {
+                    errors.Enqueue(exception);
+                }
+            }
+        }
     }
 }

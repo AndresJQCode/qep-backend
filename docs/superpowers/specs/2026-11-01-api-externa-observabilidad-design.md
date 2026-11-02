@@ -171,7 +171,9 @@ Requisitos:
 
 - El chequeo `exists` conserva `wamid = X OR id = callback`: un estado obsoleto debe dar `NoChange`. `NotFound` con
   callback produce `RetryLater` en `WebhookDeliveryProcessor`, y un estado viejo se reintentaría sin sentido.
-- Antes de implementar, confirmar que nada lee `wamid` de filas `Failed`.
+- Antes de implementar, confirmar que nada lee `wamid` de filas `Failed`. Confirmado en la revisión final: `OutboundGuards.cs:105`,
+  `ApplySeenAsync` e `InboundIngestion` leen `wamid`, pero actúan sobre filas entrantes o citadas, nunca sobre un saliente
+  `Failed`; un `NULL` en esa fila no cambia su resultado.
 - `FindMarketingOptOutCustomerAsync` no se cambia: si Meta informa opt-out, sigue siendo cierto para esa persona.
 - Riesgo residual aceptado: un `sent` o `delivered` viejo reentregado mientras la fila está `Unconfirmed` podría resolverla
   por callback. Exige que Meta reentregue un acuse de un intento ya fallido.

@@ -1,21 +1,20 @@
 using System.Diagnostics;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Modules.ApiAccess.Application;
 
 namespace Bootstrapper.ApiKeys;
 
 /// <summary>
-/// Deja una fila por cada llamada identificada a la API externa (spec 2026-11-01 parte 1). Escribe en <c>OnCompleted</c> y en un
-/// scope propio: con la respuesta ya entregada, la base no le suma tiempo al envío ni comparte transacción con él. Va afuera de
-/// autenticación, porque un 401 o un 403 también son una llamada, y adentro del manejador de excepciones, que por eso anota su código
-/// en la nota antes de que corra el callback.
+/// Deja una fila por cada llamada identificada a la API externa (spec 2026-11-01 parte 1). En <c>OnCompleted</c> sólo arma la fila y
+/// la encola en <see cref="ExternalApiCallLogChannel"/>: el INSERT lo hace <see cref="ExternalApiCallLogWriter"/>, porque Kestrel espera
+/// ese callback antes de leer la siguiente petición de la misma conexión y una escritura ahí demoraría la próxima llamada del
+/// integrador. Va afuera de autenticación, porque un 401 o un 403 también son una llamada, y adentro del manejador de excepciones,
+/// que por eso anota su código en la nota antes de que corra el callback.
 /// </summary>
 public sealed partial class ExternalApiCallLoggingMiddleware(
     RequestDelegate next,
-    IServiceScopeFactory scopes,
+    ExternalApiCallLogChannel queue,
     ILogger<ExternalApiCallLoggingMiddleware> logger)
 {
     public Task InvokeAsync(HttpContext context, IClock clock)
@@ -37,20 +36,17 @@ public sealed partial class ExternalApiCallLoggingMiddleware(
         var occurredAt = clock.UtcNow;
         var startedAt = Stopwatch.GetTimestamp();
 
-        context.Response.OnCompleted(async () =>
+        context.Response.OnCompleted(() =>
         {
             try
             {
                 var durationMs = (int)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
-                if (note.ToRequest(method, path, context.Response.StatusCode, traceId, durationMs, occurredAt) is not { } row)
+                if (note.ToRequest(method, path, context.Response.StatusCode, traceId, durationMs, occurredAt) is { } row
+                    && !queue.TryEnqueue(row))
                 {
-                    return;
+                    // Cola llena: se descarta la fila. Nunca se espera, porque esperar es demorar la respuesta que el registro no puede demorar.
+                    LogQueueFull(logger, method, path);
                 }
-
-                await using var scope = scopes.CreateAsyncScope();
-
-                // CancellationToken.None: el del request ya no vale nada acá, y una llamada cortada por el cliente también se registra.
-                await scope.ServiceProvider.GetRequiredService<IApiKeyRequestLog>().RecordAsync(row, CancellationToken.None);
             }
 #pragma warning disable CA1031 // El registro nunca rompe una respuesta ya entregada.
             catch (Exception exception)
@@ -58,6 +54,8 @@ public sealed partial class ExternalApiCallLoggingMiddleware(
             {
                 LogRecordingFailed(logger, exception, method, path);
             }
+
+            return Task.CompletedTask;
         });
 
         return next(context);
@@ -65,4 +63,7 @@ public sealed partial class ExternalApiCallLoggingMiddleware(
 
     [LoggerMessage(EventId = 1, Level = LogLevel.Error, Message = "Could not record the external API call {Method} {Path}.")]
     private static partial void LogRecordingFailed(ILogger logger, Exception exception, string method, string path);
+
+    [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "The external API call log queue is full; dropped {Method} {Path}.")]
+    private static partial void LogQueueFull(ILogger logger, string method, string path);
 }

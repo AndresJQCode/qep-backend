@@ -1275,6 +1275,10 @@ public static class QepServiceCollectionExtensions
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
 
+        // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.
+        services.AddSingleton<ExternalApiCallLogChannel>();
+        services.AddHostedService<ExternalApiCallLogWriter>();
+
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
         // impide a propósito — y el composition root cablea el puerto que declara `customers`
