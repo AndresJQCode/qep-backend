@@ -339,9 +339,14 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
         outbox.HasKey(value => value.Id);
         outbox.Property(value => value.Id).HasColumnName("id");
-        outbox.Property(value => value.EventName).HasColumnName("event_name");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
         outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        // correlation_id y attempts son NOT NULL sin default: una proyección que no los mapea no puede insertar.
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
+        outbox.Property(value => value.LastError).HasColumnName("last_error");
     }
 }
 
@@ -354,5 +359,13 @@ internal sealed class WmsOutboxMessage
 
     public string PayloadJson { get; init; } = "{}";
 
+    public string CorrelationId { get; init; } = string.Empty;
+
     public DateTimeOffset OccurredAt { get; init; }
+
+    public DateTimeOffset? ProcessedAt { get; init; }
+
+    public int Attempts { get; init; }
+
+    public string? LastError { get; init; }
 }

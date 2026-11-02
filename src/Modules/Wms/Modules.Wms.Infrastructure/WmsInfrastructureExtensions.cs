@@ -34,6 +34,10 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IInventoryLedger, InventoryLedger>();
         services.AddScoped<IStockReadQueries, StockReadQueries>();
         services.AddSingleton<WmsMetrics>();
+        services.AddSingleton<IWmsConfirmMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
+        services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();
+        services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
+        services.AddScoped<AdjustmentDtoComposer>();
 
         // Idempotencia (S2): el scope lo fija el filtro del API y lo consume Record en la transacción del handler.
         services.AddScoped<IdempotencyScope>();

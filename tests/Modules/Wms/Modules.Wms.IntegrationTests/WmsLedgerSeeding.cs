@@ -119,7 +119,7 @@ internal static class WmsLedgerSeeding
             ("lot", lotId));
 
     /// <summary>Por el <c>PUT</c> de WMS-B, con la versión 0 de un perfil todavía sin guardar.</summary>
-    public static async Task SetTrackingAsync(HttpClient manager, Guid variantId, string tracking)
+    public static async Task SetTrackingAsync(HttpClient manager, Guid variantId, string tracking, bool tracksExpiry = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, $"{WmsUrl()}/variant-profiles/{variantId}")
         {
@@ -128,7 +128,7 @@ internal static class WmsLedgerSeeding
                 baseUom = "UND",
                 baseUomPrecision = 0,
                 tracking,
-                tracksExpiry = false,
+                tracksExpiry,
                 weightKg = 1.5m,
                 volumeM3 = (decimal?)null,
                 lengthCm = (decimal?)null,

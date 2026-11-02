@@ -1,11 +1,12 @@
 using System.Diagnostics.Metrics;
+using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 
 namespace Modules.Wms.Infrastructure;
 
 /// <summary>Métricas de Bodegas (RNF-11). El meter lleva el prefijo <c>Qep.</c>, que el exportador ya recoge: el módulo no referencia
 /// la infraestructura de observabilidad. Sin etiqueta de tenant.</summary>
-internal sealed class WmsMetrics
+internal sealed class WmsMetrics : IWmsConfirmMetrics
 {
     public const string MeterName = "Qep.Wms";
 
@@ -38,7 +39,7 @@ internal sealed class WmsMetrics
     public void RecordMovements(MovementReason reason, int count) =>
         _movements.Add(count, new KeyValuePair<string, object?>("reason", reason.ToString()));
 
-    public void RecordConfirmDuration(double ms) => _confirmDuration.Record(ms);
+    public void RecordConfirmDuration(double milliseconds) => _confirmDuration.Record(milliseconds);
 
     public void SetBalanceDrift(long keys) => Volatile.Write(ref _balanceDrift, keys);
 

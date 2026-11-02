@@ -506,6 +506,21 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListStockMovementsQuery, Modules.Wms.Application.MovementPageDto>,
             Modules.Wms.Application.ListStockMovementsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListAdjustmentsQuery, Modules.Wms.Application.AdjustmentPageDto>,
+            Modules.Wms.Application.ListAdjustmentsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ProposeAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.ProposeAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ApproveAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.ApproveAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.PostAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.PostAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RejectAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
+            Modules.Wms.Application.RejectAdjustmentHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

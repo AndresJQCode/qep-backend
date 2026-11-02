@@ -56,6 +56,10 @@ public static class WmsAuditActions
         public const string Owner = "wms.owner";
         public const string Profile = "wms.variant_profile";
         public const string Uom = "wms.uom";
+        public const string Adjustment = "wms.adjustment";
+        public const string Movement = "wms.stock_movement";
+        public const string Import = "wms.import";
+        public const string Export = "wms.export";
     }
 
     public const string WarehouseCreated = "wms.warehouse.created";
@@ -68,6 +72,13 @@ public static class WmsAuditActions
     public const string ProfileCreated = "wms.profile.created";
     public const string ProfileUpdated = "wms.profile.updated";
     public const string UomCreated = "wms.uom.created";
+    public const string AdjustmentProposed = "wms.adjustment.proposed";
+    public const string AdjustmentApproved = "wms.adjustment.approved";
+    public const string AdjustmentPosted = "wms.adjustment.posted";
+    public const string AdjustmentRejected = "wms.adjustment.rejected";
+    public const string StockImported = "wms.stock.imported";
+    public const string MovementReversed = "wms.movement.reversed";
+    public const string StockExported = "wms.stock.exported";
 }
 
 public interface IWarehouseRepository
