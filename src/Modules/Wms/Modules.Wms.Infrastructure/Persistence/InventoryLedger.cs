@@ -127,6 +127,8 @@ internal sealed class InventoryLedger(
     // En un scope y una transacción propios, como IWmsProvisioner: el perfil por defecto no depende del movimiento, y guardarlo aparte
     // es lo que permite recargar. Dentro de la transacción del lote, perder la carrera (412) sólo se vería al confirmar, con los saldos
     // ya escritos y nada que reintentar. Aquí la perdedora relee y encuentra el perfil de la otra petición, que ya commiteó.
+    // Invariante: quien llama no puede tener sin confirmar una escritura de perfil o identificador antes de PostAsync. Este scope
+    // esperaría esa fila mientras quien llama espera a este scope, y PostgreSQL no ve ese ciclo: termina en el timeout del comando.
     private async Task<VariantLogisticsProfile> CreateDefaultProfileAsync(Guid tenantId, Guid variantId, CancellationToken ct)
     {
         await using (var scope = scopeFactory.CreateAsyncScope())

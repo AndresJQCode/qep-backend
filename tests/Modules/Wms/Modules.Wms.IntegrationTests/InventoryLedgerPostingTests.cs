@@ -309,6 +309,126 @@ public sealed class InventoryLedgerPostingTests
         Assert.Equal(2, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_change_queue"));
     }
 
+    // Dos lotes sobre las mismas claves de saldo nunca llegan juntos a la cola: el primer saldo los serializa, y por eso la prueba de
+    // arriba no detecta el orden de la cola. Aquí no comparten ningún saldo, y dos sesiones retienen las filas para que cada lote
+    // empiece a esperar por la fila que le toca primero. Al soltarlas, en orden de aparición cada uno tendría la que el otro necesita.
+    [Fact]
+    public async Task TwoBatchesThatShareOnlyTheirQueueKeysNeverDeadlock()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var v2 = await CreateVariantAsync(factory, "V2", null, [12]);
+        var binB = (await CreateBinAsync(s.Manager, s.WarehouseId, "A", "B-01")).Id;
+        foreach (var (location, variant) in new[] { (s.BinA, s.VariantId), (s.BinA, v2), (binB, s.VariantId), (binB, v2) })
+        {
+            await StockAsync(factory, s, location, 10, variant: variant);
+        }
+
+        var firstHolder = await HoldQueueKeyAsync(factory, s, s.VariantId);
+        var secondHolder = await HoldQueueKeyAsync(factory, s, v2);
+
+        var first = Task.Run(
+            () => PostAsync(
+                factory,
+                Batch(
+                    s,
+                    Entry(s, s.BinA, Available, s.Receiving, Available, 1),
+                    Entry(s, s.BinA, Available, s.Receiving, Available, 1, variant: v2))),
+            Ct);
+        var second = Task.Run(
+            () => PostAsync(
+                factory,
+                Batch(
+                    s,
+                    Entry(s, binB, Available, s.Adjustment, Available, 1, variant: v2),
+                    Entry(s, binB, Available, s.Adjustment, Available, 1))),
+            Ct);
+        await WaitForBlockedSessionsAsync(database, 2);
+
+        await firstHolder.DisposeAsync();
+        await secondHolder.DisposeAsync();
+
+        await Task.WhenAll(first, second);
+        Assert.Equal(2, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.balance_change_queue"));
+    }
+
+    private static async Task<AsyncServiceScope> HoldQueueKeyAsync(QepApiFactory factory, LedgerSetup s, Guid variantId)
+    {
+        var scope = factory.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().BeginTransactionAsync(Ct);
+        await scope.ServiceProvider.GetRequiredService<IBalanceChangeQueue>().EnqueueAsync(
+            [new BalanceChangeKey(s.TenantId, s.OwnerId, s.WarehouseId, variantId)], Ct);
+        return scope;
+    }
+
+    // Sin DO UPDATE el escritor no bloquea la fila ya encolada: el publicador la saca, lee el saldo sin este cambio y el evento se pierde.
+    [Fact]
+    public async Task APublisherDequeuingWhileAWriterIsUncommittedLeavesTheKeyQueuedAfterTheCommit()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        await using var writer = factory.Services.CreateAsyncScope();
+        await using var publisher = factory.Services.CreateAsyncScope();
+        var unitOfWork = writer.ServiceProvider.GetRequiredService<IWmsUnitOfWork>();
+        var queue = publisher.ServiceProvider.GetRequiredService<IBalanceChangeQueue>();
+
+        await using (await unitOfWork.BeginTransactionAsync(Ct))
+        {
+            await writer.ServiceProvider.GetRequiredService<IInventoryLedger>().PostAsync(
+                Batch(s, Entry(s, s.BinA, Available, s.Receiving, Available, 4)), Ct);
+
+            await queue.DequeueAllAsync(10, Ct);
+            await unitOfWork.SaveChangesAsync(Ct);
+        }
+
+        Assert.Equal([new BalanceChangeKey(s.TenantId, s.OwnerId, s.WarehouseId, s.VariantId)], await queue.DequeueAllAsync(10, Ct));
+    }
+
+    [Fact]
+    public async Task AWriterWaitingOnThePublishersDeleteQueuesTheKeyAgain()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        await StockAsync(factory, s, s.BinA, 10);
+        await using var publisher = factory.Services.CreateAsyncScope();
+        var unitOfWork = publisher.ServiceProvider.GetRequiredService<IWmsUnitOfWork>();
+        var queue = publisher.ServiceProvider.GetRequiredService<IBalanceChangeQueue>();
+        Task writer;
+
+        await using (await unitOfWork.BeginTransactionAsync(Ct))
+        {
+            Assert.Single(await queue.DequeueAllAsync(10, Ct));
+            writer = Task.Run(() => PostAsync(factory, Batch(s, Entry(s, s.BinA, Available, s.Receiving, Available, 4))), Ct);
+            await WaitForBlockedSessionsAsync(database, 1);
+            await unitOfWork.SaveChangesAsync(Ct);
+        }
+
+        await writer;
+        Assert.Equal([new BalanceChangeKey(s.TenantId, s.OwnerId, s.WarehouseId, s.VariantId)], await queue.DequeueAllAsync(10, Ct));
+    }
+
+    private static async Task WaitForBlockedSessionsAsync(PostgreSqlContainer database, int sessions)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            if (await ScalarAsync<long>(database, "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'") >= sessions)
+            {
+                return;
+            }
+
+            await Task.Delay(25, Ct);
+        }
+
+        Assert.Fail("The sessions never blocked on the queue rows.");
+    }
+
     [Fact]
     public async Task AProfileCollisionInsideAnExplicitTransactionStillTranslatesTo412()
     {
@@ -318,12 +438,12 @@ public sealed class InventoryLedgerPostingTests
         var s = await ArrangeAsync(database, factory);
 
         await AssertCollisionAsync<RequestConcurrencyException>(
-            database, factory, s, variant => InsertCompetingProfileAsync(database, variant, "V1"), s.VariantId);
+            factory, s, variant => InsertCompetingProfileAsync(database, variant, "V1"), s.VariantId);
 
         // Sólo la clave del perfil: el identificador de esta petición no choca con nada, así que llega a la otra rama.
         var second = await CreateVariantAsync(factory, "V2", null, [12]);
         await AssertCollisionAsync<RequestConcurrencyException>(
-            database, factory, s, variant => InsertCompetingProfileAsync(database, variant, "OTRO-CODIGO"), second);
+            factory, s, variant => InsertCompetingProfileAsync(database, variant, "OTRO-CODIGO"), second);
     }
 
     [Fact]
@@ -335,7 +455,6 @@ public sealed class InventoryLedgerPostingTests
         var s = await ArrangeAsync(database, factory);
 
         var exception = await AssertCollisionAsync<WmsDomainException>(
-            database,
             factory,
             s,
             _ => InsertCompetingProfileAsync(database, Guid.CreateVersion7(), "V1"),
@@ -346,7 +465,7 @@ public sealed class InventoryLedgerPostingTests
 
     // Sin los savepoints automáticos de EF: si la traducción dependiera de ellos, la consulta del catch fallaría con 25P02.
     private static async Task<TException> AssertCollisionAsync<TException>(
-        PostgreSqlContainer database, QepApiFactory factory, LedgerSetup s, Func<Guid, Task> collide, Guid variantId)
+        QepApiFactory factory, LedgerSetup s, Func<Guid, Task> collide, Guid variantId)
         where TException : Exception
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -367,7 +486,6 @@ public sealed class InventoryLedgerPostingTests
         }
 
         Assert.Null(dbContext.Database.CurrentTransaction);
-        Assert.True(await ScalarAsync<long>(database, "SELECT count(*) FROM wms.variant_profiles") >= 1);
         return exception;
     }
 

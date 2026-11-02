@@ -10,6 +10,9 @@ internal sealed class BalanceChangeQueue(WmsDbContext dbContext) : IBalanceChang
 
     // Un solo INSERT, ordenado (S26). Con un INSERT por clave en orden de aparición, dos lotes cruzados tomarían los bloqueos de la
     // cola en orden opuesto y reabrirían el deadlock que el orden de StockKeyComparer cierra en los saldos.
+    // DO UPDATE y no DO NOTHING: DO NOTHING no bloquea una fila ya commiteada, así que el publicador podía sacarla, leer el saldo sin
+    // este cambio y dejar la cola vacía con el evento perdido. Bloqueada hasta el commit, SKIP LOCKED la deja para la siguiente vuelta;
+    // el costo es que los escritores de una misma clave se serializan desde aquí hasta confirmar.
     public Task EnqueueAsync(IReadOnlyCollection<BalanceChangeKey> keys, CancellationToken ct)
     {
         var ordered = keys
@@ -28,7 +31,8 @@ internal sealed class BalanceChangeQueue(WmsDbContext dbContext) : IBalanceChang
         var values = ordered.SelectMany(key => new object[] { key.TenantId, key.OwnerId, key.WarehouseId, key.VariantId }).ToArray();
 
         // Sólo los marcadores {n} se arman a mano; los valores viajan como parámetros.
-        var sql = "INSERT INTO wms.balance_change_queue (tenant_id, owner_id, warehouse_id, variant_id) VALUES " + rows + " ON CONFLICT DO NOTHING";
+        var sql = "INSERT INTO wms.balance_change_queue (tenant_id, owner_id, warehouse_id, variant_id) VALUES " + rows
+            + " ON CONFLICT (tenant_id, owner_id, warehouse_id, variant_id) DO UPDATE SET queued_at = EXCLUDED.queued_at";
         return dbContext.Database.ExecuteSqlRawAsync(sql, values, ct);
     }
 

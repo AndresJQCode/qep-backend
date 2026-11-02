@@ -53,8 +53,8 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
 
     private async Task<int> PersistAsync(CancellationToken cancellationToken)
     {
-        // Propio y no el automático de EF: la consulta del 23505 necesita la transacción viva y esto no puede depender de una opción
-        // del contexto. Sin transacción explícita no hace falta: SaveChanges ya revirtió la suya.
+        // Propio y no el automático de EF: la consulta del 23505 necesita la transacción viva, sin depender de una opción del contexto.
+        // Sin transacción explícita no hace falta: SaveChanges ya revirtió la suya.
         var transaction = dbContext.Database.CurrentTransaction;
         if (transaction is not null)
         {

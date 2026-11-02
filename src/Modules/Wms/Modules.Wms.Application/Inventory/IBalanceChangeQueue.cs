@@ -8,7 +8,8 @@ public sealed record BalanceChangeKey(Guid TenantId, Guid OwnerId, Guid Warehous
 public interface IBalanceChangeQueue
 #pragma warning restore CA1711
 {
-    /// <summary>Corre en la transacción del llamador, después de los saldos. Sin claves no ejecuta nada.</summary>
+    /// <summary>Corre en la transacción del llamador, como última escritura del lote, y deja las filas bloqueadas hasta el commit. Sin
+    /// claves no ejecuta nada.</summary>
     Task EnqueueAsync(IReadOnlyCollection<BalanceChangeKey> keys, CancellationToken ct);
 
     /// <summary>Saca de la cola hasta <paramref name="max"/> claves, las más viejas primero. Es un <c>DELETE</c>: quien llama abre la
