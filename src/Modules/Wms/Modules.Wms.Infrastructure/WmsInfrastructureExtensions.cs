@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Wms.Application;
 using Modules.Wms.Infrastructure.Pdf;
 using Modules.Wms.Infrastructure.Persistence;
+using Modules.Wms.Infrastructure.Workers;
 
 namespace Modules.Wms.Infrastructure;
 
@@ -31,6 +33,16 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
         services.AddSingleton<WmsMetrics>();
+
+        // Idempotencia (S2): el scope lo fija el filtro del API y lo consume Record en la transacción del handler.
+        services.AddScoped<IdempotencyScope>();
+        services.AddScoped<IOperationReceipts, OperationReceipts>();
+
+        // Workers de WMS: opciones validadas al arrancar. Las pruebas de integración fijan intervalos enormes para que ninguno corra solo.
+        services.AddOptions<WmsWorkerOptions>().Bind(configuration.GetSection(WmsWorkerOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<WmsWorkerOptions>, WmsWorkerOptionsValidator>();
+        services.AddSingleton<WmsHousekeepingWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<WmsHousekeepingWorker>());
 
         // Sin libro de inventario no hay existencias: WMS-D reemplaza estas tres por consultas al libro.
         services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();

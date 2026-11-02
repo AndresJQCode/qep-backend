@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Modules.Wms.Application;
 using Modules.Wms.Domain;
+using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Domain.Warehousing;
 using Npgsql;
 
@@ -99,6 +100,13 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.LotCodeIndex))
         {
             throw new RequestConcurrencyException("concurrency.conflict", "The lot was created by another request.", exception);
+        }
+        // Dos peticiones con la misma Idempotency-Key a la vez: la PK del recibo frena a la segunda. El filtro del API releerá el recibo
+        // de la ganadora cuando el handler haya deshecho su transacción.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.OperationReceiptPrimaryKey))
+        {
+            var receipt = exception.Entries.Select(entry => entry.Entity).OfType<OperationReceipt>().FirstOrDefault();
+            throw new OperationReplayedException(receipt?.TenantId ?? Guid.Empty, receipt?.IdempotencyKey ?? string.Empty);
         }
         // Dos peticiones que crean el mismo perfil a la vez: las dos miraron, ninguna vio la fila y las dos arman perfil e identificadores.
         // Sólo una gana. Según el orden del guardado la perdedora tropieza con la clave del perfil o con el índice de identificadores, y

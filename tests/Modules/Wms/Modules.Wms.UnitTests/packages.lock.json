@@ -329,6 +329,14 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.wms.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Wms.Application": "[1.0.0, )",
+          "Modules.Wms.Domain": "[1.0.0, )"
+        }
+      },
       "modules.wms.application": {
         "type": "Project",
         "dependencies": {
