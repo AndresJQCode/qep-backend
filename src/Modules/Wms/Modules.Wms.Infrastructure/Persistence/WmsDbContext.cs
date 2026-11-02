@@ -28,6 +28,17 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public const string ConversionCodeIndex = "IX_uom_conversions_variant_code";
     public const string IdentifierValueIndex = "IX_identifiers_tenant_value";
 
+    // Ledger y saldos (plan WMS-D). El upsert del ledger no pasa por SaveChanges, así que los dos CHECK de saldo los traduce el
+    // ledger mismo a partir de estos nombres.
+    public const string StockBalanceKeyIndex = "UQ_stock_balances_key";
+    public const string StockBalanceNonNegativeCheck = "CK_stock_balances_on_hand_non_negative";
+    public const string StockBalanceReservedCheck = "CK_stock_balances_reserved";
+    public const string OperationReceiptPrimaryKey = "PK_operation_receipts";
+    public const string LotCodeIndex = "IX_lots_owner_variant_code";
+    public const string SerialUnitIndex = "IX_serial_units_variant_serial";
+    public const string ReservationOpenIndex = "IX_reservations_open_key";
+    public const string AdjustmentNumberIndex = "IX_adjustments_tenant_number";
+
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
 
     public DbSet<Location> Locations => Set<Location>();
@@ -60,6 +71,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         ConfigureConversion(modelBuilder);
         ConfigureIdentifier(modelBuilder);
         ConfigureMemberScope(modelBuilder);
+        InventoryLedgerModel.Configure(modelBuilder);
     }
 
     // Los enums van como texto y los `version` como bigint fijado a mano: un cambio futuro del tipo CLR no cambia el esquema. Los

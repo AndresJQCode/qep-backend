@@ -49,9 +49,17 @@ public sealed class WmsPersistenceTests
         await using var _ = database;
         using var __ = factory;
 
+        // Las tablas del ledger (AddInventoryLedger) las cubre InventoryLedgerMigrationTests; aquí sólo las ocho de InitialWms.
         var tables = await QueryStringsAsync(
             factory,
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'wms' AND tablename <> '__ef_migrations_history' ORDER BY tablename");
+            """
+            SELECT tablename FROM pg_tables
+             WHERE schemaname = 'wms' AND tablename <> '__ef_migrations_history'
+               AND tablename NOT LIKE 'stock_movements%'
+               AND tablename NOT IN ('stock_balances', 'lots', 'serial_units', 'reservations', 'operation_receipts', 'balance_checks',
+                                     'import_previews', 'adjustments', 'adjustment_lines', 'balance_change_queue')
+             ORDER BY tablename
+            """);
         var indexes = await QueryStringsAsync(factory, "SELECT indexname FROM pg_indexes WHERE schemaname = 'wms'");
 
         Assert.Equal(
