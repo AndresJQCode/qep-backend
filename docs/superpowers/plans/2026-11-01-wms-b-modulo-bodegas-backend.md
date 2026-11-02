@@ -66,7 +66,7 @@
 | P-2 | `Self` y las seis UoM del sistema se crean **en el primer acceso** del tenant (`IWmsProvisioner.EnsureAsync`, `INSERT … ON CONFLICT DO NOTHING`), como `PipelineProvisioner`: Tenancy no avisa al activar un módulo. **Sólo el provisioner escribe el `Self`**; `IOwnerRepository.GetSelfAsync` lanza `InvalidOperationException` si falta (S5). | §5.2 decía «al activar el módulo»; no hay evento. |
 | P-3 | Hay `DELETE /warehouses/{id}/locations/{locationId}` (no está en §24.3): 204 para una hoja no virtual sin saldo; 422 `wms.location.virtual_immutable`, `wms.location.has_children` o `wms.location.has_stock`. | «Las virtuales no se borran» (§8) necesita un camino de borrado que lo pruebe. |
 | P-4 | Códigos de bodega y ubicación: `Trim` + mayúsculas, `[A-Z0-9._-]{1,32}`; de UoM `[A-Z0-9]{1,8}`. Inválido → `wms.warehouse.code_invalid`, `wms.location.code_invalid`, `wms.uom.code_invalid`. | Etiqueta Code 128 y cache por código exacto. |
-| P-5 | Jerarquía de `kind`: rango `Zone < Aisle < Rack < Level < Bin`, profundidad libre pero siempre descendente; `Dock` y `Virtual` sólo en la raíz; `Bin` y `Dock` sin hijos. `Virtual` y los roles `Transit/Adjustment/Supplier/Customer` no se crean por API (`wms.location.kind_not_allowed`, `wms.location.role_not_allowed`). | §8 fija el orden y la profundidad libre; lo demás es lo mínimo para que el árbol tenga sentido. |
+| P-5 | Jerarquía de `kind`: rango `Zone < Aisle < Rack < Level < Bin`, profundidad libre pero siempre descendente; `Virtual` sólo en la raíz; `Dock` en la raíz **o bajo una `Zone`** (el muelle `REC-01` nace bajo `RECEIVING`, así que «sólo en la raíz» era irrealizable); `Bin` y `Dock` sin hijos. `Virtual` y los roles `Transit/Adjustment/Supplier/Customer` no se crean por API (`wms.location.kind_not_allowed`, `wms.location.role_not_allowed`). | §8 fija el orden y la profundidad libre; lo demás es lo mínimo para que el árbol tenga sentido. |
 | P-6 | Códigos nuevos además de §24.2: `wms.warehouse.not_found`, `wms.location.not_found`, `wms.owner.not_found`, `wms.warehouse.city_unknown`, `wms.location.parent_invalid`, `wms.location.kind_not_allowed`, `wms.location.virtual_immutable`, `wms.location.has_children`, `wms.location.capacity_invalid`, `wms.owner.self_immutable`, `wms.owner.has_stock`, `wms.uom.code_taken`, `wms.uom.unknown`, `wms.uom.precision_invalid`, `wms.profile.variant_unknown`, `wms.profile.conversion_duplicate`, `wms.profile.conversion_factor_invalid`, `wms.profile.measure_invalid`, `wms.identifier.value_taken`, `wms.identifier.value_invalid`, `wms.label.render_failed`, más los `*_invalid` de P-4. | Se listan para que el spec los incorpore. |
 | P-7 | `IWmsAuditRecorder.Record` recibe `WmsActorType { Human, System, ApiKey }` (enum del módulo) y `IReadOnlyDictionary<string, string?> changedFields`. `WmsAuditRecorder` lo escribe con `JsonSerializer.Serialize(changedFields)` en `changed_fields`, que es `jsonb`: el valor por defecto de `AuditEntry.ChangedFieldsJson` es el arreglo `"[]"` y las entradas del Wms llevan siempre un **objeto** (`{"code":…}`), y es el primer recorder que serializa el diccionario él mismo en vez de recibir el string ya armado por el handler, como hacen `GeographyAuditRecorder` y `ShopifyAuditRecorder` (S23). `ApiKey` se mapea a `AuditActorType.Integration`. | Application no puede referenciar `Modules.Audit.Domain`; §10.3 quiere `owner_id` dentro de `changedFields`. |
 | P-8 | Perfil sin fila: `GET /variant-profiles` lo devuelve calculado en memoria con `version: 0` y conversiones sembradas desde `PackagingUnits`; el `PUT` con `version: 0` lo crea. `GetOrCreateDefaultAsync` (para WMS-D) sí persiste y audita como `System`. | Un GET no escribe, con **una sola excepción**: los GET de listado llaman a `IWmsProvisioner.EnsureAsync` (precedente `PipelineProvisioner`, S5). El formulario necesita ver el default sin que exista fila. |
@@ -322,7 +322,7 @@ RF-100. Se registran los 16 permisos de §11.5 aunque sus casos de uso lleguen e
 
 - [ ] **Step 1: Ajustar `CompositionRootTests` (RED)**
 
-Renombrar `PermissionDiscoveryFindsTheSeventyTwoConstants` → `PermissionDiscoveryFindsTheEightyEightConstants`, `Assert.Equal(88, …)`, y sumar al comentario y al `<summary>` «+ los dieciséis `wms.*` del spec WMS 2026-10-31 §11.5». Agregar, después de `TheLoansPermissionsRequireTheLoansModuleAndGoToAdminAndBilling`:
+Renombrar `PermissionDiscoveryFindsTheSeventyThreeConstants` → `PermissionDiscoveryFindsTheEightyNineConstants`, `Assert.Equal(89, …)`, y sumar al comentario y al `<summary>` «+ los dieciséis `wms.*` del spec WMS 2026-10-31 §11.5». Agregar, después de `TheLoansPermissionsRequireTheLoansModuleAndGoToAdminAndBilling`:
 
 ```csharp
 /// <summary>Spec WMS 2026-10-31 §11.5: dieciséis permisos con [wms] (la máscara los quita con el módulo apagado), categoría
@@ -355,7 +355,7 @@ public void TheWmsPermissionsRequireTheWmsModuleAndGoOnlyToAdmin()
 dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~CompositionRootTests"
 ```
 
-Esperado: `PermissionDiscoveryFindsTheEightyEightConstants` (cuenta 72) y `TheWmsPermissions…` (0 constantes) fallan.
+Esperado: `PermissionDiscoveryFindsTheEightyNineConstants` (cuenta 73) y `TheWmsPermissions…` (0 constantes) fallan.
 
 - [ ] **Step 3: Escribir las 16 constantes y registrar definiciones, políticas, rol admin, infraestructura y `Program.cs`**
 
@@ -1078,7 +1078,7 @@ Con el stub (`$env:Authentication__UseDevelopmentStub = "true"` y `--no-launch-p
 
 - [ ] **Step 5: Handoff**
 
-Empujar la rama y entregar la URL de compare contra `develop`. El handoff lista: el conteo de permisos (88), la migración de Tenancy, P-1 y P-3 como correcciones pendientes del spec, si Task 13 quedó dentro (y si no, la desviación de RF-004 según P-11), y que `docs/estado.md` se actualiza al mergear a `develop`. El frontend (`features/wms`, `tenant-modules.ts` con `wms` al final y la etiqueta «Bodegas», `ModuleGate modules={['wms','catalog']}`, sidebar **sin** `module` porque los permisos ya van enmascarados) es plan propio y se escribe desde § Contrato HTTP.
+Empujar la rama y entregar la URL de compare contra `develop`. El handoff lista: el conteo de permisos (89), la migración de Tenancy, P-1 y P-3 como correcciones pendientes del spec, si Task 13 quedó dentro (y si no, la desviación de RF-004 según P-11), y que `docs/estado.md` se actualiza al mergear a `develop`. El frontend (`features/wms`, `tenant-modules.ts` con `wms` al final y la etiqueta «Bodegas», `ModuleGate modules={['wms','catalog']}`, sidebar **sin** `module` porque los permisos ya van enmascarados) es plan propio y se escribe desde § Contrato HTTP.
 
 ---
 

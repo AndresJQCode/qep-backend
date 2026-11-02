@@ -801,7 +801,7 @@ una ubicación con movimientos no se borra, se desactiva.
 
   Los permisos finos de fases 4 y 5 (sustitución en picking, disposición de devoluciones) **no existen todavía**: esas
   acciones usan el permiso de gestión del área que ya está en la lista y el suyo propio se define al planear esos cortes.
-  `CompositionRootTests` pasa de 72 a 88 permisos. Roles: `admin` recibe todos; el resto es rol custom del tenant (el spec
+  `CompositionRootTests` pasa de 73 a 89 permisos. Roles: `admin` recibe todos; el resto es rol custom del tenant (el spec
   de recepción deja P-11 abierto).
 - Scope por propietario/bodega (§10.2) en handler y repositorio.
 - Doble capa de tenant (ruta + `IExecutionContext`) en cada handler; el filtro de idempotencia la aplica **antes** de
@@ -1347,7 +1347,7 @@ borran».
 
 **Permisos → rutas** (S8). Los 16 de §11.5, cada uno con las rutas de §24.3 y §24.4 que lo exigen. Un permiso sin
 ruta en fases 1–2 (`wms.purchase_order.manage`, `wms.count.*`) se registra igual, para que `CompositionRootTests` cuente
-88 desde WMS-B y las rutas lleguen con su corte.
+89 desde WMS-B y las rutas lleguen con su corte.
 
 | Permiso | Rutas |
 | --- | --- |
