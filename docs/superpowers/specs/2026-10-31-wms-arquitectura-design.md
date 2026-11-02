@@ -1324,6 +1324,7 @@ sobre un documento existente, el servidor deriva la clave `"{documento}:{id}:{ac
 | `wms.owner.self_exists` | 422 | Segundo `Self` |
 | `wms.owner.has_stock` | 422 | Desactivar propietario con saldo |
 | `wms.profile.tracking_change_requires_identification` | 422 | RF-010 |
+| `wms.profile.base_uom_change_requires_identification` | 422 | **Pendiente de confirmación del owner (I4).** Con saldo, cambiar la unidad base, bajar su precisión o cambiar el factor de una conversión existente; RF-010 sólo nombra el tracking. Se aplica en WMS-D T15 |
 | `wms.uom.factor_mismatch` | 422 | Factor del cliente ≠ perfil |
 | `wms.uom.precision_exceeded` | 422 | Decimales no permitidos por `base_uom_precision` |
 | `wms.lot.required` / `wms.lot.not_allowed` | 422 | Según perfil |
