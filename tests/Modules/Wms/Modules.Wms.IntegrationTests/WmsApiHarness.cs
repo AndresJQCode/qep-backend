@@ -246,6 +246,7 @@ internal static partial class WmsApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos en el tenant de pruebas.
             builder.UseSetting("Seed:Enabled", "false");
             // Ningún worker de WMS corre solo en una prueba: cada prueba de worker llama a mano su RunOnceAsync/PublishOnceAsync.
+            builder.UseSetting("Wms:Workers:WorkerStartupSeconds", "3600");
             builder.UseSetting("Wms:Workers:BalanceChangePublishSeconds", "3600");
             builder.UseSetting("Wms:Workers:ReconciliationSweepMinutes", "600");
             builder.UseSetting("Wms:Workers:PartitionSweepHours", "24");

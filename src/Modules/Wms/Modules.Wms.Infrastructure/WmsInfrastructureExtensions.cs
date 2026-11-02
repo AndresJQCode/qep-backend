@@ -54,6 +54,8 @@ public static class WmsInfrastructureExtensions
         services.AddSingleton<IValidateOptions<WmsWorkerOptions>, WmsWorkerOptionsValidator>();
         services.AddSingleton<WmsHousekeepingWorker>();
         services.AddHostedService(provider => provider.GetRequiredService<WmsHousekeepingWorker>());
+        services.AddSingleton<BalanceChangePublisher>();
+        services.AddHostedService(provider => provider.GetRequiredService<BalanceChangePublisher>());
 
         // Sin libro de inventario no hay existencias: WMS-D reemplaza estas tres por consultas al libro.
         services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();

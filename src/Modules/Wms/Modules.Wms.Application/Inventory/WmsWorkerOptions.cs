@@ -8,6 +8,12 @@ public sealed class WmsWorkerOptions
 {
     public const string SectionName = "Wms:Workers";
 
+    /// <summary>Espera antes de la primera pasada de los workers del libro (publicador, conciliación, particiones). Misma razón que
+    /// <see cref="HousekeepingStartupSeconds"/>: con un intervalo largo y un despliegue por commit, el pod se reiniciaría antes de que el
+    /// temporizador cumpliera.</summary>
+    [Range(0, 3600)]
+    public int WorkerStartupSeconds { get; init; } = 30;
+
     [Range(1, 3600)]
     public int BalanceChangePublishSeconds { get; init; } = 10;
 
