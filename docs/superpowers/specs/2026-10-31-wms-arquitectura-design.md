@@ -446,7 +446,12 @@ RETURNING on_hand, reserved;
   `SELECT FOR UPDATE` explícito.
 - **Orden de claves.** Un movimiento toca dos saldos (origen y destino) y un lote de picking toca muchos. Para evitar
   deadlocks, el ledger ordena las claves de un batch por `(location_id, variant_id, lot_id, status)` antes de ejecutar,
-  siempre en el mismo orden. Es la misma lección de `BusinessHoursRepository.SwapDefaultAsync` (CLAUDE.md).
+  siempre en el mismo orden. Es la misma lección de `BusinessHoursRepository.SwapDefaultAsync` (CLAUDE.md). Por eso hay un
+  solo lote por transacción: un segundo lote tomaría saldos después de haber bloqueado la cola de cambios.
+- **Cola de `balance.changed`.** La última escritura del lote es un solo `INSERT … ON CONFLICT … DO UPDATE` multi-fila y
+  ordenado sobre `wms.balance_change_queue`. No es `DO NOTHING` porque eso no bloquea una fila ya commiteada: el worker podría
+  sacarla antes del commit del movimiento, publicar el saldo viejo y perder el cambio para siempre. El costo es que los
+  escritores de una misma `(tenant, dueño, bodega, variante)` se serializan desde el encolado hasta confirmar.
 - `reserved` sólo lo mueve el agregado `Reservation`, también con upsert; el segundo `CHECK` impide que una reserva
   supere el saldo físico, y un movimiento que dejaría `on_hand < reserved` falla con `wms.stock.reserved` salvo que
   consuma la reserva (§7).
