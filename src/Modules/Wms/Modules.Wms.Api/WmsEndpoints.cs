@@ -17,6 +17,7 @@ public static class WmsEndpoints
             .WithTags("Wms");
 
         WarehouseEndpoints.Map(group);
+        LocationEndpoints.Map(group);
 
         return endpoints;
     }
