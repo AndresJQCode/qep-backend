@@ -13,7 +13,7 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// </summary>
 internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueries
 {
-    private sealed record TotalsRow(int Total, decimal OnHand, decimal Reserved, decimal Available);
+    private sealed record TotalsRow(int Total, decimal OnHand, decimal Reserved, decimal Available, decimal Pickable);
 
     public async Task<StockSearchResult> SearchAsync(StockFilter filter, CancellationToken cancellationToken)
     {
@@ -60,7 +60,8 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
             SELECT count(*)::int AS "Total",
                    coalesce(sum(CASE WHEN NOT r.is_virtual THEN r.on_hand ELSE 0 END), 0) AS "OnHand",
                    coalesce(sum(CASE WHEN NOT r.is_virtual THEN r.reserved ELSE 0 END), 0) AS "Reserved",
-                   coalesce(sum(r.available), 0) AS "Available"
+                   coalesce(sum(r.available), 0) AS "Available",
+                   coalesce(sum(r.pickable), 0) AS "Pickable"
             @FROM@
             WHERE @WHERE@
             """.Replace("@FROM@", from, StringComparison.Ordinal).Replace("@WHERE@", where.Text, StringComparison.Ordinal),
@@ -86,7 +87,7 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
                 .Replace("@OFFSET@", offset, StringComparison.Ordinal),
             page.Arguments.ToArray()).ToListAsync(cancellationToken);
 
-        return new StockSearchResult(rows, totalsRow.Total, new StockTotalsDto(totalsRow.OnHand, totalsRow.Reserved, totalsRow.Available));
+        return new StockSearchResult(rows, totalsRow.Total, new StockTotalsDto(totalsRow.OnHand, totalsRow.Reserved, totalsRow.Available, totalsRow.Pickable));
     }
 
     public async Task<StockSummaryRow> SummarizeAsync(

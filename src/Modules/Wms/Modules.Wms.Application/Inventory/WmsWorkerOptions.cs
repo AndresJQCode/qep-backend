@@ -23,9 +23,14 @@ public sealed class WmsWorkerOptions
     [Range(1, 168)]
     public int HousekeepingHours { get; init; } = 24;
 
+    /// <summary>Espera antes de la primera limpieza. Sin ella, con un intervalo de 24 h y un despliegue por día, el pod se reiniciaría
+    /// antes de que el temporizador cumpliera y la limpieza no correría nunca.</summary>
+    [Range(0, 3600)]
+    public int HousekeepingStartupSeconds { get; init; } = 60;
+
     /// <summary>S13: una sesión offline dura como máximo 30 días; los 15 de margen cubren el reintento tardío. Un evento más viejo ya
     /// lo rechazó la ventana de <c>occurredAt</c> (S12).</summary>
-    [Range(1, 3650)]
+    [Range(30, 3650)]
     public int ReceiptRetentionDays { get; init; } = 45;
 
     [Range(1, 1440)]

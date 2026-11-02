@@ -105,6 +105,10 @@ public sealed class StockQueryTests
         Assert.Equal(0m, row.GetProperty("pickable").GetDecimal());
         Assert.Equal(10m, summary.RootElement.GetProperty("pickable").GetDecimal());
         Assert.Equal(17m, summary.RootElement.GetProperty("available").GetDecimal());
+        // totals trae pickable (spec 24.3): lo que está en el bin sin picking no se puede tomar.
+        using var all = await GetJsonAsync(s.Manager, "/stock");
+        Assert.Equal(10m, all.RootElement.GetProperty("totals").GetProperty("pickable").GetDecimal());
+        Assert.Equal(17m, all.RootElement.GetProperty("totals").GetProperty("available").GetDecimal());
     }
 
     [Fact]
@@ -182,6 +186,37 @@ public sealed class StockQueryTests
         Assert.Equal("A-01-02", movement.GetProperty("to").GetProperty("locationCode").GetString());
         Assert.Equal("UND", movement.GetProperty("baseUom").GetString());
         Assert.Equal("V1", movement.GetProperty("variantCode").GetString());
+    }
+
+    [Fact]
+    public async Task MovementsSharingOccurredAtAreNeitherSkippedNorRepeatedAcrossPages()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var s = await ArrangeAsync(database, factory);
+        var newest = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var shared = DateTimeOffset.UtcNow.AddMinutes(-10);
+        // Las líneas de un ajuste comparten hora: el desempate lo da el id, y la frontera de página cae en medio del par.
+        var batch = Batch(
+            s,
+            Entry(s, s.Supplier, Available, s.BinA, Available, 1, occurredAt: shared),
+            Entry(s, s.Supplier, Available, s.BinA, Available, 2, occurredAt: shared),
+            Entry(s, s.Supplier, Available, s.BinA, Available, 3, occurredAt: shared));
+        var posting = await PostAsync(factory, batch);
+        var latest = (await PostAsync(factory, Batch(s, Entry(s, s.Supplier, Available, s.BinA, Available, 4, occurredAt: newest)))).MovementIds.Single();
+        var expected = new List<Guid> { latest };
+        expected.AddRange(posting.MovementIds.OrderByDescending(id => id));
+
+        using var first = await GetJsonAsync(s.Manager, $"/stock/movements?locationId={s.BinA}&limit=2");
+        var cursor = first.RootElement.GetProperty("nextCursor").GetString();
+        using var second = await GetJsonAsync(s.Manager, $"/stock/movements?locationId={s.BinA}&limit=2&cursor={cursor}");
+
+        static List<Guid> IdsOf(JsonDocument page) =>
+            [.. page.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetGuid())];
+
+        Assert.Equal(expected.Take(2), IdsOf(first));
+        Assert.Equal(expected.Skip(2), IdsOf(second));
     }
 
     [Fact]

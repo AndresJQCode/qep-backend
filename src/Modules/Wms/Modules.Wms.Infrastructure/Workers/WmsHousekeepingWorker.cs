@@ -29,8 +29,18 @@ internal sealed partial class WmsHousekeepingWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(options.Value.HousekeepingStartupSeconds), stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        // Primera pasada ya, luego cada HousekeepingHours: RunOnceAsync es idempotente.
         using var timer = new PeriodicTimer(TimeSpan.FromHours(options.Value.HousekeepingHours));
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        do
         {
             try
             {
@@ -45,6 +55,19 @@ internal sealed partial class WmsHousekeepingWorker(
             {
                 LogTickFailed(logger, exception);
             }
+        }
+        while (await WaitNextAsync(timer, stoppingToken));
+    }
+
+    private static async Task<bool> WaitNextAsync(PeriodicTimer timer, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await timer.WaitForNextTickAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
     }
 

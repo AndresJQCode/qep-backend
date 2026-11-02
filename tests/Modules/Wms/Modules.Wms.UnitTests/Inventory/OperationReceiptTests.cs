@@ -223,4 +223,73 @@ public sealed class OperationReceiptTests
         Assert.Equal("{\"id\":9}", content.ResponseContent);
         Assert.Equal(2, harness.Receipts.FindCalls);
     }
+
+    [Fact]
+    public async Task ALoserFailingOnAConsumedPreconditionReplaysTheWinnersResponse()
+    {
+        var harness = Arrange(header: "k1");
+        var hash = RequestHasher.Hash("POST", Path, new Body("x"));
+
+        // La ganadora consumió la precondición (versión, reverso, saldo): la perdedora falla con un error de negocio, no con la PK.
+        var result = await RunAsync(HeaderFilter(), harness, new Body("x"), () =>
+        {
+            harness.Receipts.Store("k1", hash, "{\"id\":5}");
+            throw new WmsDomainException(WmsErrorCodes.StockInsufficient, "not enough");
+        });
+
+        var content = Assert.IsType<Microsoft.AspNetCore.Http.HttpResults.ContentHttpResult>(result);
+        Assert.Equal("{\"id\":5}", content.ResponseContent);
+    }
+
+    [Fact]
+    public async Task AFailureWithAWinnersReceiptOfAnotherBodyIsAConflict()
+    {
+        var harness = Arrange(header: "k1");
+
+        var failure = await Assert.ThrowsAsync<ResourceConflictException>(() => RunAsync(HeaderFilter(), harness, new Body("x"), () =>
+        {
+            harness.Receipts.Store("k1", RequestHasher.Hash("POST", Path, new Body("other")), "{}");
+            throw new WmsDomainException(WmsErrorCodes.StockInsufficient, "not enough");
+        }));
+
+        Assert.Equal(WmsErrorCodes.IdempotencyKeyReused, failure.Code);
+    }
+
+    [Fact]
+    public async Task AFailureWithoutAReceiptKeepsItsOwnError()
+    {
+        var harness = Arrange(header: "k1");
+
+        await Assert.ThrowsAsync<WmsDomainException>(() => RunAsync(
+            HeaderFilter(), harness, new Body("x"), () => throw new WmsDomainException(WmsErrorCodes.StockInsufficient, "not enough")));
+    }
+
+    [Fact]
+    public async Task ACancelledRequestIsNeverReplayed()
+    {
+        var harness = Arrange(header: "k1");
+        harness.Receipts.Store("k1", RequestHasher.Hash("POST", Path, new Body("x")), "{}");
+
+        // Con recibo ya guardado el filtro respondería antes de llegar al handler: se arma el caso por la ruta del catch.
+        harness.Receipts.Stored.Clear();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => RunAsync(
+            HeaderFilter(), harness, new Body("x"), () =>
+            {
+                harness.Receipts.Store("k1", RequestHasher.Hash("POST", Path, new Body("x")), "{}");
+                throw new OperationCanceledException();
+            }));
+    }
+
+    [Fact]
+    public async Task ABodyThatFailedBindingSkipsTheFilter()
+    {
+        var harness = Arrange(routeId: Guid.NewGuid());
+        harness.Http.Response.StatusCode = 400;
+        var filter = new IdempotencyKeyFilter(IdempotencyKeySource.Server, "adjustment", "post");
+
+        var result = await RunAsync(filter, harness, null);
+
+        Assert.Equal("ran", result);
+        Assert.Equal(0, harness.Receipts.FindCalls);
+    }
 }

@@ -26,6 +26,13 @@ public sealed class IdempotencyKeyFilter(IdempotencyKeySource source, string? do
         ArgumentNullException.ThrowIfNull(next);
 
         var http = context.HttpContext;
+
+        // Un cuerpo ausente o ilegible ya fijó su 400/415 al enlazar los argumentos: no hay clave que derivar ni recibo que buscar.
+        if (http.Response.StatusCode >= StatusCodes.Status400BadRequest)
+        {
+            return await next(context);
+        }
+
         var services = http.RequestServices;
         var executionContext = services.GetRequiredService<IExecutionContext>();
 
@@ -91,11 +98,14 @@ public sealed class IdempotencyKeyFilter(IdempotencyKeySource source, string? do
         {
             return await next(context);
         }
-        // 5. Dos peticiones iguales a la vez: la PK frenó a ésta, su transacción ya se deshizo (el await using del handler) y el recibo
-        // de la ganadora es visible. Sin recibo no hay qué repetir: se deja pasar el error original.
-        catch (OperationReplayedException)
+        // 5. Dos peticiones iguales a la vez: la perdedora puede fallar por la PK del recibo (OperationReplayedException) o antes, por una
+        // precondición que la ganadora ya consumió (412 de versión, 422 de ya reversado, saldo insuficiente). Sea cual sea el error, su
+        // transacción ya se deshizo (el await using del handler) y el recibo de la ganadora es visible: reintentar tiene que ser
+        // indistinguible de haber acertado a la primera (§6.4). Sin recibo no hay qué repetir y el error original sigue. La
+        // cancelación no cuenta: el cliente se fue.
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            var winner = await receipts.FindAsync(tenantId, key, http.RequestAborted);
+            var winner = await receipts.FindAsync(tenantId, key, CancellationToken.None);
             if (winner is null)
             {
                 throw;

@@ -1,5 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Modules.Wms.Application;
 using Modules.Wms.Domain.Inventory;
 using Modules.Wms.Infrastructure.Workers;
 using Testcontainers.PostgreSql;
@@ -42,6 +45,31 @@ public sealed class WmsHousekeepingTests
         Assert.Equal(
             ["recent"],
             [.. await ReadKeysAsync(database)]);
+    }
+
+    [Fact]
+    public async Task TheFirstPassRunsSoonAfterStartWithoutWaitingTheInterval()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        await InsertReceiptAsync(database, "old", DateTimeOffset.UtcNow.AddDays(-46));
+        // Un worker propio con espera de arranque 0 y un intervalo de 24 h: si sólo corriera al cumplirse el intervalo, el recibo seguiría ahí.
+        using var worker = new WmsHousekeepingWorker(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new WmsWorkerOptions { HousekeepingStartupSeconds = 0, HousekeepingHours = 24 }),
+            NullLogger<WmsHousekeepingWorker>.Instance);
+
+        await worker.StartAsync(TestContext.Current.CancellationToken);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (DateTimeOffset.UtcNow < deadline
+            && await ScalarAsync<long>(database, "SELECT count(*) FROM wms.operation_receipts") > 0)
+        {
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+        }
+
+        await worker.StopAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0L, await ScalarAsync<long>(database, "SELECT count(*) FROM wms.operation_receipts"));
     }
 
     [Fact]

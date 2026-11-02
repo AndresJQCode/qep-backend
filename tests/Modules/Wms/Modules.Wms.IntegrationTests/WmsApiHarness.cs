@@ -250,6 +250,7 @@ internal static partial class WmsApiHarness
             builder.UseSetting("Wms:Workers:ReconciliationSweepMinutes", "600");
             builder.UseSetting("Wms:Workers:PartitionSweepHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingHours", "24");
+            builder.UseSetting("Wms:Workers:HousekeepingStartupSeconds", "3600");
 
             if (configureServices is not null)
             {

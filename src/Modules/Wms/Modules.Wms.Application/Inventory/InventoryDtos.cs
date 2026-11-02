@@ -34,7 +34,8 @@ public sealed record StockRowDto(
     decimal? DisplayQty,
     DateTimeOffset UpdatedAt);
 
-public sealed record StockTotalsDto(decimal OnHand, decimal Reserved, decimal Available);
+/// <summary><c>Pickable</c> viaja con los totales (spec §24.3): sin él la pantalla no sabe cuánto se puede tomar sobre el filtro completo.</summary>
+public sealed record StockTotalsDto(decimal OnHand, decimal Reserved, decimal Available, decimal Pickable);
 
 /// <summary><c>Totals</c> viaja porque sumar la página da un total que depende de la página que se esté mirando, y
 /// <c>pageSize</c> tiene tope: la pantalla no puede pedir el filtro entero para sumarlo ella.</summary>
