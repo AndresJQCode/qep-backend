@@ -32,7 +32,9 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<ILotRepository, LotRepository>();
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
-        services.AddScoped<IStockReadQueries, StockReadQueries>();
+        services.AddScoped<StockReadQueries>();
+        services.AddScoped<IStockReadQueries>(provider => provider.GetRequiredService<StockReadQueries>());
+        services.AddScoped<IMovementReader>(provider => provider.GetRequiredService<StockReadQueries>());
         services.AddSingleton<WmsMetrics>();
         services.AddSingleton<IWmsConfirmMetrics>(provider => provider.GetRequiredService<WmsMetrics>());
         services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();

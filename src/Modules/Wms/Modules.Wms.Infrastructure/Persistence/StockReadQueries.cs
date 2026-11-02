@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
+using Modules.Wms.Domain.Inventory;
 
 namespace Modules.Wms.Infrastructure.Persistence;
 
@@ -11,7 +12,7 @@ namespace Modules.Wms.Infrastructure.Persistence;
 /// en las vistas y no se repiten acá. Un filtro opcional que no viene se omite del texto: PostgreSQL no tipa un parámetro <c>NULL</c>
 /// suelto (<c>could not determine data type of parameter</c>), así que nunca se manda como nulo.
 /// </summary>
-internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueries
+internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueries, IMovementReader
 {
     private sealed record TotalsRow(int Total, decimal OnHand, decimal Reserved, decimal Available, decimal Pickable);
 
@@ -181,6 +182,18 @@ internal sealed class StockReadQueries(WmsDbContext dbContext) : IStockReadQueri
             ? new MovementSearchResult(rows.Take(filter.Limit).ToList(), HasMore: true)
             : new MovementSearchResult(rows, HasMore: false);
     }
+
+    // El ledger sigue siendo el único escritor: acá sólo se lee, sin rastreo. La PK (id, occurred_at) da índice por prefijo al id.
+    public Task<StockMovement?> GetAsync(Guid tenantId, Guid movementId, CancellationToken cancellationToken) =>
+        dbContext.Set<StockMovement>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(movement => movement.TenantId == tenantId && movement.Id == movementId, cancellationToken);
+
+    // EXISTS sobre IX_stock_movements_reverses: no baja una fila ni recorre particiones enteras.
+    public Task<bool> IsReversedAsync(Guid tenantId, Guid movementId, CancellationToken cancellationToken) =>
+        dbContext.Set<StockMovement>()
+            .AsNoTracking()
+            .AnyAsync(movement => movement.TenantId == tenantId && movement.ReversesMovementId == movementId, cancellationToken);
 
     private static string EscapeLike(string text) =>
         text.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal);

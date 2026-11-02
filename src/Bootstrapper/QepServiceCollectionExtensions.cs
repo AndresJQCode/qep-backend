@@ -521,6 +521,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.RejectAdjustmentCommand, Modules.Wms.Application.AdjustmentDto>,
             Modules.Wms.Application.RejectAdjustmentHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ReverseMovementCommand, Modules.Wms.Application.MovementDto>,
+            Modules.Wms.Application.ReverseMovementHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

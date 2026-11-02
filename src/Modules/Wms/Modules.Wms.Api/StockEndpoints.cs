@@ -7,7 +7,7 @@ using Modules.Wms.Application;
 namespace Modules.Wms.Api;
 
 /// <summary>Saldos, resumen e historia de movimientos (spec WMS 2026-10-31 §24.3). Cuelga del grupo <c>/wms</c> de
-/// <see cref="WmsEndpoints"/>. Las tres rutas son lecturas puras: no provisionan ni escriben.</summary>
+/// <see cref="WmsEndpoints"/>. Las tres lecturas no provisionan ni escriben; el reverso de un movimiento es la única escritura.</summary>
 internal static class StockEndpoints
 {
     public static void Map(RouteGroupBuilder group)
@@ -30,6 +30,26 @@ internal static class StockEndpoints
             .Produces<MovementPageDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // IK: un movimiento no tiene versión, así que la clave la trae el cliente en el header.
+        group.MapPost("/stock/movements/{id:guid}/reverse", ReverseMovementAsync)
+            .RequireIdempotencyKey()
+            .RequireAuthorization(WmsPermissions.AdjustmentApprove)
+            .Accepts<ReverseMovementRequest>("application/json")
+            .Produces<MovementDto>(StatusCodes.Status201Created)
+            .Produces<MovementDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+    }
+
+    private static async Task<IResult> ReverseMovementAsync(
+        Guid tenantId, Guid id, ReverseMovementRequest? request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var reversal = await dispatcher.SendAsync(ReverseMovementCommand.From(tenantId, id, request), cancellationToken);
+        return Results.Created($"/api/v1/tenants/{tenantId}/wms/stock/movements", reversal);
     }
 
     private static async Task<IResult> ListStockAsync(
