@@ -43,6 +43,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<AdjustmentDtoComposer>();
         services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
         services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();
+        services.AddSingleton<IStockExportBuilder, ClosedXmlStockExportBuilder>();
 
         // Idempotencia (S2): el scope lo fija el filtro del API y lo consume Record en la transacción del handler.
         services.AddScoped<IdempotencyScope>();

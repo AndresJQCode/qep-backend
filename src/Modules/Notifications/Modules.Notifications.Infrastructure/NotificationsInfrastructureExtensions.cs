@@ -52,6 +52,7 @@ public static class NotificationsInfrastructureExtensions
         services.AddHostedService<CustomerExportDeliveryWorker>();
         services.AddHostedService<ProductExportDeliveryWorker>();
         services.AddHostedService<SupplierExportDeliveryWorker>();
+        services.AddHostedService<WmsExportDeliveryWorker>();
         // La exportación asíncrona de Quotations (spec 2026-09-12, D12): un worker por evento.
         services.AddHostedService<QuotationsExportReadyDeliveryWorker>();
         services.AddHostedService<QuotationsExportFailedDeliveryWorker>();

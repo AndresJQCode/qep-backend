@@ -34,5 +34,10 @@ public enum FileOwnerType
     // Spec 2026-09-19: el logo de un tenant. Sube por el mismo pipeline que cualquier imagen
     // (POST /files, PUT prefirmado, complete) y Tenancy lo asigna después con su propio endpoint
     // — ver ITenantLogoStorage. OwnerId es el tenantId.
-    Tenant = 6
+    Tenant = 6,
+
+    // WMS (spec 2026-10-31, S14): la evidencia de un documento de bodega y el Excel de saldos exportado. Se mapean al módulo `wms` en
+    // FileOwnerModules, para que con el módulo apagado esos archivos tampoco se listen ni se descarguen.
+    WmsEvidence = 7,
+    WmsExport = 8
 }

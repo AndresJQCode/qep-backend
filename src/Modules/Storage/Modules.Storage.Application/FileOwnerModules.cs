@@ -26,6 +26,8 @@ public static class FileOwnerModules
             [FileOwnerType.Product] = TenantModuleKeys.Catalog,
             [FileOwnerType.PaymentProof] = TenantModuleKeys.Orders,
             [FileOwnerType.Tenant] = null,
+            [FileOwnerType.WmsEvidence] = TenantModuleKeys.Wms,
+            [FileOwnerType.WmsExport] = TenantModuleKeys.Wms,
         }.ToFrozenDictionary();
 
     public static TenantModuleKey? ModuleOf(FileOwnerType ownerType) => ByOwnerType[ownerType];

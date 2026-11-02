@@ -31,6 +31,13 @@ internal static class StockEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Como la exportación de Suppliers: 202 y el archivo llega por correo (RF-030). Los filtros son los de GET /stock, por query.
+        group.MapPost("/stock/export", ExportStockAsync)
+            .RequireAuthorization(WmsPermissions.StockExport)
+            .Produces<StockExportAcceptedDto>(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         // IK: un movimiento no tiene versión, así que la clave la trae el cliente en el header.
         group.MapPost("/stock/movements/{id:guid}/reverse", ReverseMovementAsync)
             .RequireIdempotencyKey()
@@ -51,6 +58,10 @@ internal static class StockEndpoints
         var reversal = await dispatcher.SendAsync(ReverseMovementCommand.From(tenantId, id, request), cancellationToken);
         return Results.Created($"/api/v1/tenants/{tenantId}/wms/stock/movements", reversal);
     }
+
+    private static async Task<IResult> ExportStockAsync(
+        Guid tenantId, [AsParameters] ExportStockRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Accepted(value: await dispatcher.SendAsync(ExportStockCommand.From(tenantId, request), cancellationToken));
 
     private static async Task<IResult> ListStockAsync(
         Guid tenantId,

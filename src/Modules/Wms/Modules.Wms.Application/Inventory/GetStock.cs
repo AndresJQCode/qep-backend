@@ -63,13 +63,18 @@ public sealed class GetStockHandler(
         var snapshots = (await catalog.GetVariantsAsync(query.TenantId, variantIds, cancellationToken)).ToDictionary(snapshot => snapshot.VariantId);
         var variantProfiles = (await profiles.ListAsync(query.TenantId, variantIds, cancellationToken)).ToDictionary(profile => profile.VariantId);
 
-        var items = result.Rows.Select(row => ToDto(
+        var items = result.Rows.Select(row => StockRowMapper.ToDto(
             row, snapshots.GetValueOrDefault(row.VariantId), variantProfiles.GetValueOrDefault(row.VariantId))).ToList();
 
         return new StockPageDto(items, page, pageSize, result.Total, result.Totals);
     }
+}
 
-    private static StockRowDto ToDto(StockBalanceRow row, WmsVariantSnapshot? variant, VariantLogisticsProfile? profile) =>
+/// <summary>Una fila de la vista de saldos tal como la pinta la pantalla: la comparten la lista y la exportación, para que el Excel diga
+/// lo mismo que la grilla.</summary>
+internal static class StockRowMapper
+{
+    public static StockRowDto ToDto(StockBalanceRow row, WmsVariantSnapshot? variant, VariantLogisticsProfile? profile) =>
         new(
             row.OwnerId,
             row.OwnerName,

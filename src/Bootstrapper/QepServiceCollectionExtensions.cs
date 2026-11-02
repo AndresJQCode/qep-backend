@@ -530,6 +530,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Wms.Application.CommitInitialBalancesCommand, Modules.Wms.Application.InitialBalanceCommitDto>,
             Modules.Wms.Application.CommitInitialBalancesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.ExportStockCommand, Modules.Wms.Application.StockExportAcceptedDto>,
+            Modules.Wms.Application.ExportStockHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
@@ -1378,6 +1381,7 @@ public static class QepServiceCollectionExtensions
 
         // Y entre `suppliers` y `storage`, con el mismo adaptador para su exportación.
         services.AddScoped<ISupplierExportStorage, SupplierExportStorage>();
+        services.AddScoped<Modules.Wms.Application.IWmsExportStorage, WmsExportStorage>();
 
         // Y entre `quotations` y `storage`, para el Excel de las exportaciones asíncronas.
         services.AddScoped<IExportFileStorage, ExportFileStorage>();

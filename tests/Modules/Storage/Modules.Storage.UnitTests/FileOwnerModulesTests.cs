@@ -40,6 +40,17 @@ public sealed class FileOwnerModulesTests
     }
 
     [Fact]
+    public void WmsEvidenceAndExportsBelongToTheWmsModule()
+    {
+        Assert.Same(TenantModuleKeys.Wms, FileOwnerModules.ModuleOf(FileOwnerType.WmsEvidence));
+        Assert.Same(TenantModuleKeys.Wms, FileOwnerModules.ModuleOf(FileOwnerType.WmsExport));
+        Assert.Equal(
+            [FileOwnerType.WmsEvidence, FileOwnerType.WmsExport],
+            FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
+                TenantModuleKeys.All.Except([TenantModuleKeys.Wms]))).Order());
+    }
+
+    [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {
         Assert.Equal(
@@ -47,18 +58,18 @@ public sealed class FileOwnerModulesTests
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.WmsEvidence, FileOwnerType.WmsExport],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
 
-    // Con catalog apagado el listado excluye a los productos, y por la dependencia orders -> catalog
-    // también a los comprobantes: el módulo apagado se propaga.
+    // Con catalog apagado el listado excluye a los productos, y por las dependencias orders -> catalog y wms -> catalog también a los
+    // comprobantes y a los archivos de bodega: el módulo apagado se propaga.
     [Fact]
     public void OwnerTypesDisabledInExcludesProductsWhenCatalogIsOff()
     {
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.WmsEvidence, FileOwnerType.WmsExport],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Catalog]))).Order());
     }
