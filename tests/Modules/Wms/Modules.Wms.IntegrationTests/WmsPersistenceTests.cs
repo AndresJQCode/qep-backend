@@ -66,6 +66,12 @@ public sealed class WmsPersistenceTests
             Assert.Contains(expected, indexes);
         }
 
+        // Las FKs internas son RESTRICT ('r'), no CASCADE: spec §11.2.
+        Assert.Equal(
+            "r",
+            Assert.Single(await QueryStringsAsync(
+                factory, "SELECT confdeltype::text FROM pg_constraint WHERE conname = 'FK_uom_conversions_profile'")));
+
         // member_scopes nace vacía: nadie la escribe en este corte (S18).
         await using var scope = factory.Services.CreateAsyncScope();
         Assert.Empty(await scope.ServiceProvider.GetRequiredService<WmsDbContext>().MemberScopes.ToListAsync(Ct));
@@ -221,6 +227,47 @@ public sealed class WmsPersistenceTests
         staleCopy.Update("Segundo", null, true, DateTimeOffset.UtcNow);
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => stale.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().SaveChangesAsync(Ct));
+    }
+
+    [Fact]
+    public async Task UpdatingATrackedProfileKeepsChangesAndDropsConversionsInPlace()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-2", null, [6, 12]);
+        await using (var seed = factory.Services.CreateAsyncScope())
+        {
+            await seed.ServiceProvider.GetRequiredService<IVariantProfileRepository>().GetOrCreateDefaultAsync(Tenant, variantId, Ct);
+            await seed.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        Guid keptId;
+        await using (var edit = factory.Services.CreateAsyncScope())
+        {
+            var profile = (await edit.ServiceProvider.GetRequiredService<IVariantProfileRepository>().FindAsync(Tenant, variantId, Ct))!;
+            Assert.Equal(2, profile.Conversions.Count);
+            keptId = profile.Conversions.Single(c => c.Code == "EMPAQUE x6").Id;
+
+            // Conserva «EMPAQUE x6» con otro factor, deja caer «EMPAQUE x12» y agrega «CAJA».
+            profile.Update(
+                new ProfileChanges(
+                    UomCode.Parse("UND"), 0, TrackingPolicy.None, false, null, null, null, null, null, null, null,
+                    [("EMPAQUE x6", 7m, "BAR-6"), ("CAJA", 24m, null)]),
+                hasStock: false,
+                DateTimeOffset.UtcNow);
+            await edit.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var stored = (await read.ServiceProvider.GetRequiredService<IVariantProfileRepository>().FindAsync(Tenant, variantId, Ct))!;
+        Assert.Equal(2, stored.Conversions.Count);
+        var kept = stored.Conversions.Single(c => c.Code == "EMPAQUE x6");
+        Assert.Equal(keptId, kept.Id);
+        Assert.Equal(7m, kept.Factor);
+        Assert.Equal("BAR-6", kept.Barcode);
+        Assert.Contains(stored.Conversions, c => c.Code == "CAJA" && c.Factor == 24m);
+        Assert.DoesNotContain(stored.Conversions, c => c.Code == "EMPAQUE x12");
     }
 
     [Fact]

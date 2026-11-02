@@ -19,4 +19,12 @@ public sealed class UomConversion
 
     internal static UomConversion Create(Guid id, string code, decimal factor, string? barcode) =>
         new() { Id = id, Code = code, Factor = factor, Barcode = barcode };
+
+    /// <summary>Cambia los datos conservando el Id: lo llama el perfil al editar, para que EF la vea como la misma fila.</summary>
+    internal void Reconfigure(string code, decimal factor, string? barcode)
+    {
+        Code = code;
+        Factor = factor;
+        Barcode = barcode;
+    }
 }

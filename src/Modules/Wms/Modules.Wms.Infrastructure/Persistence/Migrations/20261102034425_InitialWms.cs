@@ -168,7 +168,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                         principalSchema: "wms",
                         principalTable: "variant_profiles",
                         principalColumns: new[] { "tenant_id", "variant_id" },
-                        onDelete: ReferentialAction.Cascade);
+                        // A mano: el modelo declara ClientCascade (EF borra del lado del cliente la conversión que el perfil deja
+                        // caer) y el generador no emite nada para eso, lo que en la base sería NO ACTION. El esquema exige RESTRICT
+                        // (spec §11.2): borrar un perfil con conversiones vivas no puede arrastrarlas en silencio.
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -273,6 +276,12 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                 schema: "wms",
                 table: "member_scopes",
                 columns: new[] { "tenant_id", "member_id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_owners_tenant",
+                schema: "wms",
+                table: "owners",
+                column: "tenant_id");
 
             migrationBuilder.CreateIndex(
                 name: "IX_owners_tenant_self",

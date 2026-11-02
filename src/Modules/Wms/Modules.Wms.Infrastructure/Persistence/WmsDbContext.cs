@@ -180,9 +180,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         owner.Property(value => value.Version).HasColumnName("version").HasColumnType("bigint").IsConcurrencyToken();
         owner.Property(value => value.CreatedAt).HasColumnName("created_at");
         owner.Property(value => value.UpdatedAt).HasColumnName("updated_at");
-        owner.HasIndex(value => value.TenantId).HasDatabaseName("IX_owners_tenant");
+        // Con nombre en el HasIndex: dos índices sobre la misma propiedad se fusionan si sólo se distinguen por HasDatabaseName.
+        owner.HasIndex(value => value.TenantId, "IX_owners_tenant");
         // Un solo Self por tenant (S5): lo frena la base, no una consulta previa.
-        owner.HasIndex(value => value.TenantId).IsUnique().HasFilter("kind = 'Self'").HasDatabaseName(OwnerSelfIndex);
+        owner.HasIndex(value => value.TenantId, OwnerSelfIndex).IsUnique().HasFilter("kind = 'Self'");
     }
 
     private static void ConfigureUnitOfMeasure(ModelBuilder modelBuilder)
@@ -239,7 +240,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             .WithOne()
             .HasForeignKey("TenantId", "VariantId")
             .HasConstraintName("FK_uom_conversions_profile")
-            .OnDelete(DeleteBehavior.Cascade);
+            // ClientCascade y no Restrict: con Restrict EF rechaza sacar una conversión de la colección del perfil ("association
+            // severed"). La FK de la base sigue siendo RESTRICT: se fija a mano en InitialWms porque el generador no emite nada
+            // para ClientCascade. Así quitar una conversión es un DELETE directo del hijo y borrar el perfil no arrastra nada.
+            .OnDelete(DeleteBehavior.ClientCascade);
         profile.Navigation(value => value.Conversions).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 

@@ -133,18 +133,31 @@ public sealed class VariantLogisticsProfile
         HeightCm = changes.HeightCm;
         StorageClass = string.IsNullOrWhiteSpace(changes.StorageClass) ? null : changes.StorageClass.Trim();
         DisplayUom = changes.DisplayUom;
-        _conversions.Clear();
-        _conversions.AddRange(conversions);
+        // En el lugar y no reconstruyendo: EF rastrea cada conversión por su Id, y una instancia nueva con el Id de una rastreada
+        // se rechaza. Las que se quedan se actualizan, las nuevas se agregan y las que ya no vienen se sacan de la colección.
+        _conversions.RemoveAll(existing => !conversions.Any(c => c.Existing == existing));
+        foreach (var (existing, code, factor, barcode) in conversions)
+        {
+            if (existing is null)
+            {
+                _conversions.Add(UomConversion.Create(Guid.CreateVersion7(), code, factor, barcode));
+            }
+            else
+            {
+                existing.Reconfigure(code, factor, barcode);
+            }
+        }
+
         UpdatedAt = now;
     }
 
     /// <summary>Valida las presentaciones y conserva el id de la que mantiene su código: un identificador de barras apunta a ese
     /// id (<c>conversion_id</c>), y regenerarlo en cada <c>PUT</c> lo dejaría huérfano.</summary>
-    private List<UomConversion> BuildConversions(IReadOnlyList<(string Code, decimal Factor, string? Barcode)> requested)
+    private List<(UomConversion? Existing, string Code, decimal Factor, string? Barcode)> BuildConversions(IReadOnlyList<(string Code, decimal Factor, string? Barcode)> requested)
     {
         ArgumentNullException.ThrowIfNull(requested);
 
-        var result = new List<UomConversion>(requested.Count);
+        var result = new List<(UomConversion?, string, decimal, string?)>(requested.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (rawCode, factor, barcode) in requested)
         {
@@ -165,11 +178,7 @@ public sealed class VariantLogisticsProfile
             }
 
             var existing = _conversions.FirstOrDefault(c => string.Equals(c.Code.ToUpperInvariant(), key, StringComparison.Ordinal));
-            result.Add(UomConversion.Create(
-                existing?.Id ?? Guid.CreateVersion7(),
-                code,
-                factor,
-                string.IsNullOrWhiteSpace(barcode) ? null : barcode.Trim()));
+            result.Add((existing, code, factor, string.IsNullOrWhiteSpace(barcode) ? null : barcode.Trim()));
         }
 
         return result;

@@ -414,9 +414,10 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId")
+                    b.HasIndex(new[] { "TenantId" }, "IX_owners_tenant");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_owners_tenant_self")
                         .IsUnique()
-                        .HasDatabaseName("IX_owners_tenant_self")
                         .HasFilter("kind = 'Self'");
 
                     b.ToTable("owners", "wms", t =>
@@ -667,7 +668,7 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                     b.HasOne("Modules.Wms.Domain.Warehousing.VariantLogisticsProfile", null)
                         .WithMany("Conversions")
                         .HasForeignKey("TenantId", "VariantId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.ClientCascade)
                         .IsRequired()
                         .HasConstraintName("FK_uom_conversions_profile");
                 });

@@ -1,5 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Wms.Domain.Warehousing;
+using Modules.Wms.Infrastructure.Persistence;
 using Modules.Tenancy.Domain;
 using static Modules.Wms.IntegrationTests.WmsApiHarness;
 
@@ -57,6 +61,7 @@ public sealed class WmsAccessApiTests
         var response = await client.GetAsync(WarehousesUrl(), Ct);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(string.Empty, await BodyAsync(response));
     }
 
     [Fact]
@@ -72,5 +77,23 @@ public sealed class WmsAccessApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await BodyAsync(response));
         Assert.Equal(0, document.RootElement.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task TheFirstListProvisionsTheSelfOwnerAndTheSixUnits()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var client = CreateReader(factory);
+
+        var response = await client.GetAsync(WarehousesUrl(), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
+        var tenant = Guid.Parse(WmsApiHarness.TenantId);
+        Assert.Equal(1, await db.Owners.CountAsync(o => o.TenantId == tenant && o.Kind == OwnerKind.Self, Ct));
+        Assert.Equal(6, await db.UnitsOfMeasure.CountAsync(u => u.TenantId == tenant && u.IsSystem, Ct));
     }
 }

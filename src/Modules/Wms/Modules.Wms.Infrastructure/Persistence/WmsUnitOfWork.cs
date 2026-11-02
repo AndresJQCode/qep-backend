@@ -18,7 +18,7 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
-                "The warehouse record changed while the update was being committed.",
+                "The record changed while the update was being committed.",
                 exception);
         }
         // Por nombre de índice y no por 23505: dos peticiones a la vez pasan la comprobación previa del handler y sólo la base las
