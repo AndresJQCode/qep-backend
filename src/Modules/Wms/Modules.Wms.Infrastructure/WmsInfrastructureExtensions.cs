@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<WmsCaller>();
         services.AddScoped<IWmsUnitOfWork, WmsUnitOfWork>();
         services.AddScoped<IWmsAuditRecorder, WmsAuditRecorder>();
+        services.AddScoped<IUserReferenceProbe, WmsUserReferenceProbe>();
         services.AddScoped<IWmsProvisioner, WmsProvisioner>();
         services.AddScoped<IWarehouseRepository, WarehouseRepository>();
         services.AddScoped<IOwnerRepository, OwnerRepository>();
