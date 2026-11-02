@@ -11,6 +11,10 @@ namespace Modules.Wms.Infrastructure.Persistence;
 
 internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsUnitOfWork> logger) : IWmsUnitOfWork
 {
+    /// <summary>Primera clave del lock de dos claves de Bodegas, distinta de las de Automations, Identity y Pos. La numeración de
+    /// ajustes la comparte con su propio lock bloqueante.</summary>
+    internal const int WmsLockNamespace = 7401;
+
     private const string BeforeSavingSavepoint = "wms_before_saving";
 
     [LoggerMessage(Level = LogLevel.Error, Message = "ledger mutation attempted")]
@@ -18,6 +22,21 @@ internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsU
 
     public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
         await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+    // Precedente: AutomationsUnitOfWork. La forma de dos claves es un espacio aparte del de una sola clave, y sin transacción abierta
+    // el lock no serializaría nada: se libera con ella.
+    public async Task<bool> TryLockDocumentAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("TryLockDocumentAsync requires the transaction from BeginTransactionAsync.");
+        }
+
+        var taken = await dbContext.Database.SqlQuery<bool>(
+            $"SELECT pg_try_advisory_xact_lock({WmsLockNamespace}, hashtext({documentId.ToString()})) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return taken.Single();
+    }
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {

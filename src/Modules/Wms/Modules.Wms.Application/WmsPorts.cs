@@ -14,6 +14,10 @@ public interface IWmsUnitOfWork
     /// base. Traduce los errores igual que <see cref="SaveChangesAsync"/>.</summary>
     Task FlushAsync(CancellationToken cancellationToken);
 
+    /// <summary>Sólo para documentos (ajuste, movimiento a reversar, preview): <c>false</c> si otra transacción lo tiene. No espera, y
+    /// lo suelta el fin de la transacción. Exige la de <see cref="BeginTransactionAsync"/>.</summary>
+    Task<bool> TryLockDocumentAsync(Guid documentId, CancellationToken cancellationToken);
+
     /// <summary>Guarda. Con una transacción abierta, además la confirma.</summary>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }
