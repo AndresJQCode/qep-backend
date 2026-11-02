@@ -50,6 +50,17 @@ public sealed class FileOwnerModulesTests
                 TenantModuleKeys.All.Except([TenantModuleKeys.Wms]))).Order());
     }
 
+    // I-2: sólo el export de WMS pide un permiso además de storage.file.read; el resto de tipos no pide nada más.
+    [Fact]
+    public void OnlyTheWmsExportRequiresAnExtraPermission()
+    {
+        Assert.Equal("wms.stock.export", FileOwnerModules.RequiredPermissionOf(FileOwnerType.WmsExport));
+        Assert.Equal([FileOwnerType.WmsExport], FileOwnerModules.RequiredPermissionByOwnerType.Keys);
+        Assert.Null(FileOwnerModules.RequiredPermissionOf(FileOwnerType.WmsEvidence));
+        Assert.Equal([FileOwnerType.WmsExport], FileOwnerModules.OwnerTypesLackingPermission(_ => false));
+        Assert.Empty(FileOwnerModules.OwnerTypesLackingPermission(_ => true));
+    }
+
     [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {

@@ -12,7 +12,8 @@ namespace Bootstrapper;
 /// Adapta el almacenamiento de objetos de <c>Storage</c> al puerto que <c>wms</c> declara para dejar ahí el Excel de saldos (§24.3, S14).
 /// A diferencia de <see cref="SupplierExportStorage"/>, que solo manda un enlace prefirmado por correo, el export de WMS queda registrado
 /// como <see cref="FileResource"/> de dueño <see cref="FileOwnerType.WmsExport"/>: el <c>fileId</c> que recibe la pantalla se descarga por
-/// <c>POST /files/{id}/download-url</c>, y <see cref="FileOwnerModules"/> lo oculta y lo bloquea con el módulo <c>wms</c> apagado.
+/// <c>POST /files/{id}/download-url</c>, y <see cref="FileOwnerModules"/> lo oculta y lo bloquea con el módulo <c>wms</c> apagado, y listarlo o descargarlo exige además <c>wms.stock.export</c>
+/// (<see cref="FileOwnerModules.RequiredPermissionByOwnerType"/>).
 ///
 /// El objeto vive bajo <c>exports/</c>, cuya regla de lifecycle del bucket lo borra a los dos días (README «Reportes exportados»): por eso
 /// Storage solo emite el enlace durante <see cref="FileResource.ExportDownloadWindow"/> y la fila vencida responde

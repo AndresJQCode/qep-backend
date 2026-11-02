@@ -98,7 +98,7 @@ public sealed class StockExportDownloadTests
         var (database, factory, bucket, _, export) = await ExportedAsync();
         await using var _ = database;
         using var __ = factory;
-        using var reader = CreateClient(factory, SubjectId, TenantId, "storage.file.read");
+        using var reader = CreateClient(factory, SubjectId, TenantId, "storage.file.read", WmsPermissions.StockExport);
 
         Assert.Equal(
             1L,
@@ -125,13 +125,42 @@ public sealed class StockExportDownloadTests
         Assert.Equal("tenancy.module_not_enabled", await CodeOfAsync(blocked));
     }
 
+    // Storage no referencia a Wms: su tabla lleva el permiso como literal, y este es el único lugar que ve los dos lados.
+    [Fact]
+    public void StorageRequiresTheWmsExportPermissionByItsLiteral() =>
+        Assert.Equal(WmsPermissions.StockExport, FileOwnerModules.RequiredPermissionOf(Modules.Storage.Domain.FileOwnerType.WmsExport));
+
+    // I-2: storage.file.read es núcleo y lo tiene cualquier miembro del tenant; el export trae saldos de toda la bodega, así que
+    // descargarlo o listarlo exige además wms.stock.export. Mismo tenant, rol sin ese permiso.
+    [Fact]
+    public async Task ASameTenantCallerWithoutTheExportPermissionCannotDownloadOrListTheExport()
+    {
+        var (database, factory, _, _, export) = await ExportedAsync();
+        await using var _ = database;
+        using var __ = factory;
+        using var withPermission = CreateClient(factory, SubjectId, TenantId, "storage.file.read", WmsPermissions.StockExport);
+        using var withoutPermission = CreateClient(factory, SubjectId, TenantId, "storage.file.read");
+
+        var denied = await DownloadUrlAsync(withoutPermission, export.FileId);
+        var listedWithout = await withoutPermission.GetAsync($"/api/v1/tenants/{TenantId}/files?pageSize=100", Ct);
+        var listedWith = await withPermission.GetAsync($"/api/v1/tenants/{TenantId}/files?pageSize=100", Ct);
+        var allowed = await DownloadUrlAsync(withPermission, export.FileId);
+
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal("authorization.denied", await CodeOfAsync(denied));
+        Assert.Equal(HttpStatusCode.OK, listedWithout.StatusCode);
+        Assert.DoesNotContain(export.FileId.ToString(), await BodyAsync(listedWithout), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(export.FileId.ToString(), await BodyAsync(listedWith), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+    }
+
     [Fact]
     public async Task AnExpiredExportIsAGracefulErrorAndNotADeadLink()
     {
         var (database, factory, _, _, export) = await ExportedAsync();
         await using var _ = database;
         using var __ = factory;
-        using var reader = CreateClient(factory, SubjectId, TenantId, "storage.file.read");
+        using var reader = CreateClient(factory, SubjectId, TenantId, "storage.file.read", WmsPermissions.StockExport);
         await ExecuteAsync(
             database, "UPDATE storage.file_resources SET created_at = now() - interval '3 days' WHERE id = @id", ("id", export.FileId));
 
@@ -148,7 +177,7 @@ public sealed class StockExportDownloadTests
         await using var _ = database;
         using var __ = factory;
         await SeedTenantAsync(factory, OtherTenantId);
-        using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, "storage.file.read");
+        using var outsider = CreateClient(factory, OtherSubjectId, OtherTenantId, "storage.file.read", WmsPermissions.StockExport);
 
         var response = await outsider.PostAsync($"/api/v1/tenants/{OtherTenantId}/files/{export.FileId}/download-url", content: null, Ct);
 
