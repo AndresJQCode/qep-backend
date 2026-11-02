@@ -17,7 +17,7 @@ internal static class WorkerLoop
         {
             await Task.Delay(startupDelay, stoppingToken);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             return;
         }
@@ -29,7 +29,7 @@ internal static class WorkerLoop
             {
                 await tick(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }

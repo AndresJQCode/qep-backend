@@ -20,7 +20,8 @@ public sealed class WmsWorkerOptions
     [Range(0, 23)]
     public int ReconciliationHourUtc { get; init; } = 3;
 
-    [Range(1, 1440)]
+    // Hasta una hora: con un barrido más largo podría saltarse la hora objetivo entera y no correr nunca.
+    [Range(1, 60)]
     public int ReconciliationSweepMinutes { get; init; } = 30;
 
     [Range(1, 168)]

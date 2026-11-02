@@ -248,7 +248,7 @@ internal static partial class WmsApiHarness
             // Ningún worker de WMS corre solo en una prueba: cada prueba de worker llama a mano su RunOnceAsync/PublishOnceAsync.
             builder.UseSetting("Wms:Workers:WorkerStartupSeconds", "3600");
             builder.UseSetting("Wms:Workers:BalanceChangePublishSeconds", "3600");
-            builder.UseSetting("Wms:Workers:ReconciliationSweepMinutes", "600");
+            builder.UseSetting("Wms:Workers:ReconciliationSweepMinutes", "60");
             builder.UseSetting("Wms:Workers:PartitionSweepHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingHours", "24");
             builder.UseSetting("Wms:Workers:HousekeepingStartupSeconds", "3600");

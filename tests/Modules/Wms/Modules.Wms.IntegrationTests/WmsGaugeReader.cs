@@ -8,9 +8,11 @@ namespace Modules.Wms.IntegrationTests;
 /// <c>qep.wms.*</c>, así que se filtra por el <c>IMeterFactory</c> que lo creó.</summary>
 internal static class WmsGaugeReader
 {
-    public static long Read(QepApiFactory factory, string instrumentName)
+    public static long Read(QepApiFactory factory, string instrumentName) =>
+        Read(factory.Services.GetRequiredService<IMeterFactory>(), instrumentName);
+
+    public static long Read(IMeterFactory meterFactory, string instrumentName)
     {
-        var meterFactory = factory.Services.GetRequiredService<IMeterFactory>();
         long value = -1;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meterListener) =>

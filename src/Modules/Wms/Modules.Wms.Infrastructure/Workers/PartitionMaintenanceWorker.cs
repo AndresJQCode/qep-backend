@@ -9,7 +9,7 @@ namespace Modules.Wms.Infrastructure.Workers;
 
 /// <summary>
 /// Mantiene creada la partición del mes en curso y la del siguiente, para que un movimiento nunca caiga en <c>DEFAULT</c> (RNF-08).
-/// Si crearla falla —típicamente porque <c>DEFAULT</c> ya tiene filas de ese mes— lo registra y deja <c>qep.wms.partition.missing</c>
+/// Si crear una falla —típicamente porque <c>DEFAULT</c> ya tiene filas de ese mes— lo registra y deja <c>qep.wms.partition.missing</c>
 /// en 1, que es lo que alerta. <b>Sólo crea:</b> no hay camino de <c>DETACH</c> ni de <c>DROP</c>, porque una partición dentro de la
 /// ventana de <c>occurredAt</c> (S12) o un dato borrado no se recuperan.
 /// </summary>
@@ -44,7 +44,10 @@ internal sealed partial class PartitionMaintenanceWorker(
 
         await TryEnsureAsync(partitions, today, cancellationToken);
         await TryEnsureAsync(partitions, next, cancellationToken);
-        metrics.SetPartitionMissing(!await partitions.ExistsAsync(next, cancellationToken));
+        // ADR-10: falta partición si falta la del mes en curso o la del siguiente. Con sólo la siguiente, la alerta se apagaría el día
+        // que el mes sin partición pasa a ser el actual, justo cuando los movimientos empiezan a caer en DEFAULT.
+        var covered = await partitions.ExistsAsync(today, cancellationToken) && await partitions.ExistsAsync(next, cancellationToken);
+        metrics.SetPartitionMissing(!covered);
     }
 
     private async Task TryEnsureAsync(IPartitionMaintenance partitions, DateOnly month, CancellationToken cancellationToken)

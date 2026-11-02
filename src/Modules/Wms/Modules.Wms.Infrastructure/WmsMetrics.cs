@@ -14,6 +14,7 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
     private readonly Histogram<double> _confirmDuration;
     private long _balanceDrift;
     private long _partitionMissing;
+    private long _reconciliationFailed;
 
     public WmsMetrics(IMeterFactory meterFactory)
     {
@@ -31,7 +32,11 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
         Meter.CreateObservableGauge(
             "qep.wms.partition.missing",
             () => Volatile.Read(ref _partitionMissing),
-            description: "1 when the next stock movement partition could not be created.");
+            description: "1 when the partition of the current or the next month is missing.");
+        Meter.CreateObservableGauge(
+            "qep.wms.reconciliation.failed",
+            () => Volatile.Read(ref _reconciliationFailed),
+            description: "Warehouses the last reconciliation could not check; the drift gauge does not include them.");
     }
 
     public Meter Meter { get; }
@@ -42,6 +47,8 @@ internal sealed class WmsMetrics : IWmsConfirmMetrics
     public void RecordConfirmDuration(double milliseconds) => _confirmDuration.Record(milliseconds);
 
     public void SetBalanceDrift(long keys) => Volatile.Write(ref _balanceDrift, keys);
+
+    public void SetReconciliationFailed(long warehouses) => Volatile.Write(ref _reconciliationFailed, warehouses);
 
     public void SetPartitionMissing(bool missing) => Volatile.Write(ref _partitionMissing, missing ? 1 : 0);
 }

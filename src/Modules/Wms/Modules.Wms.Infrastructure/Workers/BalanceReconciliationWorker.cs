@@ -19,9 +19,13 @@ internal sealed partial class BalanceReconciliationWorker(
     ILogger<BalanceReconciliationWorker> logger) : BackgroundService
 {
     private DateOnly _lastRunDay;
+    private bool _lastRunFailed;
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Wms balance reconciliation failed.")]
     private static partial void LogTickFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Wms reconciliation could not check warehouse {WarehouseId}.")]
+    private static partial void LogWarehouseFailed(ILogger logger, Exception exception, Guid warehouseId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Wms reconciliation found {Drift} balance keys that differ from the ledger.")]
     private static partial void LogDrift(ILogger logger, long drift);
@@ -41,9 +45,13 @@ internal sealed partial class BalanceReconciliationWorker(
                     return;
                 }
 
-                // Se marca antes: una conciliación que falla a medias no se reintenta cada 30 minutos de esa hora.
-                _lastRunDay = today;
+                // Sólo una pasada limpia cierra el día: si alguna bodega falló, el siguiente barrido de esa hora reintenta (las
+                // diferencias ya registradas hoy no se duplican).
                 await RunOnceAsync(token);
+                if (!_lastRunFailed)
+                {
+                    _lastRunDay = today;
+                }
             },
             exception => LogTickFailed(logger, exception),
             stoppingToken);
@@ -55,12 +63,26 @@ internal sealed partial class BalanceReconciliationWorker(
         var reconciliation = scope.ServiceProvider.GetRequiredService<IBalanceReconciliation>();
 
         long total = 0;
+        long failed = 0;
         foreach (var warehouseId in await reconciliation.ListWarehousesAsync(cancellationToken))
         {
-            total += await reconciliation.ReconcileWarehouseAsync(warehouseId, cancellationToken);
+            try
+            {
+                total += await reconciliation.ReconcileWarehouseAsync(warehouseId, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Una bodega que falla no deja sin revisar a las demás: se cuenta y se sigue.
+                failed++;
+                LogWarehouseFailed(logger, exception, warehouseId);
+            }
         }
 
+        // El gauge de diferencia sólo cuenta lo revisado; lo que no se pudo revisar sale por su propio gauge, para que un 0 aquí no
+        // se lea como «todo cuadra» cuando hubo bodegas sin revisar.
+        _lastRunFailed = failed > 0;
         metrics.SetBalanceDrift(total);
+        metrics.SetReconciliationFailed(failed);
         if (total > 0)
         {
             LogDrift(logger, total);

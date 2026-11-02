@@ -37,6 +37,27 @@ public sealed class PartitionMaintenanceTests
         Assert.Equal(1L, WmsGaugeReader.Read(factory, "qep.wms.partition.missing"));
     }
 
+    // ADR-10: el riesgo es que falte la partición del mes. Si el gauge sólo mirara el siguiente, se apagaría el día que el mes sin
+    // partición pasa a ser el actual, justo cuando los movimientos empiezan a caer en DEFAULT.
+    [Fact]
+    public async Task TheGaugeReportsOneWhileTheCurrentMonthHasNoPartitionEvenIfNextExists()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var anchors = await SeedMovementAnchorsAsync(factory, database);
+        var current = DateOnly.FromDateTime(DateTime.UtcNow);
+        await ExecuteAsync(database, $"DROP TABLE {PartitionOf(current)}");
+        await InsertRawMovementAsync(database, anchors, new DateTimeOffset(current.Year, current.Month, 1, 0, 30, 0, TimeSpan.Zero));
+        var worker = factory.Services.GetRequiredService<PartitionMaintenanceWorker>();
+
+        await worker.RunOnceAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(await ExistsAsync(factory, NextMonth()));
+        Assert.False(await ExistsAsync(factory, current));
+        Assert.Equal(1L, WmsGaugeReader.Read(factory, "qep.wms.partition.missing"));
+    }
+
     [Fact]
     public async Task RunOnceIsIdempotentAndRecreatesAMissingPartitionWhenDefaultIsClean()
     {
