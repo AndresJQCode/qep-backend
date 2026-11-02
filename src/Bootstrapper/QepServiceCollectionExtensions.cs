@@ -446,6 +446,11 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Loans.Application.LoanDtoComposer>();
         // La carga común de abonar, previsualizar y anular: genera los períodos cerrados antes de decidir.
         services.AddScoped<Modules.Loans.Application.CapitalPaymentSupport>();
+
+        // Wms, spec WMS 2026-10-31. A mano y con ruta completa, como Loans: un handler olvidado responde 500.
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListWarehousesQuery, Modules.Wms.Application.WarehousesDto>,
+            Modules.Wms.Application.ListWarehousesHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
