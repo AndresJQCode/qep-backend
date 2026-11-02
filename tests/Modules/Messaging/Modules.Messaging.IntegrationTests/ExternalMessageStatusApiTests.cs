@@ -30,7 +30,9 @@ public sealed class ExternalMessageStatusApiTests
     private sealed record Fixture(
         QepApiFactory Factory, string ConnectionString, RegisteredTenant Tenant, Guid MemberId, Guid ConnectionId, HttpClient Client);
 
-    private static async Task<Fixture> ArrangeAsync(TestDatabase database)
+    /// <summary><paramref name="metaAccepts"/> va acá porque <see cref="FakeMetaGraphHandler"/> se queda con la primera regla que coincide:
+    /// una segunda regla sobre la misma ruta nunca se aplica.</summary>
+    private static async Task<Fixture> ArrangeAsync(TestDatabase database, bool metaAccepts = true)
     {
         var connectionString = database.GetConnectionString();
         var factory = new QepApiFactory(connectionString);
@@ -41,7 +43,15 @@ public sealed class ExternalMessageStatusApiTests
         var connectionId = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", "111", "222");
         var (_, plaintext) = await SeedApiKeyAsync(connectionString, tenant.TenantId, member, SendScope);
         factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, Catalog);
-        ScriptMetaOk(factory.MetaHandler, "111");
+        if (metaAccepts)
+        {
+            ScriptMetaOk(factory.MetaHandler, "111");
+        }
+        else
+        {
+            factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.InternalServerError, "{}");
+        }
+
         return new Fixture(factory, connectionString, tenant, member, connectionId, CreateExternalClient(factory, plaintext));
     }
 
@@ -103,9 +113,8 @@ public sealed class ExternalMessageStatusApiTests
     public async Task AnUnconfirmedSendReadsUnconfirmed()
     {
         await using var database = await StartDatabaseAsync();
-        var f = await ArrangeAsync(database);
+        var f = await ArrangeAsync(database, metaAccepts: false);
         using var host = f.Factory;
-        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.InternalServerError, "{}");
         await f.Client.PostAsJsonAsync(ExternalMessagesUrl, Body(f.ConnectionId), Ct);
         var messageId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE direction = 2");
 
@@ -146,10 +155,10 @@ public sealed class ExternalMessageStatusApiTests
         var other = await SeedWhatsAppConnectionAsync(f.Factory, f.Tenant.TenantId, "Soporte", "333", "444");
         f.Factory.MetaHandler.Respond("/444/message_templates", HttpStatusCode.OK, Catalog);
         ScriptMetaOk(f.Factory.MetaHandler, "333");
-        var (_, plaintextOther) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope, [other]);
+        var (_, plaintextOther) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope, [other], name: "Soporte");
         using var otherClient = CreateExternalClient(f.Factory, plaintextOther);
         var messageOnOther = await SendAsync(otherClient, other);
-        var (_, plaintextVentas) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope, [f.ConnectionId]);
+        var (_, plaintextVentas) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, SendScope, [f.ConnectionId], name: "Ventas");
         using var ventasClient = CreateExternalClient(f.Factory, plaintextVentas);
 
         await AssertNotFoundAsync(await ventasClient.GetAsync(MessageUrl(messageOnOther), Ct));
@@ -179,7 +188,7 @@ public sealed class ExternalMessageStatusApiTests
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
         var messageId = await SendAsync(f.Client, f.ConnectionId);
-        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, ["other.scope"]);
+        var (_, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, ["other.scope"], name: "Sin scope");
         using var scopeless = CreateExternalClient(f.Factory, plaintext);
 
         var response = await scopeless.GetAsync(MessageUrl(messageId), Ct);

@@ -205,7 +205,7 @@ public sealed class ExternalApiRequestLogTests
         await using var database = await StartDatabaseAsync();
         var f = await ArrangeAsync(database);
         using var host = f.Factory;
-        var (keyId, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, ["other.scope"]);
+        var (keyId, plaintext) = await SeedApiKeyAsync(f.ConnectionString, f.Tenant.TenantId, f.MemberId, ["other.scope"], name: "Sin scope");
         using var scopeless = CreateExternalClient(f.Factory, plaintext);
 
         var response = await scopeless.GetAsync($"{ExternalMessagesUrl}/{Guid.CreateVersion7()}", Ct);
