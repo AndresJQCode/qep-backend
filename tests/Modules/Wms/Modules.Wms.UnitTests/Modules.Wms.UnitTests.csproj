@@ -12,5 +12,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Modules\Wms\Modules.Wms.Domain\Modules.Wms.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Wms\Modules.Wms.Application\Modules.Wms.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Wms\Modules.Wms.Infrastructure\Modules.Wms.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

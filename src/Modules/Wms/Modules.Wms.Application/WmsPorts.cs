@@ -171,3 +171,22 @@ public interface IWmsGeographyReader
 {
     Task<IReadOnlyDictionary<Guid, WmsCityRef>> FindCitiesAsync(IReadOnlyCollection<Guid> cityIds, CancellationToken ct);
 }
+
+/// <summary>Lo que una etiqueta imprime de una ubicación: el código que se codifica en Code 128, la ruta legible y la bodega que
+/// da el nombre del archivo.</summary>
+public sealed record LocationLabel(string Code, string Path, string WarehouseCode);
+
+/// <summary>RF-004: las etiquetas de ubicación en un solo PDF. Application no sabe cómo se arma; Infrastructure lo hace con una
+/// plantilla Typst.</summary>
+public interface IWmsLabelRenderer
+{
+    Task<byte[]> RenderLocationLabelsAsync(IReadOnlyList<LocationLabel> labels, CancellationToken ct);
+}
+
+/// <summary>La salida hacia <c>qcode-pdf</c>. Vive aparte del renderer porque la URL y la clave son de <c>Quotations:Pdf</c> y el
+/// módulo no puede ver Quotations (WmsLayerTests): el adaptador está en Bootstrapper. Un fallo se lanza como
+/// <c>wms.label.render_failed</c>.</summary>
+public interface IWmsPdfGateway
+{
+    Task<byte[]> RenderAsync(string source, object data, string fileName, CancellationToken ct);
+}

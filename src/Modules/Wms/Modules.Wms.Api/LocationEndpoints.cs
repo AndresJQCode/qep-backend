@@ -36,6 +36,14 @@ internal static class LocationEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        locations.MapPost("/labels", LabelsAsync)
+            .RequireAuthorization(WmsPermissions.WarehouseManage)
+            .Accepts<LocationLabelsRequest>("application/json")
+            .Produces(StatusCodes.Status200OK, contentType: "application/pdf")
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         locations.MapPut("/{locationId:guid}", UpdateAsync)
             .RequireAuthorization(WmsPermissions.WarehouseManage)
             .Accepts<UpdateLocationRequest>("application/json")
@@ -83,6 +91,14 @@ internal static class LocationEndpoints
             .Select(candidate => candidate.Trim())
             .Select(candidate => candidate.StartsWith("W/", StringComparison.Ordinal) ? candidate[2..] : candidate)
             .Any(candidate => string.Equals(candidate, etag, StringComparison.Ordinal));
+
+    private static async Task<IResult> LabelsAsync(
+        Guid tenantId, Guid warehouseId, LocationLabelsRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        var pdf = await dispatcher.SendAsync(RenderLocationLabelsCommand.From(tenantId, warehouseId, request), cancellationToken);
+
+        return Results.File(pdf.Content, "application/pdf", pdf.FileName);
+    }
 
     private static async Task<IResult> UpdateAsync(
         Guid tenantId,

@@ -55,6 +55,9 @@ public sealed record UpdateLocationRequest(
     string Status,
     long Version);
 
+/// <summary>Cuerpo de <c>POST …/locations/labels</c> (RF-004): las ubicaciones a imprimir, de 1 a 500.</summary>
+public sealed record LocationLabelsRequest(IReadOnlyList<Guid> LocationIds);
+
 /// <summary>Un nodo del árbol, plano: el cliente arma el árbol con <c>ParentId</c> y se ordena por <c>Path</c>.</summary>
 public sealed record LocationDto(
     Guid Id,

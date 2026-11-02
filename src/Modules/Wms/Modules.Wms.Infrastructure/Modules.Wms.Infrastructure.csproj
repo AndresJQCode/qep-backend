@@ -20,6 +20,10 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
   <ItemGroup>
+    <!-- La plantilla de etiquetas es parte del contrato con `qcode-pdf`, no configuración: viaja adentro del ensamblado. -->
+    <EmbeddedResource Include="Pdf\location-label.typ" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Modules.Wms.UnitTests" />
     <InternalsVisibleTo Include="Modules.Wms.IntegrationTests" />
   </ItemGroup>

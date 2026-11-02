@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Wms.Application;
+using Modules.Wms.Infrastructure.Pdf;
 using Modules.Wms.Infrastructure.Persistence;
 
 namespace Modules.Wms.Infrastructure;
@@ -31,6 +32,9 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();
         services.AddScoped<ILocationStockProbe, NoLocationStockProbe>();
         services.AddScoped<IOwnerStockProbe, NoOwnerStockProbe>();
+
+        // El gateway hacia qcode-pdf lo registra el composition root: la clave es de Quotations y este módulo no la ve.
+        services.AddScoped<IWmsLabelRenderer, LocationLabelRenderer>();
 
         return services;
     }

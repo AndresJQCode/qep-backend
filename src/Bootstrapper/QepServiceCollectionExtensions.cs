@@ -453,6 +453,9 @@ public static class QepServiceCollectionExtensions
             Modules.Wms.Application.ListWarehousesHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Wms.Application.CreateWarehouseValidator>();
         services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.RenderLocationLabelsCommand, Modules.Wms.Application.LocationLabelsPdf>,
+            Modules.Wms.Application.RenderLocationLabelsHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Wms.Application.CreateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
             Modules.Wms.Application.CreateWarehouseHandler>();
         services.AddScoped<
@@ -1390,6 +1393,13 @@ public static class QepServiceCollectionExtensions
         // Wms (spec WMS 2026-10-31 §1.3): variantes y ciudades entran por puertos propios; Wms no referencia Catalog ni Geography.
         services.AddScoped<Modules.Wms.Application.IWmsCatalogReader, WmsCatalogReader>();
         services.AddScoped<Modules.Wms.Application.IWmsGeographyReader, WmsGeographyReader>();
+
+        // Etiquetas de ubicación (RF-004, P-9): el servicio y la clave son los de Quotations:Pdf, que Wms no ve. Singleton con timeout propio,
+        // como AddPdfRenderer: el default de HttpClient son 100 s y qcode-pdf corta la compilación a los 15.
+        services.AddSingleton<Modules.Wms.Application.IWmsPdfGateway>(sp =>
+            new WmsPdfGateway(
+                new HttpClient { Timeout = TimeSpan.FromSeconds(30) },
+                sp.GetRequiredService<IOptions<QuotationsOptions>>()));
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
