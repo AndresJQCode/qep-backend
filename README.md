@@ -4264,8 +4264,8 @@ Fase 2 del mismo spec (WMS-D). El inventario es un **ledger inmutable**: `wms.st
 destino (par de claves `StockKey`: dueño, ubicación, variante, lote y estado) y `wms.stock_balances` es el saldo derivado, que sólo
 escribe `InventoryLedger` en la misma transacción. Nada se edita: `trg_stock_movements_immutable` lanza `wms.ledger.immutable` ante
 cualquier `UPDATE` o `DELETE`, y un error se corrige con un movimiento de **reverso** (`POST /stock/movements/{id}/reverse`), que apunta
-al original. El rol de la aplicación no recibe `TRUNCATE` sobre `wms.stock_movements`: es configuración de la plataforma, no una
-migración. Las lecturas salen de `wms.v_stock_rows` y `wms.v_stock_summary`, donde viven las fórmulas de disponible, picking, recibido y
+al original. Quitarle al rol de la aplicación el `TRUNCATE` sobre `wms.stock_movements` y sobre cada una de sus particiones mensuales es
+una tarea **pendiente de la plataforma** (repo `migracion-k8s`), no una migración: hoy nada en `k8s/` lo hace y las migraciones corren con la conexión de la aplicación. Las lecturas salen de `wms.v_stock_rows` y `wms.v_stock_summary`, donde viven las fórmulas de disponible, picking, recibido y
 bloqueado. Las sondas de «con existencias» (`hasStock` del perfil, borrar una ubicación, desactivar un dueño) cuentan saldo físico: una
 ubicación no virtual con `on_hand` o `reserved` distinto de cero. Una variante con movimientos o saldos en el ledger tampoco se borra
 de Catalog (`CatalogVariantUsageChecker`): se desactiva.
@@ -4301,8 +4301,8 @@ postear un ajuste propuesto hace tiempo con fecha física. La ventana es la que 
 | --- | --- | --- |
 | `BalanceChangePublisher` | Vacía `wms.balance_change_queue` y publica `wms.balance.changed.v1` al outbox | `BalanceChangePublishSeconds` (10) |
 | `BalanceReconciliationWorker` | Una vez al día compara el saldo con el ledger por bodega; registra la diferencia en `wms.balance_checks` y **no la corrige** | `ReconciliationHourUtc` (3), `ReconciliationSweepMinutes` (30) |
-| `PartitionMaintenanceWorker` | Crea la partición del mes siguiente de `stock_movements` | `PartitionSweepHours` (24) |
-| `WmsHousekeepingWorker` | Purga recibos y previews vencidos | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45), `PreviewRetentionMinutes` (30) |
+| `PartitionMaintenanceWorker` | Asegura la partición del mes actual y la del siguiente de `stock_movements` | `PartitionSweepHours` (24) |
+| `WmsHousekeepingWorker` | Purga recibos pasados de `ReceiptRetentionDays`, previews vencidos (por su propia columna) y saldos en cero (`on_hand = 0` y `reserved = 0`) | `HousekeepingHours` (24), `HousekeepingStartupSeconds` (60), `ReceiptRetentionDays` (45) |
 | `WmsExportDeliveryWorker` (Notifications) | Manda por correo el enlace del export (`wms.export-ready.v1`) | — |
 
 `WorkerStartupSeconds` (30) retrasa la primera pasada de los tres workers del ledger: con un intervalo largo y un despliegue por commit, el
