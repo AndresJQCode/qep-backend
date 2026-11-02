@@ -21,6 +21,7 @@ public static class WmsEndpoints
         OwnerEndpoints.Map(group);
         UomEndpoints.Map(group);
         VariantProfileEndpoints.Map(group);
+        StockEndpoints.Map(group);
 
         return endpoints;
     }

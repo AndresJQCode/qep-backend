@@ -635,6 +635,8 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "TenantId", "VariantId", "Status" }, "IX_stock_balances_tenant_variant_status");
 
+                    b.HasIndex(new[] { "TenantId", "WarehouseId", "VariantId" }, "IX_stock_balances_tenant_warehouse_variant");
+
                     b.ToTable("stock_balances", "wms", t =>
                         {
                             t.HasCheckConstraint("CK_stock_balances_on_hand_non_negative", "on_hand >= 0 OR allows_negative");

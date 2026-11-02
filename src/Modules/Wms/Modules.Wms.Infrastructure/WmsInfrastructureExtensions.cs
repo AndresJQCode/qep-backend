@@ -32,6 +32,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<ILotRepository, LotRepository>();
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
+        services.AddScoped<IStockReadQueries, StockReadQueries>();
         services.AddSingleton<WmsMetrics>();
 
         // Idempotencia (S2): el scope lo fija el filtro del API y lo consume Record en la transacción del handler.

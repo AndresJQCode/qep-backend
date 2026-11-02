@@ -27,6 +27,7 @@ internal static class InventoryLedgerSql
         -- Sin FK hacia reverses_movement_id: PostgreSQL no admite FK a una tabla particionada salvo por la clave completa (S4).
         CREATE TABLE IF NOT EXISTS wms.stock_movements_default PARTITION OF wms.stock_movements DEFAULT;
         CREATE INDEX IF NOT EXISTS "IX_stock_movements_tenant_variant_occurred" ON wms.stock_movements (tenant_id, variant_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS "IX_stock_movements_tenant_occurred" ON wms.stock_movements (tenant_id, occurred_at DESC, id DESC);
         CREATE INDEX IF NOT EXISTS "IX_stock_movements_tenant_document" ON wms.stock_movements (tenant_id, document_type, document_id);
         CREATE INDEX IF NOT EXISTS "IX_stock_movements_from_location" ON wms.stock_movements (from_location_id, occurred_at);
         CREATE INDEX IF NOT EXISTS "IX_stock_movements_to_location" ON wms.stock_movements (to_location_id, occurred_at);

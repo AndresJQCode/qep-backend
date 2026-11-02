@@ -94,9 +94,10 @@ internal static class InventoryLedgerModel
             .IsUnique()
             .AreNullsDistinct(false)
             .HasDatabaseName(WmsDbContext.StockBalanceKeyIndex);
-        // §11.2: ninguna lectura del plan filtra por (tenant, bodega, variante) sobre el saldo; sí por variante y estado (probe de
-        // variante, resumen) y por ubicación (probe de ubicación, borrado).
+        // §11.2: por variante y estado (probe de variante, resumen), por ubicación (probe de ubicación, borrado) y, desde GET /stock, por
+        // (tenant, bodega, variante): la pantalla de saldos filtra por bodega y sin este índice recorre todos los saldos del tenant.
         balance.HasIndex(value => new { value.TenantId, value.VariantId, value.Status }, "IX_stock_balances_tenant_variant_status");
+        balance.HasIndex(value => new { value.TenantId, value.WarehouseId, value.VariantId }, "IX_stock_balances_tenant_warehouse_variant");
         balance.HasIndex(value => value.LocationId, "IX_stock_balances_location");
     }
 

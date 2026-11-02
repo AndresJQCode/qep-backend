@@ -48,10 +48,13 @@ public sealed class InventoryLedgerMigrationTests
             database,
             "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'wms' AND table_name = 'stock_movements' AND column_name = 'reverses_occurred_at'"));
 
-        // §11.2: los dos índices del saldo y las FKs internas RESTRICT ('r'); ninguna FK apunta a stock_movements.
-        Assert.Equal(2L, await ScalarAsync<long>(
+        // §11.2: los tres índices del saldo (el de bodega lo pide GET /stock), el del cursor de la historia y las FKs internas RESTRICT
+        // ('r'); ninguna FK apunta a stock_movements.
+        Assert.Equal(3L, await ScalarAsync<long>(
             database,
-            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname IN ('IX_stock_balances_tenant_variant_status', 'IX_stock_balances_location')"));
+            "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname IN ('IX_stock_balances_tenant_variant_status', 'IX_stock_balances_location', 'IX_stock_balances_tenant_warehouse_variant')"));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname = 'IX_stock_movements_tenant_occurred'"));
         Assert.Equal(0L, await ScalarAsync<long>(
             database, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'wms' AND indexname = 'IX_stock_balances_warehouse_variant'"));
         Assert.Equal(0L, await ScalarAsync<long>(

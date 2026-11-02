@@ -312,6 +312,12 @@ namespace Modules.Wms.Infrastructure.Persistence.Migrations
                 columns: new[] { "tenant_id", "variant_id", "status" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_stock_balances_tenant_warehouse_variant",
+                schema: "wms",
+                table: "stock_balances",
+                columns: new[] { "tenant_id", "warehouse_id", "variant_id" });
+
+            migrationBuilder.CreateIndex(
                 name: "UQ_stock_balances_key",
                 schema: "wms",
                 table: "stock_balances",
