@@ -76,8 +76,12 @@ public static class TenantModuleKeys
     /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Loans = TenantModuleKey.Define("loans");
 
+    /// <summary>Spec WMS 2026-10-31 §1.1: inventario de las variantes del catálogo. Depende de <see cref="Catalog"/> y queda
+    /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
+    public static readonly TenantModuleKey Wms = TenantModuleKey.Define("wms");
+
     public static readonly IReadOnlyList<TenantModuleKey> All =
-        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans];
+        [Catalog, Customers, Companies, Quotations, Orders, Reporting, Pos, Messaging, Pipeline, Shopify, Automations, Suppliers, ServiceContracts, Developer, Loans, Wms];
 
     /// <summary>Los seis base más <c>shopify</c>, sin <c>pos</c>, <c>messaging</c> ni <c>pipeline</c>: el signup con el interruptor prendido.</summary>
     public static readonly IReadOnlyList<TenantModuleKey> DefaultForNewTenants =
@@ -98,6 +102,8 @@ public static class TenantModuleKeys
         [ServiceContracts] = [Customers],
         // Spec 2026-10-31: un préstamo se otorga a un cliente.
         [Loans] = [Customers],
+        // Spec WMS 2026-10-31 §1.1: el inventario es de variantes del catálogo.
+        [Wms] = [Catalog],
     };
 
     public static IReadOnlyList<TenantModuleKey> DependenciesOf(TenantModuleKey key) =>
