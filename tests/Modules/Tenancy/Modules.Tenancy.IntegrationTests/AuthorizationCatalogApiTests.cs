@@ -79,7 +79,9 @@ public sealed class AuthorizationCatalogApiTests
         Assert.Equal(
             expected,
             catalog.Permissions
-                .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal))
+                // `wms.purchase_order.manage` también dice «order», pero es de Bodegas y no un permiso de pedidos de venta.
+                .Where(permission => permission.Permission.Contains("order", StringComparison.Ordinal)
+                    && !permission.Permission.StartsWith("wms.", StringComparison.Ordinal))
                 .OrderBy(permission => permission.Permission, StringComparer.Ordinal));
         // Los únicos permisos de venta son los del punto de venta (spec 2026-10-07): la regla
         // sigue cuidando que ningún permiso de pedidos se llame "sale".
@@ -164,7 +166,8 @@ public sealed class AuthorizationCatalogApiTests
     private static string[] OrderPermissionsOf(CatalogPayload catalog, string role) =>
     [
         .. catalog.Roles.Single(item => item.Role == role).Permissions
-            .Where(permission => permission.Contains("order", StringComparison.Ordinal))
+            .Where(permission => permission.Contains("order", StringComparison.Ordinal)
+                && !permission.StartsWith("wms.", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal),
     ];
 
