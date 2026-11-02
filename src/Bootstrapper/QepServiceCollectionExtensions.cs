@@ -81,6 +81,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
+        services.AddScoped<IExternalCallNotes, HttpExternalCallNotes>();
         // Límites de la API externa (spec 2026-10-30 §6.1): todo tiene valor por defecto y no hay
         // configuración nueva en Backend-prod, pero un 0 o un negativo tumba el arranque (ApiAccessOptionsValidator). El limitador por clave es singleton: el estado de las ventanas vive en él.
         services.AddOptions<ApiAccessOptions>()
@@ -313,6 +314,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
             ListApiKeysHandler>();
         services.AddScoped<
+            IQueryHandler<ListApiKeyRequestsQuery, ApiKeyRequestPage>,
+            ListApiKeyRequestsHandler>();
+        services.AddScoped<
             IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
             ListApiScopesHandler>();
         services.AddScoped<
@@ -325,6 +329,7 @@ public static class QepServiceCollectionExtensions
         // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
         services.AddScoped<ApiScopeCatalog>();
         services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiMessageStates, ApiMessageStates>();
         services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
         services.AddSingleton(new ApiScopeDefinition(
             MessagingScopes.TemplatesSend,
@@ -902,6 +907,7 @@ public static class QepServiceCollectionExtensions
         // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
         services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
         services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<IQueryHandler<GetExternalMessageQuery, ExternalMessageDto>, GetExternalMessageHandler>();
         services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
@@ -1268,6 +1274,10 @@ public static class QepServiceCollectionExtensions
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
+
+        // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.
+        services.AddSingleton<ExternalApiCallLogChannel>();
+        services.AddHostedService<ExternalApiCallLogWriter>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo

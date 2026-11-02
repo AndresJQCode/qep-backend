@@ -46,6 +46,13 @@ public static class ExternalWhatsAppEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status502BadGateway);
 
+        whatsapp.MapGet("/messages/{messageId:guid}", GetMessageAsync)
+            .RequireAuthorization(RequireTemplatesSend)
+            .Produces<ExternalMessageDto>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
         return group;
     }
 
@@ -61,6 +68,9 @@ public static class ExternalWhatsAppEndpoints
     private static async Task<IResult> ListTemplatesAsync(
         Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListExternalTemplatesQuery(connectionId), cancellationToken));
+
+    private static async Task<IResult> GetMessageAsync(Guid messageId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetExternalMessageQuery(messageId), cancellationToken));
 
     private static async Task<IResult> SendMessageAsync(HttpRequest request, IRequestDispatcher dispatcher, CancellationToken cancellationToken)
     {

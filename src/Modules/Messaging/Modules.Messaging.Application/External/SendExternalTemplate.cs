@@ -69,7 +69,8 @@ public sealed class SendExternalTemplateHandler(
     IMessagingNotifier notifier,
     ReadReceipts receipts,
     IClock clock,
-    IValidator<SendExternalTemplateCommand> validator)
+    IValidator<SendExternalTemplateCommand> validator,
+    IExternalCallNotes notes)
     : ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>
 {
     private static readonly Dictionary<string, string?> NoParameters = [];
@@ -156,6 +157,9 @@ public sealed class SendExternalTemplateHandler(
             }
         }
 
+        // Antes de Meta: el mensaje ya existe, así que un 502 o un 422 de la llamada también queda atado a él en el registro.
+        notes.NoteMessage(claim.MessageId);
+
         // 8. Desde acá todo va con CancellationToken.None: si Meta aceptó, cancelar no puede borrar la fila.
         var result = await meta.SendTemplateAsync(
             sender, SendTarget.ForTemplate(conversation.UserId, conversation.WaId), built.Send,
@@ -208,12 +212,15 @@ public sealed class SendExternalTemplateHandler(
 
     /// <summary>Lo que responde un <c>idempotencyKey</c> que ya no se reenvía: otra plantilla es 409; la misma, lo guardado, o el 502 si nunca se
     /// supo si salió.</summary>
-    private static ExternalMessageResult Repeat(Guid messageId, Guid conversationId, MessageStatus status, string? detailsJson, SendExternalTemplateCommand command)
+    private ExternalMessageResult Repeat(Guid messageId, Guid conversationId, MessageStatus status, string? detailsJson, SendExternalTemplateCommand command)
     {
         if (!SameTemplate(detailsJson, command))
         {
             throw IdempotencyKeyReused();
         }
+
+        // Después de comparar: un 409 es otra petición que reusó la clave, y ese mensaje no es el suyo.
+        notes.NoteMessage(messageId);
 
         return status == MessageStatus.Failed
             ? throw ExternalSendFailure.Unconfirmed()

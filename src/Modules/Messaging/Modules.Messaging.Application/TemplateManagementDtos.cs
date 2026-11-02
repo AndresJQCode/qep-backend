@@ -26,7 +26,9 @@ public sealed record ManagedTemplateDto(
     string? UnsupportedReason,
     MemberRefDto? CreatedBy,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    // Sólo en plantillas de cobro que Meta reclasificó: la categoría que QEP pidió. Es un aviso, no frena nada.
+    string? RequestedCategory = null);
 
 /// <summary>§4.3: el estado de la plantilla de cotización de la conexión. <c>null</c> en la pantalla = no aprovisionada, botón de crear.</summary>
 public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);

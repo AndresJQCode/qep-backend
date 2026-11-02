@@ -16,12 +16,52 @@ public sealed class ApiAccessDbContext(DbContextOptions<ApiAccessDbContext> opti
 
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
+    public DbSet<ApiKeyRequest> ApiKeyRequests => Set<ApiKeyRequest>();
+
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureApiKey(modelBuilder);
+        ConfigureApiKeyRequest(modelBuilder);
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
+    }
+
+    private static void ConfigureApiKeyRequest(ModelBuilder modelBuilder)
+    {
+        var request = modelBuilder.Entity<ApiKeyRequest>();
+        request.ToTable("api_key_requests", Schema);
+        request.HasKey(value => value.Id);
+        request.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        request.Property(value => value.TenantId).HasColumnName("tenant_id");
+        request.Property(value => value.ApiKeyId).HasColumnName("api_key_id");
+        request.Property(value => value.ApiKeyName)
+            .HasColumnName("api_key_name")
+            .HasMaxLength(ApiKey.NameMaxLength);
+        request.Property(value => value.Method)
+            .HasColumnName("method")
+            .HasMaxLength(ApiKeyRequest.MethodMaxLength);
+        request.Property(value => value.Path)
+            .HasColumnName("path")
+            .HasMaxLength(ApiKeyRequest.PathMaxLength);
+        request.Property(value => value.StatusCode).HasColumnName("status_code");
+        request.Property(value => value.ErrorCode)
+            .HasColumnName("error_code")
+            .HasMaxLength(ApiKeyRequest.ErrorCodeMaxLength);
+        request.Property(value => value.MessageId).HasColumnName("message_id");
+        request.Property(value => value.TraceId)
+            .HasColumnName("trace_id")
+            .HasMaxLength(ApiKeyRequest.TraceIdMaxLength);
+        request.Property(value => value.DurationMs).HasColumnName("duration_ms");
+        request.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+
+        request.HasIndex(value => new { value.TenantId, value.OccurredAt })
+            .IsDescending(false, true)
+            .HasDatabaseName("IX_api_key_requests_tenant_occurred");
+
+        // Para que la purga diaria no recorra toda la tabla.
+        request.HasIndex(value => value.OccurredAt)
+            .HasDatabaseName("IX_api_key_requests_occurred");
     }
 
     private static void ConfigureApiKey(ModelBuilder modelBuilder)

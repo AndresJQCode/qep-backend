@@ -1,3 +1,4 @@
+using Bootstrapper.ApiKeys;
 using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using FluentValidation;
@@ -40,6 +41,8 @@ internal sealed class ApiExceptionHandler(
         CancellationToken cancellationToken)
     {
         var (status, title, code) = MapException(exception);
+        ExternalCallNote.Find(httpContext)?.NoteError(code);
+
         // El 503 de Integrations (sin llave de cifrado fuera de producción) es una condición de
         // configuración que el mensaje ya explica, no una excepción sin manejar: va como las 4xx.
         // El 502 tampoco: es la respuesta de un servicio externo (Meta), ya registrada con su código.

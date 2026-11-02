@@ -41,8 +41,14 @@ internal sealed partial class ApiKeyAuthenticationHandler(
         };
 
         var verification = await verifier.VerifyAsync(presented, Context.RequestAborted);
+        var note = ExternalCallNote.Find(Context);
         if (verification.Key is not { } key)
         {
+            if (verification.RejectedKey is { } rejected)
+            {
+                note?.Identify(rejected.Id, rejected.Name, rejected.TenantId);
+            }
+
             // Unknown y Malformed son ruido de quien prueba claves inventadas (el tope por IP aun deja 600 por minuto): Debug.
             // Revoked, Expired y SecretMismatch nombran una clave real y vale verlos.
             if (verification.Rejection is ApiKeyRejection.Unknown or ApiKeyRejection.Malformed)
@@ -56,6 +62,8 @@ internal sealed partial class ApiKeyAuthenticationHandler(
 
             return AuthenticateResult.Fail("Invalid API key.");
         }
+
+        note?.Identify(key.Id, key.Name, key.TenantId);
 
         // Un contador no puede tumbar un envío (spec §6.2): si falla se loguea y se sigue.
         try
@@ -97,6 +105,7 @@ internal sealed partial class ApiKeyAuthenticationHandler(
     // El comportamiento por defecto es un cuerpo vacío, y un integrador externo no tiene otra forma de saber qué pasó.
     private async Task WriteProblemAsync(int status, string title, string code, string detail)
     {
+        ExternalCallNote.Find(Context)?.NoteError(code);
         Response.StatusCode = status;
         var problem = new ProblemDetails { Status = status, Title = title, Detail = detail };
         problem.Extensions["code"] = code;

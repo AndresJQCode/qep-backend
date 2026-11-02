@@ -31,6 +31,9 @@ public static class MessagingErrorCodes
     /// <summary>Spec 2026-10-30 §6.3.2: Meta no confirmó el envío (502).</summary>
     public const string ExternalSendUnconfirmed = "external.send_unconfirmed";
 
+    /// <summary>Spec 2026-11-01 parte 2: el mensaje no existe, es de otro tenant o conexión, o no lo envió una clave. Siempre 404: un 403 confirmaría que existe.</summary>
+    public const string ExternalMessageNotFound = "external.message_not_found";
+
     /// <summary>Spec 2026-10-14 §5.2: plantillas, campañas e inicio de conversación no existen en Instagram (§3).</summary>
     public const string ChannelUnsupported = "messaging.channel_unsupported";
 

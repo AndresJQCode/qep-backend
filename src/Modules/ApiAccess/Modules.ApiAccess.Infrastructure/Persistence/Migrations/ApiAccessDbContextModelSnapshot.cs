@@ -111,6 +111,76 @@ namespace Modules.ApiAccess.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.ApiAccess.Domain.ApiKeyRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("api_key_id");
+
+                    b.Property<string>("ApiKeyName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("api_key_name");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("error_code");
+
+                    b.Property<Guid?>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("method");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("path");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer")
+                        .HasColumnName("status_code");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("TraceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("trace_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAt")
+                        .HasDatabaseName("IX_api_key_requests_occurred");
+
+                    b.HasIndex("TenantId", "OccurredAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("IX_api_key_requests_tenant_occurred");
+
+                    b.ToTable("api_key_requests", "api_access");
+                });
+
             modelBuilder.Entity("Modules.Audit.Domain.AuditEntry", b =>
                 {
                     b.Property<Guid>("Id")

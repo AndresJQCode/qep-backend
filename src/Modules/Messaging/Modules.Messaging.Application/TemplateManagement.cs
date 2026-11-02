@@ -52,7 +52,8 @@ internal static class ManagedTemplateMapping
             described.UnsupportedReason,
             template.CreatedByMemberId is { } member ? new MemberRefDto(member, memberNames.GetValueOrDefault(member) ?? MessageMapping.DeletedMemberName) : null,
             template.CreatedAt,
-            template.UpdatedAt);
+            template.UpdatedAt,
+            BillingTemplateDefinitions.RequestedCategoryFor(template.Kind, template.Name, template.Category));
     }
 }
 

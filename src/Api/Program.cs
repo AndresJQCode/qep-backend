@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using Api;
 using Bootstrapper;
+using Bootstrapper.ApiKeys;
 using Bootstrapper.Authentication;
 using Bootstrapper.Cors;
 using Bootstrapper.Csrf;
@@ -171,6 +172,7 @@ app.UseExceptionHandler();
 // aplican al empezar la respuesta, así que sobreviven a que UseExceptionHandler la limpie. Ver
 // CorsSettings.
 app.UseQepCors();
+app.UseMiddleware<ExternalApiCallLoggingMiddleware>();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.

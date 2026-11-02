@@ -1,4 +1,5 @@
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
 
@@ -25,6 +26,8 @@ public sealed class BillingTemplateProvisioningTests
 
         public RecordingAudit Audit { get; } = new();
 
+        public RecordingLogger<ProvisionBillingTemplatesHandler> Logger { get; } = new();
+
         public Task<IReadOnlyList<ManagedTemplateDto>> ProvisionAsync(string? reminderBody = null, string? overdueBody = null)
         {
             var membership = new FakeMembershipDirectory();
@@ -32,13 +35,38 @@ public sealed class BillingTemplateProvisioningTests
             var executionContext = new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, MessagingPermissions.TemplateManage);
             var handler = new ProvisionBillingTemplatesHandler(
                 Repository, Bed.Meta, Bed.Connections, new FakeMemberNames(Bed.MemberId), new CallerMembership(membership, executionContext), UnitOfWork, Audit,
-                Bed.TenantModules, executionContext, new FakeClock(Bed.Now), new RecordingLogger<ProvisionBillingTemplatesHandler>(),
+                Bed.TenantModules, executionContext, new FakeClock(Bed.Now), Logger,
                 new ProvisionBillingTemplatesCommandValidator());
             return handler.HandleAsync(new ProvisionBillingTemplatesCommand(Bed.TenantId, Bed.ConnectionId, reminderBody, overdueBody), Ct);
         }
 
         public static string BodyOf(System.Text.Json.Nodes.JsonObject payload) =>
             payload["components"]!.AsArray().Single(component => component!["type"]!.GetValue<string>() == "BODY")!["text"]!.GetValue<string>();
+    }
+
+    // Meta puede reclasificar una plantilla de cobro de UTILITY a MARKETING (pasó con qep_cobro_vencido): el aviso sale sólo si cambió.
+    [Theory]
+    [InlineData(MessageTemplateKind.BillingOverdue, "qep_cobro_vencido", "MARKETING", "UTILITY")]
+    [InlineData(MessageTemplateKind.BillingOverdue, "qep_cobro_vencido_v2", "MARKETING", "UTILITY")]
+    [InlineData(MessageTemplateKind.External, "qep_cobro_vencido_v3", "MARKETING", "UTILITY")]
+    [InlineData(MessageTemplateKind.BillingReminder, "qep_cobro_recordatorio", "UTILITY", null)]
+    [InlineData(MessageTemplateKind.BillingReminder, "qep_cobro_recordatorio", "utility", null)]
+    [InlineData(MessageTemplateKind.Free, "promo", "MARKETING", null)]
+    [InlineData(MessageTemplateKind.External, "qep_cobro_vencido_v02", "MARKETING", null)]
+    public void TheRequestedCategoryAppearsOnlyWhenABillingTemplateChanged(
+        MessageTemplateKind kind, string name, string actual, string? expected) =>
+        Assert.Equal(expected, BillingTemplateDefinitions.RequestedCategoryFor(kind, name, actual));
+
+    [Fact]
+    public async Task AProvisionedTemplateReclassifiedByMetaWarnsAndReportsItsCategory()
+    {
+        var rig = new Rig();
+        rig.Bed.Meta.NextCreatedTemplate = new(new CreatedTemplate("777", "PENDING", "MARKETING"), null);
+
+        var templates = await rig.ProvisionAsync();
+
+        Assert.All(templates, template => Assert.Equal("UTILITY", template.RequestedCategory));
+        Assert.Contains(rig.Logger.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.Contains("MARKETING", StringComparison.Ordinal));
     }
 
     [Fact]

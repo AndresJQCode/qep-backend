@@ -218,9 +218,10 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public async Task CommitFailedAsync(int failureCode, string? failureTitle, DateTimeOffset occurredAt, string? metaMediaId, CancellationToken cancellationToken)
         {
             var kind = MessageColumnCodes.ToCode(draft.Kind);
+            // wamid = NULL: reenviar un Failed reescribe la fila, y el wamid del intento anterior haría que su failed rezagado la pisara.
             await dbContext.Database.ExecuteSqlAsync(
                 $"""
-                UPDATE messaging.messages SET status = 4, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
+                UPDATE messaging.messages SET status = 4, wamid = NULL, failure_code = {failureCode}, failure_title = {failureTitle}, occurred_at = {occurredAt}, text = {draft.Text}, caption = {draft.Caption}, kind = {kind},
                     reply_to_message_id = {draft.ReplyToMessageId}, reply_to_wamid = {draft.ReplyToWamid}, details = {draft.DetailsJson}::jsonb
                 WHERE id = {MessageId}
                 """, cancellationToken);

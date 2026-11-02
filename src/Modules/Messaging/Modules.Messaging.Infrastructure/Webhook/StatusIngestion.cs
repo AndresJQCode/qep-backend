@@ -33,18 +33,31 @@ internal static class StatusIngestion
         int? failureCode = update.Status == MessageStatus.Failed ? update.ErrorCode ?? 0 : null;
         var failureTitle = update.Status == MessageStatus.Failed ? update.ErrorTitle : null;
 
+        // Un failed deja la fila sin wamid: ese intento ya no existe en Meta, y un reintento acepta uno nuevo. El callback sólo identifica
+        // una fila sin wamid (sin confirmar o ya fallida); con el wamid de otro intento, un acuse rezagado del primero no la pisa.
         // §8.2: cada cambio en su transacción. El candado que toma el UPDATE del mensaje se mantiene hasta que la
         // foto commitea: dos réplicas con el delivered y el read del mismo mensaje se serializan, y la foto no
         // puede quedar en el estado del que perdió. Además el par es atómico: un corte entre los dos no deja
         // la foto vieja para siempre (el reintento vería NoChange y no la repararía).
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // El candado va antes del UPDATE: si un reintento tiene la fila bloqueada (§8.3), Postgres sólo esperaría al UPDATE cuando la versión vieja
+        // cumpliera su WHERE, y una fila Failed con un código real no lo cumple para el acuse del intento nuevo: lo saltaría y el estado se perdería.
+        // Con el SELECT ... FOR UPDATE la espera es incondicional, y el UPDATE (READ COMMITTED) ya ve el reintento commiteado.
+        var existing = await dbContext.Database.SqlQuery<int>(
+            $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2 ORDER BY id FOR UPDATE""")
+            .ToListAsync(cancellationToken);
+        if (existing.Count == 0)
+        {
+            return StatusApplied.NotFound;
+        }
+
         var updated = await dbContext.Database.SqlQuery<AppliedRow>(
             $"""
             UPDATE messaging.messages
             SET status = {newStatus}, failure_code = {failureCode}, failure_title = {failureTitle},
-                wamid = COALESCE(wamid, {update.Wamid})
+                wamid = CASE WHEN {newStatus} = 4 THEN NULL ELSE COALESCE(wamid, {update.Wamid}) END
             WHERE connection_id = {connectionId}
-              AND (wamid = {update.Wamid} OR id = {callback})
+              AND (wamid = {update.Wamid} OR (id = {callback} AND wamid IS NULL))
               AND direction = 2
               AND (
                     ({newStatus} IN (2, 3) AND (status < {newStatus} OR (status = 4 AND failure_code = -1)))
@@ -56,11 +69,8 @@ internal static class StatusIngestion
 
         if (updated.Count == 0)
         {
-            // RETURNING vacío no distingue «no existe» de «existe pero no avanza»; el reintento depende de eso.
-            var exists = await dbContext.Database.SqlQuery<int>(
-                $"""SELECT 1 AS "Value" FROM messaging.messages WHERE connection_id = {connectionId} AND (wamid = {update.Wamid} OR id = {callback}) AND direction = 2""")
-                .ToListAsync(cancellationToken);
-            return exists.Count == 0 ? StatusApplied.NotFound : StatusApplied.NoChange;
+            // Existe (el candado de arriba lo probó) pero no avanza.
+            return StatusApplied.NoChange;
         }
 
         if (failureCode is { } code)
