@@ -16,3 +16,9 @@ public sealed record WarehouseDto(
     int LocationCount);
 
 public sealed record WarehousesDto(IReadOnlyList<WarehouseDto> Items);
+
+/// <summary>Cuerpo de <c>POST /warehouses</c>. El código lo normaliza el dominio (P-4): «bog» queda «BOG».</summary>
+public sealed record CreateWarehouseRequest(string Code, string Name, Guid? CityId);
+
+/// <summary>Cuerpo de <c>PUT /warehouses/{id}</c>. No lleva código: el código es la clave de las etiquetas y no se cambia.</summary>
+public sealed record UpdateWarehouseRequest(string Name, Guid? CityId, bool IsActive, long Version);

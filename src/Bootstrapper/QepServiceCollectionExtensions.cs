@@ -451,6 +451,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.ListWarehousesQuery, Modules.Wms.Application.WarehousesDto>,
             Modules.Wms.Application.ListWarehousesHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Wms.Application.CreateWarehouseValidator>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.CreateWarehouseHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateWarehouseCommand, Modules.Wms.Application.WarehouseDto>,
+            Modules.Wms.Application.UpdateWarehouseHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<
