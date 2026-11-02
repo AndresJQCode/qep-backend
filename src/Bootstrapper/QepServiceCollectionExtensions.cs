@@ -57,12 +57,14 @@ using Modules.Shopify.Infrastructure;
 using Modules.Storage.Application;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Infrastructure;
+using Modules.Wms.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using WmsPermissions = Modules.Wms.Application.WmsPermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -1077,6 +1079,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddWmsInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1573,7 +1576,24 @@ public static class QepServiceCollectionExtensions
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
-                ApiAccessPermissions.ApiKeyManage
+                ApiAccessPermissions.ApiKeyManage,
+                // Spec WMS 2026-10-31 §11.5: de fábrica sólo en admin; el resto de roles los recibe como rol custom del tenant.
+                WmsPermissions.WarehouseManage,
+                WmsPermissions.OwnerManage,
+                WmsPermissions.ProfileManage,
+                WmsPermissions.DocumentRead,
+                WmsPermissions.StockRead,
+                WmsPermissions.StockExport,
+                WmsPermissions.AdjustmentPropose,
+                WmsPermissions.AdjustmentApprove,
+                WmsPermissions.PurchaseOrderManage,
+                WmsPermissions.TransferManage,
+                WmsPermissions.TransferDispatch,
+                WmsPermissions.ReceiptPerform,
+                WmsPermissions.PutawayPerform,
+                WmsPermissions.DiscrepancyResolve,
+                WmsPermissions.CountPerform,
+                WmsPermissions.CountApprove
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -2241,6 +2261,120 @@ public static class QepServiceCollectionExtensions
             "Préstamos",
             "medium",
             RequiredModules: [ModuleKeys.Loans]));
+        // Spec WMS 2026-10-31 §11.5: nunca se muestran permisos que el tenant no tiene. Con [wms], ModuleEntitlementMask quita el
+        // permiso al apagar el módulo y el editor de roles no lo ofrece; la API responde un 403 pelado, sin tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.WarehouseManage,
+            "Gestionar bodegas",
+            "Permite crear y editar bodegas y sus ubicaciones.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.OwnerManage,
+            "Gestionar dueños del inventario",
+            "Permite crear y editar los dueños a los que pertenece el inventario.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.ProfileManage,
+            "Gestionar perfiles de variante",
+            "Permite definir cómo se maneja cada variante en bodega: unidad de medida, seguimiento, conversiones e identificadores.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.DocumentRead,
+            "Ver bodegas y documentos de inventario",
+            "Permite consultar bodegas, ubicaciones, documentos y tareas del inventario.",
+            "Bodegas",
+            "low",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.StockRead,
+            "Ver existencias",
+            "Permite consultar las existencias por variante, ubicación y dueño.",
+            "Bodegas",
+            "low",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.StockExport,
+            "Exportar existencias",
+            "Permite descargar las existencias del inventario a un archivo.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.AdjustmentPropose,
+            "Proponer ajustes de inventario",
+            "Permite proponer un ajuste para corregir las existencias de una ubicación.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.AdjustmentApprove,
+            "Aprobar ajustes de inventario",
+            "Permite aprobar los ajustes propuestos, que modifican las existencias.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.PurchaseOrderManage,
+            "Gestionar órdenes de compra",
+            "Permite crear y gestionar las órdenes de compra a proveedores.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TransferManage,
+            "Gestionar traslados",
+            "Permite crear y gestionar traslados entre bodegas y ubicaciones.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.TransferDispatch,
+            "Despachar traslados",
+            "Permite despachar un traslado y sacar la mercancía de su ubicación de origen.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.ReceiptPerform,
+            "Recibir mercancía",
+            "Permite registrar la recepción de mercancía en la bodega.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.PutawayPerform,
+            "Ubicar mercancía recibida",
+            "Permite llevar la mercancía recibida a su ubicación de almacenamiento.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.DiscrepancyResolve,
+            "Resolver discrepancias de recepción",
+            "Permite resolver las diferencias entre lo pedido y lo recibido.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.CountPerform,
+            "Contar inventario",
+            "Permite registrar los conteos físicos de una ubicación.",
+            "Bodegas",
+            "medium",
+            RequiredModules: [ModuleKeys.Wms]));
+        services.AddSingleton(new PermissionDefinition(
+            WmsPermissions.CountApprove,
+            "Aprobar conteos",
+            "Permite aprobar los conteos, que ajustan las existencias a lo contado.",
+            "Bodegas",
+            "high",
+            RequiredModules: [ModuleKeys.Wms]));
     }
 
     private static void AddAuthentication(
@@ -2636,7 +2770,56 @@ public static class QepServiceCollectionExtensions
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,
-                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage));
+                policy => AddPermissionRequirement(policy, ApiAccessPermissions.ApiKeyManage))
+            // Spec WMS 2026-10-31 §11.5: la otra mitad de los dieciséis permisos wms.*; sin ellas el síntoma es 500, no 403.
+            .AddPolicy(
+                WmsPermissions.WarehouseManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.WarehouseManage))
+            .AddPolicy(
+                WmsPermissions.OwnerManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.OwnerManage))
+            .AddPolicy(
+                WmsPermissions.ProfileManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.ProfileManage))
+            .AddPolicy(
+                WmsPermissions.DocumentRead,
+                policy => AddPermissionRequirement(policy, WmsPermissions.DocumentRead))
+            .AddPolicy(
+                WmsPermissions.StockRead,
+                policy => AddPermissionRequirement(policy, WmsPermissions.StockRead))
+            .AddPolicy(
+                WmsPermissions.StockExport,
+                policy => AddPermissionRequirement(policy, WmsPermissions.StockExport))
+            .AddPolicy(
+                WmsPermissions.AdjustmentPropose,
+                policy => AddPermissionRequirement(policy, WmsPermissions.AdjustmentPropose))
+            .AddPolicy(
+                WmsPermissions.AdjustmentApprove,
+                policy => AddPermissionRequirement(policy, WmsPermissions.AdjustmentApprove))
+            .AddPolicy(
+                WmsPermissions.PurchaseOrderManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.PurchaseOrderManage))
+            .AddPolicy(
+                WmsPermissions.TransferManage,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TransferManage))
+            .AddPolicy(
+                WmsPermissions.TransferDispatch,
+                policy => AddPermissionRequirement(policy, WmsPermissions.TransferDispatch))
+            .AddPolicy(
+                WmsPermissions.ReceiptPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.ReceiptPerform))
+            .AddPolicy(
+                WmsPermissions.PutawayPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.PutawayPerform))
+            .AddPolicy(
+                WmsPermissions.DiscrepancyResolve,
+                policy => AddPermissionRequirement(policy, WmsPermissions.DiscrepancyResolve))
+            .AddPolicy(
+                WmsPermissions.CountPerform,
+                policy => AddPermissionRequirement(policy, WmsPermissions.CountPerform))
+            .AddPolicy(
+                WmsPermissions.CountApprove,
+                policy => AddPermissionRequirement(policy, WmsPermissions.CountApprove));
     }
 
     private static void AddPermissionRequirement(

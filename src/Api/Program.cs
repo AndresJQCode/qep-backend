@@ -48,6 +48,8 @@ using Modules.Storage.Api;
 using Modules.Storage.Infrastructure;
 using Modules.Loans.Api;
 using Modules.Loans.Infrastructure;
+using Modules.Wms.Api;
+using Modules.Wms.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
@@ -269,6 +271,7 @@ app.MapSupplierEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+app.MapWmsEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -353,6 +356,11 @@ await app.Services.InitializeLoansDatabaseAsync(
 // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
 // membresías son referencias blandas.
 await app.Services.InitializeApiAccessDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Wms (spec WMS 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; variantes, ciudades y
+// proveedores son referencias blandas.
+await app.Services.InitializeWmsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y

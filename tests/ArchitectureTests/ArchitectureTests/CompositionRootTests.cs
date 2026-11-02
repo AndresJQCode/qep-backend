@@ -19,6 +19,7 @@ using Modules.Pos.Application;
 using Modules.Shopify.Application;
 using Modules.Suppliers.Application;
 using Modules.Tenancy.Application;
+using Modules.Wms.Application;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
 namespace ArchitectureTests;
@@ -179,9 +180,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y las dieciséis <c>wms.*</c> del spec WMS 2026-10-31 §11.5.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSeventyThreeConstants()
+    public void PermissionDiscoveryFindsTheEightyNineConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -194,8 +195,9 @@ public sealed class CompositionRootTests
         // + los dos de cobros recurrentes (billing, spec 2026-10-29)
         // + el de claves de API (developer.api_key.manage, spec 2026-10-30)
         // + los dos de préstamos (loans, spec 2026-10-31)
-        // + el de uso de la plataforma (operator.usage.read).
-        Assert.Equal(73, PermissionConstants().Length);
+        // + el de uso de la plataforma (operator.usage.read)
+        // + los dieciséis de bodegas (wms, spec WMS 2026-10-31 §11.5).
+        Assert.Equal(89, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -604,6 +606,29 @@ public sealed class CompositionRootTests
             Assert.Contains(permission, catalog.PermissionsFor("billing"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("advisor"));
             Assert.DoesNotContain(permission, catalog.PermissionsFor("cashier"));
+        }
+    }
+
+    /// <summary>Spec WMS 2026-10-31 §11.5: dieciséis permisos con [wms] (la máscara los quita con el módulo apagado), categoría
+    /// Bodegas, todos en admin y en ningún otro rol de sistema: el resto es rol custom del tenant.</summary>
+    [Fact]
+    public void TheWmsPermissionsRequireTheWmsModuleAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        var definitions = RegisteredPermissionDefinitions().ToDictionary(definition => definition.Permission, StringComparer.Ordinal);
+        var permissions = typeof(WmsPermissions).GetFields().Select(field => (string)field.GetRawConstantValue()!).ToArray();
+
+        Assert.Equal(16, permissions.Length);
+        foreach (var permission in permissions)
+        {
+            Assert.Equal("Bodegas", definitions[permission].Category);
+            Assert.Equal([ModuleKeys.Wms], definitions[permission].RequiredModules!.ToArray());
+            Assert.Contains(permission, catalog.PermissionsFor("admin"));
+            foreach (var role in new[] { "advisor", "cashier", "billing" })
+            {
+                Assert.DoesNotContain(permission, catalog.PermissionsFor(role));
+            }
         }
     }
 
