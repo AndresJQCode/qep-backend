@@ -1074,7 +1074,7 @@ recepción llevan su referencia.
 | RF-027 | Reservar saldo contra una clave concreta para una demanda; liberar; consumir con el movimiento | 3 |
 | RF-028 | Bloquear y desbloquear saldo cambiando `status` por movimiento, con motivo | 3 |
 | RF-029 | Reconciliación nocturna ledger ↔ saldos, con novedad `LedgerDrift` si difieren | 3 |
-| RF-030 | Exportar saldos y movimientos a Excel con los mismos filtros de la consulta | 1 |
+| RF-030 | Exportar saldos y movimientos a Excel con los mismos filtros de la consulta | 1 (**parcial**: sólo saldos, `POST /stock/export`; movimientos pendiente) |
 
 ### 20.3 Entradas
 
@@ -1343,6 +1343,13 @@ sobre un documento existente, el servidor deriva la clave `"{documento}:{id}:{ac
 | `wms.ledger.immutable` | 500→422 | Sólo si algo intenta `UPDATE/DELETE`; se loguea como incidente |
 | `wms.import.too_many_rows` | 422 | Preview de la carga inicial con más de 500 filas (S21) |
 | `wms.import.invalid_file` | 422 | Commit de una previsualización que todavía tiene `issues` (`canCommit = false`, S21). `unknown_code` y `ambiguous_code` **no** son códigos de error: son `issues` por fila dentro del 200 del preview |
+| `wms.import.preview_not_found` | 404 | Commit de un `previewId` que no existe, es de otro tenant o ya se confirmó (el preview se consume al commitear) |
+| `wms.import.preview_expired` | 422 | Commit pasados 30 minutos del preview |
+| `wms.import.lot_expiry_conflict` | 422 (issue por fila) | Fila de la carga inicial cuyo lote ya existe con otra fecha de vencimiento, o que repite en la hoja un lote nuevo con otra fecha. Issue dentro del 200 del preview |
+| `wms.import.stock_exists` | 422 (issue por fila) | Fila de la carga inicial sobre una clave (dueño, ubicación, variante, lote) que ya tiene saldo: cargarla otra vez lo duplicaría. **Pendiente de confirmación del owner (P-12).** Issue dentro del 200 del preview |
+| `wms.lot.code_invalid` | 422 (issue por fila) | Código de lote de más de 64 caracteres en la carga inicial |
+| `wms.export.empty` / `wms.export.too_many_rows` | 422 | `POST /stock/export` sin filas que exportar, o con más de 50 000 |
+| `storage.file.expired` | 422 | `download-url` de un `WmsExport` con más de 24 h: el objeto vive bajo `exports/`, que el bucket borra a los dos días |
 | `wms.movement.already_reversed` | 422 | Segundo `POST /stock/movements/{id}/reverse` sobre el mismo movimiento: se revierte una sola vez (§6.2) |
 
 Los códigos de validación finos que cada corte necesite (jerarquía de ubicaciones, formato de código, etc.) los define
