@@ -1,8 +1,9 @@
+﻿using Bootstrapper.ApiKeys;
 using BuildingBlocks.Application;
-using Bootstrapper.ApiKeys;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Domain;
@@ -13,7 +14,8 @@ namespace Bootstrapper.UnitTests;
 /// Spec 2026-11-01 parte 1, anti-objetivo: el registro no demora un envío. Kestrel espera los callbacks de <c>OnCompleted</c>
 /// antes de leer la siguiente petición de la misma conexión, así que lo que el callback espere se le suma a la siguiente llamada
 /// del integrador. Por eso estas pruebas disparan los callbacks a mano: con TestServer la respuesta sale antes de que corran, y
-/// una escritura lenta en la base no se notaría.
+/// una escritura lenta en la base no se notaría. El proveedor se pone también en <c>RequestServices</c>, como en Kestrel, para que
+/// una escritura vuelta a meter en el callback tropiece con el registro bloqueado.
 /// </summary>
 public sealed class ExternalApiCallLoggingMiddlewareTests
 {
@@ -27,44 +29,51 @@ public sealed class ExternalApiCallLoggingMiddlewareTests
     {
         var log = new BlockingLog();
         await using var provider = new ServiceCollection().AddScoped<IApiKeyRequestLog>(_ => log).BuildServiceProvider();
-        var queue = new ExternalApiCallLogChannel();
-        var (context, callbacks) = ExternalContext();
-        var middleware = NewMiddleware(provider, queue);
+        var channel = new ExternalApiCallLogChannel();
+        using var writer = new ExternalApiCallLogWriter(channel, provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<ExternalApiCallLogWriter>.Instance);
+        var (context, callbacks) = ExternalContext(provider);
+        var middleware = NewMiddleware(channel, new CapturingLogger());
+        await writer.StartAsync(Ct);
 
-        await middleware.InvokeAsync(context, new FixedClock());
-        var completion = callbacks.RunAsync();
-
-        // La prueba falla si el callback espera a la escritura: nunca se libera hasta que el finally la suelta.
         try
         {
+            await middleware.InvokeAsync(context, new FixedClock());
+            var completion = callbacks.RunAsync();
+
+            // Primero se espera a que el escritor esté dentro de la escritura bloqueada; después, que el callback termine con ella retenida.
+            await log.Entered.WaitAsync(TimeSpan.FromSeconds(5), Ct);
             var finished = await Task.WhenAny(completion, Task.Delay(TimeSpan.FromSeconds(2), Ct));
             Assert.Same(completion, finished);
+            Assert.False(log.Released);
         }
         finally
         {
             log.Release();
+            await writer.StopAsync(Ct);
         }
     }
 
     [Fact]
-    public async Task AFullQueueDropsTheRowWithoutBlocking()
+    public async Task AFullQueueDropsTheRowWithoutBlockingAndWarns()
     {
         await using var provider = new ServiceCollection().BuildServiceProvider();
-        var queue = new ExternalApiCallLogChannel(capacity: 1);
-        var (first, firstCallbacks) = ExternalContext();
-        var (second, secondCallbacks) = ExternalContext();
-        var middleware = NewMiddleware(provider, queue);
+        var channel = new ExternalApiCallLogChannel(capacity: 1);
+        var logger = new CapturingLogger();
+        var (first, firstCallbacks) = ExternalContext(provider);
+        var (second, secondCallbacks) = ExternalContext(provider);
+        var middleware = NewMiddleware(channel, logger);
 
         await middleware.InvokeAsync(first, new FixedClock());
         await middleware.InvokeAsync(second, new FixedClock());
         await firstCallbacks.RunAsync();
         await secondCallbacks.RunAsync().WaitAsync(TimeSpan.FromSeconds(2), Ct);
 
-        Assert.True(queue.Reader.TryRead(out _));
-        Assert.False(queue.Reader.TryRead(out _));
+        Assert.True(channel.Reader.TryRead(out _));
+        Assert.False(channel.Reader.TryRead(out _));
+        Assert.Single(logger.Levels, LogLevel.Warning);
     }
 
-    private static ExternalApiCallLoggingMiddleware NewMiddleware(IServiceProvider provider, ExternalApiCallLogChannel queue) =>
+    private static ExternalApiCallLoggingMiddleware NewMiddleware(ExternalApiCallLogChannel channel, ILogger<ExternalApiCallLoggingMiddleware> logger) =>
         new(
             context =>
             {
@@ -72,13 +81,13 @@ public sealed class ExternalApiCallLoggingMiddlewareTests
                 context.Response.StatusCode = 201;
                 return Task.CompletedTask;
             },
-            queue,
-            NullLogger<ExternalApiCallLoggingMiddleware>.Instance);
+            channel,
+            logger);
 
-    private static (DefaultHttpContext Context, CapturedCallbacks Callbacks) ExternalContext()
+    private static (DefaultHttpContext Context, CapturedCallbacks Callbacks) ExternalContext(IServiceProvider provider)
     {
         var callbacks = new CapturedCallbacks();
-        var context = new DefaultHttpContext();
+        var context = new DefaultHttpContext { RequestServices = provider };
         context.Features.Set<IHttpResponseFeature>(callbacks);
         context.Request.Method = "POST";
         context.Request.Path = "/api/v1/external/whatsapp/messages";
@@ -93,10 +102,19 @@ public sealed class ExternalApiCallLoggingMiddlewareTests
     private sealed class BlockingLog : IApiKeyRequestLog
     {
         private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => _entered.Task;
+
+        public bool Released => _gate.Task.IsCompleted;
 
         public void Release() => _gate.TrySetResult();
 
-        public Task RecordAsync(ApiKeyRequest request, CancellationToken cancellationToken) => _gate.Task;
+        public Task RecordAsync(ApiKeyRequest request, CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            return _gate.Task;
+        }
     }
 
     /// <summary>Guarda los callbacks de <c>OnCompleted</c> para dispararlos como lo hace Kestrel, uno tras otro y esperando cada uno.</summary>
@@ -111,6 +129,35 @@ public sealed class ExternalApiCallLoggingMiddlewareTests
             foreach (var (callback, state) in _callbacks)
             {
                 await callback(state);
+            }
+        }
+    }
+
+    private sealed class CapturingLogger : ILogger<ExternalApiCallLoggingMiddleware>
+    {
+        private readonly List<LogLevel> _levels = [];
+
+        public IReadOnlyList<LogLevel> Levels
+        {
+            get
+            {
+                lock (_levels)
+                {
+                    return [.. _levels];
+                }
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_levels)
+            {
+                _levels.Add(logLevel);
             }
         }
     }
