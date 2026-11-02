@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
+using Modules.Wms.Domain;
 using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.Infrastructure.Persistence;
@@ -35,4 +36,20 @@ internal sealed class WarehouseRepository(WmsDbContext dbContext) : IWarehouseRe
             ct);
 
     public void RemoveLocation(Location location) => dbContext.Locations.Remove(location);
+
+    public async Task<Location?> FindLocationByCodeAsync(Guid tenantId, WarehouseId warehouseId, string code, CancellationToken ct)
+    {
+        string normalized;
+        try
+        {
+            normalized = LocationCodes.Normalize(code, WmsErrorCodes.LocationCodeInvalid);
+        }
+        catch (WmsDomainException)
+        {
+            return null;
+        }
+
+        return await dbContext.Locations.AsNoTracking().FirstOrDefaultAsync(
+            location => location.TenantId == tenantId && location.WarehouseId == warehouseId && location.Code == normalized, ct);
+    }
 }

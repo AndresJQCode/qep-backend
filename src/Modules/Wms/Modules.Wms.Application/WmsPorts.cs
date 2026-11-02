@@ -96,6 +96,11 @@ public interface IWarehouseRepository
     Task<Location?> GetVirtualLocationAsync(Guid tenantId, WarehouseId warehouseId, LocationRole role, CancellationToken ct);
 
     void RemoveLocation(Location location);
+
+    /// <summary>Por código dentro de la bodega (S7: nunca por <c>identifiers</c>). El código se normaliza con
+    /// <see cref="LocationCodes.Normalize"/> y se compara ordinal; uno que ni siquiera tiene forma de código no existe, no es un error.
+    /// Sin rastreo.</summary>
+    Task<Location?> FindLocationByCodeAsync(Guid tenantId, WarehouseId warehouseId, string code, CancellationToken ct);
 }
 
 public interface IOwnerRepository
@@ -186,6 +191,10 @@ public sealed record WmsVariantSnapshot(
 public interface IWmsCatalogReader
 {
     Task<IReadOnlyList<WmsVariantSnapshot>> GetVariantsAsync(Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken ct);
+
+    /// <summary>Todas las variantes cuyo código, sin distinguir mayúsculas, está entre <paramref name="codes"/>. La igualdad exacta de
+    /// Catalog no sirve para detectar que <c>abc</c> y <c>ABC</c> son dos variantes distintas con el mismo código escrito.</summary>
+    Task<IReadOnlyList<WmsVariantSnapshot>> FindVariantsByCodesAsync(Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken ct);
 }
 
 public sealed record WmsCityRef(Guid CityId, string Name);

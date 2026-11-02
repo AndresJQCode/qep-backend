@@ -524,6 +524,10 @@ public sealed class InventoryLedgerPostingTests
 
             return [new WmsVariantSnapshot(variantId, Guid.CreateVersion7(), "Producto", "Variante", "RACE", null, [], true)];
         }
+
+        public Task<IReadOnlyList<WmsVariantSnapshot>> FindVariantsByCodesAsync(
+            Guid tenantId, IReadOnlyCollection<string> codes, CancellationToken ct) =>
+            throw new NotSupportedException("This double only serves GetVariantsAsync.");
     }
 
     [Fact]

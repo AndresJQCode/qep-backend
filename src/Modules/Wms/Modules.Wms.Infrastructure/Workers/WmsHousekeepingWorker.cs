@@ -79,10 +79,9 @@ internal sealed partial class WmsHousekeepingWorker(
         var receipts = await scope.ServiceProvider.GetRequiredService<IOperationReceipts>()
             .PurgeOlderThanAsync(now.AddDays(-options.Value.ReceiptRetentionDays), cancellationToken);
 
-        var dbContext = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
         // El preview vence por su propia columna: PreviewRetentionMinutes sólo se usa al crearlo.
-        var previews = await dbContext.Database.ExecuteSqlAsync(
-            $"DELETE FROM wms.import_previews WHERE expires_at < {now}", cancellationToken);
+        var previews = await scope.ServiceProvider.GetRequiredService<IImportPreviewStore>().PurgeExpiredAsync(now, cancellationToken);
+        var dbContext = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
         var balances = await dbContext.Database.ExecuteSqlAsync(
             $"DELETE FROM wms.stock_balances WHERE on_hand = 0 AND reserved = 0", cancellationToken);
 

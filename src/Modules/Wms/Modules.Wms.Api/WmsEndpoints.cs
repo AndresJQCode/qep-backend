@@ -23,6 +23,7 @@ public static class WmsEndpoints
         VariantProfileEndpoints.Map(group);
         StockEndpoints.Map(group);
         AdjustmentEndpoints.Map(group);
+        ImportEndpoints.Map(group);
 
         return endpoints;
     }

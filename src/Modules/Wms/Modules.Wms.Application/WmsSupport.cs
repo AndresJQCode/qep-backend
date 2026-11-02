@@ -75,6 +75,9 @@ internal static class WmsNotFound
 
     public static ResourceNotFoundException Movement(Guid id) =>
         new(WmsErrorCodes.MovementNotFound, $"Movement '{id}' was not found.");
+
+    public static ResourceNotFoundException ImportPreview(Guid id) =>
+        new(WmsErrorCodes.ImportPreviewNotFound, $"Import preview '{id}' was not found.");
 }
 
 internal static class WmsVersions

@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using Modules.Catalog.Infrastructure.Persistence;
+
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
@@ -13,8 +16,13 @@ public sealed class WmsCatalogReaderTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
+    // La búsqueda por código contra el esquema real la prueba InitialBalanceImportTests; estas pruebas sólo ejercen GetVariantsAsync, que
+    // no toca el contexto, así que alcanza una cadena que no conecta.
+    private static CatalogDbContext UnusedCatalog() =>
+        new(new DbContextOptionsBuilder<CatalogDbContext>().UseNpgsql("Host=localhost;Database=unused").Options);
+
     private static WmsCatalogReader ReaderFor(VariantWorld world) =>
-        new(new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size));
+        new(new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), UnusedCatalog());
 
     [Fact]
     public async Task AVariantWithOptionsGivesItsDisplayNameCodeBarcodeAndPackagings()
@@ -59,7 +67,7 @@ public sealed class WmsCatalogReaderTests
     {
         var world = VariantWorld.Create(TenantId, Now);
         var options = new FakeOptionDefinitionRepository(world.Size);
-        var reader = new WmsCatalogReader(new FakeProductRepository(world.Product), options);
+        var reader = new WmsCatalogReader(new FakeProductRepository(world.Product), options, UnusedCatalog());
 
         Assert.Empty(await reader.GetVariantsAsync(TenantId, [], Ct));
         Assert.Equal(0, options.Calls);

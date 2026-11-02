@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Wms.Application;
+using Modules.Wms.Infrastructure.Excel;
 using Modules.Wms.Infrastructure.Pdf;
 using Modules.Wms.Infrastructure.Persistence;
 using Modules.Wms.Infrastructure.Workers;
@@ -40,6 +41,8 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IAdjustmentRepository, AdjustmentRepository>();
         services.AddScoped<IWmsEventPublisher, WmsEventPublisher>();
         services.AddScoped<AdjustmentDtoComposer>();
+        services.AddScoped<IImportPreviewStore, ImportPreviewStore>();
+        services.AddSingleton<IInitialBalanceSheetReader, ClosedXmlInitialBalanceSheetReader>();
 
         // Idempotencia (S2): el scope lo fija el filtro del API y lo consume Record en la transacción del handler.
         services.AddScoped<IdempotencyScope>();

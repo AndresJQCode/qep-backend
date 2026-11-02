@@ -26,4 +26,28 @@ public sealed class ImportPreview
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset ExpiresAt { get; private set; }
+
+    public static ImportPreview Create(
+        Guid tenantId,
+        Guid requestedBy,
+        WarehouseId warehouseId,
+        OwnerId ownerId,
+        string rowsJson,
+        bool canCommit,
+        DateTimeOffset now,
+        TimeSpan lifetime) =>
+        new()
+        {
+            Id = Guid.CreateVersion7(),
+            TenantId = tenantId,
+            RequestedBy = requestedBy,
+            WarehouseId = warehouseId,
+            OwnerId = ownerId,
+            RowsJson = rowsJson,
+            CanCommit = canCommit,
+            CreatedAt = now,
+            ExpiresAt = now + lifetime,
+        };
+
+    public bool IsExpiredAt(DateTimeOffset now) => ExpiresAt <= now;
 }
