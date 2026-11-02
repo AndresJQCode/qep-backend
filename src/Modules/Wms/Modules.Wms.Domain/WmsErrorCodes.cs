@@ -46,4 +46,53 @@ public static class WmsErrorCodes
     public const string IdentifierValueInvalid = "wms.identifier.value_invalid";
 
     public const string LabelRenderFailed = "wms.label.render_failed";
+
+    // Ledger y saldos (plan WMS-D). UomPrecisionExceeded ya viene de WMS-B.
+    public const string StockInsufficient = "wms.stock.insufficient";
+    public const string StockReserved = "wms.stock.reserved";
+    public const string StockStatusInvalid = "wms.stock.status_invalid";
+    public const string IdempotencyKeyRequired = "wms.idempotency_key_required";
+    public const string IdempotencyKeyReused = "wms.idempotency_key_reused";
+    public const string LedgerImmutable = "wms.ledger.immutable";
+
+    public const string LotRequired = "wms.lot.required";
+    public const string LotNotAllowed = "wms.lot.not_allowed";
+    public const string LotExpiryRequired = "wms.lot.expiry_required";
+    public const string LotCodeInvalid = "wms.lot.code_invalid";
+    public const string LotNotFound = "wms.lot.not_found";
+    public const string SerialRequired = "wms.serial.required";
+    public const string UomFactorMismatch = "wms.uom.factor_mismatch";
+
+    public const string LocationBlocked = "wms.location.blocked";
+
+    /// <summary>S20: 422 por <c>WmsDomainException</c>, no 409.</summary>
+    public const string LocationCounting = "wms.location.counting";
+
+    public const string MovementAlreadyReversed = "wms.movement.already_reversed";
+    public const string MovementNotFound = "wms.movement.not_found";
+    public const string MovementQuantityInvalid = "wms.movement.quantity_invalid";
+    public const string MovementSameKey = "wms.movement.same_key";
+
+    /// <summary>S12, nuevo en §24.2: la fecha física del movimiento fuera de la ventana permitida.</summary>
+    public const string MovementOccurredAtOutOfRange = "wms.movement.occurred_at_out_of_range";
+    public const string BatchTooLarge = "wms.batch.too_large";
+
+    public const string DocumentInvalidTransition = "wms.document.invalid_transition";
+    public const string DocumentBusy = "wms.document.busy";
+    public const string AdjustmentNotFound = "wms.adjustment.not_found";
+    public const string AdjustmentLineInvalid = "wms.adjustment.line_invalid";
+
+    public const string ImportAmbiguousCode = "wms.import.ambiguous_code";
+    public const string ImportUnknownCode = "wms.import.unknown_code";
+    public const string ImportUnknownLocation = "wms.import.unknown_location";
+    public const string ImportDuplicateRow = "wms.import.duplicate_row";
+    public const string ImportInvalidFile = "wms.import.invalid_file";
+
+    /// <summary>S21, nuevo en §24.2.</summary>
+    public const string ImportTooManyRows = "wms.import.too_many_rows";
+    public const string ImportPreviewNotFound = "wms.import.preview_not_found";
+    public const string ImportPreviewNotCommittable = "wms.import.preview_not_committable";
+    public const string ImportPreviewExpired = "wms.import.preview_expired";
+    public const string ExportEmpty = "wms.export.empty";
+    public const string ExportTooManyRows = "wms.export.too_many_rows";
 }
