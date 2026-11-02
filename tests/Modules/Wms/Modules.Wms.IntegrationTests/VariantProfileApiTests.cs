@@ -417,4 +417,62 @@ public sealed class VariantProfileApiTests
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Equal("wms.profile.conversion_duplicate", await CodeOfAsync(response));
     }
+
+    private static async Task<Dictionary<string, string?>> BarcodesByCodeAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await BodyAsync(response));
+        return document.RootElement.GetProperty("conversions").EnumerateArray()
+            .ToDictionary(c => c.GetProperty("code").GetString()!, c => c.GetProperty("barcode").GetString());
+    }
+
+    [Fact]
+    public async Task MovingABarcodeBetweenConversionsInOnePutWorks()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", null, []);
+        using var client = CreateManager(factory);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.SendAsync(
+                Put(variantId, Body(0, conversions: [new { code = "A", factor = 2m, barcode = "BAR-X" }, new { code = "B", factor = 4m, barcode = (string?)null }])),
+                Ct)).StatusCode);
+
+        var response = await client.SendAsync(
+            Put(variantId, Body(1, conversions: [new { code = "A", factor = 2m, barcode = (string?)null }, new { code = "B", factor = 4m, barcode = "BAR-X" }])),
+            Ct);
+
+        var barcodes = await BarcodesByCodeAsync(response);
+        Assert.Null(barcodes["A"]);
+        Assert.Equal("BAR-X", barcodes["B"]);
+        var presentations = (await IdentifiersAsync(factory, variantId)).Where(i => i.Kind == "Presentation").ToList();
+        Assert.Equal("BAR-X", Assert.Single(presentations).Value);
+    }
+
+    [Fact]
+    public async Task SwappingTwoBarcodesInOnePutWorks()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", null, []);
+        using var client = CreateManager(factory);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.SendAsync(
+                Put(variantId, Body(0, conversions: [new { code = "A", factor = 2m, barcode = "BAR-X" }, new { code = "B", factor = 4m, barcode = "BAR-Y" }])),
+                Ct)).StatusCode);
+
+        var response = await client.SendAsync(
+            Put(variantId, Body(1, conversions: [new { code = "A", factor = 2m, barcode = "BAR-Y" }, new { code = "B", factor = 4m, barcode = "BAR-X" }])),
+            Ct);
+
+        var barcodes = await BarcodesByCodeAsync(response);
+        Assert.Equal("BAR-Y", barcodes["A"]);
+        Assert.Equal("BAR-X", barcodes["B"]);
+        var presentations = (await IdentifiersAsync(factory, variantId)).Where(i => i.Kind == "Presentation").ToList();
+        Assert.Equal(["BAR-X", "BAR-Y"], presentations.Select(i => i.Value).Order().ToArray());
+    }
 }

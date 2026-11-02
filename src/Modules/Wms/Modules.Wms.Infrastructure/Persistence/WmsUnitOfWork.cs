@@ -72,6 +72,9 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
     private static RequestConcurrencyException LostProfileRace(DbUpdateException exception) =>
         new("concurrency.conflict", "The profile was created by another request while this one was being saved.", exception);
 
+    // Esta consulta corre después de que SaveChanges falló y ya revirtió su propia transacción: depende de que SaveChanges sea dueño de
+    // ella (sin transacción externa del llamador). Si algún día un handler abre una transacción explícita, un 23505 la deja abortada y
+    // esta consulta fallaría con 25P02 en lugar de contestar.
     private async Task<bool> AProfileBeingCreatedAlreadyExistsAsync(CancellationToken cancellationToken)
     {
         var adding = dbContext.ChangeTracker.Entries<VariantLogisticsProfile>()
