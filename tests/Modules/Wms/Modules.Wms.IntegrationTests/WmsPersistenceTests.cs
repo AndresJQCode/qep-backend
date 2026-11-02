@@ -309,4 +309,30 @@ public sealed class WmsPersistenceTests
             $"SELECT actor_type FROM audit.entries WHERE action = '{WmsAuditActions.ProfileCreated}' AND resource_id = '{variantId}'");
         Assert.Equal("System", Assert.Single(actors));
     }
+
+    [Fact]
+    public async Task TwoConcurrentDefaultCreationsOfTheSameProfileLoseWithAConcurrencyConflictNotAServerError()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+        var variantId = await CreateVariantAsync(factory, "SKU-1", "7701234567890", [12]);
+
+        // Las dos miran antes de que cualquiera guarde: ninguna ve la fila y las dos arman el perfil por defecto.
+        await using var first = factory.Services.CreateAsyncScope();
+        await using var second = factory.Services.CreateAsyncScope();
+        await first.ServiceProvider.GetRequiredService<IVariantProfileRepository>().GetOrCreateDefaultAsync(Tenant, variantId, Ct);
+        await second.ServiceProvider.GetRequiredService<IVariantProfileRepository>().GetOrCreateDefaultAsync(Tenant, variantId, Ct);
+
+        await first.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().SaveChangesAsync(Ct);
+
+        // La perdedora no pasa a 500: PK_variant_profiles se traduce a 412, que es lo que le dice a quien llama «recarga, ya existe».
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => second.ServiceProvider.GetRequiredService<IWmsUnitOfWork>().SaveChangesAsync(Ct));
+
+        await using var read = factory.Services.CreateAsyncScope();
+        var stored = await read.ServiceProvider.GetRequiredService<IVariantProfileRepository>().FindAsync(Tenant, variantId, Ct);
+        Assert.NotNull(stored);
+        Assert.Equal(1, stored.Version);
+    }
 }

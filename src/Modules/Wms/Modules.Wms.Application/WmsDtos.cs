@@ -101,3 +101,54 @@ public sealed record CreateUomRequest(string Code, string Name, int Precision);
 public sealed record UomDto(string Code, string Name, int Precision, bool IsSystem);
 
 public sealed record UomsDto(IReadOnlyList<UomDto> Items);
+
+/// <summary>Una presentación del perfil («CAJA x12»). Se reemplaza entera con el <c>PUT</c>: la lista que llega es la que queda.</summary>
+public sealed record UomConversionRequest(string Code, decimal Factor, string? Barcode);
+
+/// <summary>Cuerpo de <c>PUT /variant-profiles/{variantId}</c>. <c>Tracking</c> viaja por nombre (<c>None</c> | <c>Lot</c> |
+/// <c>Serial</c>); <c>Version</c> es 0 cuando el perfil aún no existe y el <c>PUT</c> lo crea (P-8).</summary>
+public sealed record UpdateVariantProfileRequest(
+    string BaseUom,
+    int BaseUomPrecision,
+    string Tracking,
+    bool TracksExpiry,
+    decimal? WeightKg,
+    decimal? VolumeM3,
+    decimal? LengthCm,
+    decimal? WidthCm,
+    decimal? HeightCm,
+    string? StorageClass,
+    string? DisplayUom,
+    IReadOnlyList<UomConversionRequest> Conversions,
+    long Version);
+
+/// <summary>El <c>Id</c> es <c>Guid.Empty</c> mientras el perfil no existe (el default calculado en memoria).</summary>
+public sealed record UomConversionDto(Guid Id, string Code, decimal Factor, string? Barcode);
+
+/// <summary>
+/// El perfil con lo que la pantalla necesita para dibujarlo sin otra llamada: nombre y código de la variante (de Catalog) y
+/// <c>HasStock</c>, que dice si el selector de rastreo se deshabilita (RF-010). <c>Version</c> 0 significa «aún sin guardar».
+/// </summary>
+public sealed record VariantProfileDto(
+    Guid VariantId,
+    Guid ProductId,
+    string ProductName,
+    string VariantCode,
+    string VariantName,
+    string? Barcode,
+    string BaseUom,
+    int BaseUomPrecision,
+    string Tracking,
+    bool TracksExpiry,
+    decimal? WeightKg,
+    decimal? VolumeM3,
+    decimal? LengthCm,
+    decimal? WidthCm,
+    decimal? HeightCm,
+    string? StorageClass,
+    string? DisplayUom,
+    IReadOnlyList<UomConversionDto> Conversions,
+    bool HasStock,
+    long Version);
+
+public sealed record VariantProfilesDto(IReadOnlyList<VariantProfileDto> Items);

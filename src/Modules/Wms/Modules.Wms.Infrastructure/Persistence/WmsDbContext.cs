@@ -24,6 +24,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public const string LocationParentForeignKey = "FK_locations_parent";
     public const string OwnerSelfIndex = "IX_owners_tenant_self";
     public const string UomPrimaryKey = "PK_units_of_measure";
+    public const string VariantProfilePrimaryKey = "PK_variant_profiles";
     public const string ConversionCodeIndex = "IX_uom_conversions_variant_code";
     public const string IdentifierValueIndex = "IX_identifiers_tenant_value";
 
@@ -211,7 +212,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             table.HasCheckConstraint("CK_variant_profiles_tracking", "tracking IN ('None','Lot','Serial')");
             table.HasCheckConstraint("CK_variant_profiles_precision", "base_uom_precision BETWEEN 0 AND 6");
         });
-        profile.HasKey(value => new { value.TenantId, value.VariantId });
+        profile.HasKey(value => new { value.TenantId, value.VariantId }).HasName(VariantProfilePrimaryKey);
         profile.Property(value => value.TenantId).HasColumnName("tenant_id");
         // Variante y producto son referencias blandas a catalog: otro esquema, otro contexto.
         profile.Property(value => value.VariantId).HasColumnName("variant_id");

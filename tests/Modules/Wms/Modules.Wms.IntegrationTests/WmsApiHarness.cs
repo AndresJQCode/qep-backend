@@ -159,13 +159,13 @@ internal static partial class WmsApiHarness
     /// logístico copia y siembra. Usa un cliente propio con <c>catalog.product.manage</c>. Devuelve el id de la variante, que es el
     /// del producto: la variante por defecto comparte el Guid (<c>VariantId.cs</c>).</summary>
     public static async Task<Guid> CreateVariantAsync(
-        QepApiFactory factory, string code, string? barcode, int[] packagingUnits, string name = "Producto")
+        QepApiFactory factory, string code, string? barcode, int[] packagingUnits, string name = "Producto", string tenantId = TenantId)
     {
-        using var client = CreateClient(factory, SubjectId, TenantId, "catalog.product.manage");
+        using var client = CreateClient(factory, SubjectId, tenantId, "catalog.product.manage");
         // `barcode` va en la variante junto a `code` (ProductVariantRequest.Barcode) y `packagingUnits` va DENTRO de `pricing`
         // (ProductPricingRequest.PackagingUnits).
         var response = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{TenantId}/catalog/products",
+            $"/api/v1/tenants/{tenantId}/catalog/products",
             new
             {
                 name,

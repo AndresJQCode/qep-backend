@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Wms.Application;
 using Modules.Wms.Domain;
+using Modules.Wms.Domain.Warehousing;
 
 namespace Modules.Wms.Infrastructure.Persistence;
 
@@ -43,8 +44,22 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new WmsDomainException(WmsErrorCodes.ProfileConversionDuplicate, "The conversion code is repeated.", exception);
         }
+        // Dos peticiones que crean el mismo perfil a la vez: las dos miraron, ninguna vio la fila y las dos arman perfil e identificadores.
+        // Sólo una gana. Según el orden del guardado la perdedora tropieza con la clave del perfil o con el índice de identificadores, y
+        // ambos son lo mismo: «ya existe, recarga» (412), no un 500 ni un «código ya asignado» que culpa al usuario.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.VariantProfilePrimaryKey))
+        {
+            throw LostProfileRace(exception);
+        }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.IdentifierValueIndex))
         {
+            // Un código de barras que ya es de otra variante también llega acá y ése sí es del usuario: lo distingue que el perfil que
+            // esta petición quería crear ya exista en la base.
+            if (await AProfileBeingCreatedAlreadyExistsAsync(cancellationToken))
+            {
+                throw LostProfileRace(exception);
+            }
+
             throw new WmsDomainException(WmsErrorCodes.IdentifierValueTaken, "This identifier is already assigned.", exception);
         }
         // Borrar el padre de una FK RESTRICT da 23001, no 23503: ForeignKeyViolation reconoce las dos.
@@ -52,5 +67,26 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new WmsDomainException(WmsErrorCodes.LocationHasChildren, "The location still has child locations.", exception);
         }
+    }
+
+    private static RequestConcurrencyException LostProfileRace(DbUpdateException exception) =>
+        new("concurrency.conflict", "The profile was created by another request while this one was being saved.", exception);
+
+    private async Task<bool> AProfileBeingCreatedAlreadyExistsAsync(CancellationToken cancellationToken)
+    {
+        var adding = dbContext.ChangeTracker.Entries<VariantLogisticsProfile>()
+            .Where(entry => entry.State == EntityState.Added)
+            .Select(entry => (entry.Entity.TenantId, entry.Entity.VariantId))
+            .ToList();
+        foreach (var (tenantId, variantId) in adding)
+        {
+            // Sin rastreo: la entidad Added con la misma clave no cuenta, se pregunta a la base.
+            if (await dbContext.VariantProfiles.AsNoTracking().AnyAsync(p => p.TenantId == tenantId && p.VariantId == variantId, cancellationToken))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

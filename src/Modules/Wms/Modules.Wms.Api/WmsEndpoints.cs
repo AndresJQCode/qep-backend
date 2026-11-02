@@ -20,6 +20,7 @@ public static class WmsEndpoints
         LocationEndpoints.Map(group);
         OwnerEndpoints.Map(group);
         UomEndpoints.Map(group);
+        VariantProfileEndpoints.Map(group);
 
         return endpoints;
     }
