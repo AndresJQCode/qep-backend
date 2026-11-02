@@ -32,6 +32,7 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IIdentifierRepository, IdentifierRepository>();
         services.AddScoped<ILotRepository, LotRepository>();
         services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
+        services.AddScoped<IBalanceReconciliation, BalanceReconciliation>();
         services.AddScoped<IInventoryLedger, InventoryLedger>();
         services.AddScoped<StockReadQueries>();
         services.AddScoped<IStockReadQueries>(provider => provider.GetRequiredService<StockReadQueries>());
@@ -56,6 +57,8 @@ public static class WmsInfrastructureExtensions
         services.AddHostedService(provider => provider.GetRequiredService<WmsHousekeepingWorker>());
         services.AddSingleton<BalanceChangePublisher>();
         services.AddHostedService(provider => provider.GetRequiredService<BalanceChangePublisher>());
+        services.AddSingleton<BalanceReconciliationWorker>();
+        services.AddHostedService(provider => provider.GetRequiredService<BalanceReconciliationWorker>());
 
         // Sin libro de inventario no hay existencias: WMS-D reemplaza estas tres por consultas al libro.
         services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();
