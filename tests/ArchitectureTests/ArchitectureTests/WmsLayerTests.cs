@@ -76,6 +76,44 @@ public sealed class WmsLayerTests
         Assert.DoesNotContain(ReferenceNamesOf(Application), name =>
             name is not null && name.StartsWith("Modules.Audit", StringComparison.Ordinal));
 
+    // El ledger es el único que escribe saldos y movimientos (RNF-12): si el contexto expusiera un DbSet de esas tablas, cualquier
+    // repositorio podría hacer UPDATE/INSERT por EF y saltarse el upsert guardado, la netea de claves y el orden de bloqueos.
+    [Fact]
+    public void TheDbContextExposesNoSetForLedgerTables()
+    {
+        var sets = typeof(Modules.Wms.Infrastructure.Persistence.WmsDbContext)
+            .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Select(property => property.PropertyType)
+            .Where(type => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Microsoft.EntityFrameworkCore.DbSet<>))
+            .Select(type => type.GetGenericArguments()[0])
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(Modules.Wms.Domain.Inventory.StockMovement), sets);
+        Assert.DoesNotContain(typeof(Modules.Wms.Domain.Inventory.StockBalance), sets);
+    }
+
+    // StockMovement.Record es internal y sólo lo ven Infrastructure y las dos pruebas: Application no puede construir un movimiento,
+    // así que nada fuera del ledger llega a escribir una fila.
+    [Fact]
+    public void OnlyTheLedgerConstructsMovements()
+    {
+        var record = typeof(Modules.Wms.Domain.Inventory.StockMovement)
+            .GetMethod("Record", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(record);
+        Assert.True(record.IsAssembly);
+
+        var visibleTo = Domain
+            .GetCustomAttributes<System.Runtime.CompilerServices.InternalsVisibleToAttribute>()
+            .Select(attribute => attribute.AssemblyName)
+            .ToArray();
+
+        Assert.DoesNotContain(Application.GetName().Name, visibleTo);
+        Assert.Contains(Infrastructure.GetName().Name, visibleTo);
+        Assert.Equal(
+            ["Modules.Wms.Infrastructure", "Modules.Wms.IntegrationTests", "Modules.Wms.UnitTests"],
+            visibleTo.Order(StringComparer.Ordinal));
+    }
+
     // §4.1: la regla interna del Domain. Mira tipos de campos, propiedades, parámetros, retornos, bases e interfaces
     // (no cuerpos de método): es lo que decide si un namespace «conoce» a otro.
     [Theory]

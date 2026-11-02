@@ -719,6 +719,35 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// WMS-D: los cinco workers del ledger (publicador de saldos, reconciliación, particiones, limpieza y entrega del export) se
+    /// construyen desde el contenedor con validación de ámbitos. Son singleton y usan scopes propios: uno que pidiera un servicio
+    /// scoped directo se cae acá y no al arrancar en producción. Mismo armado que el de Contratos de servicio.
+    /// </summary>
+    [Fact]
+    public void TheContainerValidatesAndBuildsTheWmsWorkers()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddRouting();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        services.AddSingleton<IHostApplicationLifetime, TestHostLifetime>();
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+
+        var hosted = provider.GetServices<IHostedService>().Select(service => service.GetType().FullName).ToArray();
+        foreach (var worker in new[]
+        {
+            "Modules.Wms.Infrastructure.Workers.BalanceChangePublisher",
+            "Modules.Wms.Infrastructure.Workers.BalanceReconciliationWorker",
+            "Modules.Wms.Infrastructure.Workers.PartitionMaintenanceWorker",
+            "Modules.Wms.Infrastructure.Workers.WmsHousekeepingWorker",
+            "Modules.Notifications.Infrastructure.Messaging.WmsExportDeliveryWorker",
+        })
+        {
+            Assert.Contains(worker, hosted);
+        }
+    }
+
+    /// <summary>
     /// Observabilidad fase 2: sin el muestreador registrado los gauges de cola no publican nada y nadie se entera; y como los gauges
     /// son singleton, ValidateScopes caza que dependan de un servicio scoped (IClock lo es).
     /// </summary>
