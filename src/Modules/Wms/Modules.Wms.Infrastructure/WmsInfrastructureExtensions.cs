@@ -27,6 +27,10 @@ public static class WmsInfrastructureExtensions
         services.AddScoped<IUnitOfMeasureRepository, UnitOfMeasureRepository>();
         services.AddScoped<IVariantProfileRepository, VariantProfileRepository>();
         services.AddScoped<IIdentifierRepository, IdentifierRepository>();
+        services.AddScoped<ILotRepository, LotRepository>();
+        services.AddScoped<IBalanceChangeQueue, BalanceChangeQueue>();
+        services.AddScoped<IInventoryLedger, InventoryLedger>();
+        services.AddSingleton<WmsMetrics>();
 
         // Sin libro de inventario no hay existencias: WMS-D reemplaza estas tres por consultas al libro.
         services.AddScoped<IVariantStockProbe, NoVariantStockProbe>();

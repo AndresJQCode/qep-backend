@@ -1,15 +1,47 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using Modules.Wms.Application;
 using Modules.Wms.Domain;
 using Modules.Wms.Domain.Warehousing;
+using Npgsql;
 
 namespace Modules.Wms.Infrastructure.Persistence;
 
-internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
+internal sealed partial class WmsUnitOfWork(WmsDbContext dbContext, ILogger<WmsUnitOfWork> logger) : IWmsUnitOfWork
 {
+    private const string BeforeSavingSavepoint = "wms_before_saving";
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "ledger mutation attempted")]
+    private static partial void LogLedgerMutationAttempted(ILogger logger, Exception exception);
+
+    public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
+        var written = await PersistAsync(cancellationToken);
+        if (dbContext.Database.CurrentTransaction is { } transaction)
+        {
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        return written;
+    }
+
+    public Task FlushAsync(CancellationToken cancellationToken) => PersistAsync(cancellationToken);
+
+    private async Task<int> PersistAsync(CancellationToken cancellationToken)
+    {
+        // Propio y no el automático de EF: la consulta del 23505 necesita la transacción viva y esto no puede depender de una opción
+        // del contexto. Sin transacción explícita no hace falta: SaveChanges ya revirtió la suya.
+        var transaction = dbContext.Database.CurrentTransaction;
+        if (transaction is not null)
+        {
+            await transaction.CreateSavepointAsync(BeforeSavingSavepoint, cancellationToken);
+        }
+
         try
         {
             return await dbContext.SaveChangesAsync(cancellationToken);
@@ -44,6 +76,11 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new WmsDomainException(WmsErrorCodes.ProfileConversionDuplicate, "The conversion code is repeated.", exception);
         }
+        // Dos peticiones crearon el mismo lote a la vez: ya existe, recarga.
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, WmsDbContext.LotCodeIndex))
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The lot was created by another request.", exception);
+        }
         // Dos peticiones que crean el mismo perfil a la vez: las dos miraron, ninguna vio la fila y las dos arman perfil e identificadores.
         // Sólo una gana. Según el orden del guardado la perdedora tropieza con la clave del perfil o con el índice de identificadores, y
         // ambos son lo mismo: «ya existe, recarga» (412), no un 500 ni un «código ya asignado» que culpa al usuario.
@@ -55,7 +92,7 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             // Un código de barras que ya es de otra variante también llega acá y ése sí es del usuario: lo distingue que el perfil que
             // esta petición quería crear ya exista en la base.
-            if (await AProfileBeingCreatedAlreadyExistsAsync(cancellationToken))
+            if (await AProfileBeingCreatedAlreadyExistsAsync(transaction, cancellationToken))
             {
                 throw LostProfileRace(exception);
             }
@@ -76,16 +113,29 @@ internal sealed class WmsUnitOfWork(WmsDbContext dbContext) : IWmsUnitOfWork
         {
             throw new WmsDomainException(WmsErrorCodes.OwnerHasStock, "The owner has stock movements and cannot be removed.", exception);
         }
+        // §24.2: el código no tiene cómo llegar acá, el ledger sólo inserta. Si llega es un incidente, no un error del usuario.
+        catch (Exception exception) when (IsLedgerMutation(exception))
+        {
+            LogLedgerMutationAttempted(logger, exception);
+            throw new WmsDomainException(WmsErrorCodes.LedgerImmutable, "Los movimientos no se modifican: se compensan con otro movimiento.", exception);
+        }
     }
+
+    private static bool IsLedgerMutation(Exception exception) =>
+        (exception as PostgresException ?? exception.InnerException as PostgresException) is { MessageText: WmsErrorCodes.LedgerImmutable };
 
     private static RequestConcurrencyException LostProfileRace(DbUpdateException exception) =>
         new("concurrency.conflict", "The profile was created by another request while this one was being saved.", exception);
 
-    // Esta consulta corre después de que SaveChanges falló y ya revirtió su propia transacción: depende de que SaveChanges sea dueño de
-    // ella (sin transacción externa del llamador). Si algún día un handler abre una transacción explícita, un 23505 la deja abortada y
-    // esta consulta fallaría con 25P02 en lugar de contestar.
-    private async Task<bool> AProfileBeingCreatedAlreadyExistsAsync(CancellationToken cancellationToken)
+    // Corre después de que SaveChanges falló. Sin transacción explícita, SaveChanges ya revirtió la suya; con una abierta, el 23505 la
+    // dejó abortada y hay que volver al savepoint antes de consultar, o esto fallaría con 25P02 en lugar de contestar.
+    private async Task<bool> AProfileBeingCreatedAlreadyExistsAsync(IDbContextTransaction? transaction, CancellationToken cancellationToken)
     {
+        if (transaction is not null)
+        {
+            await transaction.RollbackToSavepointAsync(BeforeSavingSavepoint, cancellationToken);
+        }
+
         var adding = dbContext.ChangeTracker.Entries<VariantLogisticsProfile>()
             .Where(entry => entry.State == EntityState.Added)
             .Select(entry => (entry.Entity.TenantId, entry.Entity.VariantId))

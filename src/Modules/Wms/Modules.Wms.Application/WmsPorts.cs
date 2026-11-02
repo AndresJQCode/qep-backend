@@ -7,6 +7,14 @@ namespace Modules.Wms.Application;
 /// cambio, su auditoría y su outbox commitean o se revierten juntos.</summary>
 public interface IWmsUnitOfWork
 {
+    /// <summary>La transacción explícita de los flujos que escriben al ledger: disponerla sin guardar la deshace.</summary>
+    Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken);
+
+    /// <summary>Manda los cambios acumulados a la transacción abierta, sin confirmarla: para lo que un SQL posterior necesita ver en la
+    /// base. Traduce los errores igual que <see cref="SaveChangesAsync"/>.</summary>
+    Task FlushAsync(CancellationToken cancellationToken);
+
+    /// <summary>Guarda. Con una transacción abierta, además la confirma.</summary>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 }
 
