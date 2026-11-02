@@ -177,4 +177,60 @@ public sealed class LocationTreeTests
         Assert.Equal(WmsErrorCodes.LocationCapacityInvalid, Code(() =>
             w.AddLocation(LocationId.New(), null, "A", LocationKind.Zone, LocationRole.Storage, false, false, LocationCapacity.None, -1, [], Now)));
     }
+
+    private static void ChangeKind(Warehouse w, Location l, LocationKind kind) =>
+        w.UpdateLocation(l.Id, l.ParentId, l.Code, kind, l.Role, l.AllowsStorage, l.AllowsPicking, l.Capacity, l.PutawayPriority, l.StorageClasses, l.Status, Now);
+
+    [Fact]
+    public void ChangingAKindToBinWithChildrenIsRejected()
+    {
+        var w = WarehouseTests.NewWarehouse();
+        var zone = Add(w, null, "A", LocationKind.Zone);
+        var rack = Add(w, zone.Id, "R1", LocationKind.Rack);
+        Add(w, rack.Id, "L1", LocationKind.Level);
+
+        Assert.Equal(WmsErrorCodes.LocationParentInvalid, Code(() => ChangeKind(w, rack, LocationKind.Bin)));
+        Assert.Equal(WmsErrorCodes.LocationParentInvalid, Code(() => ChangeKind(w, rack, LocationKind.Dock)));
+        Assert.Equal(LocationKind.Rack, rack.Kind);
+    }
+
+    [Fact]
+    public void ChangingAKindAtOrBelowAChildIsRejected()
+    {
+        var w = WarehouseTests.NewWarehouse();
+        var zone = Add(w, null, "A", LocationKind.Zone);
+        var aisle = Add(w, zone.Id, "01", LocationKind.Aisle);
+        Add(w, aisle.Id, "R1", LocationKind.Rack);
+
+        Assert.Equal(WmsErrorCodes.LocationParentInvalid, Code(() => ChangeKind(w, aisle, LocationKind.Level)));
+        Assert.Equal(WmsErrorCodes.LocationParentInvalid, Code(() => ChangeKind(w, aisle, LocationKind.Rack)));
+
+        // Un cambio que mantiene a los hijos por debajo sí pasa: Rack con un Bin puede volverse Level.
+        var rack = Add(w, zone.Id, "R2", LocationKind.Rack);
+        Add(w, rack.Id, "B1", LocationKind.Bin);
+        ChangeKind(w, rack, LocationKind.Level);
+        Assert.Equal(LocationKind.Level, rack.Kind);
+    }
+
+    [Fact]
+    public void ADockUnderANonZoneIsRejected()
+    {
+        var w = WarehouseTests.NewWarehouse();
+        var zone = Add(w, null, "A", LocationKind.Zone);
+        var aisle = Add(w, zone.Id, "01", LocationKind.Aisle);
+
+        Assert.Equal(WmsErrorCodes.LocationParentInvalid, Code(() => Add(w, aisle.Id, "D1", LocationKind.Dock)));
+    }
+
+    [Fact]
+    public void TheReceivingDockCanBeUpdated()
+    {
+        var w = WarehouseTests.NewWarehouse();
+        var dock = w.Locations.Single(l => l.Code == "REC-01");
+
+        Move(w, dock, dock.ParentId, "muelle-1");
+
+        Assert.Equal("BOG/RECEIVING/MUELLE-1", dock.Path);
+        Assert.Equal(2, dock.Version);
+    }
 }

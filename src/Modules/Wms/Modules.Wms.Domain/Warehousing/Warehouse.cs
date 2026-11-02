@@ -229,7 +229,34 @@ public sealed class Warehouse
         }
 
         ValidateParent(current, parentId, kind);
+        if (current is not null)
+        {
+            ValidateChildren(current, kind);
+        }
+
         return normalized;
+    }
+
+    /// <summary>Cambiar el <c>kind</c> de un nodo con hijos no puede dejar un Bin o un Dock con hijos, ni un hijo que no rankee
+    /// por debajo de su padre; sin esto, un Aisle con Racks se volvería Level por un simple PUT.</summary>
+    private void ValidateChildren(Location current, LocationKind kind)
+    {
+        var children = _locations.Where(l => l.ParentId == current.Id).ToList();
+        if (children.Count == 0)
+        {
+            return;
+        }
+
+        if (kind is LocationKind.Bin or LocationKind.Dock)
+        {
+            throw ParentInvalid("A Bin or Dock cannot have children.");
+        }
+
+        // Un Dock hijo solo vive bajo una Zone; los demás deben rankear estrictamente por debajo.
+        if (children.Any(c => c.Kind == LocationKind.Dock ? kind != LocationKind.Zone : Rank(c.Kind) <= Rank(kind)))
+        {
+            throw ParentInvalid("A child must rank below its parent: Zone, Aisle, Rack, Level, Bin.");
+        }
     }
 
     private void ValidateParent(Location? current, LocationId? parentId, LocationKind kind)
