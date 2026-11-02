@@ -473,6 +473,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Wms.Application.GetScannableLocationsQuery, Modules.Wms.Application.ScannableLocationsDto>,
             Modules.Wms.Application.GetScannableLocationsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Wms.Application.ListOwnersQuery, Modules.Wms.Application.OwnersDto>,
+            Modules.Wms.Application.ListOwnersHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.CreateOwnerCommand, Modules.Wms.Application.OwnerDto>,
+            Modules.Wms.Application.CreateOwnerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Wms.Application.UpdateOwnerCommand, Modules.Wms.Application.OwnerDto>,
+            Modules.Wms.Application.UpdateOwnerHandler>();
         // Pos (spec 2026-10-07). Registro a mano, uno por uno, como los demás: un handler olvidado
         // responde 500 y CompositionRootTests lo detecta.
         services.AddScoped<

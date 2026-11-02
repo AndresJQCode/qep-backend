@@ -18,6 +18,7 @@ public static class WmsEndpoints
 
         WarehouseEndpoints.Map(group);
         LocationEndpoints.Map(group);
+        OwnerEndpoints.Map(group);
 
         return endpoints;
     }

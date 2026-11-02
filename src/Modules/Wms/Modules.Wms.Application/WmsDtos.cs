@@ -83,3 +83,14 @@ public sealed record ScannableLocationDto(Guid Id, string Code, string Path, str
 /// <summary>El <c>Etag</c> deja que la app guarde la lista y sólo la baje otra vez cuando cambió una ubicación no virtual (las
 /// virtuales no se escanean ni cambian).</summary>
 public sealed record ScannableLocationsDto(IReadOnlyList<ScannableLocationDto> Items, string Etag);
+
+/// <summary>Cuerpo de <c>POST /owners</c>. Siempre crea un <c>Client</c>: el <c>Self</c> sólo lo escribe el provisioner.</summary>
+public sealed record CreateOwnerRequest(string Name, string? Identification, string? ContactEmail);
+
+/// <summary>Cuerpo de <c>PUT /owners/{id}</c>.</summary>
+public sealed record UpdateOwnerRequest(string Name, string? Identification, string? ContactEmail, bool IsActive, long Version);
+
+/// <summary><c>Kind</c> viaja por nombre (<c>Self</c> | <c>Client</c>): la pantalla oculta el listado cuando sólo está el Self.</summary>
+public sealed record OwnerDto(Guid Id, string Kind, string Name, string? Identification, string? ContactEmail, bool IsActive, long Version);
+
+public sealed record OwnersDto(IReadOnlyList<OwnerDto> Items);
