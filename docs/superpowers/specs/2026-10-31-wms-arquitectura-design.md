@@ -1464,7 +1464,7 @@ aprobar, postear, rechazar y reversar; `wms.document.read` para listar)
 POST /adjustments  IK  [wms.adjustment.propose]  { warehouseId, ownerId, reason, note, lines: [{ locationId, variantId, lotCode?, expirationDate?, status, quantityDelta, capturedUom?, capturedQty? }] }
    → 201 AdjustmentDto (Proposed, o Approved si el actor tiene approve y lo pide con autoApprove=true)
 POST /adjustments/{id}/approve      [wms.adjustment.approve]  { version }       → 200
-POST /adjustments/{id}/post     SK  [wms.adjustment.approve]  { version }       → 200 AdjustmentDto { ..., batchId }   // clave "Adjustment:{id}:post:{version}"
+POST /adjustments/{id}/post     SK  [wms.adjustment.approve]  { version }       → 200 AdjustmentDto { ..., batchId }   // clave "adjustment:{id}:post:{version}"
 POST /adjustments/{id}/reject       [wms.adjustment.approve]  { version, note }
 GET  /adjustments?status&warehouseId&page   [wms.document.read]
 
