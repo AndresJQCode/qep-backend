@@ -20,6 +20,9 @@ namespace Modules.Automations.Infrastructure.Http;
 /// respuesta sólo lo que dice el mapeo (D-H7). Cada llamada deja su fila en <c>http_calls</c> (D-H6), salvo cuando no hay conexión. Ni el
 /// cuerpo, ni los headers, ni la clave, ni la URL llegan a un log: los mensajes llevan tenant, bloque, resultado, status y duración, y el
 /// cliente nombrado no tiene loggers (<c>RemoveAllLoggers</c>, registrado en Bootstrapper con el handler anti-SSRF de Integrations).
+/// Spec 2026-11-03 D-1/D-2: una falla de red se repite una sola vez, tras <see cref="NetworkRetryDelay"/>, sólo si repetir no puede duplicar
+/// un efecto: cualquier método si la petición no salió, y sólo <c>GET</c> si pudo llegar. Nunca un timeout, un status, un multipart ni una
+/// URL rechazada. Cada intento deja su fila (D-5).
 /// </summary>
 public sealed partial class HttpBlockExecutor(
     IHttpClientFactory httpClientFactory,
@@ -52,13 +55,18 @@ public sealed partial class HttpBlockExecutor(
 
     private const string DefaultFileName = "file";
 
+    /// <summary>Spec 2026-11-03 D-1: la espera antes del único reintento. Alcanza para que el pool descarte la conexión muerta y abra otra.</summary>
+    internal static readonly TimeSpan NetworkRetryDelay = TimeSpan.FromSeconds(1);
+
+    private const int MaxAttempts = 2;
+
     private readonly Func<TimeSpan, CancellationToken, Task> wait = delay ?? Task.Delay;
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} answered {Status}: {Outcome} in {DurationMs} ms")]
-    private static partial void LogCalled(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int durationMs);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} answered {Status}: {Outcome}, attempt {Attempt}, in {DurationMs} ms")]
+    private static partial void LogCalled(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int attempt, int durationMs);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} failed: {Outcome} (status {Status}) in {DurationMs} ms")]
-    private static partial void LogFailed(ILogger logger, Guid tenantId, string nodeId, string outcome, int? status, int durationMs);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} failed: {Outcome} ({ErrorCode}), attempt {Attempt}, (status {Status}) in {DurationMs} ms")]
+    private static partial void LogFailed(ILogger logger, Guid tenantId, string nodeId, string outcome, string? errorCode, int attempt, int? status, int durationMs);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Chatbot HTTP block {NodeId} of tenant {TenantId} has no usable connection: {Outcome} ({ErrorCode})")]
     private static partial void LogUnavailable(ILogger logger, Guid tenantId, string nodeId, string outcome, string errorCode);
@@ -158,11 +166,28 @@ public sealed partial class HttpBlockExecutor(
                 break;
         }
 
-        // P2-R46: la duración de http_calls es la de la llamada; la espera del adjunto (hasta 20 s) no cuenta.
-        call = call with { SentAt = Stopwatch.GetTimestamp() };
-        var sent = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
-        // P2-R33a: la llamada ya salió. Un apagado justo ahora no puede perder la fila: el reintento volvería a llamar sin rastro de la primera.
-        return await FinishAsync(call, sent.Result, CancellationToken.None, sent.Body?.Length);
+        for (var attempt = 1; ; attempt++)
+        {
+            // P2-R46: la duración de http_calls es la de la llamada; la espera del adjunto (hasta 20 s) no cuenta.
+            call = call with { SentAt = Stopwatch.GetTimestamp() };
+            var sent = await SendAsync(node, credentials, request.Method, url, content, cancellationToken);
+            // Spec 2026-11-03 D-2: el multipart no se repite (el archivo es un stream de R2 que no se rebobina), ni lo que canceló quien llama.
+            var retry = sent.Retryable && attempt < MaxAttempts && request.Body is not HttpBlockBody.Multipart
+                && !cancellationToken.IsCancellationRequested;
+            // P2-R33a: la llamada ya salió. Un apagado justo ahora no puede perder la fila: el reintento volvería a llamar sin rastro de la primera.
+            // Spec 2026-11-03 D-5: por eso la fila del primer intento se escribe antes de esperar el segundo.
+            var result = await FinishAsync(call, sent.Result, CancellationToken.None, sent.Body?.Length, attempt);
+            if (!retry)
+            {
+                return result;
+            }
+
+            // Spec 2026-11-03 D-1: una cancelación de quien llama durante la espera se propaga, como hoy.
+            await wait(NetworkRetryDelay, cancellationToken);
+            // Un HttpRequestMessage no se manda dos veces y al disponerlo se lleva su contenido: el segundo intento arma uno nuevo.
+            content = request.Body is HttpBlockBody.Json again ? new StringContent(again.Content, Encoding.UTF8, "application/json") : null;
+            call = call with { CalledAt = clock.UtcNow };
+        }
     }
 
     private async Task<Sent> SendAsync(
@@ -194,23 +219,30 @@ public sealed partial class HttpBlockExecutor(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // El timeout del bloque (o el del cliente), no una cancelación de quien llama: ésa se propaga.
+            // El timeout del bloque (o el del cliente), no una cancelación de quien llama: ésa se propaga. Spec 2026-11-03 (decisión del
+            // owner): no se reintenta, ni en GET; repetir frente a una API lenta duplicaría la espera del cliente.
             return new Sent(Failure(HttpCallOutcomes.Timeout, answered, HttpCallOutcomes.Timeout));
         }
         catch (HttpRequestException exception)
         {
-            // D-H2: ConnectCallback rechazó lo que resolvió el host. Es la URL, no la red.
-            return new Sent(
-                urlPolicy.RejectionIn(exception) is { } reason
-                    ? Failure(HttpCallOutcomes.UrlRejected, null, reason)
-                    : Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network));
+            // D-H2: ConnectCallback rechazó lo que resolvió el host. Es la URL, no la red, y no se repite.
+            return urlPolicy.RejectionIn(exception) is { } reason
+                ? new Sent(Failure(HttpCallOutcomes.UrlRejected, null, reason))
+                : NetworkSent(exception, method, answered);
         }
-        catch (IOException)
+        catch (IOException exception)
         {
             // Revisión de la tarea 11: con ResponseHeadersRead, un corte a mitad del cuerpo llega como HttpIOException (IOException, no
             // HttpRequestException). La API ya recibió el request: lanzar desharía la unidad y el reintento la volvería a llamar.
-            return new Sent(Failure(HttpCallOutcomes.Network, answered, HttpCallOutcomes.Network));
+            return NetworkSent(exception, method, answered);
         }
+    }
+
+    // Spec 2026-11-03 D-2/D-4: outcome network con el detalle armado sólo de enums, y si este método lo puede repetir.
+    private static Sent NetworkSent(Exception exception, string method, int? answered)
+    {
+        var (errorCode, retryable) = NetworkFailure.Classify(exception, method, responded: answered is not null);
+        return new Sent(Failure(HttpCallOutcomes.Network, answered, errorCode), Retryable: retryable);
     }
 
     // D-H7: sólo el mapeo guarda algo; sin mapeo el cuerpo ni se lee como JSON. El paso del mapeo es el mismo del simulador (HttpResponseMapping).
@@ -423,17 +455,18 @@ public sealed partial class HttpBlockExecutor(
     }
 
     private async Task<HttpCallResult> FinishAsync(
-        Call call, HttpCallResult result, CancellationToken cancellationToken, int? responseBytes = null)
+        Call call, HttpCallResult result, CancellationToken cancellationToken, int? responseBytes = null, int attempt = 1)
     {
         // Sin llamada (url rechazada, adjunto que no llegó, cuerpo que no se armó) no hay duración que medir.
         var durationMs = call.SentAt is { } sentAt ? (int)Math.Min(int.MaxValue, Stopwatch.GetElapsedTime(sentAt).TotalMilliseconds) : 0;
+        // Spec 2026-11-03 D-4: el intento va al log (no a la base), para que un ok en el segundo se vea.
         if (result.Ok)
         {
-            LogCalled(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, durationMs);
+            LogCalled(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, attempt, durationMs);
         }
         else
         {
-            LogFailed(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.Status, durationMs);
+            LogFailed(logger, call.Context.TenantId, call.Context.NodeId, result.Outcome, result.ErrorCode, attempt, result.Status, durationMs);
         }
 
         try
@@ -460,8 +493,9 @@ public sealed partial class HttpBlockExecutor(
         HttpCallContext Context, Guid ConnectionId, string? ConnectionName, string Method, string Path, DateTimeOffset CalledAt, long? SentAt = null);
 
     /// <summary>Lo que dejó la llamada: el resultado del bloque y el cuerpo leído (D-E3: de él sólo se guarda el largo en <c>response_bytes</c>);
-    /// <see cref="Body"/> es <c>null</c> si no se leyó ninguno.</summary>
-    private sealed record Sent(HttpCallResult Result, byte[]? Body = null);
+    /// <see cref="Body"/> es <c>null</c> si no se leyó ninguno. <see cref="Retryable"/>: una falla de red que este método puede repetir (spec
+    /// 2026-11-03 D-2); el multipart lo descarta quien llama.</summary>
+    private sealed record Sent(HttpCallResult Result, byte[]? Body = null, bool Retryable = false);
 
     /// <summary>Los reintentos de espera del adjunto que le quedan al bloque (D-H8 con el desvío: 4 × 5 s en total).</summary>
     private sealed class MediaWait

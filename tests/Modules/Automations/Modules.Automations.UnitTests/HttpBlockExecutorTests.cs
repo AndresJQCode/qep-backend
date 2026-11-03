@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using BuildingBlocks.Application;
 using Microsoft.Extensions.Logging;
@@ -125,13 +126,14 @@ public sealed class HttpBlockExecutorTests
     }
 
     /// <summary>Revisión de la tarea 11: un corte de la conexión mientras se lee el cuerpo (HttpIOException, que es IOException y no
-    /// HttpRequestException) es <c>network</c> con su fila; si lanzara, la unidad se desharía y el reintento volvería a llamar a la API.</summary>
+    /// HttpRequestException) es <c>network</c> con su fila; si lanzara, la unidad se desharía y el reintento volvería a llamar a la API.
+    /// Spec 2026-11-03 D-2: con <c>POST</c>, para que siga siendo una sola fila (un <c>GET</c> cortado se reintenta).</summary>
     [Fact]
     public async Task AConnectionDropWhileReadingTheBodyIsNetwork()
     {
         var bed = new Bed(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new DroppingStream()) });
 
-        var result = await bed.Executor().ExecuteAsync(Context, Node(mapping: [new HttpMapping("data", "x")]), Variables(), Ct);
+        var result = await bed.Executor().ExecuteAsync(Context, Node(method: "POST", mapping: [new HttpMapping("data", "x")]), Variables(), Ct);
 
         Assert.Equal(("network", false), (result.Outcome, result.Ok));
         var entry = Assert.Single(bed.Log.Entries);
@@ -250,7 +252,8 @@ public sealed class HttpBlockExecutorTests
         Assert.Equal(((int?)7, (int?)321), (entry.StepNumber, entry.ResponseBytes));
     }
 
-    /// <summary>Sin cuerpo leído no hay bytes que contar: timeout, red, url rechazada y cuerpo de más de 1 MB quedan en <c>null</c>.</summary>
+    /// <summary>Sin cuerpo leído no hay bytes que contar: timeout, red, url rechazada y cuerpo de más de 1 MB quedan en <c>null</c>. La de red
+    /// va con <c>POST</c> (spec 2026-11-03 D-2): un <c>GET</c> con una falla <c>Unknown</c> se reintenta y dejaría dos filas.</summary>
     [Fact]
     public async Task NoBytesWithoutABodyRead()
     {
@@ -266,7 +269,7 @@ public sealed class HttpBlockExecutorTests
         var errorStatus = new Bed(_ => Json(HttpStatusCode.NotFound, "{}"));
 
         await timeout.Executor().ExecuteAsync(Context, Node(timeoutSeconds: 1), Variables(), Ct);
-        await network.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        await network.Executor().ExecuteAsync(Context, Node(method: "POST"), Variables(), Ct);
         await rejected.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
         await tooLarge.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
         await errorStatus.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
@@ -294,6 +297,8 @@ public sealed class HttpBlockExecutorTests
         Assert.True(entry.DurationMs >= 1000, $"Duró {entry.DurationMs} ms.");
     }
 
+    /// <summary>Spec 2026-11-03 D-2/D-4: una <c>HttpRequestException</c> sin <c>HttpRequestError</c> es <c>Unknown</c>, «pudo llegar»: un
+    /// <c>GET</c> se reintenta una vez y deja dos filas, las dos con el código detallado.</summary>
     [Fact]
     public async Task ANetworkFailureIsNetwork()
     {
@@ -301,8 +306,401 @@ public sealed class HttpBlockExecutorTests
 
         var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
 
-        Assert.Equal(("network", false), (result.Outcome, result.Ok));
-        Assert.Equal("network", Assert.Single(bed.Log.Entries).Outcome);
+        Assert.Equal(("network", "network:unknown", false), (result.Outcome, result.ErrorCode, result.Ok));
+        Assert.Equal([("network", "network:unknown"), ("network", "network:unknown")], bed.Log.Entries.Select(entry => (entry.Outcome, entry.ErrorCode)));
+    }
+
+    /// <summary>Spec 2026-11-03 D-1/D-5: la petición no salió; un segundo después se repite, y cada intento deja su fila con la misma visita.</summary>
+    [Fact]
+    public async Task AGetThatCouldNotConnectIsRetriedOnceAndSucceeds()
+    {
+        var bed = new Bed(Sequence(() => throw new HttpRequestException(HttpRequestError.ConnectionError, "refused"), () => Json(HttpStatusCode.OK, "{}")));
+
+        var result = await bed.Executor().ExecuteAsync(Context with { StepNumber = 4 }, Node(), Variables(), Ct);
+
+        Assert.Equal(("ok", true), (result.Outcome, result.Ok));
+        Assert.Equal(2, bed.Handler.Requests.Count);
+        Assert.Equal([("network", "network:connection_error"), ("ok", null)], bed.Log.Entries.Select(entry => (entry.Outcome, entry.ErrorCode)));
+        Assert.Equal([TimeSpan.FromSeconds(1)], bed.Delays);
+        Assert.All(bed.Log.Entries, entry => Assert.Equal(4, entry.StepNumber));
+    }
+
+    /// <summary>Spec 2026-11-03 D-2: si la petición no salió, repetirla no duplica nada, tenga el método que tenga. El cuerpo se rearma.</summary>
+    [Fact]
+    public async Task APostThatCouldNotConnectIsRetried()
+    {
+        var bed = new Bed(Sequence(() => throw Refused(), () => Json(HttpStatusCode.Created, "{}")));
+        var node = Node("/service-orders", "POST", body: new HttpBody(HttpBodyKinds.Json, """{ "identificationNumber": {cedula} }""", null, null, null));
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, Variables(), Ct);
+
+        Assert.True(result.Ok);
+        Assert.Equal(
+            ["""{ "identificationNumber": "10203" }""", """{ "identificationNumber": "10203" }"""],
+            bed.Handler.Requests.Select(request => request.Body));
+    }
+
+    /// <summary>Spec 2026-11-03 D-2 (P2-R37): la respuesta se cortó, así que el POST pudo llegar; repetirlo podría crear dos órdenes.</summary>
+    [Fact]
+    public async Task APostWhoseResponseEndedIsNotRetried()
+    {
+        var bed = new Bed(_ => throw new HttpRequestException(HttpRequestError.ResponseEnded, "ended"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(method: "POST"), Variables(), Ct);
+
+        Assert.Equal(("network", "network:response_ended"), (result.Outcome, result.ErrorCode));
+        Assert.Single(bed.Handler.Requests);
+        Assert.Single(bed.Log.Entries);
+        Assert.Empty(bed.Delays);
+    }
+
+    [Fact]
+    public async Task AGetWhoseResponseEndedIsRetried()
+    {
+        var bed = new Bed(Sequence(() => throw new HttpRequestException(HttpRequestError.ResponseEnded, "ended"), () => Json(HttpStatusCode.OK, "{}")));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.True(result.Ok);
+        Assert.Equal(2, bed.Handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task AGetCutWhileReadingTheBodyIsRetried()
+    {
+        var bed = new Bed(Sequence(
+            () => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new DroppingStream()) }, () => Json(HttpStatusCode.OK, "{}")));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.True(result.Ok);
+        Assert.Equal([("network", "network:response_ended"), ("ok", null)], bed.Log.Entries.Select(entry => (entry.Outcome, entry.ErrorCode)));
+    }
+
+    [Fact]
+    public async Task APutCutWhileReadingTheBodyIsNotRetried()
+    {
+        var bed = new Bed(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new DroppingStream()) });
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(method: "PUT"), Variables(), Ct);
+
+        Assert.Equal(("network", "network:response_ended", (int?)200), (result.Outcome, result.ErrorCode, result.Status));
+        Assert.Single(bed.Handler.Requests);
+        Assert.Empty(bed.Delays);
+    }
+
+    /// <summary>Spec 2026-11-03, decisión del owner: un timeout no se reintenta, ni en <c>GET</c>. Repetir frente a una API lenta duplica la
+    /// espera del cliente.</summary>
+    [Fact]
+    public async Task ATimeoutIsNotRetriedEvenForGet()
+    {
+        var bed = new Bed(async (_, cancellationToken) =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            return Json(HttpStatusCode.OK, "{}");
+        });
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(timeoutSeconds: 1), Variables(), Ct);
+
+        Assert.Equal(("timeout", "timeout"), (result.Outcome, result.ErrorCode));
+        Assert.Single(bed.Handler.Requests);
+        Assert.Equal("timeout", Assert.Single(bed.Log.Entries).Outcome);
+        Assert.Empty(bed.Delays);
+    }
+
+    [Fact]
+    public async Task AnUnknownNetworkErrorIsRetriedOnlyForGet()
+    {
+        var get = new Bed(_ => throw new HttpRequestException("?"));
+        var post = new Bed(_ => throw new HttpRequestException("?"));
+
+        await get.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+        await post.Executor().ExecuteAsync(Context, Node(method: "POST"), Variables(), Ct);
+
+        Assert.Equal(2, get.Handler.Requests.Count);
+        Assert.Single(post.Handler.Requests);
+    }
+
+    /// <summary>Spec 2026-11-03 D-2/D-6: sólo una vez; si el segundo intento falla, su resultado es el del bloque.</summary>
+    [Fact]
+    public async Task TheSecondFailureIsTheResult()
+    {
+        var bed = new Bed(Sequence(
+            () => throw new HttpRequestException(HttpRequestError.ConnectionError, "refused"),
+            () => throw new HttpRequestException(HttpRequestError.ResponseEnded, "ended"),
+            () => Json(HttpStatusCode.OK, "{}")));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Equal(("network", "network:response_ended", false), (result.Outcome, result.ErrorCode, result.Ok));
+        Assert.Equal(2, bed.Handler.Requests.Count);
+        Assert.Equal(["network:connection_error", "network:response_ended"], bed.Log.Entries.Select(entry => entry.ErrorCode));
+    }
+
+    /// <summary>Spec 2026-11-03 D-3: con status el servidor procesó algo; un 503 no se repite.</summary>
+    [Fact]
+    public async Task AnErrorStatusIsNotRetried()
+    {
+        var bed = new Bed(_ => Json(HttpStatusCode.ServiceUnavailable, "{}"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Equal(("error_status", "http_503"), (result.Outcome, result.ErrorCode));
+        Assert.Single(bed.Handler.Requests);
+        Assert.Empty(bed.Delays);
+    }
+
+    [Fact]
+    public async Task AConnectRejectionIsNotRetried()
+    {
+        var bed = new Bed(_ => throw new HttpRequestException("rejected", new InvalidOperationException(StubPolicy.ConnectRejection)));
+
+        await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Single(bed.Handler.Requests);
+        Assert.Empty(bed.Delays);
+    }
+
+    /// <summary>Spec 2026-11-03 D-2: el archivo es un stream de R2 que no se rebobina.</summary>
+    [Fact]
+    public async Task AMultipartBodyIsNotRetried()
+    {
+        // Una conexión rechazada de verdad (con el SocketException adentro): sin el multipart, un POST así sí se repetiría.
+        var bed = new Bed(_ => throw Refused());
+        var messageId = Guid.CreateVersion7();
+        bed.Media.Stored[messageId] = new StoredAttachment("k", "f.pdf", "application/pdf", 3);
+        bed.Media.Objects["k"] = Encoding.ASCII.GetBytes("PDF");
+        var variables = Variables();
+        variables.Set("factura", new System.Text.Json.Nodes.JsonObject { ["messageId"] = messageId.ToString() });
+        var node = Node("/upload", "POST", body: new HttpBody(HttpBodyKinds.Multipart, null, [], "file", "factura"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, variables, Ct);
+
+        Assert.Equal("network:connection_error:connection_refused", result.ErrorCode);
+        Assert.Single(bed.Handler.Requests);
+        Assert.Empty(bed.Delays);
+    }
+
+    /// <summary>Spec 2026-11-03 D-5: la fila del primer intento se escribe antes de esperar, así que un apagado durante la espera no la pierde;
+    /// la cancelación de quien llama se propaga, como hoy.</summary>
+    [Fact]
+    public async Task TheCallerCancellationDuringTheRetryWaitPropagates()
+    {
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var bed = new Bed(_ => throw new HttpRequestException(HttpRequestError.ConnectionError, "refused"));
+        // El doble respeta el token que recibe: si la espera no recibiera el de quien llama, no se cancelaría y habría un segundo intento.
+        bed.OnDelay = caller.Cancel;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bed.Executor().ExecuteAsync(Context, Node(), Variables(), caller.Token));
+
+        Assert.Equal(caller.Token, Assert.Single(bed.DelayTokens));
+        Assert.Single(bed.Handler.Requests);
+        Assert.Equal("network:connection_error", Assert.Single(bed.Log.Entries).ErrorCode);
+    }
+
+    /// <summary>Spec 2026-11-03 D-2: si quien llama ya canceló cuando falla el primer intento, no se espera ni se repite. HttpClient convierte
+    /// la falla del handler en una cancelación (su token ya está cancelado), así que se propaga sin fila, como antes del reintento.</summary>
+    [Fact]
+    public async Task ACallerCancelledDuringTheFirstAttemptIsNeitherWaitedNorRetried()
+    {
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var bed = new Bed(_ =>
+        {
+            caller.Cancel();
+            throw new HttpRequestException(HttpRequestError.ConnectionError, "refused");
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => bed.Executor().ExecuteAsync(Context, Node(), Variables(), caller.Token));
+
+        Assert.Single(bed.Handler.Requests);
+        Assert.Empty(bed.Delays);
+        Assert.Empty(bed.Log.Entries);
+    }
+
+    /// <summary>Spec 2026-11-03 D-4 (D-H5): el código sale de los enums, nunca del mensaje de la excepción, que puede traer la URL.</summary>
+    [Fact]
+    public async Task TheNetworkErrorCodeComesFromEnumsOnly()
+    {
+        var logs = new CapturedLogs();
+        var bed = new Bed(
+            _ => throw new HttpRequestException(
+                HttpRequestError.ConnectionError, "https://secreto.test/?k=CLAVE", new SocketException((int)SocketError.ConnectionRefused)),
+            logs: logs);
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(), Variables(), Ct);
+
+        Assert.Equal("network:connection_error:connection_refused", result.ErrorCode);
+        Assert.All(bed.Log.Entries, entry => Assert.Equal("network:connection_error:connection_refused", entry.ErrorCode));
+        Assert.Contains("network:connection_error:connection_refused", logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("secreto", logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("CLAVE", logs.AllText, StringComparison.Ordinal);
+        Assert.DoesNotContain("api.clasic.test", logs.AllText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnIOExceptionWithoutHttpErrorIsNetworkIo()
+    {
+        var bed = new Bed(_ => throw new IOException("broken pipe"));
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(method: "POST"), Variables(), Ct);
+
+        Assert.Equal(("network", "network:io"), (result.Outcome, result.ErrorCode));
+        Assert.Equal("network:io", Assert.Single(bed.Log.Entries).ErrorCode);
+    }
+
+    /// <summary>Spec 2026-11-03 D-4: <c>http_calls.error_code</c> es <c>varchar(64)</c>; ninguna combinación de enums (ni un valor sin nombre)
+    /// la pasa, así que el recorte de <c>HttpCallLog</c> nunca parte un código.</summary>
+    [Fact]
+    public void TheLongestNetworkErrorCodeFitsTheColumn()
+    {
+        HttpRequestError[] errors = [.. Enum.GetValues<HttpRequestError>(), (HttpRequestError)999];
+        SocketError[] sockets = [.. Enum.GetValues<SocketError>(), (SocketError)99999];
+
+        foreach (var error in errors)
+        {
+            foreach (var socket in sockets)
+            {
+                var (code, _) = NetworkFailure.Classify(new HttpRequestException(error, "x", new SocketException((int)socket)), "GET", responded: false);
+                Assert.True(code.Length <= 64, $"{code} mide {code.Length}.");
+                Assert.StartsWith("network:", code, StringComparison.Ordinal);
+            }
+        }
+
+        Assert.Equal("network:999", NetworkFailure.Classify(new HttpRequestException((HttpRequestError)999, "x"), "GET", responded: false).ErrorCode);
+    }
+
+    /// <summary>Spec 2026-11-03 D-2: con el status ya recibido la petición llegó, así que un <c>ConnectionError</c> no cuenta como «no salió».</summary>
+    [Fact]
+    public void AFailureAfterTheStatusIsNeverPreSend()
+    {
+        var failure = Refused();
+
+        Assert.False(NetworkFailure.Classify(failure, "POST", responded: true).Retryable);
+        Assert.True(NetworkFailure.Classify(failure, "POST", responded: false).Retryable);
+        Assert.True(NetworkFailure.Classify(failure, "GET", responded: true).Retryable);
+    }
+
+    /// <summary>Revisión del hotfix: un <c>ConnectionError</c> es «no salió» para un método con efecto sólo si en la cadena hay un
+    /// <c>SocketException</c> y ninguna <c>IOException</c>. Con una <c>IOException</c> (falla al escribir el request o al leer los headers) o
+    /// sin causa, pudo llegar: sólo <c>GET</c>.</summary>
+    [Fact]
+    public void AConnectionErrorWithoutAConnectFailureIsOnlyRetriedForGet()
+    {
+        var reset = new HttpRequestException(
+            HttpRequestError.ConnectionError, "x", new IOException("reset", new SocketException((int)SocketError.ConnectionReset)));
+        var bare = new HttpRequestException(HttpRequestError.ConnectionError, "x");
+
+        Assert.False(NetworkFailure.Classify(reset, "POST", responded: false).Retryable);
+        Assert.False(NetworkFailure.Classify(bare, "PUT", responded: false).Retryable);
+        Assert.True(NetworkFailure.Classify(reset, "GET", responded: false).Retryable);
+        Assert.True(NetworkFailure.Classify(bare, "GET", responded: false).Retryable);
+        Assert.Equal("network:connection_error:connection_reset", NetworkFailure.Classify(reset, "POST", responded: false).ErrorCode);
+    }
+
+    /// <summary>Revisión del hotfix, con sockets reales (SocketsHttpHandler contra 127.0.0.1): un POST a un puerto donde nadie escucha no
+    /// salió, y se repite.</summary>
+    [Fact]
+    public async Task ARealRefusedConnectionRetriesAPost()
+    {
+        using var transport = new SocketsHttpHandler();
+        var bed = new Bed((_, _) => throw new InvalidOperationException("no se usa"), baseUrl: new Uri($"http://127.0.0.1:{FreePort()}/v1/"))
+        {
+            Transport = transport,
+        };
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(method: "POST", timeoutSeconds: 10), Variables(), Ct);
+
+        Assert.Equal("network", result.Outcome);
+        Assert.StartsWith("network:connection_error", result.ErrorCode, StringComparison.Ordinal);
+        Assert.Equal(2, bed.Log.Entries.Count);
+        Assert.Equal([TimeSpan.FromSeconds(1)], bed.Delays);
+    }
+
+    /// <summary>Revisión del hotfix, con sockets reales: el servidor leyó el POST entero y reseteó sin responder. La petición llegó, así que
+    /// no se repite (P2-R37).</summary>
+    [Fact]
+    public async Task ARealResetAfterThePostArrivedIsNotRetried()
+    {
+        await using var server = new ResettingServer();
+        using var transport = new SocketsHttpHandler();
+        var bed = new Bed((_, _) => throw new InvalidOperationException("no se usa"), baseUrl: server.BaseUrl) { Transport = transport };
+        var node = Node("/service-orders", "POST", body: new HttpBody(HttpBodyKinds.Json, """{ "id": {cedula} }""", null, null, null), timeoutSeconds: 5);
+
+        var result = await bed.Executor().ExecuteAsync(Context, node, Variables(), Ct);
+
+        Assert.Equal("network", result.Outcome);
+        Assert.Single(bed.Log.Entries);
+        Assert.Empty(bed.Delays);
+        Assert.Equal(1, server.RequestsRead);
+    }
+
+    /// <summary>Revisión del hotfix, con sockets reales: el mismo reset con un <c>GET</c> se repite.</summary>
+    [Fact]
+    public async Task ARealResetAfterTheGetArrivedIsRetried()
+    {
+        await using var server = new ResettingServer();
+        using var transport = new SocketsHttpHandler();
+        var bed = new Bed((_, _) => throw new InvalidOperationException("no se usa"), baseUrl: server.BaseUrl) { Transport = transport };
+
+        var result = await bed.Executor().ExecuteAsync(Context, Node(timeoutSeconds: 5), Variables(), Ct);
+
+        Assert.Equal("network", result.Outcome);
+        Assert.Equal(2, bed.Log.Entries.Count);
+        Assert.Equal(2, server.RequestsRead);
+    }
+
+    /// <summary>Revisión del hotfix: deja escrito qué entrega .NET de verdad ante el reset del servidor tras leer el POST, y que el clasificador
+    /// no lo trata como «no salió».</summary>
+    [Fact]
+    public async Task WhatDotNetReportsForAResetAfterThePost()
+    {
+        await using var server = new ResettingServer();
+        using var transport = new SocketsHttpHandler();
+        using var client = new HttpClient(transport) { Timeout = TimeSpan.FromSeconds(5) };
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(
+            () => client.PostAsync(new Uri(server.BaseUrl, "service-orders"), new StringContent("""{"id":1}""", Encoding.UTF8, "application/json"), Ct));
+
+        var chain = new List<string>();
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            chain.Add(current switch
+            {
+                HttpRequestException request => $"HttpRequestException({request.HttpRequestError})",
+                HttpIOException io => $"HttpIOException({io.HttpRequestError})",
+                SocketException socket => $"SocketException({socket.SocketErrorCode})",
+                _ => current.GetType().Name,
+            });
+        }
+
+        TestContext.Current.TestOutputHelper?.WriteLine("Reset tras el POST: " + string.Join(" -> ", chain));
+        Assert.False(NetworkFailure.Classify(exception, "POST", responded: false).Retryable, string.Join(" -> ", chain));
+    }
+
+    private static HttpRequestException Refused() =>
+        new(HttpRequestError.ConnectionError, "refused", new SocketException((int)SocketError.ConnectionRefused));
+
+    private static int FreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    [Theory]
+    [InlineData(HttpRequestError.HttpProtocolError)]
+    [InlineData(HttpRequestError.InvalidResponse)]
+    [InlineData(HttpRequestError.UserAuthenticationError)]
+    [InlineData(HttpRequestError.ConfigurationLimitExceeded)]
+    public void ADeterministicFailureIsNeverRetried(HttpRequestError error) =>
+        Assert.False(NetworkFailure.Classify(new HttpRequestException(error, "x"), "GET", responded: false).Retryable);
+
+    private static Func<HttpRequestMessage, HttpResponseMessage> Sequence(params Func<HttpResponseMessage>[] steps)
+    {
+        var index = 0;
+        return _ => steps[Math.Min(index++, steps.Length - 1)]();
     }
 
     /// <summary>D-H2: el host resolvió a un rango interno al conectar (la política lo reconoce en la excepción).</summary>
@@ -681,13 +1079,14 @@ public sealed class HttpBlockExecutorTests
 
         public Bed(
             Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond, string authHeader = "x-api-key", string? rejection = null,
-            bool resolves = true, CapturedLogs? logs = null, (string Reason, string? Name)? unavailable = null)
+            bool resolves = true, CapturedLogs? logs = null, (string Reason, string? Name)? unavailable = null, Uri? baseUrl = null)
         {
             Handler = new StubHandler(respond);
             Policy = new StubPolicy(rejection);
             Apis = new StubExternalApis(
                 unavailable is { } why ? new ExternalApiResolution(null, why.Reason, why.Name)
-                : resolves ? new ExternalApiResolution(new ExternalApiCredentials(new Uri("https://api.clasic.test/v1/"), authHeader, Key), null, "API de Clasic")
+                : resolves ? new ExternalApiResolution(
+                    new ExternalApiCredentials(baseUrl ?? new Uri("https://api.clasic.test/v1/"), authHeader, Key), null, "API de Clasic")
                 : new ExternalApiResolution(null, "not_found", null));
             LoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder => builder.AddProvider(logs ?? new CapturedLogs()).SetMinimumLevel(LogLevel.Trace));
         }
@@ -704,19 +1103,117 @@ public sealed class HttpBlockExecutorTests
 
         public List<TimeSpan> Delays { get; } = [];
 
+        /// <summary>El token que recibió cada espera: el doble lo respeta, así que una espera con <c>CancellationToken.None</c> no se cancela.</summary>
+        public List<CancellationToken> DelayTokens { get; } = [];
+
         public Action? OnDelay { get; set; }
+
+        /// <summary>Un transporte real (<c>SocketsHttpHandler</c>) en vez del handler de mentira.</summary>
+        public HttpMessageHandler? Transport { get; init; }
 
         private ILoggerFactory LoggerFactory { get; }
 
         public HttpBlockExecutor Executor() =>
             new(
-                new StubClientFactory(Handler), Apis, Policy, Media, Log, new FixedClock(Now), LoggerFactory.CreateLogger<HttpBlockExecutor>(),
-                (delay, _) =>
+                new StubClientFactory(Transport ?? Handler), Apis, Policy, Media, Log, new FixedClock(Now), LoggerFactory.CreateLogger<HttpBlockExecutor>(),
+                (delay, cancellationToken) =>
                 {
                     Delays.Add(delay);
+                    DelayTokens.Add(cancellationToken);
                     OnDelay?.Invoke();
+                    cancellationToken.ThrowIfCancellationRequested();
                     return Task.CompletedTask;
                 });
+    }
+
+    /// <summary>Acepta, lee el request entero (headers y cuerpo por <c>Content-Length</c>) y resetea el socket sin responder: la petición
+    /// llegó al servidor y el cliente no sabe qué pasó.</summary>
+    private sealed class ResettingServer : IAsyncDisposable
+    {
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+
+        private readonly CancellationTokenSource stop = new();
+
+        private readonly Task loop;
+
+        private int requestsRead;
+
+        public ResettingServer()
+        {
+            listener.Start();
+            loop = AcceptAsync();
+        }
+
+        public Uri BaseUrl => new($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/v1/");
+
+        public int RequestsRead => Volatile.Read(ref requestsRead);
+
+        public async ValueTask DisposeAsync()
+        {
+            await stop.CancelAsync();
+            listener.Stop();
+            try
+            {
+                await loop;
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or SocketException or ObjectDisposedException)
+            {
+            }
+
+            stop.Dispose();
+        }
+
+        private async Task AcceptAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    using var socket = await listener.AcceptSocketAsync(stop.Token);
+                    if (!await ReadRequestAsync(socket, stop.Token))
+                    {
+                        continue;
+                    }
+
+                    Interlocked.Increment(ref requestsRead);
+                    socket.LingerState = new LingerOption(true, 0);
+                    socket.Close();
+                }
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or SocketException or ObjectDisposedException)
+            {
+            }
+        }
+
+        private static async Task<bool> ReadRequestAsync(Socket socket, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[8192];
+            using var received = new MemoryStream();
+            var headerEnd = -1;
+            var contentLength = 0;
+            while (true)
+            {
+                var read = await socket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken);
+                if (read == 0)
+                {
+                    return false;
+                }
+
+                received.Write(buffer, 0, read);
+                var text = Encoding.ASCII.GetString(received.GetBuffer(), 0, (int)received.Length);
+                if (headerEnd < 0 && (headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal)) >= 0)
+                {
+                    var length = System.Text.RegularExpressions.Regex.Match(
+                        text[..headerEnd], @"Content-Length:\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    contentLength = length.Success ? int.Parse(length.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+                }
+
+                if (headerEnd >= 0 && received.Length >= headerEnd + 4 + contentLength)
+                {
+                    return true;
+                }
+            }
+        }
     }
 
     internal sealed record CapturedPart(string? Name, string? FileName, string? ContentType, string Text, long? Length = null);
