@@ -6,7 +6,9 @@ responder), Bootstrapper (adaptadores). **Frontend:** `qep-frontend`, `features/
 `features/automations/` (texto del disparador).
 **Construido (parte en horario, 2026-10-31):** D-1, D-1b, D-2, D-3b, D-12 y D-12b, sin migración. Compila; sus pruebas se escribieron pero
 no se corrieron al entregar. Pendiente: cobertura fuera de horario (D-5 a D-11, D-14, D-16\*), el CHECK, D-15 y el frontend.
-**Estado:** borrador para el owner. Las decisiones «del owner» vienen de la conversación del 2026-10-26; las «del redactor» las tomé
+**Revisado contra `develop` el 2026-11-03:** ver §9. Nada de lo pendiente se construyó todavía, D-16 se corrigió (DP-9 y DP-10,
+aprobadas) y varias citas de código de §3 y §4 quedaron viejas: las vigentes están en §9.2.
+**Estado:** aprobado por el owner el 2026-11-03, con DP-1 a DP-10 resueltas. Las decisiones «del owner» vienen de la conversación del 2026-10-26; las «del redactor» las tomé
 yo y se pueden discutir; las DECISIÓN-PENDIENTE (§8) las decide el owner. **No se escribe código hasta que el developer lo diga.**
 **Es un delta sobre** `2026-10-21-constructor-de-chatbots-design.md` (D-C6, D-M3, D-M15, D-M16) y
 `2026-10-21-mensajeria-asistente-y-horarios-design.md` (pausa del asistente al tomar o responder). Lo que este documento no toca
@@ -130,9 +132,11 @@ la cobertura es una persona, no el reloj.
 
 **D-16 (del owner, 2026-10-27).** Un asesor que atiende fuera de horario **frena la cobertura** de esa conversación hasta el próximo
 cierre del horario. Sin esto, D-6 y D-8 arman un loop: el asesor responde (corrida `Interrupted`, `Paused AdvisorReplied`), el cliente
-contesta, `AdvisorReplied` no frena la cobertura y el bot arranca el flujo desde Inicio en medio de la charla. Cuenta una pausa
-`AdvisorTook`, `AdvisorReplied` o `AdvisorTransferred` cuyo `AutomationPausedAt` cae **dentro de la ventana fuera de horario actual**
-(desde el último cierre de la conexión), o en el margen de D-16b antes de ese cierre. La ventana siguiente vuelve a cubrir: D-6 sigue
+contesta, `AdvisorReplied` no frena la cobertura y el bot arranca el flujo desde Inicio en medio de la charla. Cuenta la **última
+actividad de una persona** en la conversación (DP-9, aprobada 2026-11-03): un saliente con autor miembro, tomarla o transferirla, y un
+eco de la app de WhatsApp Business (DP-10), si cae **dentro de la ventana fuera de horario actual** (desde el último cierre de la
+conexión) o en el margen de D-16b antes de ese cierre. No se mide con `AutomationPausedAt`: responder en una conversación ya asignada
+no la cambia (`OutboundGuards.cs:112-116`), y el asistente puede estar en `None`. La ventana siguiente vuelve a cubrir: D-6 sigue
 valiendo para el asesor que respondió de día y no está de noche. En horario no cambia nada (D-4).
 
 **D-16b (del owner, 2026-10-27).** El margen hacia atrás cubre la charla que cruza el cierre: el asesor responde a las 17:50, cierra a las
@@ -187,8 +191,9 @@ Hoy la regla «con asesor, sin bot» vive en cuatro lugares. Los cuatro cambian:
    assigned_member_id IS NULL`), y el agregado también (`Conversation.StartAutomation`, `Conversation.cs:339-359`). Hay que permitir esa
    combinación. Si alcanza con relajar el CHECK, o si conviene una columna que diga que es una cobertura fuera de horario, lo decide el
    builder (§7).
-5. **El motor** (D-16): antes de arrancar una cobertura, descarta la conversación si su pausa automática tiene `AutomationPausedAt >=
-   último cierre - margen del tenant` (D-16b). Necesita el último cierre de la conexión: `BusinessHoursStatus` hoy sólo trae
+5. **El motor** (D-16): antes de arrancar una cobertura, descarta la conversación si la última actividad de una persona (D-16) es `>=
+   último cierre - margen del tenant` (D-16b). Si hoy no hay un dato que la dé en una lectura (saliente con autor miembro, toma,
+   transferencia, eco), el builder decide si se agrega una columna o se consulta. Necesita el último cierre de la conexión: `BusinessHoursStatus` hoy sólo trae
    `NextChangeAt` (`Modules/Messaging/Modules.Messaging.Application/BusinessHoursPorts.cs:38`).
 6. **La pausa manual** (D-16c): `POST …/automation/pause` acepta una conversación ya `Paused` por un motivo automático y la deja en
    `Manual`, con su evento `AutomationPaused`.
@@ -238,6 +243,9 @@ conversación con el asistente `Active`: ese envío también tiene que pausar co
   siguiente, el primer entrante → `started`.
 - El asesor respondió 20 min antes del cierre con margen 30 → `skipped`; 40 min antes → `started`; con margen `0`, 1 min antes →
   `started` (D-16b).
+- El asesor la tomó de día (`Paused AdvisorTook`) y responde después del cierre; el cliente contesta → `skipped` (DP-9). Igual con el
+  asistente en `None`.
+- Un eco de la app de WhatsApp Business después del cierre; el cliente contesta → `skipped` (DP-10).
 - «Pausar asistente» sobre `Paused AdvisorReplied` → `Paused Manual` con su evento, y fuera de horario el siguiente entrante →
   `skipped` (D-16c).
 - Pruebas de integración de la ingesta para el nuevo `ShouldEnqueue`, y una de persistencia para el CHECK cambiado.
@@ -279,3 +287,54 @@ conversación con el asistente `Active`: ese envío también tiene que pausar co
   explique. El código actual sólo pone `Open` desde `Conversation.Reopen` (con evento) o la ingesta (con `opened = true`), y no hay
   triggers en la tabla. D-1 hace que deje de importar para el bot, pero un estado que cambia sin rastro es un bug de Mensajería. ¿Se
   investiga aparte, con una prueba que reproduzca el camino «el bot resuelve → entra un mensaje»?
+
+## 9. Revisión contra `develop` (2026-11-03)
+
+Revisión de lectura, sin correr pruebas. Rutas relativas a `qep-backend/src/` salvo que digan otra cosa.
+
+### 9.1 Qué está construido
+
+- **Backend** (`0c50700a`, 2026-10-31): D-1, D-1b, D-2, D-3b, D-12 y D-12b. `TriggerEvaluator.Applies` ya no recibe `opened`; la
+  ingesta encola sin asesor con pausa automática (`Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/InboundIngestion.cs:228-235`);
+  `RunProcessor.DecideAsync` arranca sobre una pausa automática sin asesor (`RunProcessor.cs:287-311`); `FinishedAloneWithoutResolutionAsync`
+  aplica D-12 (`RunProcessor.cs:352-361`); `Conversation.StartAutomation` acepta la pausa automática (`Conversation.cs:368-393`).
+- **Frontend** (`6d9bb232`): el texto del disparador `NewConversation` (`features/automations/types/automations.ts`).
+
+### 9.2 Qué falta (sin cambios desde el 2026-10-27)
+
+| Pieza | Dónde está hoy la regla que cambia |
+| --- | --- |
+| D-15: entrante fuera de orden no reabre | `InboundIngestion.cs:140` pone `status = 'Open'` siempre |
+| Cobertura: encolar con asesor | `InboundIngestion.cs:229` (`state.AssignedMemberId is null`) |
+| Cobertura: el motor la acepta | `RunProcessor.cs:291` |
+| Cobertura: arrancar con asesor | `Conversation.cs:373` (`StartAutomation`) y `CK_conversations_automation_assignment` (`MessagingDbContext.cs:207`) |
+| Cobertura: «una persona actuó después del arranque» | `Engine/BotAttendance.cs:13-22` (`HumanTookOver`), ya no en `RunProcessor` |
+| D-8: responder con asesor ya asignado pausa | `Modules/Messaging/Modules.Messaging.Application/OutboundGuards.cs:112-116`: con dueño no pasa por `TryAutoAssignAsync` y no pausa |
+| D-16: último cierre del horario | `BusinessHoursStatus` sólo trae `NextChangeAt` (`BusinessHoursPorts.cs:38`) |
+| D-16b: margen del tenant | no existe |
+| D-16c: pausar una pausa automática | `Conversation.PauseAutomation` responde `AutomationAlreadyPaused` (`Conversation.cs:446`) |
+| Frontend: D-11, D-16c, campo del margen | `thread-header.tsx` ofrece «Pausar asistente» sólo con `Active` |
+
+### 9.3 Lo que cambió alrededor
+
+- **«Iniciar asistente» desde el hilo** (spec 2026-10-31) y **«Continuar el asistente»** (spec 2026-11-01) ya están en `develop`. Los dos
+  excluyen la conversación con asesor y dejan esa pieza a este spec.
+- `HumanTookOver` vive en `BotAttendance` y la usan también `ManualRunStarter` (`Engine/ManualRunStarter.cs:130`) y el estado del asistente
+  en el resumen del hilo. Cambiarla para la cobertura cambia también qué ofrecen «Iniciar» y «Continuar»: sus pruebas entran en el alcance.
+- Con «Continuar», una pausa `Manual` sin asesor ya no termina la corrida. D-16c deja `Manual` sobre una pausa automática, cuya corrida ya
+  terminó `Interrupted`, así que no habilita «Continuar» por sí sola; igual hay que probarlo.
+- El spec de Agentes IA (`docs/superpowers/specs/2026-10-29-agentes-ia-design.md`, D-A9) sigue citando D-M16, que D-1 reemplazó. El
+  módulo no existe todavía; se corrige ese spec antes de construirlo.
+
+### 9.4 Decisiones pendientes nuevas
+
+Las dos las aprobó el owner el 2026-11-03 con la recomendación del redactor; D-16, §4.2 punto 5 y §6 ya las incorporan.
+
+- ~~**DP-9 (defecto de D-16).**~~ D-16 mide con `AutomationPausedAt`, que sólo se escribe al pausar un asistente `Active`. Un asesor que tomó
+  la conversación de día y responde de noche no la cambia (ya estaba `Paused`, o en `None`), así que D-16 no lo ve y el bot entra en la
+  charla: el loop que D-16 tenía que cortar. **Recomendación del redactor:** medir la **última actividad de una persona** en la conversación
+  (su último saliente con autor miembro, la toma y la transferencia), no la fecha de la pausa. Si hace falta un dato nuevo, lo decide el
+  builder.
+- ~~**DP-10 (ecos del celular).**~~ Con coexistencia, lo que el negocio escribe desde la app de WhatsApp Business entra como saliente sin autor
+  (`InboundIngestion.IngestEchoAsync`, `InboundIngestion.cs:47`) y no pausa nada. **Recomendación del redactor:** que cuente como actividad
+  de una persona para D-16. No se sabe quién fue, pero siempre es una persona.
