@@ -15,6 +15,15 @@ namespace Modules.Customers.Application;
 internal static class CustomerCityIds
 {
     /// <summary>
+    /// Las ciudades DIVIPOLA de la libreta que hay que resolver: solo las de las direcciones
+    /// colombianas. Una direccion de afuera lleva su ciudad como texto y no tiene id que buscar.
+    /// </summary>
+    public static IEnumerable<Guid> OfAddresses(Customer customer) =>
+        customer.Addresses
+            .Where(address => address.CityId.HasValue)
+            .Select(address => address.CityId!.Value);
+
+    /// <summary>
     /// La ciudad de domicilio que hay que resolver contra Geography, o nada si el cliente no es
     /// de Colombia. Se devuelve una secuencia y no un <c>Guid?</c> para que los llamadores la
     /// concatenen con las ciudades de la libreta sin desarmar el nulo cada vez.

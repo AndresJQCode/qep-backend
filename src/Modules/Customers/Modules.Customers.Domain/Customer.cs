@@ -501,7 +501,8 @@ public sealed class Customer
         }
 
         CityId = cityId;
-        if (PrincipalAddress is { } principal && principal.CityId == previousCityId)
+        if (PrincipalAddress is { } principal && principal.Country == ColombiaCountryCode
+            && principal.CityId == previousCityId)
         {
             principal.MoveToCity(cityId, occurredAt);
         }

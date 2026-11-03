@@ -33,8 +33,7 @@ internal sealed class QuotationCustomerLookup(
         // Las ciudades del domicilio y de toda la libreta de una vez: la cotizacion muestra la
         // libreta completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses
-                .Select(address => address.CityId)
+            AddressCityIds(customer)
                 .Concat(DomicileCityIds(customer))
                 .Distinct()
                 .ToArray(),
@@ -59,8 +58,7 @@ internal sealed class QuotationCustomerLookup(
         // sola vez — mismo motivo que FindAsync, pero por lote y no por cliente.
         var citiesById = await geographyLookup.FindCitiesAsync(
             customers.Values
-                .SelectMany(customer => customer.Addresses
-                    .Select(address => address.CityId)
+                .SelectMany(customer => AddressCityIds(customer)
                     .Concat(DomicileCityIds(customer)))
                 .Distinct()
                 .ToArray(),
@@ -69,6 +67,12 @@ internal sealed class QuotationCustomerLookup(
         return customers.Values.ToDictionary(
             customer => customer.Id.Value, customer => ToRef(customer, citiesById));
     }
+
+    // Las ciudades DIVIPOLA de la libreta: una direccion de afuera no tiene id que resolver.
+    private static IEnumerable<Guid> AddressCityIds(Customer customer) =>
+        customer.Addresses
+            .Where(address => address.CityId.HasValue)
+            .Select(address => address.CityId!.Value);
 
     // La ciudad del domicilio a resolver, o nada: un cliente que no es de Colombia no tiene
     // ciudad DIVIPOLA, la suya es el texto de Customer.CityName.
@@ -125,15 +129,22 @@ internal sealed class QuotationCustomerLookup(
         CustomerAddress address,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
     {
-        citiesById.TryGetValue(address.CityId, out var city);
+        // Una direccion de afuera no tiene ciudad DIVIPOLA: sigue la convencion de "sin dato" de
+        // este puerto (Guid.Empty) y la ciudad escrita viaja como nombre. La tarea siguiente
+        // reemplaza esto por pais y ciudad propios en QuotationCustomerAddressRef.
+        CustomerCityRef? city = null;
+        if (address.CityId is { } cityId)
+        {
+            citiesById.TryGetValue(cityId, out city);
+        }
 
         return new QuotationCustomerAddressRef(
             address.Id.Value,
             address.Name,
             address.Address,
             address.Phone,
-            address.CityId,
-            city?.CityName ?? string.Empty,
+            address.CityId ?? Guid.Empty,
+            city?.CityName ?? address.CityName ?? string.Empty,
             city?.DepartmentId ?? Guid.Empty,
             city?.DepartmentName ?? string.Empty,
             address.IsPrincipal);

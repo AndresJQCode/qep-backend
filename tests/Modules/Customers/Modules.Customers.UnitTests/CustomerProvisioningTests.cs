@@ -543,6 +543,30 @@ public sealed class CustomerProvisioningTests
         Assert.Empty(bed.Audit.Human);
     }
 
+    // La libreta puede tener una direccion de afuera como principal: no tiene ciudad DIVIPOLA, asi
+    // que la correccion de Shopify (que es de una ciudad colombiana) no la toca.
+    [Fact]
+    public async Task CorrectCityIgnoresForeignAddresses()
+    {
+        var customer = NewComplete();
+        var colombian = Assert.Single(customer.Addresses);
+        var foreign = customer.AddAddress(
+            new CustomerAddressDetails { Name = "Sede Madrid", Address = "Gran Via 28", Country = "ES", CityName = "Madrid" },
+            isPrincipal: true,
+            Now);
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CorrectCityAsync(
+            Tenant, customer.Id.Value, customer.Version, CityId, ValleCityId, [], TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExternalCustomerCityOutcomeKind.Applied, outcome.Kind);
+        Assert.Equal(ValleCityId, customer.CityId);
+        Assert.Equal("ES", foreign.Country);
+        Assert.Null(foreign.CityId);
+        Assert.Equal("Madrid", foreign.CityName);
+        Assert.Equal(CityId, colombian.CityId);
+    }
+
     [Fact]
     public async Task CorrectCityTwiceIsAlreadyApplied()
     {
