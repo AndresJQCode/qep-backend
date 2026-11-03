@@ -137,7 +137,7 @@ valiendo para el asesor que respondió de día y no está de noche. En horario n
 
 **D-16b (del owner, 2026-10-27).** El margen hacia atrás cubre la charla que cruza el cierre: el asesor responde a las 17:50, cierra a las
 18:00 y el cliente escribe a las 18:01, antes de que el asesor vuelva a responder. Sin margen esa respuesta queda en horario y el bot
-entra. **Default 30 minutos, parametrizable por el tenant.** Con `0` no hay margen. El rango permitido es DP-8.
+entra. **Default 30 minutos, parametrizable por el tenant.** Con `0` no hay margen. Rango permitido: de 0 a 240 minutos (DP-8).
 
 **D-16c (del owner, 2026-10-27).** «Pausar asistente» se ofrece también con el asistente `Paused` por un motivo automático (`AdvisorTook`,
 `AdvisorReplied`, `AdvisorTransferred`), y lo convierte en `Manual`. Es la salida explícita del asesor que va a seguir en la conversación
@@ -257,7 +257,7 @@ conversación con el asistente `Active`: ese envío también tiene que pausar co
 - ~~**DP-5.**~~ Resuelta: D-13 y D-13b.
 - ~~**DP-6.**~~ Resuelta: D-14.
 
-- **DP-8.** Rango permitido del margen de D-16b (¿0 a 240 minutos?). El default de 30 ya lo decidió el owner.
+- ~~**DP-8.**~~ Resuelta: el margen de D-16b va de 0 a 240 minutos, con default 30.
 
 - ~~**DP-1.**~~ Resuelta: D-1b.
 - ~~**DP-2.**~~ Resuelta: D-5b.
