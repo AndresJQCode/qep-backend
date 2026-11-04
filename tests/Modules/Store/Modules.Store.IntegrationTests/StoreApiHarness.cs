@@ -266,6 +266,59 @@ internal static class StoreApiHarness
         return new CompanyRef(await ReadIdAsync(response), "Bancolombia", accountNumber);
     }
 
+    /// <summary>Una empresa con las cuentas que se pidan (banco, número, moneda): la tienda elige una por moneda.</summary>
+    public static async Task<CompanyRef> CreateCompanyAsync(
+        HttpClient client, Guid tenantId, string name, params (string Bank, string Number, string Currency)[] accounts)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name,
+                bankAccounts = accounts.Select(account => new { bankName = account.Bank, accountNumber = account.Number, currency = account.Currency }),
+                taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                cityId = await AnyCityIdAsync(client),
+                phone = "6045551234",
+                email = "ventas@origen.example.co",
+                address = "Cra 50 # 10-20, Rionegro",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        return new CompanyRef(await ReadIdAsync(response), accounts[0].Bank, accounts[0].Number);
+    }
+
+    /// <summary>Un producto con precio de lista en cada moneda pedida: sólo así la moneda aparece en <c>currencies-in-use</c>.</summary>
+    public static async Task<Guid> CreateProductAsync(
+        HttpClient client, Guid tenantId, string code, string name, IReadOnlyDictionary<string, decimal> prices)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name,
+                taxRateId = (Guid?)null,
+                variants = new[]
+                {
+                    new
+                    {
+                        code,
+                        pricing = new
+                        {
+                            prices,
+                            scales = new object[]
+                            {
+                                new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 },
+                            },
+                            packagingUnits = Array.Empty<int>(),
+                        },
+                    },
+                },
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await ReadIdAsync(response);
+    }
+
     public static async Task<Guid> CreateTaxRateAsync(HttpClient client, Guid tenantId, string name, int percentage)
     {
         var response = await client.PostAsJsonAsync(

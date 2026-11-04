@@ -44,6 +44,25 @@ public static class StoreColorScheme
         return new StoreResolvedColors(primary, resolvedOnPrimary, resolvedAccentText, checks);
     }
 
+    /// <summary>El único punto que lee un color de entrada, para que guardar y previsualizar rechacen lo mismo.</summary>
+    public static StoreColor ParseRequired(string? raw) =>
+        StoreColor.TryParse(raw, out var color)
+            ? color
+            : throw new StoreDomainException(StoreErrorCodes.ColorInvalid, "El color primario debe ser #RRGGBB.");
+
+    /// <summary>En blanco o null = automático; cualquier otra cosa tiene que ser #RRGGBB.</summary>
+    public static StoreColor? ParseOptional(string? raw)
+    {
+        if (StoreText.Clean(raw) is null)
+        {
+            return null;
+        }
+
+        return StoreColor.TryParse(raw, out var color)
+            ? color
+            : throw new StoreDomainException(StoreErrorCodes.ColorInvalid, "Un color debe ser #RRGGBB.");
+    }
+
     private static double Truncate(double ratio) => Math.Floor(ratio * 100d) / 100d;
 
     private static StoreColor AutoOnPrimary(StoreColor primary) =>

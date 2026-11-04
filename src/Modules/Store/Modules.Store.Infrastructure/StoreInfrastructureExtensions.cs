@@ -34,6 +34,8 @@ public static class StoreInfrastructureExtensions
         // Secretos y topes de la tienda: validados al arrancar (fuera de Development y Testing, los secretos son obligatorios).
         services.AddOptions<StoreOptions>().Bind(configuration.GetSection(StoreOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IValidateOptions<StoreOptions>, StoreOptionsValidator>();
+        // Los manejadores piden el valor ya enlazado, no IOptions: Application no referencia Microsoft.Extensions.Options.
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<StoreOptions>>().Value);
 
         return services;
     }

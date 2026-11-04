@@ -1068,6 +1068,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -1344,6 +1345,31 @@ public static class QepServiceCollectionExtensions
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
+        // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
+        // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
+        // olvidado compila, mapea su endpoint y responde 500.
+        services.AddScoped<Modules.Store.Application.IStoreTenantLookup, StoreTenantLookup>();
+        services.AddScoped<Modules.Store.Application.IStoreFileLookup, StoreFileLookup>();
+        services.AddScoped<Modules.Store.Application.IStoreCatalogReader, StoreCatalogReader>();
+        services.AddScoped<Modules.Store.Application.IStoreBillingAccounts, StoreBillingAccounts>();
+        services.AddScoped<Modules.Store.Application.IStoreCountries, StorePhoneNormalizer>();
+        services.AddScoped<Modules.Store.Application.StoreSettingsComposer>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.GetStoreSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.UpdateStoreSettingsCommand, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.UpdateStoreSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.PublishStoreCommand, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.PublishStoreHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.PreviewStoreColorsQuery, Modules.Store.Application.StoreColorPreviewDto>,
+            Modules.Store.Application.PreviewStoreColorsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListStoreBillingAccountsQuery, Modules.Store.Application.StoreBillingAccountListDto>,
+            Modules.Store.Application.ListStoreBillingAccountsHandler>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules

@@ -94,9 +94,9 @@ public sealed class OnlineStore
             slug = normalized;
         }
 
-        var primaryColor = ParseRequiredColor(input.PrimaryColor);
-        var onPrimaryColor = ParseOptionalColor(input.OnPrimaryColor);
-        var accentTextColor = ParseOptionalColor(input.AccentTextColor);
+        var primaryColor = StoreColorScheme.ParseRequired(input.PrimaryColor);
+        var onPrimaryColor = StoreColorScheme.ParseOptional(input.OnPrimaryColor);
+        var accentTextColor = StoreColorScheme.ParseOptional(input.AccentTextColor);
 
         ValidateCurrencies(input.Currencies, input.PrimaryCurrency);
         ValidateSalesCountries(input.SalesCountries, isKnownCountry);
@@ -283,7 +283,8 @@ public sealed class OnlineStore
         }
     }
 
-    internal static bool IsCurrencyShape(string? code) =>
+    /// <summary>La forma de un código de moneda (3 letras); que el catálogo la use lo decide Application.</summary>
+    public static bool IsCurrencyShape(string? code) =>
         code is { Length: 3 } && code.All(char.IsAsciiLetter);
 
     private static List<StorePublishBlocker> Blockers(string? slug, string? policyUrl, int currencies, int countries)
@@ -321,23 +322,6 @@ public sealed class OnlineStore
                 AccountNumber = entry.BillingAccount.AccountNumber.Trim(),
                 Currency = entry.BillingAccount.Currency.Trim().ToUpperInvariant(),
             });
-
-    private static StoreColor ParseRequiredColor(string? raw) =>
-        StoreColor.TryParse(raw, out var color)
-            ? color
-            : throw new StoreDomainException(StoreErrorCodes.ColorInvalid, "El color primario debe ser #RRGGBB.");
-
-    private static StoreColor? ParseOptionalColor(string? raw)
-    {
-        if (StoreText.Clean(raw) is null)
-        {
-            return null;
-        }
-
-        return StoreColor.TryParse(raw, out var color)
-            ? color
-            : throw new StoreDomainException(StoreErrorCodes.ColorInvalid, "Un color debe ser #RRGGBB.");
-    }
 
     private void Touch(Guid by, DateTimeOffset now)
     {

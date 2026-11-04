@@ -1,0 +1,285 @@
+using BuildingBlocks.Application;
+using Modules.Store.Application;
+using Modules.Store.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
+using static Modules.Store.UnitTests.StoreTestData;
+
+namespace Modules.Store.UnitTests;
+
+// Dobles a mano de los puertos de Store.Application, sin librería de mocking, como el resto del repositorio: devuelven lo sembrado y
+// anotan lo que reciben y en qué orden, que es lo que estas pruebas fijan.
+
+internal sealed class FakeExecutionContext(Guid tenantId, params string[] permissions) : IExecutionContext
+{
+    public Guid SubjectId => Member;
+
+    public Modules.Tenancy.Domain.TenantId TenantId { get; } = new(tenantId);
+
+    public bool HasPermission(string permission) => permissions.Contains(permission);
+}
+
+internal sealed class FakeTenantModules(TenantModuleSet? set) : ITenantModules
+{
+    public static FakeTenantModules AllEnabled() => new(TenantModuleSet.FromStored(TenantModuleKeys.All));
+
+    public static FakeTenantModules StoreOff() =>
+        new(TenantModuleSet.FromStored(TenantModuleKeys.All.Where(key => key != TenantModuleKeys.Store)));
+
+    public Task<TenantModuleSet?> FindAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(set);
+}
+
+internal sealed class FixedClock(DateTimeOffset now) : IClock
+{
+    public DateTimeOffset UtcNow { get; } = now;
+}
+
+/// <summary>El registro compartido de lo que ocurrió y en qué orden: guardar y reemplazar el dominio tienen que ir juntos.</summary>
+internal sealed class CallLog
+{
+    public List<string> Entries { get; } = [];
+}
+
+internal sealed class FakeStores(CallLog log, OnlineStore? seeded = null) : IOnlineStoreRepository
+{
+    public OnlineStore? Stored { get; private set; } = seeded;
+
+    public HashSet<string> SlugsOfOtherTenants { get; } = [];
+
+    public Task<OnlineStore?> FindAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Stored);
+
+    public void Add(OnlineStore store)
+    {
+        log.Entries.Add("stores.add");
+        Stored = store;
+    }
+
+    public Task<bool> SlugTakenByAnotherAsync(Guid tenantId, string slug, CancellationToken cancellationToken) =>
+        Task.FromResult(SlugsOfOtherTenants.Contains(slug));
+}
+
+internal sealed class FakeDomains(CallLog log) : IStoreDomainRepository
+{
+    public List<(string? Slug, string RootDomain)> Replaced { get; } = [];
+
+    public Task<StoreDomain?> FindByHostAsync(string hostname, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task ReplaceSubdomainAsync(Guid tenantId, string? slug, string rootDomain, CancellationToken cancellationToken)
+    {
+        log.Entries.Add("domains.replace");
+        Replaced.Add((slug, rootDomain));
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeUnitOfWork(CallLog log) : IStoreUnitOfWork
+{
+    public int Saves { get; private set; }
+
+    public Task SaveChangesAsync(CancellationToken cancellationToken)
+    {
+        Saves++;
+        log.Entries.Add("uow.save");
+        return Task.CompletedTask;
+    }
+
+    public Task<IStoreTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
+internal sealed class FakeAudit : IStoreAuditPublisher
+{
+    public List<(string Action, IReadOnlyCollection<string> ChangedFields)> Entries { get; } = [];
+
+    public void Publish(
+        Guid tenantId,
+        Guid actorId,
+        string action,
+        string resourceType,
+        string resourceId,
+        string outcome,
+        IReadOnlyCollection<string> changedFields,
+        DateTimeOffset occurredAt) => Entries.Add((action, changedFields));
+
+    public void PublishAnonymous(Guid tenantId, string action, string resourceType, string resourceId, DateTimeOffset at) =>
+        throw new NotSupportedException();
+}
+
+internal sealed class FakeCatalog : IStoreCatalogReader
+{
+    public HashSet<string> CurrenciesWithPrices { get; } = ["COP", "EUR"];
+
+    public Dictionary<Guid, string> Categories { get; } = [];
+
+    public int CurrencyCalls { get; private set; }
+
+    public Task<IReadOnlyDictionary<Guid, string>> CategoryNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            Categories.Where(pair => ids.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+
+    public Task<IReadOnlyCollection<string>> CurrenciesInUseAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        CurrencyCalls++;
+        return Task.FromResult<IReadOnlyCollection<string>>(CurrenciesWithPrices.ToList());
+    }
+}
+
+internal sealed class FakeBillingAccounts : IStoreBillingAccounts
+{
+    public List<(Guid CompanyId, string Bank, string Number, string Currency)> Validated { get; } = [];
+
+    /// <summary>Los números de cuenta que la «empresa» no tiene: la validación los rechaza.</summary>
+    public HashSet<string> UnknownNumbers { get; } = [];
+
+    public List<StoreBillingAccountOption> Options { get; } = [];
+
+    public string? LastListedCurrency { get; private set; }
+
+    public Task<IReadOnlyList<StoreBillingAccountOption>> ListAsync(
+        Guid tenantId, string? currency, CancellationToken cancellationToken)
+    {
+        LastListedCurrency = currency;
+        return Task.FromResult<IReadOnlyList<StoreBillingAccountOption>>(Options);
+    }
+
+    public Task<StoreBillingAccount> ValidateAsync(
+        Guid tenantId, Guid companyId, string bankName, string accountNumber, string currency, CancellationToken cancellationToken)
+    {
+        Validated.Add((companyId, bankName, accountNumber, currency));
+        return UnknownNumbers.Contains(accountNumber)
+            ? throw new InvalidOperationException("quotation.billing.account_not_found")
+            : Task.FromResult(new StoreBillingAccount(companyId, bankName, accountNumber, currency));
+    }
+}
+
+internal sealed class FakeFiles : IStoreFileLookup
+{
+    public Dictionary<Guid, string> PublicImages { get; } = [];
+
+    public Task<string?> FindPublicImageAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+        Task.FromResult(PublicImages.GetValueOrDefault(fileId));
+}
+
+internal sealed class FakeTenants : IStoreTenantLookup
+{
+    public Task<StoreTenantRef?> GetAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<StoreTenantRef?>(new StoreTenantRef(
+            "Origen Botánico",
+            "CO",
+            true,
+            "https://cdn.test/logo.png",
+            new StoreRegionalFormat("America/Bogota", "yyyy-MM-dd", "es-CO", "COP", "CO")));
+}
+
+internal sealed class KnownCountries : IStoreCountries
+{
+    public bool IsKnown(string country) => country is "CO" or "ES" or "US";
+}
+
+/// <summary>Arma el manejador de ajustes con todos sus dobles a la vista de la prueba.</summary>
+internal sealed class SettingsRig
+{
+    public CallLog Log { get; } = new();
+
+    public FakeStores Stores { get; }
+
+    public FakeDomains Domains { get; }
+
+    public FakeUnitOfWork UnitOfWork { get; }
+
+    public FakeAudit Audit { get; } = new();
+
+    public FakeCatalog Catalog { get; } = new();
+
+    public FakeBillingAccounts Accounts { get; } = new();
+
+    public FakeFiles Files { get; } = new();
+
+    public StoreSettingsComposer Composer { get; }
+
+    public IExecutionContext Context { get; }
+
+    public ITenantModules Modules { get; }
+
+    public SettingsRig(
+        OnlineStore? seeded = null,
+        string[]? permissions = null,
+        ITenantModules? modules = null,
+        Guid? callerTenant = null)
+    {
+        Stores = new FakeStores(Log, seeded);
+        Domains = new FakeDomains(Log);
+        UnitOfWork = new FakeUnitOfWork(Log);
+        Context = new FakeExecutionContext(callerTenant ?? StoreTestData.TenantId, permissions ?? [StorePermissions.SettingsManage]);
+        Modules = modules ?? FakeTenantModules.AllEnabled();
+        Composer = new StoreSettingsComposer(new FakeTenants(), Files, Catalog, new StoreOptions { RootDomain = "lulocrm.com" });
+    }
+
+    public UpdateStoreSettingsHandler UpdateHandler() =>
+        new(
+            Context,
+            Modules,
+            Stores,
+            Domains,
+            Catalog,
+            Accounts,
+            Files,
+            new KnownCountries(),
+            UnitOfWork,
+            Audit,
+            new FixedClock(Now),
+            new StoreOptions { RootDomain = "lulocrm.com" },
+            Composer,
+            new UpdateStoreSettingsValidator());
+
+    public PublishStoreHandler PublishHandler() =>
+        new(Context, Modules, Stores, UnitOfWork, Audit, new FixedClock(Now), Composer, new PublishStoreValidator());
+
+    public GetStoreSettingsHandler GetHandler() =>
+        new(Context, Modules, Stores, new FixedClock(Now), Composer);
+
+    public PreviewStoreColorsHandler PreviewHandler() => new(Context, Modules);
+
+    public ListStoreBillingAccountsHandler ListAccountsHandler() => new(Context, Modules, Accounts);
+
+    public static StoreSettingsRequest Body(
+        string? slug = "acme",
+        string? primaryColor = "#FFD400",
+        string? onPrimaryColor = null,
+        string? pricingMode = "RetailOnly",
+        IReadOnlyList<StoreCurrencyRequest?>? currencies = null,
+        string? primaryCurrency = "COP",
+        IReadOnlyList<string?>? salesCountries = null,
+        IReadOnlyList<Guid>? featured = null,
+        Guid? bannerFileId = null,
+        string? name = null,
+        string? dataPolicyUrl = "https://acme.test/politica",
+        string? instagramUrl = null) =>
+        new(
+            slug,
+            name,
+            primaryColor,
+            onPrimaryColor,
+            AccentTextColor: null,
+            bannerFileId,
+            BannerText: null,
+            WhatsApp: null,
+            Address: null,
+            Schedule: null,
+            instagramUrl,
+            FacebookUrl: null,
+            TiktokUrl: null,
+            dataPolicyUrl,
+            pricingMode,
+            currencies ?? [Entry("COP", "A-111")],
+            primaryCurrency,
+            salesCountries ?? ["co", "es"],
+            featured ?? []);
+
+    public static StoreCurrencyRequest Entry(string currency, string account, string? accountCurrency = null) =>
+        new(currency, new StoreBillingAccountRequest(CompanyId, "Bancolombia", account, accountCurrency ?? currency));
+
+    public static readonly Guid CompanyId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+}

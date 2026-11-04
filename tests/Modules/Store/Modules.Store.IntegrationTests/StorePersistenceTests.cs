@@ -330,14 +330,14 @@ public sealed class StorePersistenceTests
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<IStoreDomainRepository>()
-                .ReplaceSubdomainAsync(Tenant, "acme.lulocrm.com", Ct);
+                .ReplaceSubdomainAsync(Tenant, "acme", "lulocrm.com", Ct);
             await scope.ServiceProvider.GetRequiredService<IStoreUnitOfWork>().SaveChangesAsync(Ct);
         }
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<IStoreDomainRepository>()
-                .ReplaceSubdomainAsync(Tenant, "acme-nuevo.lulocrm.com", Ct);
+                .ReplaceSubdomainAsync(Tenant, "acme-nuevo", "lulocrm.com", Ct);
             await scope.ServiceProvider.GetRequiredService<IStoreUnitOfWork>().SaveChangesAsync(Ct);
         }
 
