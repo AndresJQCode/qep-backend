@@ -66,7 +66,7 @@ public sealed class StoreOptionsTests
         var options = Valid();
         options.Turnstile = new TurnstileOptions { Enabled = false };
 
-        Assert.Empty(options.Validate(requireSecrets: false));
+        Assert.Empty(options.Validate(requireSecrets: false, turnstileMayBeDisabled: true));
     }
 
     [Fact]
@@ -85,6 +85,11 @@ public sealed class StoreOptionsTests
     {
         var absent = new StoreOptions();
         Assert.Empty(absent.Validate(requireSecrets: false));
+
+        // Sin requerir secretos tampoco se permite apagar el anti-bot: son dos condiciones distintas.
+        var disabled = new StoreOptions { Turnstile = new TurnstileOptions { Enabled = false } };
+        Assert.Contains(
+            "Store:Turnstile:Enabled", Assert.Single(disabled.Validate(requireSecrets: false)), StringComparison.Ordinal);
 
         var short31 = new StoreOptions { Storefront = new StorefrontOptions { SharedSecret = new string('s', 31) } };
         Assert.Contains(

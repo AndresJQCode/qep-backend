@@ -34,14 +34,14 @@ public static class StoreInfrastructureExtensions
         services.AddScoped<IStoreUnitOfWork, StoreUnitOfWork>();
         services.AddScoped<IStoreAuditPublisher, StoreAuditPublisher>();
 
-        // Secretos y topes de la tienda: validados al arrancar (fuera de Development y Testing, los secretos son obligatorios).
+        // Secretos y topes de la tienda: validados al arrancar (los secretos son obligatorios sólo en Production).
         services.AddOptions<StoreOptions>().Bind(configuration.GetSection(StoreOptions.SectionName)).ValidateOnStart();
         services.AddSingleton<IValidateOptions<StoreOptions>, StoreOptionsValidator>();
         // Los manejadores piden el valor ya enlazado, no IOptions: Application no referencia Microsoft.Extensions.Options.
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<StoreOptions>>().Value);
 
         // Turnstile: un cliente propio con 5 s, sin redirecciones y sin los loggers por defecto. Enabled=false (sólo Development y
-        // Testing; el arranque lo prohíbe fuera) registra el verificador que siempre pasa.
+        // Testing; el arranque lo prohíbe en cualquier otro ambiente, Staging incluido) registra el verificador que siempre pasa.
         if (configuration.GetValue("Store:Turnstile:Enabled", true))
         {
             services.AddHttpClient(CloudflareTurnstileVerifier.HttpClientName, CloudflareTurnstileVerifier.ConfigureClient)

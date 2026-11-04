@@ -19,10 +19,11 @@ public sealed class StoreOptions
     public TurnstileOptions Turnstile { get; set; } = new();
 
     /// <summary>
-    /// <paramref name="requireSecrets"/> es false en Development y Testing: ahí los secretos viven en user-secrets o faltan, y exigirlos
-    /// tumbaría el arranque de todas las demás pruebas de integración. Un secreto presente siempre se valida.
+    /// <paramref name="requireSecrets"/> es true sólo en Production: fuera de ahí los secretos viven en user-secrets o faltan, y exigirlos
+    /// tumbaría el arranque de todo host de pruebas. Un secreto presente siempre se valida. <paramref name="turnstileMayBeDisabled"/> es
+    /// true sólo en Development y Testing y va aparte: apagar el desafío deja pasar cualquier token, y eso no depende de los secretos.
     /// </summary>
-    public IReadOnlyList<string> Validate(bool requireSecrets = true)
+    public IReadOnlyList<string> Validate(bool requireSecrets = true, bool turnstileMayBeDisabled = false)
     {
         var failures = new List<string>();
         if (string.IsNullOrWhiteSpace(RootDomain))
@@ -52,8 +53,9 @@ public sealed class StoreOptions
             failures.Add("Store:Turnstile:SecretKey is required when Store:Turnstile:Enabled is true.");
         }
 
-        // El pasa-todo existe para Development y Testing; fuera de ellos apagar el desafío dejaría el envío público sin anti-bot.
-        if (!Turnstile.Enabled && requireSecrets)
+        // El pasa-todo existe para Development y Testing; fuera de ellos (Staging incluido) apagar el desafío dejaría el envío público
+        // sin anti-bot.
+        if (!Turnstile.Enabled && !turnstileMayBeDisabled)
         {
             failures.Add("Store:Turnstile:Enabled cannot be false outside Development and Testing.");
         }

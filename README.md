@@ -1001,7 +1001,9 @@ manuales. Efecto inmediato, sin reiniciar la API.
 
 Cada tenant puede publicar una tienda en `{slug}.lulocrm.com` (spec `docs/superpowers/specs/2026-11-03-tienda-publica-design.md`,
 plan `docs/superpowers/plans/2026-11-03-tienda-publica-backend.md`). Es el módulo `store`: exige `orders`, no viene con el signup y se
-prende por tenant desde la consola de operador. Sin él, el backoffice responde `403 tenancy.module_not_enabled`.
+prende por tenant desde la consola de operador. Sin él, los manejadores de la bandeja (listar, «Tomar», «Descartar») responden
+`403 tenancy.module_not_enabled`; los ajustes y la vista previa de colores responden un `403` pelado, porque la máscara de permisos del
+módulo apagado ya los descarta antes.
 
 - **Backoffice:** `/api/v1/tenants/{tenantId}/store` (ajustes, publicar, bandeja de solicitudes, «Tomar» y «Descartar»). Los ajustes
   piden `store.settings.manage` (sólo `admin` por defecto); la bandeja, `quotations.order.manage`.
@@ -1016,8 +1018,10 @@ prende por tenant desde la consola de operador. Sin él, el backoffice responde 
 
 ### Secretos
 
-Los dos son obligatorios fuera de `Development` y `Testing`: sin ellos el arranque falla. La clave del storefront, cuando está, se
-valida siempre y necesita al menos 32 caracteres. Van en user-secrets en local y en el almacén de secretos del despliegue, nunca en
+Los dos son obligatorios **sólo en `Production`**, como los demás validadores del repositorio: sin ellos el arranque falla, y como
+el arranque es de toda la API, **un secreto faltante en Production detiene la API entera, no sólo la tienda**. Fuera de Production, un
+secreto ausente no impide arrancar: la tienda queda cerrada en ejecución (401 sin clave del storefront, 503 `store.captcha.unavailable`
+sin clave de Turnstile). La clave del storefront, cuando está, se valida siempre y necesita al menos 32 caracteres. Van en user-secrets en local y en el almacén de secretos del despliegue, nunca en
 `appsettings`:
 
 ```powershell
@@ -1027,7 +1031,7 @@ dotnet user-secrets set "Store:Turnstile:SecretKey" "<secret key de Cloudflare T
 
 Para comprobar que existen sin verlos: `dotnet user-secrets list --project src/Api | Select-String -Pattern "Store:" | Measure-Object`.
 Una clave del storefront vacía o en blanco no abre la tienda: toda llamada pública responde 401. `Store:Turnstile:Enabled=false` sólo se
-acepta en `Development` y `Testing`.
+acepta en `Development` y `Testing` (en Staging el arranque falla, para que no corra con un captcha que acepta cualquier token).
 
 ### Códigos de error de las rutas públicas
 
@@ -1057,7 +1061,7 @@ Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 c
 
 **El backend va antes que el frontend y el storefront.** El backend nuevo sólo agrega: el módulo nace apagado en todos los tenants, el
 detalle del pedido suma `storeRequest` al final y las direcciones y partes de afuera de Colombia no existen hasta que la tienda las crea.
-Orden: (1) backend con sus migraciones y los dos secretos; (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
+Orden: (1) backend con sus migraciones y los dos secretos (en Production deben estar **antes** de desplegar: sin ellos la API entera no arranca); (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
 antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
 
 ## API implementada
