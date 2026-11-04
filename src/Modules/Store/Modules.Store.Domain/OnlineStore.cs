@@ -223,18 +223,26 @@ public sealed class OnlineStore
     {
         ArgumentNullException.ThrowIfNull(entries);
 
-        if (entries.Any(e => !IsCurrencyShape(e.Currency)))
+        if (entries.Count > MaxCurrencies)
+        {
+            throw new StoreDomainException(
+                StoreErrorCodes.ValidationFailed,
+                $"La tienda admite hasta {MaxCurrencies} monedas.");
+        }
+
+        // Las entradas se recortan igual que la principal: " cop " y "COP" son la misma moneda.
+        if (entries.Any(e => !IsCurrencyShape(e.Currency?.Trim())))
         {
             throw new StoreDomainException(StoreErrorCodes.CurrencyInvalid, "La moneda debe ser de 3 letras.");
         }
 
-        var codes = entries.Select(e => e.Currency.ToUpperInvariant()).ToList();
+        var codes = entries.Select(e => e.Currency.Trim().ToUpperInvariant()).ToList();
         if (codes.Distinct(StringComparer.Ordinal).Count() != codes.Count)
         {
             throw new StoreDomainException(StoreErrorCodes.CurrencyDuplicate, "Una moneda no puede repetirse.");
         }
 
-        if (entries.Any(e => !string.Equals(e.BillingAccount.Currency, e.Currency, StringComparison.OrdinalIgnoreCase)))
+        if (entries.Any(e => !string.Equals(e.BillingAccount.Currency?.Trim(), e.Currency.Trim(), StringComparison.OrdinalIgnoreCase)))
         {
             throw new StoreDomainException(
                 StoreErrorCodes.CurrencyMismatch,
@@ -306,12 +314,12 @@ public sealed class OnlineStore
 
     private static StoreCurrency NormalizeCurrency(StoreCurrency entry) =>
         new(
-            entry.Currency.ToUpperInvariant(),
+            entry.Currency.Trim().ToUpperInvariant(),
             entry.BillingAccount with
             {
                 BankName = entry.BillingAccount.BankName.Trim(),
                 AccountNumber = entry.BillingAccount.AccountNumber.Trim(),
-                Currency = entry.BillingAccount.Currency.ToUpperInvariant(),
+                Currency = entry.BillingAccount.Currency.Trim().ToUpperInvariant(),
             });
 
     private static StoreColor ParseRequiredColor(string? raw) =>

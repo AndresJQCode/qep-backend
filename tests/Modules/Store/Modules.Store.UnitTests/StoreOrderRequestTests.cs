@@ -123,6 +123,17 @@ public sealed class StoreOrderRequestTests
         Assert.True(Request(discountPercentage: 5m).HasScaleDiscount);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void AZeroOrNegativeLeaseIsRejected(int seconds)
+    {
+        var request = Request();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => request.BeginConversion(Member, Now, TimeSpan.FromSeconds(seconds)));
+        Assert.Null(request.LeaseMemberId);
+    }
+
     [Fact]
     public void OnlyANewRequestCanBeConvertedOrDiscarded()
     {

@@ -204,6 +204,29 @@ public sealed class OnlineStoreTests
     public void AnEmptyListWithoutPrimaryIsValid() => OnlineStore.ValidateCurrencies([], null);
 
     [Fact]
+    public void MoreThanTenCurrenciesAreRejected()
+    {
+        var eleven = Enumerable.Range(0, OnlineStore.MaxCurrencies + 1)
+            .Select(i => Currency($"A{(char)('A' + i)}{(char)('A' + i)}"))
+            .ToList();
+        var ten = eleven.Take(OnlineStore.MaxCurrencies).ToList();
+
+        Assert.Equal(StoreErrorCodes.ValidationFailed, CodeOf(() => OnlineStore.ValidateCurrencies(eleven, eleven[0].Currency)));
+        OnlineStore.ValidateCurrencies(ten, ten[0].Currency);
+    }
+
+    [Fact]
+    public void EntryCurrenciesAreTrimmedLikeThePrimary()
+    {
+        var store = ConfiguredStore(Input(currencies: [Currency(" cop ", accountCurrency: "COP")], primaryCurrency: " cop "));
+
+        Assert.Equal("COP", Assert.Single(store.Currencies).Currency);
+        Assert.Equal("COP", store.PrimaryCurrency);
+        Assert.True(store.Sells("COP"));
+        Assert.Equal(StoreErrorCodes.CurrencyDuplicate, CodeOf(() => OnlineStore.ValidateCurrencies([Cop, Currency(" cop ", "COP")], "COP")));
+    }
+
+    [Fact]
     public void AMalformedCurrencyIsRejected() =>
         Assert.Equal(
             StoreErrorCodes.CurrencyInvalid,

@@ -1,12 +1,13 @@
 namespace Modules.Store.Domain;
 
 /// <summary>
-/// Razones WCAG redondeadas a 2 decimales, como las muestra el backoffice. Las banderas se calculan
-/// con la razón sin redondear, que es lo que WCAG compara contra 4.5.
+/// Razones WCAG truncadas a 2 decimales, como las muestra el backoffice. Se truncan y no se redondean
+/// para que la razón mostrada sea menor que 4.50 exactamente cuando la bandera está encendida: 4.496
+/// redondea a 4.50 pero no cumple. Las banderas se calculan con la razón sin truncar.
 /// </summary>
 public sealed record StoreColorChecks(
-    double OnPrimaryOnPrimary,
-    double AccentTextOnWhite,
+    double OnPrimaryContrast,
+    double AccentTextContrast,
     bool OnPrimaryLowContrast,
     bool AccentTextLowContrast);
 
@@ -35,13 +36,15 @@ public static class StoreColorScheme
         var accentRatio = StoreColor.Contrast(resolvedAccentText, StoreColor.White);
 
         var checks = new StoreColorChecks(
-            Math.Round(onPrimaryRatio, 2, MidpointRounding.AwayFromZero),
-            Math.Round(accentRatio, 2, MidpointRounding.AwayFromZero),
+            Truncate(onPrimaryRatio),
+            Truncate(accentRatio),
             onPrimaryRatio < MinimumContrast,
             accentRatio < MinimumContrast);
 
         return new StoreResolvedColors(primary, resolvedOnPrimary, resolvedAccentText, checks);
     }
+
+    private static double Truncate(double ratio) => Math.Floor(ratio * 100d) / 100d;
 
     private static StoreColor AutoOnPrimary(StoreColor primary) =>
         StoreColor.Contrast(StoreColor.White, primary) >= StoreColor.Contrast(NearBlack, primary)

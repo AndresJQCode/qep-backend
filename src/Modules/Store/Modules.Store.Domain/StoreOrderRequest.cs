@@ -155,6 +155,11 @@ public sealed class StoreOrderRequest
     /// </summary>
     public void BeginConversion(Guid memberId, DateTimeOffset now, TimeSpan lease)
     {
+        if (lease <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lease), lease, "El lease debe ser positivo.");
+        }
+
         RequireNew();
         RequireNoLeaseOfAnother(memberId, now);
 

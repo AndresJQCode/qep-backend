@@ -99,10 +99,35 @@ public sealed class StoreColorTests
     }
 
     [Fact]
-    public void AWhitePrimaryFallsToTheDarkestFloor()
+    public void AWhitePrimaryIsDarkenedUntilItReachesFourAndAHalfOnWhite()
     {
         var accent = StoreColorScheme.Resolve(Parse("#FFFFFF"), null, null).AccentText;
+
+        Assert.Equal("#757575", accent.ToHex());
         Assert.True(StoreColor.Contrast(accent, StoreColor.White) >= 4.5);
+    }
+
+    [Fact]
+    public void TheShownRatioIsFlooredSoItIsBelowFourAndAHalfExactlyWhenFlagged()
+    {
+        // 4.4986 redondea a 4.50 y aun así no cumple: la razón mostrada se trunca a 4.49.
+        var checks = StoreColorScheme.Resolve(Parse("#FFFFFF"), Parse("#FFFFFF"), Parse("#76767F")).Checks;
+
+        Assert.True(checks.AccentTextLowContrast);
+        Assert.Equal(4.49, checks.AccentTextContrast);
+        Assert.True(checks.AccentTextContrast < StoreColorScheme.MinimumContrast);
+    }
+
+    [Fact]
+    public void TheFlagAndTheShownRatioAgreeForEveryGrayOverride()
+    {
+        for (var v = 0; v <= 255; v++)
+        {
+            var gray = new StoreColor((byte)v, (byte)v, (byte)v);
+            var checks = StoreColorScheme.Resolve(Parse("#FFFFFF"), null, gray).Checks;
+
+            Assert.Equal(checks.AccentTextLowContrast, checks.AccentTextContrast < StoreColorScheme.MinimumContrast);
+        }
     }
 
     [Fact]
@@ -123,7 +148,7 @@ public sealed class StoreColorTests
 
         Assert.False(checks.OnPrimaryLowContrast);
         Assert.False(checks.AccentTextLowContrast);
-        Assert.Equal(Math.Round(checks.OnPrimaryOnPrimary, 2), checks.OnPrimaryOnPrimary);
-        Assert.Equal(Math.Round(checks.AccentTextOnWhite, 2), checks.AccentTextOnWhite);
+        Assert.Equal(Math.Round(checks.OnPrimaryContrast, 2), checks.OnPrimaryContrast);
+        Assert.Equal(Math.Round(checks.AccentTextContrast, 2), checks.AccentTextContrast);
     }
 }
