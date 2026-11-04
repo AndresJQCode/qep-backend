@@ -271,6 +271,20 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task AHugePageNumberIsCorrectedAndAnswersAnEmptyPage()
+    {
+        await using var fixture = await OpenAsync();
+        await fixture.CreateProductAsync("Camisa", "C-1", Prices(10_000m));
+
+        var response = await fixture.GetAsync("/products?currency=COP&page=2147483647&pageSize=60");
+        var page = await PublicStoreFixture.JsonAsync(response);
+
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(page["items"]!.AsArray());
+        Assert.Equal(1, (int)page["total"]!);
+    }
+
+    [Fact]
     public async Task TheStoreCarriesTheTenantRegionalFormat()
     {
         await using var fixture = await OpenAsync();
@@ -281,8 +295,10 @@ public sealed class PublicCatalogApiTests
         var regional = store["regionalFormat"]!;
         Assert.Equal("America/Bogota", (string)regional["timeZone"]!);
         Assert.Equal("yyyy-MM-dd", (string)regional["dateFormat"]!);
-        Assert.False(string.IsNullOrWhiteSpace((string?)regional["numberFormat"]));
-        Assert.False(string.IsNullOrWhiteSpace((string?)regional["defaultCurrency"]));
+        // El tenant del harness es es-CO: los valores exactos fijan que numberFormat y defaultCurrency no se crucen.
+        Assert.Equal("es-CO", (string)regional["numberFormat"]!);
+        Assert.Equal("COP", (string)regional["defaultCurrency"]!);
+        Assert.Equal("CO", (string)regional["country"]!);
     }
 
     [Fact]

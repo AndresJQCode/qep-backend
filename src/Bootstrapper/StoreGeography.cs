@@ -10,9 +10,13 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class StoreGeography(IDepartmentRepository departments, ICityRepository cities) : IStoreGeography
 {
+    // Cultura explícita: el orden no puede depender de la configuración regional del servidor.
+    private static readonly StringComparer SpanishOrder =
+        StringComparer.Create(new System.Globalization.CultureInfo("es-CO"), ignoreCase: true);
+
     public async Task<IReadOnlyList<StoreGeoItem>> DepartmentsAsync(CancellationToken cancellationToken) =>
         (await departments.ListAllAsync(cancellationToken))
-            .OrderBy(department => department.Name, StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(department => department.Name, SpanishOrder)
             .Select(department => new StoreGeoItem(department.Id.Value, department.Name))
             .ToList();
 
@@ -25,7 +29,7 @@ internal sealed class StoreGeography(IDepartmentRepository departments, ICityRep
         }
 
         return (await cities.ListByDepartmentAsync(id, cancellationToken))
-            .OrderBy(city => city.Name, StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(city => city.Name, SpanishOrder)
             .Select(city => new StoreGeoItem(city.Id.Value, city.Name))
             .ToList();
     }

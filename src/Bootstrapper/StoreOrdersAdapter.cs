@@ -14,9 +14,8 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class StoreOrdersAdapter(IServiceScopeFactory scopes) : IStoreOrders
 {
-    // Todo rechazo de una línea (producto inexistente o inactivo, cantidad que la escala no admite) es para la tienda una línea que
-    // ya no se puede vender.
-    private const string LineErrorPrefix = "quotation.item.";
+    // Todo rechazo del motor (línea inexistente, inactiva, cantidad que la escala no admite, u otro) es para la tienda una línea que
+    // no se puede vender: el código interno quotation.* nunca llega al visitante anónimo.
 
     public async Task<StoreQuoteView> QuoteAsync(
         Guid tenantId,
@@ -53,7 +52,7 @@ internal sealed class StoreOrdersAdapter(IServiceScopeFactory scopes) : IStoreOr
                 quote.TaxAmount,
                 quote.Total);
         }
-        catch (QuotationsDomainException error) when (error.Code.StartsWith(LineErrorPrefix, StringComparison.Ordinal))
+        catch (QuotationsDomainException)
         {
             throw new StoreDomainException(
                 StoreErrorCodes.LineUnavailable, "A line of the cart cannot be sold.");

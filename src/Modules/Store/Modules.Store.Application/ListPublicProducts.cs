@@ -14,13 +14,18 @@ public sealed class ListPublicProductsHandler(StorefrontResolver resolver, IStor
 
     public const int MaxSearchLength = 100;
 
+    /// <summary>Con el tope de página de 60, la posición más lejana (600 000) cabe de sobra en un int; sin él, <c>(page - 1) * pageSize</c> se desborda y Postgres rechaza el OFFSET negativo.</summary>
+    public const int MaxPage = 10_000;
+
+    public static int ClampPage(int page) => Math.Clamp(page, 1, MaxPage);
+
     public async Task<PublicProductsPageDto> HandleAsync(ListPublicProductsQuery query, CancellationToken cancellationToken)
     {
         var (store, _) = await resolver.ResolveAsync(query.Host, cancellationToken);
         var currency = StorefrontResolver.RequireCurrency(store, query.Currency);
 
         // Una página fuera de rango se corrige y no se rechaza: es una lectura pública y el visitante no puede arreglar un 422.
-        var page = Math.Max(1, query.Page);
+        var page = ClampPage(query.Page);
         var pageSize = query.PageSize <= 0 ? DefaultPageSize : Math.Min(query.PageSize, MaxPageSize);
         var text = string.IsNullOrWhiteSpace(query.Q) ? null : query.Q.Trim();
         if (text is { Length: > MaxSearchLength })
