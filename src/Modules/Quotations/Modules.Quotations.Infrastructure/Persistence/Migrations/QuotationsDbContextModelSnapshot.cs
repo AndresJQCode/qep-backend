@@ -593,6 +593,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
 
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
+
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid")
                         .HasColumnName("department_id");
@@ -1106,6 +1116,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
 
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid")

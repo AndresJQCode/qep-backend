@@ -102,7 +102,8 @@ public static class OrderResponses
             order.Parties
                 .Select(party => new QuotationPartyResponse(
                     party.Id, party.Role, party.Name, party.IdentificationNumber, party.Phone, party.Email,
-                    party.Address, party.DepartmentId, party.CityId, party.PersonType, party.IdentificationType))
+                    party.Address, party.DepartmentId, party.CityId, party.PersonType, party.IdentificationType,
+                    party.Country, party.CityName))
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,

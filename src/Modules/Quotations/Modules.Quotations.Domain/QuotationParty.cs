@@ -69,6 +69,12 @@ public sealed class QuotationParty
 
     public Guid? CityId { get; private set; }
 
+    /// <summary>ISO alfa-2; <c>null</c> es Colombia (ver <see cref="QuotationPartyDetails.Country"/>).</summary>
+    public string? Country { get; private set; }
+
+    /// <summary>La ciudad como texto, sólo fuera de Colombia.</summary>
+    public string? CityName { get; private set; }
+
     /// <summary>Si los seis campos están cargados. Existir con algunos vacíos es un estado
     /// válido mientras se edita —cada campo es opcional por separado, ver la clase—, pero un
     /// pedido no puede heredar una dirección a medio llenar: <see cref="Quotation.EnsureConvertibleToOrder"/>
@@ -78,8 +84,10 @@ public sealed class QuotationParty
         && !string.IsNullOrWhiteSpace(Phone)
         && !string.IsNullOrWhiteSpace(Email)
         && !string.IsNullOrWhiteSpace(Address)
-        && DepartmentId is not null
-        && CityId is not null;
+        && new QuotationPartyDetails
+        {
+            Country = Country, DepartmentId = DepartmentId, CityId = CityId, CityName = CityName
+        }.HasCompleteCity;
 
     internal static QuotationParty Create(
         QuotationId quotationId,
@@ -105,13 +113,15 @@ public sealed class QuotationParty
         Address = Address,
         DepartmentId = DepartmentId,
         CityId = CityId,
+        Country = Country,
+        CityName = CityName,
     };
 
     internal void Apply(QuotationPartyDetails details)
     {
         var normalized = (Role == QuotationPartyRole.Billing
             ? details
-            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized();
+            : details with { IdentificationNumber = null, PersonType = null, IdentificationType = null }).Normalized($"Parties.{Role}");
         Name = normalized.Name;
         IdentificationNumber = normalized.IdentificationNumber;
         PersonType = normalized.PersonType;
@@ -121,5 +131,7 @@ public sealed class QuotationParty
         Address = normalized.Address;
         DepartmentId = normalized.DepartmentId;
         CityId = normalized.CityId;
+        Country = normalized.Country;
+        CityName = normalized.CityName;
     }
 }

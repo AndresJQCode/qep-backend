@@ -178,7 +178,11 @@ public sealed record QuotationPartyDto(
     /// <summary>"Natural" o "Juridica"; sólo en facturación (spec 2026-10-26), siempre null en la entrega.</summary>
     string? PersonType = null,
     /// <summary>"NIT", "CC", "CE" o "PASAPORTE"; sólo en facturación, siempre null en la entrega.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
+    string? Country = null,
+    /// <summary>La ciudad escrita, sólo fuera de Colombia; null en Colombia.</summary>
+    string? CityName = null);
 
 /// <summary>La cuenta con la que se factura, tal como sale hacia el cliente HTTP. Es la copia
 /// guardada, no lo que la empresa tenga hoy.</summary>
@@ -219,7 +223,12 @@ public sealed record QuotationPartyRequest(
     string? PersonType = null,
     /// <summary>"NIT", "CC", "CE" o "PASAPORTE": el tipo de <c>IdentificationNumber</c>. En facturación con
     /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    /// <summary>ISO alfa-2. Ausente (o <c>CO</c>) es Colombia y la ciudad va por <c>DepartmentId</c>/<c>CityId</c>;
+    /// otro país lleva <c>CityName</c> y ningún id (<c>quotations.party.city_lane_invalid</c> si se mezclan).</summary>
+    string? Country = null,
+    /// <summary>La ciudad como texto (≤ 120), sólo fuera de Colombia.</summary>
+    string? CityName = null);
 
 /// <summary>Las dos partes de la cotización en el request. <b>Null es el caso normal</b>: "factura
 /// (o entrega) a los datos del cliente" — el switch prendido de la UI. Como
@@ -468,11 +477,13 @@ public sealed record QuotationClientAddressResponse(
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
-    string CityName,
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO alfa-2 de la dirección. Fuera de Colombia no hay ids de DIVIPOLA y la ciudad es el texto.</summary>
+    string Country = "CO");
 
 /// <summary>
 /// La escala viaja con su restricción, no sólo con su descuento: es lo único con lo que el
@@ -636,7 +647,9 @@ public sealed record QuotationPartyResponse(
     Guid? DepartmentId,
     Guid? CityId,
     string? PersonType = null,
-    string? IdentificationType = null);
+    string? IdentificationType = null,
+    string? Country = null,
+    string? CityName = null);
 
 public sealed record QuotationListItemResponse(
     Guid Id,

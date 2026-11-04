@@ -454,7 +454,7 @@ public sealed class OrdersExportProcessor(
             BilledPartySource.BillingParty => new BilledContact(
                 billing!.IdentificationType?.ToWireValue() ?? string.Empty,
                 billing.Address ?? string.Empty,
-                NameOf(billing.CityId, cityNames),
+                CityOf(billing, cityNames),
                 NameOf(billing.DepartmentId, departmentNames),
                 billing.Phone ?? string.Empty,
                 billing.Email ?? string.Empty),
@@ -485,7 +485,7 @@ public sealed class OrdersExportProcessor(
                 shipping.IdentificationNumber ?? string.Empty,
                 shipping.PersonType?.ToWireValue() ?? string.Empty,
                 shipping.Address ?? string.Empty,
-                NameOf(shipping.CityId, cityNames),
+                CityOf(shipping, cityNames),
                 NameOf(shipping.DepartmentId, departmentNames),
                 shipping.Phone ?? string.Empty,
                 shipping.Email ?? string.Empty)
@@ -500,6 +500,10 @@ public sealed class OrdersExportProcessor(
                 customer?.Phone ?? string.Empty,
                 customer?.Email ?? string.Empty);
 
+    // Una parte de afuera no tiene ciudad de DIVIPOLA: la columna lleva el texto que se escribió.
+    private static string CityOf(OrderParty party, IReadOnlyDictionary<Guid, string> cityNames) =>
+        party.Country is null ? NameOf(party.CityId, cityNames) : party.CityName ?? string.Empty;
+
     private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
         id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
 
@@ -510,10 +514,7 @@ public sealed class OrdersExportProcessor(
     {
         if (shipping is not null)
         {
-            var ciudad = shipping.CityId is { } cityId && cityNames.TryGetValue(cityId, out var name)
-                ? name
-                : string.Empty;
-            return (ciudad, shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
+            return (CityOf(shipping, cityNames), shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
         }
 
         return (

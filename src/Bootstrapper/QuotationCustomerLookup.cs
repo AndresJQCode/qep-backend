@@ -129,25 +129,26 @@ internal sealed class QuotationCustomerLookup(
         CustomerAddress address,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
     {
-        // Una direccion de afuera no tiene ciudad DIVIPOLA: sigue la convencion de "sin dato" de
-        // este puerto (Guid.Empty) y la ciudad escrita viaja como nombre. La tarea siguiente
-        // reemplaza esto por pais y ciudad propios en QuotationCustomerAddressRef.
+        // Una direccion de afuera no tiene ciudad DIVIPOLA: viaja sin ids y la ciudad escrita va como nombre.
         CustomerCityRef? city = null;
         if (address.CityId is { } cityId)
         {
             citiesById.TryGetValue(cityId, out city);
         }
 
+        // Para Colombia el contrato no cambia: una ciudad que no se resolvió sigue llegando vacía.
+        var foreign = !string.Equals(address.Country, "CO", StringComparison.OrdinalIgnoreCase);
         return new QuotationCustomerAddressRef(
             address.Id.Value,
             address.Name,
             address.Address,
             address.Phone,
-            address.CityId ?? Guid.Empty,
-            city?.CityName ?? address.CityName ?? string.Empty,
-            city?.DepartmentId ?? Guid.Empty,
-            city?.DepartmentName ?? string.Empty,
-            address.IsPrincipal);
+            address.CityId,
+            city?.CityName ?? address.CityName ?? (foreign ? null : string.Empty),
+            city?.DepartmentId ?? (foreign ? null : Guid.Empty),
+            city?.DepartmentName ?? (foreign ? null : string.Empty),
+            address.IsPrincipal,
+            address.Country);
     }
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(
