@@ -676,10 +676,11 @@ public sealed class OrderEditsApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        // Natural: en un tenant colombiano una jurídica exige NIT aunque la parte sea de afuera (BillingPartyFiscalRules.cs:18-35).
         var foreign = new OrderBillingEditRequest(
             new QuotationPartyRequest(
-                "Importadora Madrid S.L.", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
-                PersonType: "Juridica", IdentificationType: "CE", Country: "ES", CityName: "Madrid"),
+                "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+                PersonType: "Natural", IdentificationType: "CE", Country: "ES", CityName: "Madrid"),
             BillingWithRetention: false,
             BillingVatSurplus: false);
 

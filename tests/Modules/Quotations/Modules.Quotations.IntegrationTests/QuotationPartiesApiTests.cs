@@ -17,9 +17,11 @@ public sealed class QuotationPartiesApiTests
     private static string ConvertUrl(Guid tenantId, Guid quotationId) =>
         $"{QuotationUrl(tenantId, quotationId)}/order";
 
+    // Natural: en un tenant colombiano una jurídica exige NIT aunque la parte sea de afuera (BillingPartyFiscalRules.cs:18-35, regla
+    // por el país del tenant), y estas pruebas son del carril de ciudad, no de esa regla.
     private static QuotationPartyRequest ForeignBilling() => new(
-        "Importadora Madrid S.L.", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
-        PersonType: "Juridica", IdentificationType: "CE", Country: "ES", CityName: "Madrid");
+        "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+        PersonType: "Natural", IdentificationType: "CE", Country: "ES", CityName: "Madrid");
 
     private static QuotationPartyRequest ForeignShipping() => new(
         "Bodega Madrid", null, "+34600111333", "bodega@madrid.es", "Calle Alcalá 20", null, null,

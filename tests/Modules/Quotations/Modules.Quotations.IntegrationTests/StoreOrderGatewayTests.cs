@@ -129,8 +129,9 @@ public sealed class StoreOrderGatewayTests
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(draft, TestContext.Current.CancellationToken));
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        // Colombia se guarda como null: una sola forma para CO (QuotationPartyDetails.cs:108-125).
         Assert.Equal(
-            ("Ana Pérez", "1020304050", PartyIdentificationType.Cc, "ana@example.com", first.CityId, "CO"),
+            ("Ana Pérez", "1020304050", PartyIdentificationType.Cc, "ana@example.com", first.CityId, (string?)null),
             (order.Billing!.Name, order.Billing.IdentificationNumber, order.Billing.IdentificationType, order.Billing.Email,
                 order.Billing.CityId, order.Billing.Country));
         Assert.Equal(
