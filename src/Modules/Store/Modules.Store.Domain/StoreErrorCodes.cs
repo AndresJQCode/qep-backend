@@ -25,6 +25,7 @@ public static class StoreErrorCodes
     public const string SalesCountryRequired = "store.settings.sales_country_required";
 
     public const string PublicClientUnauthorized = "store.public.client_unauthorized";
+    public const string PublicVisitorIpRequired = "store.public.visitor_ip_required";
     public const string PublicNotFound = "store.public.not_found";
     public const string PublicProductNotFound = "store.public.product_not_found";
     public const string PublicCurrencyInvalid = "store.public.currency_invalid";

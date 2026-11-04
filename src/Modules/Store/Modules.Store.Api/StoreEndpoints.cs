@@ -58,8 +58,7 @@ public static class StoreEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        endpoints.MapPublicStoreEndpoints();
-
+        // Las rutas públicas las cablea Program.cs con sus limitadores (MapPublicStoreEndpoints).
         return endpoints;
     }
 

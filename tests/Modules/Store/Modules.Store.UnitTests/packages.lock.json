@@ -205,6 +205,14 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.store.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Domain": "[1.0.0, )"
+        }
+      },
       "modules.store.application": {
         "type": "Project",
         "dependencies": {

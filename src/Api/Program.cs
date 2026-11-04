@@ -52,6 +52,7 @@ using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
 using Modules.Store.Api;
+using Modules.Store.Application;
 using Modules.Store.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -156,6 +157,34 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+
+    // Tienda pública: la cubeta es la IP del visitante, no la del servidor del storefront (si no, todos los visitantes
+    // compartirían una). StorefrontClient.VisitorIp solo cree el header X-Qep-Visitor-Ip con la clave válida; sin ella
+    // cae a la IP del par directo, así que quien no tiene la clave no escapa de su cubeta cambiando el header. Corre antes
+    // del filtro de la clave: los intentos con clave inventada también gastan el cupo de su IP.
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontRead,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontSubmit,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+
+    static string? StorefrontSecret(HttpContext httpContext) =>
+        httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
 });
 
 var app = builder.Build();
@@ -273,6 +302,8 @@ app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
 // Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
 app.MapStoreEndpoints();
+// Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
+app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontSubmit);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
