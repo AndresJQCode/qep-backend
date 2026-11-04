@@ -6,6 +6,20 @@ public sealed record StoreRequestBilling
     // Los mismos cuatro tipos del cliente (IdentificationType) y de las partes del pedido.
     private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
 
+    // EF Core materializa por acá: no puede enlazar el lugar (otro tipo mapeado) a un parámetro del constructor validador, y los datos
+    // que lee ya pasaron por él al guardarse.
+    private StoreRequestBilling()
+    {
+        Name = string.Empty;
+        IdentificationType = string.Empty;
+        IdentificationNumber = string.Empty;
+        Phone = string.Empty;
+        PhoneE164 = string.Empty;
+        Email = string.Empty;
+        Address = string.Empty;
+        Place = null!;
+    }
+
     public StoreRequestBilling(
         string name,
         string identificationType,

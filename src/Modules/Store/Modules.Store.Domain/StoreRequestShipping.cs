@@ -6,6 +6,15 @@ namespace Modules.Store.Domain;
 /// </summary>
 public sealed record StoreRequestShipping
 {
+    // EF Core materializa por acá, por la misma razón que StoreRequestBilling.
+    private StoreRequestShipping()
+    {
+        Phone = string.Empty;
+        PhoneE164 = string.Empty;
+        Address = string.Empty;
+        Place = null!;
+    }
+
     public StoreRequestShipping(
         string? recipientName,
         string phone,
