@@ -406,6 +406,41 @@ public sealed class StoreTakeApiTests
         Assert.Equal(1, await rig.CountAsync("quotations.orders"));
     }
 
+    // Un doble clic del mismo asesor: la segunda toma no reentra el lease vivo, así que una sola corre (revisión de la tarea 12).
+    [Fact]
+    public async Task TwoConcurrentTakesByTheSameMemberCreateOneOrder()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        var request = await rig.SubmitAsync();
+
+        var responses = await Task.WhenAll(rig.TakeAsync(request, NewCustomerBody), rig.TakeAsync(request, NewCustomerBody));
+
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
+        Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal(1, await rig.CountAsync("quotations.orders"));
+        var state = await rig.StateAsync(request);
+        Assert.Equal(StoreOrderRequestStatus.Converted, state.Status);
+        Assert.Equal(1, await rig.CountAsync("customers.customers"));
+    }
+
+    [Fact]
+    public async Task ANewCustomerWhoseDocumentBelongsToAnInactiveCustomerIs422()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        // El mismo documento del bloque de facturación ("CC" 123456), en un cliente apagado.
+        var inactive = await BillingTwinAsync(rig);
+        await DeactivateCustomerAsync(rig.Factory, inactive);
+        var request = await rig.SubmitAsync();
+
+        await StoreInboxRig.AssertCodeAsync(
+            await rig.TakeAsync(request, NewCustomerBody), HttpStatusCode.UnprocessableEntity, "store.order_request.customer_not_found");
+
+        Assert.Equal(0, await rig.CountAsync("quotations.orders"));
+        var state = await rig.StateAsync(request);
+        Assert.Equal(StoreOrderRequestStatus.New, state.Status);
+        Assert.False(state.IsBeingTaken(rig.Clock.UtcNow));
+    }
+
     [Fact]
     public async Task TheLoserOfATakeCreatesNoCustomer()
     {
@@ -465,14 +500,27 @@ public sealed class StoreTakeApiTests
             ("until", StoreInboxRig.Start.AddHours(-1)),
             ("id", request));
         var addressesBefore = await rig.AddressesAsync(customer);
+        // El segundo tomador elige OTRO cliente: R5 marca con el del pedido que ya existe y no toca al elegido.
+        var chosen = await rig.CreateCompleteCustomerAsync("Cliente Elegido", "888", "3105552222");
+        var chosenBefore = await rig.CustomerAsync(chosen);
+        var chosenAddressesBefore = await rig.AddressesAsync(chosen);
 
-        var retaken = await rig.TakeOkAsync(request, ExistingBody(customer), rig.ClientFor(userId));
+        var retaken = await rig.TakeOkAsync(request, ExistingBody(chosen), rig.ClientFor(userId));
 
         Assert.Equal(rig.CallerMembershipId, (Guid)retaken["request"]!["convertedBy"]!["memberId"]!);
+        Assert.Equal(customer, (Guid)retaken["customerId"]!);
         Assert.Equal(1, await rig.CountAsync("quotations.orders"));
-        // Con el pedido ya creado no se toca la libreta: el reintento sólo marca la solicitud.
-        Assert.Equal(addressesBefore.Count, (await rig.AddressesAsync(customer)).Count);
-        Assert.Equal(StoreOrderRequestStatus.Converted, (await rig.StateAsync(request)).Status);
+        var order = await rig.OrderAsync((Guid)retaken["orderId"]!);
+        var state = await rig.StateAsync(request);
+        Assert.Equal(StoreOrderRequestStatus.Converted, state.Status);
+        Assert.Equal((Guid)order["order"]!["clientId"]!, state.CustomerId);
+        Assert.Equal(customer, state.CustomerId);
+        // Con el pedido ya creado no se toca ninguna libreta, y no hay resultado de direcciones que informar.
+        Assert.Equal(addressesBefore, await rig.AddressesAsync(customer));
+        Assert.Equal(chosenAddressesBefore, await rig.AddressesAsync(chosen));
+        Assert.Equal(chosenBefore, await rig.CustomerAsync(chosen));
+        Assert.Null(retaken["addresses"]!["billing"]);
+        Assert.Null(retaken["addresses"]!["shipping"]);
     }
 
     [Fact]

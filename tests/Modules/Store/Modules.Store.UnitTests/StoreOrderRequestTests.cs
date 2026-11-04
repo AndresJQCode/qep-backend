@@ -172,16 +172,28 @@ public sealed class StoreOrderRequestTests
             CodeOf(() => request.Discard(OtherMember, StoreDiscardReason.Spam, null, during)));
     }
 
+    // Un doble clic o un reintento del mismo asesor mientras la primera toma sigue corriendo no puede abrir una segunda: si una de las
+    // dos falla, soltaría el lease que la otra todavía usa (revisión de la tarea 12).
     [Fact]
-    public void TheSameMemberRenewsItsOwnLease()
+    public void TheSameMemberCannotReenterALiveLease()
     {
         var request = Request();
         request.BeginConversion(Member, Now, Lease);
 
-        request.BeginConversion(Member, Now.AddSeconds(90), Lease);
+        Assert.Equal(StoreErrorCodes.BeingTaken, CodeOf(() => request.BeginConversion(Member, Now.AddSeconds(90), Lease)));
+        Assert.False(request.IsBeingTaken(Now + Lease));
+    }
 
-        Assert.True(request.IsBeingTaken(Now.AddSeconds(200)));
-        Assert.False(request.IsBeingTaken(Now.AddSeconds(90) + Lease));
+    [Fact]
+    public void TheSameMemberRetakesOnceItsLeaseExpired()
+    {
+        var request = Request();
+        request.BeginConversion(Member, Now, Lease);
+        var after = Now + Lease + TimeSpan.FromSeconds(1);
+
+        request.BeginConversion(Member, after, Lease);
+
+        Assert.True(request.IsBeingTaken(after));
     }
 
     [Fact]

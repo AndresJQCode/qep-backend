@@ -21,6 +21,11 @@ public sealed class DiscardOrderRequestValidator : AbstractValidator<DiscardOrde
             .Must(reason => reason is null || Enum.TryParse<StoreDiscardReason>(reason, ignoreCase: true, out _))
             .WithMessage("El motivo debe ser Spam, Duplicate u Other.");
         RuleFor(command => command.Note).MaximumLength(StoreOrderRequest.DiscardNoteMaxLength);
+        // El dominio también lo exige, pero sin el mapa errors; acá la respuesta marca el campo.
+        RuleFor(command => command.Note)
+            .NotEmpty()
+            .When(command => string.Equals(command.Reason?.Trim(), nameof(StoreDiscardReason.Other), StringComparison.OrdinalIgnoreCase))
+            .WithMessage("Descartar por «otro» exige una nota.");
     }
 }
 

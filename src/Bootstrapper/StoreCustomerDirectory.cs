@@ -97,6 +97,12 @@ internal sealed class StoreCustomerDirectory(
         // Se relee para traer la retención y el excedente de IVA reales del ganador cuando el documento ya era de otro.
         var customer = await customers.FindAsync(tenantId, new CustomerId(provisioned.Id), cancellationToken)
             ?? throw new InvalidOperationException("The customer that was just provisioned cannot be read back.");
+        // El documento ya era de otro cliente y ése está inactivo: no se le cuelga un pedido, igual que si la persona lo hubiera elegido.
+        if (customer is not { IsActive: true, IsMerged: false })
+        {
+            throw NotFound();
+        }
+
         return (ToRef(customer), provisioned.Created);
     }
 
@@ -116,6 +122,12 @@ internal sealed class StoreCustomerDirectory(
             // Nunca se cambia en silencio al otro cliente que ya tiene ese documento: la persona decide.
             throw new ResourceConflictException(
                 StoreErrorCodes.CustomerDocumentTaken, "Another customer already has the document of the billing block.", exception);
+        }
+        catch (RequestConcurrencyException exception)
+        {
+            // Lo mismo que en EnsureAddressesAsync: «Tomar» no manda If-Match, así que no es un 412 sino un conflicto que se reintenta.
+            throw new ResourceConflictException(
+                StoreErrorCodes.OrderRequestConflict, "The customer changed while it was being completed.", exception);
         }
 
         var customer = await customers.FindAsync(tenantId, new CustomerId(customerId), cancellationToken) ?? throw NotFound();

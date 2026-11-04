@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Store.Domain;
 using Modules.Tenancy.Application;
 
@@ -33,7 +34,7 @@ public sealed class TakeOrderRequestValidator : AbstractValidator<TakeOrderReque
 /// lease corto en la solicitud (un solo tomador), el pedido con una clave idempotente por solicitud, y la solicitud marcada
 /// después. Si el proceso cae entre el pedido y la marca, el siguiente intento encuentra el pedido y sólo marca.
 /// </summary>
-public sealed class TakeOrderRequestHandler(
+public sealed partial class TakeOrderRequestHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IOnlineStoreRepository stores,
@@ -46,7 +47,8 @@ public sealed class TakeOrderRequestHandler(
     IStoreCustomerDirectory customers,
     IStoreOrders orders,
     OrderRequestRowComposer composer,
-    IValidator<TakeOrderRequestCommand> validator)
+    IValidator<TakeOrderRequestCommand> validator,
+    ILogger<TakeOrderRequestHandler> logger)
     : ICommandHandler<TakeOrderRequestCommand, StoreTakeResultDto>
 {
     public async Task<StoreTakeResultDto> HandleAsync(TakeOrderRequestCommand command, CancellationToken cancellationToken)
@@ -91,7 +93,7 @@ public sealed class TakeOrderRequestHandler(
         {
             // Un cliente creado en el paso 7 o una dirección agregada en el 8 se quedan: el reintento los encuentra por documento y
             // por contenido, así que nada se duplica.
-            await ReleaseLeaseAsync(command, caller.MembershipId, cancellationToken);
+            await ReleaseLeaseAsync(command, caller.MembershipId);
             throw;
         }
     }
@@ -112,14 +114,13 @@ public sealed class TakeOrderRequestHandler(
         if (await orders.FindExistingAsync(tenantId, request.Id, cancellationToken) is { } existing)
         {
             await MarkConvertedAsync(request, existing, now, cancellationToken);
+            // Este camino no mira la libreta: no hay resultado de direcciones que informar.
             return await ResultAsync(
                 request,
                 existing,
                 customerCreated: false,
                 customerCompleted: false,
-                new StoreTakeAddressesDto(
-                    StoreAddressOutcome.Reused.ToString(),
-                    request.Shipping is null ? null : StoreAddressOutcome.Reused.ToString()),
+                new StoreTakeAddressesDto(null, null),
                 now,
                 cancellationToken);
         }
@@ -207,25 +208,34 @@ public sealed class TakeOrderRequestHandler(
             row, order.OrderId, order.OrderNumber, order.ClientId, customerCreated, customerCompleted, addresses);
     }
 
-    // Si algo falló, lo pendiente del contexto no vale: se suelta, se relee la solicitud y se libera SU lease. Un fallo al liberar no
-    // tapa el error original: el lease vence solo a los pocos minutos.
-    private async Task ReleaseLeaseAsync(TakeOrderRequestCommand command, Guid membershipId, CancellationToken cancellationToken)
+    // Si algo falló, lo pendiente del contexto no vale: se suelta, se relee la solicitud y se libera SU lease. Sin el token del request:
+    // si el cliente se desconectó, el lease igual se suelta en vez de quedar tomado hasta que venza. Un fallo al liberar no tapa el
+    // error original (el lease vence solo a los pocos minutos), pero queda en el log.
+    private async Task ReleaseLeaseAsync(TakeOrderRequestCommand command, Guid membershipId)
     {
         try
         {
             unitOfWork.DiscardPendingChanges();
-            var fresh = await requests.FindAsync(command.TenantId, command.RequestId, cancellationToken);
+            var fresh = await requests.FindAsync(command.TenantId, command.RequestId, CancellationToken.None);
             if (fresh is { Status: StoreOrderRequestStatus.New } && fresh.LeaseMemberId == membershipId)
             {
                 fresh.ReleaseConversion();
-                await unitOfWork.SaveChangesAsync(cancellationToken);
+                await unitOfWork.SaveChangesAsync(CancellationToken.None);
             }
         }
-        catch (Exception)
+#pragma warning disable CA1031 // Ver arriba: el error que importa es el original, que se relanza.
+        catch (Exception exception)
+#pragma warning restore CA1031
         {
-            // Ver arriba.
+            LogReleaseFailed(logger, command.RequestId, command.TenantId, exception);
         }
     }
+
+    [LoggerMessage(
+        EventId = 6100,
+        Level = LogLevel.Warning,
+        Message = "Could not release the take lease of store order request {RequestId} in tenant {TenantId}")]
+    private static partial void LogReleaseFailed(ILogger logger, Guid requestId, Guid tenantId, Exception exception);
 
     private static StoreDomainException CustomerNotFound() =>
         new(StoreErrorCodes.CustomerNotFound, "The customer does not exist, is inactive or was merged.");

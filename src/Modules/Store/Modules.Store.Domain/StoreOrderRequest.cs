@@ -150,8 +150,9 @@ public sealed class StoreOrderRequest
     public bool IsBeingTaken(DateTimeOffset now) => LeaseMemberId is not null && LeaseUntil > now;
 
     /// <summary>
-    /// Reserva la conversión. Quien ya la tiene la renueva (reintenta tras un corte); otro asesor
-    /// espera a que venza, que es lo que rescata una conversión que se cayó a medias.
+    /// Reserva la conversión. Mientras el lease está vivo nadie más entra, ni siquiera quien lo tiene: un doble clic abriría dos tomas
+    /// en paralelo, y la primera que fallara soltaría el lease que la otra todavía usa. Al vencer, cualquiera reintenta, que es lo que
+    /// rescata una conversión que se cayó a medias.
     /// </summary>
     public void BeginConversion(Guid memberId, DateTimeOffset now, TimeSpan lease)
     {
@@ -161,7 +162,10 @@ public sealed class StoreOrderRequest
         }
 
         RequireNew();
-        RequireNoLeaseOfAnother(memberId, now);
+        if (IsBeingTaken(now))
+        {
+            throw new StoreDomainException(StoreErrorCodes.BeingTaken, "Esta solicitud ya se está tomando.");
+        }
 
         LeaseMemberId = memberId;
         LeaseUntil = now + lease;

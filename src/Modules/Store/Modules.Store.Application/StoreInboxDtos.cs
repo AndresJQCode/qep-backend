@@ -104,7 +104,8 @@ public sealed record StoreCustomerCandidatesDto(
     Guid? SuggestedCustomerId,
     StoreNewCustomerPreviewDto NewCustomer);
 
-public sealed record StoreTakeAddressesDto(string Billing, string? Shipping);
+/// <summary>Null en las dos cuando «Tomar» sólo marcó una solicitud cuyo pedido ya existía: ese camino no mira la libreta.</summary>
+public sealed record StoreTakeAddressesDto(string? Billing, string? Shipping);
 
 public sealed record StoreTakeResultDto(
     StoreOrderRequestRowDto Request,

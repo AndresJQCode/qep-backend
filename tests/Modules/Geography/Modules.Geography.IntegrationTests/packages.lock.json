@@ -1554,6 +1554,7 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
           "Modules.Store.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"
         }
@@ -1569,7 +1570,6 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
-          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Store.Application": "[1.0.0, )",
