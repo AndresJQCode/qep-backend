@@ -198,7 +198,7 @@ public sealed class StoreOrderGateway(
             (order, now) =>
             {
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
-                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, advisor,
                     OrderChangeSummary.CreatedFromStore(draft.RequestNumber), now));
                 auditPublisher.Publish(
                     draft.TenantId, draft.TakerUserId, "quotation.order.created", order.Id.ToString(), "success", now);

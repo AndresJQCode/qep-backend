@@ -100,9 +100,10 @@ public sealed class StoreOrderGatewayTests
         Assert.Equal(
             ("Store", false, "PaymentPending", advisorId, customerId),
             (detail.Order.Source, detail.Order.IsStorePickup, detail.Order.PaymentStatus, detail.Order.AdvisorId, result.ClientId));
-        Assert.Equal(
-            "Creado desde la tienda (solicitud T-0001).",
-            Assert.Single(detail.History, entry => entry.EventType == "Created").Details);
+        var created = Assert.Single(detail.History, entry => entry.EventType == "Created");
+        Assert.Equal("Creado desde la tienda (solicitud T-0001).", created.Details);
+        // El que toma la solicitud es el asesor: la entrada no puede quedar sin autor.
+        Assert.Equal(advisorId, created.MemberId);
     }
 
     [Fact]
