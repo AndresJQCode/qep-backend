@@ -199,6 +199,11 @@ public sealed class ProductCategoryPersistenceTests
         Assert.Equal("catalog.category.has_products", error.Code);
     }
 
+    // The same race on the hierarchy FK: a child hung from the parent between DeleteCategoryHandler's
+    // load (and its tracked has_children check) and the commit. The child has to be created after the
+    // load: a child already tracked by the deleting context gets its parent_id nulled by EF
+    // (DeleteBehavior.Restrict does that for tracked dependents), so the RESTRICT never fires — and
+    // the handler rejects that case before reaching the save anyway.
     [Fact]
     public async Task DeletingAParentThatHasAChildIsHasChildrenOnSave()
     {
@@ -206,10 +211,15 @@ public sealed class ProductCategoryPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
 
         var drinks = await SaveCategoryAsync(factory, Tenant, "Bebidas", null);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IProductCategoryRepository>();
+        var tracked = await repository.ListForUpdateAsync(Tenant, TestContext.Current.CancellationToken);
         await SaveCategoryAsync(factory, Tenant, "Gaseosas", drinks.Id);
+        repository.Remove(tracked.Single(category => category.Id == drinks.Id));
 
         var error = await Assert.ThrowsAsync<CatalogDomainException>(
-            () => RemoveCategoryAsync(factory, drinks.Id));
+            () => scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken));
         Assert.Equal("catalog.category.has_children", error.Code);
     }
 
