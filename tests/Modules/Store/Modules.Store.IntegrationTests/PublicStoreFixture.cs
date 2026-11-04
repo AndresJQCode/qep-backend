@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Modules.Store.IntegrationTests;
 
@@ -82,7 +84,6 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
         bool visible = true,
         Guid? categoryId = null,
         object? scales = null,
-        bool variantActive = true,
         string? barcode = null)
     {
         var response = await Settings.Admin.PostAsJsonAsync(
@@ -98,7 +99,6 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
                     {
                         code,
                         barcode,
-                        isActive = variantActive,
                         pricing = new { prices, scales = scales ?? NoDiscountScales(), packagingUnits = Array.Empty<int>() },
                     },
                 },
@@ -176,6 +176,19 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
             fixture.CurrencyEntry("EUR", "Davivienda", "B-EUR-1"),
         };
         body["primaryCurrency"] = "EUR";
+    }
+
+    /// <summary>Un <c>UPDATE</c> directo con un único parámetro <c>@id</c>: para estados que la API no deja armar en un paso.</summary>
+    public async Task ExecuteAsync(string sql, Guid id)
+    {
+        var connectionString = Settings.Factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", id);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
     public async ValueTask DisposeAsync()

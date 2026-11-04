@@ -29,9 +29,14 @@ public sealed class PublicCatalogApiTests
         var first = await PublicStoreFixture.JsonAsync(unpublished);
         var second = await PublicStoreFixture.JsonAsync(unknown);
         Assert.Equal("store.public.not_found", (string)first["code"]!);
-        // Idéntico salvo el traceId: quien sondea hosts no distingue una tienda en preparación de una inexistente.
-        first.AsObject().Remove("traceId");
-        second.AsObject().Remove("traceId");
+        // Idéntico salvo el traceId y el instance, que sólo repite la ruta que pidió el mismo que llama: quien sondea hosts no
+        // distingue una tienda en preparación de una inexistente.
+        foreach (var problem in new[] { first, second })
+        {
+            problem.AsObject().Remove("traceId");
+            problem.AsObject().Remove("instance");
+        }
+
         Assert.Equal(first.ToJsonString(), second.ToJsonString());
     }
 
@@ -74,7 +79,12 @@ public sealed class PublicCatalogApiTests
         await using var fixture = await OpenAsync();
         var (visible, _) = await fixture.CreateProductAsync("Visible", "VIS-1", Prices(10_000m));
         await fixture.CreateProductAsync("Oculto", "HID-1", Prices(10_000m), visible: false);
-        await fixture.CreateProductAsync("Variante apagada", "OFF-1", Prices(10_000m), variantActive: false);
+        // El catálogo no deja crear un producto sin variante activa (catalog.variant.active_required), así que los dos casos se arman
+        // por SQL después: la única variante apagada y el producto inactivo.
+        var (_, offVariant) = await fixture.CreateProductAsync("Variante apagada", "OFF-1", Prices(10_000m));
+        var (inactiveProduct, _) = await fixture.CreateProductAsync("Producto inactivo", "INA-1", Prices(10_000m));
+        await fixture.ExecuteAsync("UPDATE catalog.product_variants SET is_active = false WHERE id = @id", offVariant);
+        await fixture.ExecuteAsync("UPDATE catalog.products SET is_active = false WHERE id = @id", inactiveProduct);
 
         var page = await fixture.GetJsonAsync("/products?currency=COP");
 
@@ -295,8 +305,9 @@ public sealed class PublicCatalogApiTests
         var regional = store["regionalFormat"]!;
         Assert.Equal("America/Bogota", (string)regional["timeZone"]!);
         Assert.Equal("yyyy-MM-dd", (string)regional["dateFormat"]!);
-        // El tenant del harness es es-CO: los valores exactos fijan que numberFormat y defaultCurrency no se crucen.
-        Assert.Equal("es-CO", (string)regional["numberFormat"]!);
+        // numberFormat es el patrón del tenant, no una cultura (TenantNumberFormats.cs:9; el default de la columna). Los valores exactos
+        // fijan que numberFormat y defaultCurrency no se crucen.
+        Assert.Equal(Modules.Tenancy.Domain.TenantNumberFormats.CommaDecimal, (string)regional["numberFormat"]!);
         Assert.Equal("COP", (string)regional["defaultCurrency"]!);
         Assert.Equal("CO", (string)regional["country"]!);
     }

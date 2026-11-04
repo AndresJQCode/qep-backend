@@ -361,7 +361,8 @@ public sealed class StoreSettingsApiTests
             Modules.Tenancy.Domain.TenantModuleKeys.All.Where(key => key != Modules.Tenancy.Domain.TenantModuleKeys.Store));
         var moduleOff = await storeOff.PostAsync("/colors/preview", ifMatch: null, new { primaryColor = "#FFD400" });
         Assert.Equal(HttpStatusCode.Forbidden, moduleOff.StatusCode);
-        Assert.Equal("tenancy.module_not_enabled", await StoreSettingsFixture.CodeAsync(moduleOff));
+        // Sin el módulo el permiso ya no llega al handler (RequiredModules): 403 pelado, como en StoreAccessApiTests.
+        Assert.DoesNotContain("tenancy.module_not_enabled", await BodyAsync(moduleOff));
     }
 
     [Fact]

@@ -42,8 +42,11 @@ public sealed class StoreAccessApiTests
         var read = await fixture.GetAsync();
         var write = await fixture.PutAsync(fixture.Body());
 
+        // store.settings.manage exige el módulo (RequiredModules), así que ModuleEntitlementMask lo quita antes del handler: 403 pelado,
+        // sin código de módulo, igual que en Loans (LoansAccessApiTests.WithTheModuleOffTheRouteIs403). La bandeja, que cuelga de un
+        // permiso de Quotations, sí responde tenancy.module_not_enabled desde su handler.
         Assert.Equal(HttpStatusCode.Forbidden, read.StatusCode);
-        Assert.Equal("tenancy.module_not_enabled", await StoreSettingsFixture.CodeAsync(read));
+        Assert.DoesNotContain("tenancy.module_not_enabled", await BodyAsync(read));
         Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
     }
 }

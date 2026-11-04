@@ -128,7 +128,9 @@ public sealed class PublicOrderRequestApiTests
         return body;
     }
 
-    private static Task<HttpResponseMessage> SubmitAsync(
+    // Async a propósito: con el using, devolver la tarea sin esperarla liberaba el request (y su contenido) antes de que el servidor de
+    // pruebas terminara de leerlo, y salía ObjectDisposedException.
+    private static async Task<HttpResponseMessage> SubmitAsync(
         Rig rig, object body, string? visitorIp = "", HttpClient? client = null, string? cookie = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url("/order-requests")) { Content = JsonContent.Create(body) };
@@ -143,7 +145,7 @@ public sealed class PublicOrderRequestApiTests
             request.Headers.Add("Cookie", cookie);
         }
 
-        return (client ?? rig.Fixture.Storefront).SendAsync(request, TestContext.Current.CancellationToken);
+        return await (client ?? rig.Fixture.Storefront).SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     private static async Task<string> CodeAsync(HttpResponseMessage response) =>
