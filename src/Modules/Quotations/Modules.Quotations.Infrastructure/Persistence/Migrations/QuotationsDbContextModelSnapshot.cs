@@ -442,7 +442,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
 
-                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
                         });
                 });
 

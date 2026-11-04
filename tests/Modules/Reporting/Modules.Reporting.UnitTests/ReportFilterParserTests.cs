@@ -82,7 +82,7 @@ public sealed class ReportFilterParserTests
 
     [Theory]
     [InlineData("pos")]
-    [InlineData("Store")]
+    [InlineData("Telegram")]
     public void RejectsAnUnknownOrLowercaseSource(string value)
     {
         Assert.False(ReportFilterParser.TryParseSource(value, out _));
@@ -99,4 +99,13 @@ public sealed class ReportFilterParserTests
     [InlineData("PriceBaseCop")]
     public void TheRetiredPerCurrencyFieldsAreNoLongerValid(string value) =>
         Assert.False(ReportFilterParser.TryParsePriceChangeField(value, out _));
+
+    // El orden del enum es el de bySource en el resumen: un origen nuevo va al final, después de Pos.
+    [Fact]
+    public void StoreIsTheLastSourceAfterPos()
+    {
+        var sources = Enum.GetValues<OrderSourceFilter>();
+
+        Assert.Equal((OrderSourceFilter.Store, OrderSourceFilter.Pos), (sources[^1], sources[^2]));
+    }
 }

@@ -123,6 +123,22 @@ public sealed class OrderPricingRecalculationTests
         Assert.Equal(112.20m, order.Items.Single().Subtotal);
     }
 
+    // Decisión del owner (2026-11-03): la tienda pública se precia con la regla vigente del tenant, como el manual.
+    [Fact]
+    public async Task AStoreOrderUsesTheTenantRoundingRule()
+    {
+        var productId = Guid.CreateVersion7();
+        var order = UsdOrder(OrderSource.Store, productId);
+        var rule = new PriceRounding(2, PriceRoundingMode.Up);
+
+        await OrderPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(UsdProduct(productId)), new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(("USD", rule)), TenantId, order, Now.AddDays(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(rule, order.PriceRounding);
+    }
+
     // Decisión del owner (spec §4): un pedido de una integración se precia siempre con el valor por defecto de su
     // moneda, aun editado y aun con una regla distinta configurada.
     [Fact]
@@ -155,6 +171,21 @@ public sealed class OrderPricingRecalculationTests
             Currency = "USD",
         };
         var lines = new[] { new OrderLineInput(productId, productId, 10m, 13.19m, 15m, 19) };
+        if (source == OrderSource.Store)
+        {
+            // La tienda exige partes completas: sólo el pedido, no lo que se prueba acá.
+            var details = new QuotationPartyDetails
+            {
+                Name = "Ana", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Cc,
+                PersonType = PartyPersonType.Natural, Phone = "3001112233", Email = "ana@example.com",
+                Address = "Calle 1", DepartmentId = Guid.CreateVersion7(), CityId = Guid.CreateVersion7(),
+            };
+            return Order.CreateFromStore(
+                OrderId.New(), TenantId, "PED-2026-0011", header,
+                new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
+                lines, null, AdvisorId, Now, "T-0001", "store-request:1");
+        }
+
         return source == OrderSource.Manual
             ? Order.CreateManual(
                 OrderId.New(), TenantId, "PED-2026-0009", header, QuotationParties.Empty, account, ShippingDetails.None,

@@ -494,7 +494,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         var order = modelBuilder.Entity<Order>();
         order.ToTable("orders", "quotations", table =>
         {
-            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
             table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
         });
         order.HasKey(value => value.Id);

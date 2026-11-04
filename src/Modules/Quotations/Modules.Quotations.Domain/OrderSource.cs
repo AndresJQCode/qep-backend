@@ -6,5 +6,6 @@ public enum OrderSource
 {
     Quotation,
     Manual,
-    Shopify
+    Shopify,
+    Store
 }

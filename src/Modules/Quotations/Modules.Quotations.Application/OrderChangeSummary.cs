@@ -14,6 +14,9 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
+    public static string CreatedFromStore(string requestNumber) =>
+        Trim($"Creado desde la tienda (solicitud {requestNumber}).");
+
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         QuotationChangeSummary.ItemAdded(productName, quantity, format);
 
