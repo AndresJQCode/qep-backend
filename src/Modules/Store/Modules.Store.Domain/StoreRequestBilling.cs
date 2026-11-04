@@ -4,6 +4,12 @@ namespace Modules.Store.Domain;
 public sealed record StoreRequestBilling
 {
     // Los mismos cuatro tipos del cliente (IdentificationType) y de las partes del pedido.
+    public const int NameMaxLength = 150;
+
+    public const int IdentificationNumberMaxLength = 32;
+
+    public const int EmailMaxLength = 254;
+
     private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
 
     // EF Core materializa por acá: no puede enlazar el lugar (otro tipo mapeado) a un parámetro del constructor validador, y los datos
@@ -36,12 +42,12 @@ public sealed record StoreRequestBilling
             throw new StoreDomainException(StoreErrorCodes.ValidationFailed, "El tipo de documento no es válido.");
         }
 
-        Name = StoreText.Required(name, 150, "El nombre");
+        Name = StoreText.Required(name, NameMaxLength, "El nombre");
         IdentificationType = type;
-        IdentificationNumber = StoreText.Required(identificationNumber, 32, "El documento");
+        IdentificationNumber = StoreText.Required(identificationNumber, IdentificationNumberMaxLength, "El documento");
         Phone = StoreText.Required(phone, 32, "El teléfono");
         PhoneE164 = StoreText.Required(phoneE164, 20, "El teléfono normalizado");
-        Email = StoreText.Required(email, 254, "El correo");
+        Email = StoreText.Required(email, EmailMaxLength, "El correo");
         Address = StoreText.Required(address, 200, "La dirección");
         Place = place ?? throw new ArgumentNullException(nameof(place));
     }

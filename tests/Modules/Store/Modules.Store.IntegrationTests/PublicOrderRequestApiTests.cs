@@ -129,13 +129,18 @@ public sealed class PublicOrderRequestApiTests
     }
 
     private static Task<HttpResponseMessage> SubmitAsync(
-        Rig rig, object body, string? visitorIp = "", HttpClient? client = null)
+        Rig rig, object body, string? visitorIp = "", HttpClient? client = null, string? cookie = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url("/order-requests")) { Content = JsonContent.Create(body) };
         var ip = visitorIp == string.Empty ? NextIp() : visitorIp;
         if (ip is not null)
         {
             request.Headers.Add("X-Qep-Visitor-Ip", ip);
+        }
+
+        if (cookie is not null)
+        {
+            request.Headers.Add("Cookie", cookie);
         }
 
         return (client ?? rig.Fixture.Storefront).SendAsync(request, TestContext.Current.CancellationToken);
@@ -337,10 +342,13 @@ public sealed class PublicOrderRequestApiTests
     {
         await using var rig = await OpenRigAsync();
 
-        var response = await SubmitAsync(rig, Body(rig, body => body["note"] = new string('a', 70_000)));
+        // El resto del cuerpo es válido (una propiedad desconocida no la mira el validador): lo único que falla es el tamaño, así que
+        // sin el tope el envío saldría 201. No depende de que el servidor de pruebas implemente el límite de Kestrel.
+        var response = await SubmitAsync(rig, Body(rig, body => body["padding"] = new string('a', 70_000)));
 
-        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        await AssertRejectedAsync(response, HttpStatusCode.RequestEntityTooLarge, "store.public.body_too_large");
         Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, rig.Captcha.Calls);
     }
 
     [Fact]
@@ -520,12 +528,17 @@ public sealed class PublicOrderRequestApiTests
     {
         await using var rig = await OpenRigAsync();
 
-        for (var i = 0; i < 3; i++)
+        // Sin cabecera todos caen en la cubeta del par directo (el servidor del storefront), que ningún visitante real usa: se agota
+        // con 5 y el sexto es 429. El cupo es 5 cada 10 minutos, así que con menos de 6 el test no distinguiría una cubeta compartida.
+        for (var i = 0; i < 5; i++)
         {
             await AssertRejectedAsync(
                 await SubmitAsync(rig, Body(rig), visitorIp: null), HttpStatusCode.UnprocessableEntity, "store.public.visitor_ip_required");
         }
 
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await SubmitAsync(rig, Body(rig), visitorIp: null)).StatusCode);
+
+        // Un visitante que sí declara su IP tiene cubeta propia y sigue pudiendo enviar.
         Assert.Equal(HttpStatusCode.Created, (await SubmitAsync(rig, Body(rig))).StatusCode);
         Assert.Equal(1, rig.Captcha.Calls);
     }
@@ -594,7 +607,9 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal(plain.StatusCode, response.StatusCode);
         Assert.Equal(await plain.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
 
-        var submit = await SubmitAsync(rig, Body(rig));
+        // El envío también lleva la cookie: la ruta no la lee, y el recibo es el de siempre.
+        var submit = await SubmitAsync(rig, Body(rig), cookie: "qep_session=not-a-real-session");
         Assert.Equal(HttpStatusCode.Created, submit.StatusCode);
+        Assert.Equal("T-0001", (string)(await PublicStoreFixture.JsonAsync(submit))["number"]!);
     }
 }

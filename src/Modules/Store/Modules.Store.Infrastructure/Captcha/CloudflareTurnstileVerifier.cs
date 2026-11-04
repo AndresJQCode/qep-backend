@@ -98,12 +98,21 @@ public sealed partial class CloudflareTurnstileVerifier(
         return Evaluate(body, expectedHostname);
     }
 
+    // Con HTTP 200, Cloudflare también entrega «la llave está mal» y «yo fallé»: eso no dice nada del visitante.
+    private static readonly string[] ProviderFailureCodes = ["invalid-input-secret", "missing-input-secret", "internal-error"];
+
     private bool Evaluate(string body, string expectedHostname)
     {
         try
         {
             using var document = JsonDocument.Parse(body);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                LogUnreachable(logger, "unreadable answer");
+                throw Unavailable("Turnstile answered something unreadable.");
+            }
+
             var success = root.TryGetProperty("success", out var flag) && flag.ValueKind == JsonValueKind.True;
             var hostname = root.TryGetProperty("hostname", out var host) && host.ValueKind == JsonValueKind.String ? host.GetString() : null;
             var hostnameMatch = !enforceHostname
@@ -114,9 +123,18 @@ public sealed partial class CloudflareTurnstileVerifier(
             }
 
             var codes = root.TryGetProperty("error-codes", out var list) && list.ValueKind == JsonValueKind.Array
-                ? string.Join(',', list.EnumerateArray().Select(code => code.ToString()).Take(5))
-                : string.Empty;
-            LogRefused(logger, success, hostnameMatch, codes);
+                ? list.EnumerateArray().Select(code => code.ToString()).Take(5).ToArray()
+                : [];
+            if (!success && codes.Any(code => ProviderFailureCodes.Contains(code, StringComparer.OrdinalIgnoreCase)))
+            {
+                // Sólo el código, nunca la llave ni el token.
+                var provider = string.Join(',', codes);
+                LogUnreachable(logger, $"provider error {provider}");
+                throw Unavailable("Turnstile reported a configuration or provider error.");
+            }
+
+            var joined = string.Join(',', codes);
+            LogRefused(logger, success, hostnameMatch, joined);
             return false;
         }
         catch (JsonException)

@@ -95,14 +95,14 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
     {
         public BillingValidator()
         {
-            RuleFor(b => b.Name).NotEmpty().MaximumLength(150);
+            RuleFor(b => b.Name).NotEmpty().MaximumLength(StoreRequestBilling.NameMaxLength);
             RuleFor(b => b.IdentificationType)
                 .NotEmpty()
                 .Must(type => type is null || IdentificationTypes.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase))
                 .WithMessage("El tipo de documento no es válido.");
-            RuleFor(b => b.IdentificationNumber).NotEmpty().MaximumLength(32);
+            RuleFor(b => b.IdentificationNumber).NotEmpty().MaximumLength(StoreRequestBilling.IdentificationNumberMaxLength);
             RuleFor(b => b.Phone).NotEmpty().MaximumLength(PhoneMaxLength);
-            RuleFor(b => b.Email).NotEmpty().MaximumLength(254).EmailAddress();
+            RuleFor(b => b.Email).NotEmpty().MaximumLength(StoreRequestBilling.EmailMaxLength).EmailAddress();
             RuleFor(b => b.Address).NotEmpty().MaximumLength(AddressMaxLength);
             RuleFor(b => b.Country).NotEmpty().Must(CountryShape).WithMessage("El país debe ser un código de 2 letras.");
             RuleFor(b => b.CityName).MaximumLength(StorePlace.NameMaxLength);
@@ -119,7 +119,7 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
     {
         public ShippingValidator()
         {
-            RuleFor(s => s.RecipientName).MaximumLength(120);
+            RuleFor(s => s.RecipientName).MaximumLength(StoreRequestShipping.RecipientNameMaxLength);
             RuleFor(s => s.Phone).NotEmpty().MaximumLength(PhoneMaxLength);
             RuleFor(s => s.Address).NotEmpty().MaximumLength(AddressMaxLength);
             RuleFor(s => s.Country).NotEmpty().Must(CountryShape).WithMessage("El país debe ser un código de 2 letras.");

@@ -77,6 +77,7 @@ public static class PublicStoreEndpoints
         // El limitador del endpoint reemplaza al del grupo: el envío cuenta contra su propio cupo (5 cada 10 min), no contra las lecturas.
         group.MapPost("/order-requests", SubmitOrderRequestAsync)
             .RequireRateLimiting(submitPolicy)
+            .Accepts<PublicOrderRequestBody>("application/json")
             .Produces<PublicOrderRequestReceiptDto>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
@@ -89,11 +90,31 @@ public static class PublicStoreEndpoints
     // 201 tanto para la primera vez como para el reintento con el mismo clientRequestId: el visitante no necesita distinguirlos.
     private static async Task<IResult> SubmitOrderRequestAsync(
         string host,
-        PublicOrderRequestBody body,
         IRequestDispatcher dispatcher,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        // El tope se aplica leyendo: RequestSizeLimitAttribute sólo es metadato que Kestrel convierte en límite, y un servidor que no lo
+        // hace (TestServer) o un cuerpo sin Content-Length lo dejarían pasar. Se rechaza por Content-Length ANTES de leer y, sin él, a
+        // medida que se lee, igual que el webhook de Messaging.
+        var read = await ReadBoundedAsync(httpContext.Request.Body, httpContext.Request.ContentLength, cancellationToken);
+        if (read.Bytes is null)
+        {
+            return Results.Problem(
+                statusCode: read.Status,
+                title: "The request body is not acceptable.",
+                extensions: new Dictionary<string, object?> { ["code"] = read.Status == StatusCodes.Status413PayloadTooLarge ? "store.public.body_too_large" : "store.public.body_invalid" });
+        }
+
+        var body = TryParseBody(httpContext, read.Bytes);
+        if (body is null)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "The request body is not valid JSON.",
+                extensions: new Dictionary<string, object?> { ["code"] = "store.public.body_invalid" });
+        }
+
         // La IP del consentimiento es la que declara el storefront con su clave, nunca la del par directo (que sería la del servidor de
         // la tienda): sin ella no hay consentimiento que guardar.
         var secret = httpContext.RequestServices.GetRequiredService<StoreOptions>().Storefront.SharedSecret;
@@ -107,6 +128,55 @@ public static class PublicStoreEndpoints
             new SubmitOrderRequestCommand(host, visitorIp, NormalizeLines(body)), cancellationToken);
         httpContext.Response.Headers.CacheControl = "no-store";
         return Results.Json(receipt, statusCode: StatusCodes.Status201Created);
+    }
+
+    private const int ReadChunkSize = 16 * 1024;
+
+    private static async Task<(byte[]? Bytes, int Status)> ReadBoundedAsync(
+        Stream stream, long? declaredLength, CancellationToken cancellationToken)
+    {
+        if (declaredLength is { } declared && declared > MaxRequestBodyBytes)
+        {
+            return (null, StatusCodes.Status413PayloadTooLarge);
+        }
+
+        using var buffer = new MemoryStream();
+        var chunk = new byte[ReadChunkSize];
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+            {
+                if (buffer.Length + read > MaxRequestBodyBytes)
+                {
+                    return (null, StatusCodes.Status413PayloadTooLarge);
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+        }
+        catch (BadHttpRequestException exception)
+        {
+            // Lo que Kestrel corta al leer: el tope en chunked (413) o un cuerpo más corto que su Content-Length (400).
+            return (null, exception.StatusCode);
+        }
+
+        return (buffer.ToArray(), StatusCodes.Status200OK);
+    }
+
+    // Las mismas opciones JSON que usaría el binder de minimal API; un cuerpo ilegible o null es un 400, como antes.
+    private static PublicOrderRequestBody? TryParseBody(HttpContext httpContext, byte[] bytes)
+    {
+        var options = httpContext.RequestServices
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value.SerializerOptions;
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<PublicOrderRequestBody>(bytes, options);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     // Un cuerpo con lineas ausentes o nulas llega al validador como un carrito invalido (422), no como un 500.

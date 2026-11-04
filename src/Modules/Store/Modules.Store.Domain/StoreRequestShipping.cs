@@ -6,6 +6,8 @@ namespace Modules.Store.Domain;
 /// </summary>
 public sealed record StoreRequestShipping
 {
+    public const int RecipientNameMaxLength = 120;
+
     // EF Core materializa por acá, por la misma razón que StoreRequestBilling.
     private StoreRequestShipping()
     {
@@ -22,7 +24,7 @@ public sealed record StoreRequestShipping
         string address,
         StorePlace place)
     {
-        RecipientName = StoreText.Optional(recipientName, 120, "El destinatario");
+        RecipientName = StoreText.Optional(recipientName, RecipientNameMaxLength, "El destinatario");
         Phone = StoreText.Required(phone, 32, "El teléfono");
         PhoneE164 = StoreText.Required(phoneE164, 20, "El teléfono normalizado");
         Address = StoreText.Required(address, 200, "La dirección");
