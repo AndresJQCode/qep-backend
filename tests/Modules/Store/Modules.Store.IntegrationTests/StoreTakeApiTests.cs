@@ -465,6 +465,73 @@ public sealed class StoreTakeApiTests
     }
 
     [Fact]
+    public async Task DiscardingDuringALiveLeaseIs409BeingTakenEvenForTheSameMember()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        var request = await rig.SubmitAsync();
+        await rig.ExecuteAsync(
+            "UPDATE store.order_requests SET lease_member_id = @member, lease_until = @until WHERE id = @id",
+            ("member", rig.CallerMembershipId),
+            ("until", StoreInboxRig.Start.AddMinutes(2)),
+            ("id", request));
+
+        await StoreInboxRig.AssertCodeAsync(
+            await rig.DiscardAsync(request, new { reason = "Spam" }), HttpStatusCode.Conflict, "store.order_request.being_taken");
+
+        var state = await rig.StateAsync(request);
+        Assert.Equal(StoreOrderRequestStatus.New, state.Status);
+    }
+
+    [Fact]
+    public async Task DiscardingARequestWhoseOrderAlreadyExistsConvertsItInstead()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        var customer = await BillingTwinAsync(rig);
+        var request = await rig.SubmitAsync(shipping: _ => { });
+        // «Tomar» creó el pedido y cayó antes de marcar la solicitud; no hay lease vivo.
+        await CreateOrderBehindTheInboxAsync(rig, request, customer);
+
+        await StoreInboxRig.AssertCodeAsync(
+            await rig.DiscardAsync(request, new { reason = "Spam" }), HttpStatusCode.Conflict, "store.order_request.not_new");
+
+        var state = await rig.StateAsync(request);
+        Assert.Equal(StoreOrderRequestStatus.Converted, state.Status);
+        Assert.NotNull(state.OrderId);
+        Assert.Equal(customer, state.CustomerId);
+        Assert.Equal(1, await rig.CountAsync("quotations.orders"));
+    }
+
+    // El pedido que «Tomar» alcanzó a crear antes de caer: existe en Pedidos, con la clave de la solicitud, y la solicitud sigue Nueva.
+    private static async Task CreateOrderBehindTheInboxAsync(StoreInboxRig rig, Guid request, Guid customer)
+    {
+        await using var scope = rig.Factory.Services.CreateAsyncScope();
+        var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
+        var party = new StoreOrderParty(
+            "Ana Pérez", "3001234567", "ana@test.co", "Calle 1 # 2-3", "CO", rig.Department, rig.City, null, "CC", "123456");
+        await gateway.CreateAsync(
+            new Modules.Quotations.Application.StoreOrderDraft(
+                StoreSettingsFixture.Tenant,
+                request,
+                "T-0001",
+                customer,
+                rig.CallerMembershipId,
+                true,
+                new QuotationBillingAccountRequest(
+                    rig.Fixture.Settings.Company.Id,
+                    rig.Fixture.Settings.Company.BankName,
+                    rig.Fixture.Settings.Company.AccountNumber,
+                    "COP"),
+                party,
+                party with { IdentificationType = null, IdentificationNumber = null },
+                false,
+                false,
+                [new StoreQuoteLine(rig.Variant, 2)],
+                null,
+                Guid.Parse(SubjectId)),
+            TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task ARetakeAfterACrashMarksTheExistingOrder()
     {
         await using var rig = await StoreInboxRig.OpenAsync();
@@ -473,33 +540,7 @@ public sealed class StoreTakeApiTests
         var (userId, _) = await rig.SeedSecondCallerAsync("Segundo asesor");
 
         // El primer asesor creó el pedido y el proceso cayó antes de marcar la solicitud: el lease venció.
-        await using (var scope = rig.Factory.Services.CreateAsyncScope())
-        {
-            var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
-            var party = new StoreOrderParty(
-                "Ana Pérez", "3001234567", "ana@test.co", "Calle 1 # 2-3", "CO", rig.Department, rig.City, null, "CC", "123456");
-            await gateway.CreateAsync(
-                new Modules.Quotations.Application.StoreOrderDraft(
-                    StoreSettingsFixture.Tenant,
-                    request,
-                    "T-0001",
-                    customer,
-                    rig.CallerMembershipId,
-                    true,
-                    new QuotationBillingAccountRequest(
-                        rig.Fixture.Settings.Company.Id,
-                        rig.Fixture.Settings.Company.BankName,
-                        rig.Fixture.Settings.Company.AccountNumber,
-                        "COP"),
-                    party,
-                    party with { IdentificationType = null, IdentificationNumber = null },
-                    false,
-                    false,
-                    [new StoreQuoteLine(rig.Variant, 2)],
-                    null,
-                    Guid.Parse(SubjectId)),
-                TestContext.Current.CancellationToken);
-        }
+        await CreateOrderBehindTheInboxAsync(rig, request, customer);
 
         await rig.ExecuteAsync(
             "UPDATE store.order_requests SET lease_member_id = @member, lease_until = @until WHERE id = @id",

@@ -38,6 +38,7 @@ public sealed class DiscardOrderRequestHandler(
     IStoreAuditPublisher auditPublisher,
     ITenantClock tenantClock,
     OrderRequestRowComposer composer,
+    IStoreOrders orders,
     IValidator<DiscardOrderRequestCommand> validator)
     : ICommandHandler<DiscardOrderRequestCommand, StoreOrderRequestRowDto>
 {
@@ -51,6 +52,34 @@ public sealed class DiscardOrderRequestHandler(
         var request = await requests.FindAsync(command.TenantId, command.RequestId, cancellationToken)
             ?? throw StoreNotFound.OrderRequest(command.RequestId);
         var now = (await tenantClock.GetAsync(command.TenantId, cancellationToken)).UtcNow;
+
+        if (request.Status == StoreOrderRequestStatus.New)
+        {
+            // Un lease vivo es una toma en curso: el pedido puede existir ya, aunque la solicitud siga Nueva.
+            if (request.IsBeingTaken(now))
+            {
+                throw new ResourceConflictException(StoreErrorCodes.BeingTaken, "The order request is being taken.");
+            }
+
+            // La toma pudo crear el pedido y caer antes de marcar la solicitud: descartarla lo dejaría huérfano. Se marca convertida
+            // (como el reintento de «Tomar») y la interfaz relee con el 409.
+            if (await orders.FindExistingAsync(command.TenantId, request.Id, cancellationToken) is { } existing)
+            {
+                request.MarkConverted(
+                    existing.OrderId, existing.ClientId, existing.OrderNumber, existing.Total, existing.AdvisorMembershipId, now);
+                auditPublisher.Publish(
+                    command.TenantId,
+                    executionContext.SubjectId,
+                    StoreAuditActions.RequestConverted,
+                    StoreAuditActions.Resources.OrderRequest,
+                    request.Id.ToString(),
+                    "success",
+                    ["status", "orderId", "customerId"],
+                    now);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                throw new ResourceConflictException(StoreErrorCodes.NotNew, "The order request was already converted or discarded.");
+            }
+        }
 
         try
         {

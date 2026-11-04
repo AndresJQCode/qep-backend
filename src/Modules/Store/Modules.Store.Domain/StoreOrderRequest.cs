@@ -210,7 +210,7 @@ public sealed class StoreOrderRequest
     public void Discard(Guid memberId, StoreDiscardReason reason, string? note, DateTimeOffset now)
     {
         RequireNew();
-        RequireNoLeaseOfAnother(memberId, now);
+        RequireNoLiveLease(now);
 
         var cleaned = StoreText.Optional(note, DiscardNoteMaxLength, "La nota");
         if (reason == StoreDiscardReason.Other && cleaned is null)
@@ -235,9 +235,10 @@ public sealed class StoreOrderRequest
         }
     }
 
-    private void RequireNoLeaseOfAnother(Guid memberId, DateTimeOffset now)
+    // Cualquier lease vivo, también el propio: la toma ya pudo crear el pedido, y descartar ahí lo dejaría huérfano.
+    private void RequireNoLiveLease(DateTimeOffset now)
     {
-        if (IsBeingTaken(now) && LeaseMemberId != memberId)
+        if (IsBeingTaken(now))
         {
             throw new StoreDomainException(StoreErrorCodes.BeingTaken, "Otro asesor estÃ¡ tomando esta solicitud.");
         }

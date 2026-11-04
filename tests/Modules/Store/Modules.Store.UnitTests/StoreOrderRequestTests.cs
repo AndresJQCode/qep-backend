@@ -172,6 +172,19 @@ public sealed class StoreOrderRequestTests
             CodeOf(() => request.Discard(OtherMember, StoreDiscardReason.Spam, null, during)));
     }
 
+    // Revision final: Descartar con el lease vivo del propio asesor dejaba un pedido huerfano (la toma ya creo el pedido).
+    [Fact]
+    public void AnyLiveLeaseBlocksDiscardEvenTheCallersOwn()
+    {
+        var request = Request();
+        request.BeginConversion(Member, Now, Lease);
+
+        Assert.Equal(
+            StoreErrorCodes.BeingTaken,
+            CodeOf(() => request.Discard(Member, StoreDiscardReason.Spam, null, Now.AddSeconds(30))));
+        Assert.Equal(StoreOrderRequestStatus.New, request.Status);
+    }
+
     // Un doble clic o un reintento del mismo asesor mientras la primera toma sigue corriendo no puede abrir una segunda: si una de las
     // dos falla, soltaría el lease que la otra todavía usa (revisión de la tarea 12).
     [Fact]
