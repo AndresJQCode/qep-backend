@@ -9,6 +9,9 @@ public static class CustomerAuditActions
     public const string CreatedFromMessaging = "customers.customer.created_from_messaging";
     public const string Completed = "customers.customer.completed";
 
+    /// <summary>Tienda pública, «Tomar»: una dirección nueva en la libreta del cliente. El recurso auditado es la dirección.</summary>
+    public const string AddressAdded = "customers.customer.address_added";
+
     // Spec 2026-10-11 §4.2. El recurso auditado es la nota o la etiqueta; en los dos últimos, el cliente.
     public const string NoteCreated = "customers.note.created";
     public const string NoteUpdated = "customers.note.updated";

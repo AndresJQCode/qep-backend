@@ -506,6 +506,34 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .OrderBy(customer => customer.MergedIntoId != null).ThenBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<Customer>> ListByPhoneE164Async(
+        Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
+        await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 == phoneE164
+                && customer.IsActive && customer.MergedIntoId == null)
+            .OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlySet<string>> FindExistingPhonesE164Async(
+        Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken)
+    {
+        if (phonesE164.Count == 0)
+        {
+            return new HashSet<string>();
+        }
+
+        var found = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => customer.TenantId == tenantId && customer.PhoneE164 != null && phonesE164.Contains(customer.PhoneE164)
+                && customer.IsActive && customer.MergedIntoId == null)
+            .Select(customer => customer.PhoneE164!)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        return found.ToHashSet(StringComparer.Ordinal);
+    }
+
     public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
         dbContext.Customers
             .AsNoTracking()

@@ -714,6 +714,53 @@ public sealed class Customer
         return address;
     }
 
+    /// <summary>
+    /// Tienda pública, «Tomar»: la dirección de la libreta que ya dice lo mismo, o una nueva si no hay. Igual es mismo país, misma
+    /// dirección normalizada, misma ciudad (el id en <c>CO</c>, el texto normalizado afuera) y mismo teléfono en E.164; el
+    /// <c>Name</c> no cuenta, porque «Casa» y «Bodega» con la misma calle son el mismo destino. Lo encontrado se devuelve sin
+    /// tocarlo; lo nuevo entra como no principal, salvo que sea la primera de la libreta (<see cref="AddAddress"/>). Lanza lo
+    /// mismo que <see cref="AddAddress"/> con un cliente incompleto, fusionado o inactivo.
+    /// </summary>
+    /// <param name="phoneToE164">El normalizador con el país de <paramref name="details"/>: sólo se comparan direcciones del mismo
+    /// país, así que un único país basta. <c>null</c> si el teléfono no normaliza.</param>
+    public (CustomerAddress Address, bool Added) EnsureAddress(
+        CustomerAddressDetails details, Func<string?, string?> phoneToE164, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(details);
+        ArgumentNullException.ThrowIfNull(phoneToE164);
+        EnsureNotMerged();
+        EnsureActive();
+        if (!IsComplete)
+        {
+            throw new CustomersDomainException(
+                "customers.customer.incomplete",
+                "An incomplete customer cannot be edited until it is completed.");
+        }
+
+        var wanted = details.Normalized();
+        var wantedPhone = PhoneKey(wanted.Phone, phoneToE164);
+        var found = _addresses.FirstOrDefault(entry =>
+            entry.Country == wanted.Country
+            && SameText(entry.Address, wanted.Address)
+            && (wanted.Country == ColombiaCountryCode
+                ? entry.CityId == wanted.CityId
+                : SameText(entry.CityName, wanted.CityName))
+            && string.Equals(PhoneKey(entry.Phone, phoneToE164), wantedPhone, StringComparison.Ordinal));
+
+        return found is not null ? (found, false) : (AddAddress(details, false, occurredAt), true);
+    }
+
+    // Trim, mayúsculas y los blancos repetidos en uno: «Cra 7  # 12-30» y «CRA 7 # 12-30» son la misma calle.
+    private static bool SameText(string? left, string? right) =>
+        string.Equals(CollapseText(left), CollapseText(right), StringComparison.Ordinal);
+
+    private static string CollapseText(string? value) =>
+        string.Join(' ', (value ?? string.Empty).ToUpperInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    // E.164 cuando normaliza; si la librería lo rechaza, el texto recortado (dos teléfonos iguales e ilegibles siguen siendo iguales).
+    private static string? PhoneKey(string? phone, Func<string?, string?> phoneToE164) =>
+        string.IsNullOrWhiteSpace(phone) ? null : phoneToE164(phone) ?? phone.Trim();
+
     /// <summary>Reemplaza los datos de una direccion. Reemplaza el recurso entero, mismo criterio
     /// que <see cref="Update"/>.</summary>
     public CustomerAddress UpdateAddress(

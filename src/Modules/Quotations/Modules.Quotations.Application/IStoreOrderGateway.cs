@@ -84,6 +84,9 @@ public interface IStoreOrderGateway
 
     /// <summary>Crea el pedido de la solicitud; idempotente por <see cref="StoreOrderGateway.ExternalKeyFor"/>.</summary>
     Task<StoreOrderResult> CreateAsync(StoreOrderDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>El pedido que ya salió de esa solicitud, o <c>null</c>. «Tomar» lo mira antes de tocar al cliente.</summary>
+    Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken);
 }
 
 public sealed class StoreOrderGateway(
@@ -217,6 +220,12 @@ public sealed class StoreOrderGateway(
                 "The external key was taken, but no committed order carries it.");
         return Existing(winner);
     }
+
+    public async Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken) =>
+        await orderRepository.FindByExternalKeyAsync(tenantId, OrderSource.Store, ExternalKeyFor(requestId), cancellationToken)
+            is { } order
+            ? Existing(order)
+            : null;
 
     private static StoreOrderResult Existing(Order order) => ToResult(order, alreadyExisted: true);
 

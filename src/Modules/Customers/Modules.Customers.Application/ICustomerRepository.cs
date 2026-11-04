@@ -170,6 +170,20 @@ public interface ICustomerRepository
     /// número, y quien llama lo resuelve por <see cref="Customer.MergedIntoId"/>.</summary>
     Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Tienda pública, «Tomar»: <b>todos</b> los clientes activos y sin fusionar con ese <c>phone_e164</c> (el teléfono no es único),
+    /// del más viejo al más nuevo y luego por id, hasta <paramref name="take"/>. Sin tracking. A diferencia de
+    /// <see cref="FindOldestByPhoneE164Async"/> no devuelve fusionados ni inactivos: la bandeja sugiere a quien se puede tomar.
+    /// </summary>
+    Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Tienda pública, la bandeja: de estos teléfonos E.164, cuáles tiene algún cliente activo y sin fusionar. Una consulta para una
+    /// página entera de solicitudes. Sin tracking.
+    /// </summary>
+    Task<IReadOnlySet<string>> FindExistingPhonesE164Async(
+        Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken);
+
     /// <summary>Spec 2026-10-29, hallazgo F2: el más viejo con ese <c>phone</c> exacto y sin <c>phone_e164</c>, con el mismo orden que
     /// <see cref="FindOldestByPhoneE164Async"/>. Es la llave de un teléfono que la librería rechazó, que se guarda sin normalizar. Sin
     /// tracking.</summary>
