@@ -17,6 +17,9 @@ internal sealed class StoreUnitOfWork(StoreDbContext dbContext) : IStoreUnitOfWo
     // Otro tenant puede ser dueño del hostname (una fila Custom): la PK de dominios es la garantía global.
     private const string DomainPrimaryKey = "PK_store_domains";
 
+    // Dos primeras escrituras concurrentes de los ajustes: la segunda choca con la PK. Es la misma carrera que un If-Match viejo.
+    private const string StorePrimaryKey = "PK_stores";
+
     private const string ClientRequestIndex = "IX_order_requests_tenant_client_request";
 
     // IX_order_requests_tenant_number e IX_order_requests_order no se traducen a propósito: el generador de números y la guarda de la conversión
@@ -43,6 +46,13 @@ internal sealed class StoreUnitOfWork(StoreDbContext dbContext) : IStoreUnitOfWo
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The store settings changed while the update was being committed.",
+                exception);
+        }
+        catch (DbUpdateException exception) when (UniqueViolation.Is(exception, StorePrimaryKey))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict",
+                "The store settings were created by another request.",
                 exception);
         }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, SlugIndex, DomainPrimaryKey))

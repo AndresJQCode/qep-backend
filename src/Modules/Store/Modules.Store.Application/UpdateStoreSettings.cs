@@ -180,7 +180,13 @@ public sealed class UpdateStoreSettingsHandler(
         var previousSlug = store.Slug;
         var before = Snapshot(store);
         var now = clock.UtcNow;
-        store.Configure(input, countries.IsKnown, executionContext.SubjectId, now);
+        var changed = store.Configure(input, countries.IsKnown, executionContext.SubjectId, now);
+        if (existing is not null && !changed)
+        {
+            // Nada cambió: ni versión nueva, ni auditoría, ni escritura. Se responde la tienda tal como está.
+            return await composer.ComposeAsync(store, cancellationToken);
+        }
+
         var changedFields = Changed(before, Snapshot(store));
 
         if (existing is null)

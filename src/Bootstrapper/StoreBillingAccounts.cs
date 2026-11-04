@@ -9,9 +9,8 @@ namespace Bootstrapper;
 
 /// <summary>
 /// Companies + Quotations → Store: las cuentas de cobro de la tienda. <see cref="ValidateAsync"/> aplica la comparación de
-/// <c>QuotationBillingAccountResolver</c> (banco sin mayúsculas, número exacto, moneda, los tres recortados) sobre el mismo
-/// <see cref="IQuotationCompanyLookup"/>, con sus mismos códigos: una cuenta que la tienda da por buena tiene que ser una que el
-/// pedido acepte al «Tomar». La empresa que no existe es un 404 y la cuenta que no es de la empresa, un 422 (contrato A).
+/// <c>QuotationBillingAccountVerifier</c>, la misma llamada que hace <c>QuotationBillingAccountResolver</c>: una cuenta que la
+/// tienda da por buena es una que el pedido acepta al «Tomar» por construcción, no por copia. La empresa que no existe es un 404 y la cuenta que no es de la empresa, un 422 (contrato A).
 /// </summary>
 internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, ICompanyRepository companies) : IStoreBillingAccounts
 {
@@ -38,26 +37,19 @@ internal sealed class StoreBillingAccounts(IQuotationCompanyLookup lookup, IComp
         string currency,
         CancellationToken cancellationToken)
     {
-        var company = await lookup.FindAsync(tenantId, companyId, cancellationToken);
-
-        // El mismo código para «no existe» y «es de otro tenant»: distinguirlos confirmaría que el id existe en otro tenant.
-        if (company is null)
+        VerifiedBillingAccount account;
+        try
         {
-            throw new ResourceNotFoundException(
-                "quotation.billing.company_not_found", $"Company '{companyId}' was not found in this tenant.");
+            account = await QuotationBillingAccountVerifier.VerifyAsync(
+                lookup, tenantId, companyId, bankName, accountNumber, currency, cancellationToken);
         }
-
-        var account = company.BankAccounts.FirstOrDefault(candidate =>
-            string.Equals(candidate.BankName, bankName.Trim(), StringComparison.OrdinalIgnoreCase)
-            && candidate.AccountNumber == accountNumber.Trim()
-            && string.Equals(candidate.Currency, currency.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (account is null)
+        catch (QuotationsDomainException exception) when (exception.Code == QuotationBillingAccountVerifier.CompanyNotFoundCode)
         {
-            throw new QuotationsDomainException(
-                "quotation.billing.account_not_found", "The bank account does not belong to the selected company.");
+            // Contrato A: la empresa que no existe es un 404 (el mismo código para «no existe» y «es de otro tenant»).
+            throw new ResourceNotFoundException(exception.Code, exception.Message);
         }
 
         // Se guarda la cuenta como la tiene la empresa, no como la escribió el cliente HTTP.
-        return new StoreBillingAccount(company.Id, account.BankName, account.AccountNumber, account.Currency.ToUpperInvariant());
+        return new StoreBillingAccount(account.CompanyId, account.BankName, account.AccountNumber, account.Currency.ToUpperInvariant());
     }
 }

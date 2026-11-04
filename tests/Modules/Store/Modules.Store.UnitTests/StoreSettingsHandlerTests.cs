@@ -72,6 +72,21 @@ public sealed class StoreSettingsHandlerTests
     }
 
     [Fact]
+    public async Task AnIdenticalSaveWritesNothingAndKeepsTheVersion()
+    {
+        var rig = new SettingsRig(ConfiguredStore());
+        var first = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), version: 1), Ct);
+        var audited = rig.Audit.Entries.Count;
+        var saves = rig.UnitOfWork.Saves;
+
+        var again = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), version: first.Version), Ct);
+
+        Assert.Equal(first.Version, again.Version);
+        Assert.Equal(audited, rig.Audit.Entries.Count);
+        Assert.Equal(saves, rig.UnitOfWork.Saves);
+    }
+
+    [Fact]
     public async Task AStaleOrMissingVersionIsAConcurrencyErrorAndSavesNothing()
     {
         var rig = new SettingsRig(ConfiguredStore());

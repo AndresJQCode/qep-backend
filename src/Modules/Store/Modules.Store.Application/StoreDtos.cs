@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Modules.Store.Domain;
 
 namespace Modules.Store.Application;
@@ -62,11 +63,12 @@ public sealed record StoreSettingsDto(
 
 public sealed record StoreColorsDto(string Primary, string OnPrimary, string AccentText);
 
+// Contrato A: los nombres del cable son los que ya lee el backoffice; los del dominio se quedan.
 public sealed record StoreColorChecksDto(
-    double OnPrimaryContrast,
-    double AccentTextContrast,
-    bool OnPrimaryLowContrast,
-    bool AccentTextLowContrast);
+    [property: JsonPropertyName("onPrimaryOnPrimary")] double OnPrimaryContrast,
+    [property: JsonPropertyName("accentTextOnWhite")] double AccentTextContrast,
+    [property: JsonPropertyName("onPrimaryLowContrast")] bool OnPrimaryLowContrast,
+    [property: JsonPropertyName("accentTextLowContrast")] bool AccentTextLowContrast);
 
 public sealed record StoreColorPreviewDto(StoreColorsDto ResolvedColors, StoreColorChecksDto ColorChecks);
 

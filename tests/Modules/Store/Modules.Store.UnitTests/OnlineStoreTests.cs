@@ -57,12 +57,15 @@ public sealed class OnlineStoreTests
     }
 
     [Fact]
-    public void ConfiguringBumpsTheVersion()
+    public void ConfiguringBumpsTheVersionOnlyWhenSomethingChanges()
     {
         var store = ConfiguredStore();
         Assert.Equal(1, store.Version);
 
-        store.Configure(Input(), KnowsCoAndEs, Member, Now);
+        Assert.False(store.Configure(Input(), KnowsCoAndEs, Member, Now));
+        Assert.Equal(1, store.Version);
+
+        Assert.True(store.Configure(Input(slug: "otra"), KnowsCoAndEs, Member, Now));
         Assert.Equal(2, store.Version);
     }
 

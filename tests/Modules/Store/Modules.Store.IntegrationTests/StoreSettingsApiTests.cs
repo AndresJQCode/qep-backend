@@ -65,6 +65,7 @@ public sealed class StoreSettingsApiTests
 
         var missing = await fixture.PutAsync(fixture.Body(), ifMatch: null);
         Assert.Equal(HttpStatusCode.PreconditionRequired, missing.StatusCode);
+        Assert.Equal("precondition.if_match_required", await StoreSettingsFixture.CodeAsync(missing));
 
         await fixture.SaveAsync(fixture.Body());
         var stale = await fixture.PutAsync(fixture.Body(), ifMatch: "0");
@@ -252,8 +253,8 @@ public sealed class StoreSettingsApiTests
         var checks = saved["colorChecks"]!;
         Assert.False((bool)checks["onPrimaryLowContrast"]!);
         Assert.False((bool)checks["accentTextLowContrast"]!);
-        Assert.True((double)checks["onPrimaryContrast"]! >= 4.5);
-        Assert.True((double)checks["accentTextContrast"]! >= 4.5);
+        Assert.True((double)checks["onPrimaryOnPrimary"]! >= 4.5);
+        Assert.True((double)checks["accentTextOnWhite"]! >= 4.5);
     }
 
     [Fact]

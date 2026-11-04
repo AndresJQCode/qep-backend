@@ -73,7 +73,11 @@ public sealed class OnlineStore
             Version = 0,
         };
 
-    public void Configure(
+    /// <summary>
+    /// Devuelve false (y no sube la versión) cuando nada cambió y la tienda ya se había guardado: un PUT idéntico no escribe ni audita.
+    /// La primera vez siempre es true, aunque todo quede en sus valores por defecto.
+    /// </summary>
+    public bool Configure(
         StoreSettingsInput input,
         Func<string, bool> isKnownCountry,
         Guid updatedBy,
@@ -119,6 +123,8 @@ public sealed class OnlineStore
             DataPolicySetAt = policyUrl is null ? null : now;
         }
 
+        var before = StateKey();
+
         Slug = slug;
         Name = StoreText.Clean(input.Name);
         PrimaryColor = primaryColor.ToHex();
@@ -144,8 +150,20 @@ public sealed class OnlineStore
         _featuredCategoryIds.Clear();
         _featuredCategoryIds.AddRange(input.FeaturedCategoryIds);
 
-        Touch(updatedBy, now);
+        var changed = Version == 0 || !string.Equals(before, StateKey(), StringComparison.Ordinal);
+        if (changed)
+        {
+            Touch(updatedBy, now);
+        }
+
+        return changed;
     }
+
+    // Los records componen su ToString con todos sus campos, así que la clave cambia si cambia cualquiera.
+    private string StateKey() => string.Join(
+        '',
+        Slug, Name, PrimaryColor, OnPrimaryColor, AccentTextColor, BannerFileId, BannerText, Contact, DataPolicyUrl, PricingMode,
+        PrimaryCurrency, string.Join('|', _currencies), string.Join('|', _salesCountries), string.Join('|', _featuredCategoryIds));
 
     /// <summary>Lo que falta para publicar, en el orden del contrato; vacío = publicable.</summary>
     public IReadOnlyList<StorePublishBlocker> PublishBlockers() =>

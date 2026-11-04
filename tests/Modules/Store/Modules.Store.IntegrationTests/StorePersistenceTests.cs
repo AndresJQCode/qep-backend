@@ -301,6 +301,22 @@ public sealed class StorePersistenceTests
     }
 
     [Fact]
+    public async Task TwoFirstCreatesOfTheSameTenantAreAConcurrencyConflict()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        await SaveStoreAsync(factory, ConfiguredStore(Tenant, slug: "acme"));
+        scope.ServiceProvider.GetRequiredService<IOnlineStoreRepository>().Add(ConfiguredStore(Tenant, slug: "acme-2"));
+        var exception = await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => scope.ServiceProvider.GetRequiredService<IStoreUnitOfWork>().SaveChangesAsync(Ct));
+
+        Assert.Equal("concurrency.conflict", exception.Code);
+    }
+
+    [Fact]
     public async Task TwoTenantsCannotShareASlug()
     {
         var (database, factory) = await OpenAsync();
