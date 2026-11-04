@@ -19,6 +19,9 @@ internal sealed class StoreUnitOfWork(StoreDbContext dbContext) : IStoreUnitOfWo
 
     private const string ClientRequestIndex = "IX_order_requests_tenant_client_request";
 
+    // IX_order_requests_tenant_number e IX_order_requests_order no se traducen a propósito: el generador de números y la guarda de la conversión
+    // impiden esas violaciones, así que si ocurren son un bug y deben salir como error, no como un conflicto de negocio.
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         try

@@ -610,4 +610,96 @@ public sealed class StorePersistenceTests
         Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
         Assert.Equal("CK_order_requests_status", exception.ConstraintName);
     }
+
+    [Fact]
+    public async Task TheDatabaseRejectsAnUnknownPricingMode()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            factory,
+            $"""
+            INSERT INTO store.stores (tenant_id, is_published, pricing_mode, version)
+            VALUES ({Tenant}, false, 'Bogus', 0)
+            """));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_stores_pricing_mode", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheDatabaseRejectsALowercaseColor()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            factory,
+            $"""
+            INSERT INTO store.stores (tenant_id, is_published, pricing_mode, primary_color, version)
+            VALUES ({Tenant}, false, 'RetailOnly', '#1f4fd8', 0)
+            """));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_stores_colors", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheDatabaseRejectsAnUnknownDiscardReason()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var row = ValidRequestRow(Tenant, 1);
+        row["discard_reason"] = "Bogus";
+
+        var exception = await InsertRequestRowAsync(factory, row);
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_order_requests_discard_reason", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheDatabaseRejectsAColombianShippingWithoutCityId()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        // Completo para CK_order_requests_shipping; sólo falta el id de la ciudad que pide el carril colombiano.
+        var row = ValidRequestRow(Tenant, 1);
+        row["has_shipping"] = true;
+        row["shipping_phone"] = "300 765 4321";
+        row["shipping_phone_e164"] = "+573007654321";
+        row["shipping_address"] = "Carrera 4 # 5-6";
+        row["shipping_country"] = "CO";
+        row["shipping_department_id"] = Guid.NewGuid();
+        row["shipping_department_name"] = "Antioquia";
+        row["shipping_city_id"] = null;
+        row["shipping_city_name"] = "Medellín";
+
+        var exception = await InsertRequestRowAsync(factory, row);
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
+        Assert.Equal("CK_order_requests_shipping_lane", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TheBillingPhoneIndexExists()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        // Lo crea a mano la migración InitialStore (EF no lo expresa): si alguien la regenera sin él, esto lo atrapa.
+        var count = await ScalarAsync(
+            factory,
+            $"SELECT count(*) AS \"Value\" FROM pg_indexes WHERE schemaname = 'store' AND indexname = 'IX_order_requests_tenant_billing_phone'");
+
+        Assert.Equal(1, count);
+    }
 }
