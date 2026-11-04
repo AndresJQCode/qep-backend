@@ -51,6 +51,7 @@ using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
+using Modules.Store.Api;
 using Modules.Store.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -270,6 +271,8 @@ app.MapSupplierEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+// Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
+app.MapStoreEndpoints();
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

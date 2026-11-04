@@ -359,6 +359,9 @@ internal static class StoreApiHarness
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true y sembrar datos
             // en el tenant de pruebas. El harness no depende del entorno del shell.
             builder.UseSetting("Seed:Enabled", "false");
+            // Valores de juguete (nunca reales): el validador de Store exige un secreto de 32+ caracteres fuera de Development.
+            builder.UseSetting("Store:Storefront:SharedSecret", "integration-tests-storefront-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "integration-tests-turnstile-secret");
 
             if (configureServices is not null)
             {

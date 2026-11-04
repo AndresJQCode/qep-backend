@@ -164,6 +164,7 @@
     <Project Path="tests/Modules/Loans/Modules.Loans.IntegrationTests/Modules.Loans.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/src/Modules/Store/">
+    <Project Path="src/Modules/Store/Modules.Store.Api/Modules.Store.Api.csproj" />
     <Project Path="src/Modules/Store/Modules.Store.Application/Modules.Store.Application.csproj" />
     <Project Path="src/Modules/Store/Modules.Store.Domain/Modules.Store.Domain.csproj" />
     <Project Path="src/Modules/Store/Modules.Store.Infrastructure/Modules.Store.Infrastructure.csproj" />

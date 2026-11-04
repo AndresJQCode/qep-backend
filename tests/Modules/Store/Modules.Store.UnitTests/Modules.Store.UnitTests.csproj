@@ -10,6 +10,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />
   </ItemGroup>
 </Project>

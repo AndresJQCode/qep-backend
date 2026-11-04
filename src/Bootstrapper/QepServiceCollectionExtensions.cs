@@ -64,6 +64,7 @@ using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using StorePermissions = Modules.Store.Application.StorePermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -1580,6 +1581,9 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
+                // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
+                StorePermissions.SettingsManage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
                 ApiAccessPermissions.ApiKeyManage
             ]));
@@ -2249,6 +2253,15 @@ public static class QepServiceCollectionExtensions
             "Préstamos",
             "medium",
             RequiredModules: [ModuleKeys.Loans]));
+        // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
+        services.AddSingleton(new PermissionDefinition(
+            StorePermissions.SettingsManage,
+            "Configurar la tienda en línea",
+            "Permite publicar la tienda, cambiar su marca, contacto, monedas con sus cuentas y modo de precios.",
+            "Tienda",
+            "medium",
+            RequiredModules: [ModuleKeys.Store]));
     }
 
     private static void AddAuthentication(
@@ -2641,6 +2654,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                StorePermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, StorePermissions.SettingsManage))
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Modules.Store.Application;
 using Modules.Store.Infrastructure.Persistence;
 
@@ -29,6 +30,10 @@ public static class StoreInfrastructureExtensions
         services.AddScoped<IStoreRequestNumberGenerator, StoreRequestNumberGenerator>();
         services.AddScoped<IStoreUnitOfWork, StoreUnitOfWork>();
         services.AddScoped<IStoreAuditPublisher, StoreAuditPublisher>();
+
+        // Secretos y topes de la tienda: validados al arrancar (fuera de Development y Testing, los secretos son obligatorios).
+        services.AddOptions<StoreOptions>().Bind(configuration.GetSection(StoreOptions.SectionName)).ValidateOnStart();
+        services.AddSingleton<IValidateOptions<StoreOptions>, StoreOptionsValidator>();
 
         return services;
     }
