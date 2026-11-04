@@ -512,7 +512,9 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         int pageSize,
         CancellationToken cancellationToken)
     {
-        var query = ApplyTextFilters(StoreVisible(tenantId, currency).AsNoTracking(), search, name: null, code: null);
+        // Sólo por nombre: `search` también encuentra por código y código de barras de una variante, y esos dos nunca salen de la
+        // tienda pública, así que no pueden servir para dar con un producto.
+        var query = ApplyTextFilters(StoreVisible(tenantId, currency).AsNoTracking(), search: null, name: search, code: null);
         if (categoryIds is not null)
         {
             // Mismo tipo exacto que en SearchQueryAsync: ver el comentario de allá.

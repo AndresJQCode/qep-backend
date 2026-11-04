@@ -124,6 +124,26 @@ internal sealed class FakeCatalog : IStoreCatalogReader
         CurrencyCalls++;
         return Task.FromResult<IReadOnlyCollection<string>>(CurrenciesWithPrices.ToList());
     }
+
+    // Las lecturas públicas no las usa ninguna prueba de ajustes.
+    public Task<(IReadOnlyList<StoreProductCard> Items, int Total)> SearchAsync(
+        Guid tenantId, string currency, string? q, Guid? categoryId, int page, int pageSize, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<StoreCategoryCount>> CategoriesAsync(
+        Guid tenantId, string currency, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<StoreCategoryNode>> CategoryTreeAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<StoreProductView?> ProductAsync(
+        Guid tenantId, Guid productId, string currency, bool includeScales, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeBillingAccounts : IStoreBillingAccounts

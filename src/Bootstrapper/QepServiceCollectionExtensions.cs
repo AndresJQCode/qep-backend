@@ -1355,6 +1355,31 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreBillingAccounts, StoreBillingAccounts>();
         services.AddScoped<Modules.Store.Application.IStoreCountries, StorePhoneNormalizer>();
         services.AddScoped<Modules.Store.Application.StoreSettingsComposer>();
+        services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
+        services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
+        services.AddScoped<Modules.Store.Application.StorefrontResolver>();
+        services.AddScoped<Modules.Store.Application.PublicCartPricing>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetPublicStoreQuery, Modules.Store.Application.PublicStoreDto>,
+            Modules.Store.Application.GetPublicStoreHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicCategoriesQuery, Modules.Store.Application.PublicCategoriesDto>,
+            Modules.Store.Application.ListPublicCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicProductsQuery, Modules.Store.Application.PublicProductsPageDto>,
+            Modules.Store.Application.ListPublicProductsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetPublicProductQuery, Modules.Store.Application.PublicProductDto>,
+            Modules.Store.Application.GetPublicProductHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.QuotePublicCartQuery, Modules.Store.Application.PublicCartQuoteDto>,
+            Modules.Store.Application.QuotePublicCartHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicDepartmentsQuery, Modules.Store.Application.PublicGeoListDto>,
+            Modules.Store.Application.ListPublicDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicCitiesQuery, Modules.Store.Application.PublicGeoListDto>,
+            Modules.Store.Application.ListPublicCitiesHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
             Modules.Store.Application.GetStoreSettingsHandler>();

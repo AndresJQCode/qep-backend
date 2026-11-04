@@ -113,9 +113,9 @@ public interface IProductRepository
     // en la moneda pedida. «Un producto sin precio en la moneda elegida no se muestra.»
 
     /// <summary>
-    /// Una página de la búsqueda de la tienda, ordenada por nombre. <paramref name="search"/> tiene la
-    /// misma semántica que en <see cref="SearchAsync"/> (nombre, código o código de barras de una
-    /// variante). <paramref name="categoryIds"/>: null no filtra; una colección vacía no devuelve filas.
+    /// Una página de la búsqueda de la tienda, ordenada por nombre. <paramref name="search"/> busca sólo
+    /// en el nombre del producto (a diferencia de <see cref="SearchAsync"/>): el código y el código de
+    /// barras de una variante nunca salen de la tienda. <paramref name="categoryIds"/>: null no filtra; una colección vacía no devuelve filas.
     /// Trae el agregado sin seguimiento: quien llama filtra las variantes por moneda y estado.
     /// </summary>
     Task<(IReadOnlyList<Product> Items, int Total)> SearchStoreVisibleAsync(
