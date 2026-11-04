@@ -14,8 +14,6 @@ namespace Modules.Store.IntegrationTests;
 /// </summary>
 public sealed class StoreTakeApiTests
 {
-    private static readonly string[] BillingOutcomes = ["Reused", "Added"];
-
     private static readonly string[] ColombiaAndSpain = ["CO", "ES"];
 
     private static readonly object NewCustomerBody = new { newCustomer = new { classificationId = (Guid?)null } };
@@ -80,7 +78,9 @@ public sealed class StoreTakeApiTests
     public async Task TheNewCustomerGetsTheClassificationTheDialogChose()
     {
         await using var rig = await StoreInboxRig.OpenAsync();
-        var created = await rig.Inbox.PostAsJsonAsync(
+        // Crear la clasificación pide su propio permiso (ClientClassificationEndpoints.cs:32-33), que quien atiende la bandeja no tiene.
+        var admin = CreateClient(rig.Factory, SubjectId, TenantId, "customers.classification.manage");
+        var created = await admin.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/customers/classifications",
             new { name = "Mayorista", prefix = "MAY" },
             TestContext.Current.CancellationToken);
@@ -120,8 +120,11 @@ public sealed class StoreTakeApiTests
 
         await rig.TakeOkAsync(request, ExistingBody(customerId));
 
-        // Todo el bloque de facturación es otro, y aun así la ficha queda igual, versión incluida.
-        Assert.Equal(before, await rig.CustomerAsync(customerId));
+        // Todo el bloque de facturación es otro, y aun así la ficha queda igual. Sólo sube la versión: la libreta es parte del
+        // agregado y agregar la dirección de facturación lo toca (Customer.cs:713, AddAddress → Touch).
+        var after = await rig.CustomerAsync(customerId);
+        Assert.Equal(before with { Version = after.Version }, after);
+        Assert.Equal(before.Version + 1, after.Version);
     }
 
     [Fact]
@@ -226,9 +229,13 @@ public sealed class StoreTakeApiTests
         var taken = await rig.TakeOkAsync(request, ExistingBody(customerId));
 
         Assert.True((bool)taken["customerCompleted"]!);
-        Assert.Contains((string)taken["addresses"]!["billing"]!, BillingOutcomes);
+        // Completar siembra la principal con la calle y la ciudad de facturación pero con el teléfono del cliente, que gana por no estar
+        // en blanco (CustomerProvisioning.cs:542-548). El teléfono cuenta para la libreta, así que la de facturación es otra entrada.
+        Assert.Equal("Added", (string)taken["addresses"]!["billing"]!);
         Assert.Equal("Added", (string)taken["addresses"]!["shipping"]!);
-        Assert.Equal(2, (await rig.AddressesAsync(customerId)).Count);
+        var addresses = await rig.AddressesAsync(customerId);
+        Assert.Equal(3, addresses.Count);
+        Assert.Single(addresses, address => address.IsPrincipal && address.Phone == "3101112233");
     }
 
     [Fact]

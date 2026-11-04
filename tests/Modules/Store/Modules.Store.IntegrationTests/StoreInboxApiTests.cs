@@ -116,7 +116,8 @@ public sealed class StoreInboxApiTests
         Assert.Equal(["Phone"], phoneCandidate!["matchedBy"]!.AsArray().Select(value => (string)value!));
         Assert.Equal(["Document"], documentCandidate!["matchedBy"]!.AsArray().Select(value => (string)value!));
         Assert.Equal(byPhone, (Guid)single["suggestedCustomerId"]!);
-        Assert.Equal(["Phone", "Document"], single["candidates"]![0]!["matchedBy"]!.AsArray().Select(value => (string)value!).Order());
+        // Order() es ordinal: "Document" va antes que "Phone".
+        Assert.Equal(["Document", "Phone"], single["candidates"]![0]!["matchedBy"]!.AsArray().Select(value => (string)value!).Order());
         Assert.Equal("Ana Pérez", (string)single["newCustomer"]!["name"]!);
     }
 
