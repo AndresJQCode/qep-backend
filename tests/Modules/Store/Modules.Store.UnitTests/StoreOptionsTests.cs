@@ -61,12 +61,23 @@ public sealed class StoreOptionsTests
     }
 
     [Fact]
-    public void TurnstileDisabledDoesNotNeedASecret()
+    public void TurnstileDisabledDoesNotNeedASecretInDevelopmentAndTesting()
     {
         var options = Valid();
         options.Turnstile = new TurnstileOptions { Enabled = false };
 
-        Assert.Empty(options.Validate());
+        Assert.Empty(options.Validate(requireSecrets: false));
+    }
+
+    [Fact]
+    public void TurnstileDisabledFailsStartupOutsideDevelopmentAndTesting()
+    {
+        var options = Valid();
+        options.Turnstile = new TurnstileOptions { Enabled = false };
+
+        var failure = Assert.Single(options.Validate());
+
+        Assert.Contains("Store:Turnstile:Enabled", failure, StringComparison.Ordinal);
     }
 
     [Fact]

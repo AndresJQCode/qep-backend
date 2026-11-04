@@ -35,9 +35,10 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
     public static async Task<PublicStoreFixture> OpenAsync(
         Action<StoreSettingsFixture, Dictionary<string, object?>>? tweak = null,
         bool publish = true,
-        IEnumerable<Modules.Tenancy.Domain.TenantModuleKey>? modules = null)
+        IEnumerable<Modules.Tenancy.Domain.TenantModuleKey>? modules = null,
+        Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? configureServices = null)
     {
-        var settings = await StoreSettingsFixture.OpenAsync(modules);
+        var settings = await StoreSettingsFixture.OpenAsync(modules, configureServices);
         var body = settings.Body();
         tweak?.Invoke(settings, body);
         await settings.SaveAsync(body);

@@ -61,6 +61,21 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
         IReadOnlyList<PublicCartLineRequest> lines,
         CancellationToken cancellationToken)
     {
+        var (quote, unavailable, _) = await PriceWithOriginsAsync(tenantId, currency, mode, lines, cancellationToken);
+        return (quote, unavailable);
+    }
+
+    /// <summary>
+    /// Lo mismo que <see cref="PriceAsync"/> más el origen del descuento de cada línea (por variante), que la cotización pública no
+    /// expone pero la solicitud congela.
+    /// </summary>
+    public async Task<(PublicCartQuoteDto Quote, IReadOnlyList<Guid> Unavailable, IReadOnlyDictionary<Guid, string> Origins)> PriceWithOriginsAsync(
+        Guid tenantId,
+        string currency,
+        StorePricingMode mode,
+        IReadOnlyList<PublicCartLineRequest> lines,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(lines);
 
         // El motor rechaza una variante repetida: se juntan acá, en el orden en que aparecieron.
@@ -79,7 +94,7 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
 
         if (available.Count == 0)
         {
-            return (new PublicCartQuoteDto(currency, [], unavailable, 0m, 0m, 0m, 0m), unavailable);
+            return (new PublicCartQuoteDto(currency, [], unavailable, 0m, 0m, 0m, 0m), unavailable, new Dictionary<Guid, string>());
         }
 
         var quoted = await orders.QuoteAsync(tenantId, currency, mode, available, cancellationToken);
@@ -101,6 +116,6 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
             quoted.DiscountAmount,
             quoted.TaxAmount,
             quoted.Total);
-        return (quote, unavailable);
+        return (quote, unavailable, quoted.Lines.ToDictionary(line => line.VariantId, line => line.DiscountOrigin));
     }
 }

@@ -86,6 +86,8 @@ internal sealed class FakeUnitOfWork(CallLog log) : IStoreUnitOfWork
 
     public Task<IStoreTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public void DiscardPendingChanges() => throw new NotSupportedException();
 }
 
 internal sealed class FakeAudit : IStoreAuditPublisher

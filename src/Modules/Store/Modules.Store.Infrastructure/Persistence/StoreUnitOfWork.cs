@@ -75,6 +75,8 @@ internal sealed class StoreUnitOfWork(StoreDbContext dbContext) : IStoreUnitOfWo
     public async Task<IStoreTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
         new StoreTransaction(await dbContext.Database.BeginTransactionAsync(cancellationToken));
 
+    public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
+
     private sealed class StoreTransaction(IDbContextTransaction transaction) : IStoreTransaction
     {
         public Task CommitAsync(CancellationToken cancellationToken) => transaction.CommitAsync(cancellationToken);

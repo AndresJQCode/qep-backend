@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Store.Application;
+using Modules.Store.Domain;
 
 namespace Modules.Store.Api;
 
@@ -31,7 +33,6 @@ public static class PublicStoreEndpoints
 
         // Sin sesión: el host de la tienda va en la ruta y nunca se lee la cookie. X-Qep-Client y CSRF no aplican a las rutas
         // públicas (excepción por prefijo en RequireCsrfHeaderMiddleware); en su lugar, el filtro exige la clave del storefront.
-        // La ruta del envío de solicitudes llega con su tarea y usa submitPolicy.
         var group = endpoints
             .MapGroup("/api/v1/public/stores/{host}")
             .WithTags("Store")
@@ -73,8 +74,47 @@ public static class PublicStoreEndpoints
             .Produces<PublicGeoListDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // El limitador del endpoint reemplaza al del grupo: el envío cuenta contra su propio cupo (5 cada 10 min), no contra las lecturas.
+        group.MapPost("/order-requests", SubmitOrderRequestAsync)
+            .RequireRateLimiting(submitPolicy)
+            .Produces<PublicOrderRequestReceiptDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
     }
+
+    // 201 tanto para la primera vez como para el reintento con el mismo clientRequestId: el visitante no necesita distinguirlos.
+    private static async Task<IResult> SubmitOrderRequestAsync(
+        string host,
+        PublicOrderRequestBody body,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        // La IP del consentimiento es la que declara el storefront con su clave, nunca la del par directo (que sería la del servidor de
+        // la tienda): sin ella no hay consentimiento que guardar.
+        var secret = httpContext.RequestServices.GetRequiredService<StoreOptions>().Storefront.SharedSecret;
+        if (!StorefrontClient.TryGetVisitorIp(httpContext, secret, out var visitorIp))
+        {
+            throw new StoreDomainException(
+                StoreErrorCodes.PublicVisitorIpRequired, "The storefront must forward the visitor IP to submit an order request.");
+        }
+
+        var (receipt, _) = await dispatcher.SendAsync(
+            new SubmitOrderRequestCommand(host, visitorIp, NormalizeLines(body)), cancellationToken);
+        httpContext.Response.Headers.CacheControl = "no-store";
+        return Results.Json(receipt, statusCode: StatusCodes.Status201Created);
+    }
+
+    // Un cuerpo con lineas ausentes o nulas llega al validador como un carrito invalido (422), no como un 500.
+    private static PublicOrderRequestBody NormalizeLines(PublicOrderRequestBody body) =>
+        body with
+        {
+            Lines = (body.Lines ?? []).Select(line => line ?? new PublicCartLineRequest(Guid.Empty, 0)).ToList(),
+        };
 
     private static async Task<IResult> GetStoreAsync(
         string host, IRequestDispatcher dispatcher, HttpContext httpContext, CancellationToken cancellationToken) =>

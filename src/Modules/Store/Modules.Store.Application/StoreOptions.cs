@@ -52,6 +52,12 @@ public sealed class StoreOptions
             failures.Add("Store:Turnstile:SecretKey is required when Store:Turnstile:Enabled is true.");
         }
 
+        // El pasa-todo existe para Development y Testing; fuera de ellos apagar el desafío dejaría el envío público sin anti-bot.
+        if (!Turnstile.Enabled && requireSecrets)
+        {
+            failures.Add("Store:Turnstile:Enabled cannot be false outside Development and Testing.");
+        }
+
         return failures;
     }
 }

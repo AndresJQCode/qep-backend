@@ -127,7 +127,7 @@ public sealed class StorefrontClientTests
             .AddSingleton(Options.Create(new StoreOptions { Storefront = new StorefrontOptions { SharedSecret = secret } }))
             .BuildServiceProvider();
         var nextCalled = false;
-        var result = await new StorefrontKeyFilter().InvokeAsync(
+        var result = await new StorefrontKeyFilter(Microsoft.Extensions.Logging.Abstractions.NullLogger<StorefrontKeyFilter>.Instance).InvokeAsync(
             new DefaultEndpointFilterInvocationContext(context),
             _ =>
             {

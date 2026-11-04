@@ -25,7 +25,8 @@ public sealed record StoreQuoteLineView(
     decimal UnitPrice,
     decimal DiscountPercentage,
     decimal DiscountedUnitPrice,
-    decimal LineTotal);
+    decimal LineTotal,
+    string DiscountOrigin = "");
 
 public sealed record StoreQuoteView(
     string Currency,

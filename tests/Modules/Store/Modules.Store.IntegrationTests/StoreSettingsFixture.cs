@@ -42,7 +42,8 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
     /// <summary>Banco "Bancolombia" con A-COP-1 en COP y "Davivienda" con B-EUR-1 en EUR.</summary>
     public CompanyRef Company { get; }
 
-    public static async Task<StoreSettingsFixture> OpenAsync(IEnumerable<TenantModuleKey>? modules = null)
+    public static async Task<StoreSettingsFixture> OpenAsync(
+        IEnumerable<TenantModuleKey>? modules = null, Action<IServiceCollection>? configureServices = null)
     {
         var database = await StartDatabaseAsync();
         var factory = new QepApiFactory(
@@ -51,6 +52,7 @@ internal sealed class StoreSettingsFixture : IAsyncDisposable
             {
                 services.RemoveAll<IPublicObjectStorage>();
                 services.AddSingleton<IPublicObjectStorage>(new InMemoryPublicStorage());
+                configureServices?.Invoke(services);
             });
         await SeedTenantAsync(factory, modules: modules);
 

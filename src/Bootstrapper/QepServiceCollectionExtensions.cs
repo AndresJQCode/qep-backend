@@ -1354,11 +1354,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreCatalogReader, StoreCatalogReader>();
         services.AddScoped<Modules.Store.Application.IStoreBillingAccounts, StoreBillingAccounts>();
         services.AddScoped<Modules.Store.Application.IStoreCountries, StorePhoneNormalizer>();
+        services.AddScoped<Modules.Store.Application.IStorePhoneNormalizer, StorePhoneNormalizer>();
         services.AddScoped<Modules.Store.Application.StoreSettingsComposer>();
         services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
         services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
         services.AddScoped<Modules.Store.Application.StorefrontResolver>();
         services.AddScoped<Modules.Store.Application.PublicCartPricing>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.SubmitOrderRequestCommand, (Modules.Store.Application.PublicOrderRequestReceiptDto Receipt, bool Created)>,
+            Modules.Store.Application.SubmitOrderRequestHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.GetPublicStoreQuery, Modules.Store.Application.PublicStoreDto>,
             Modules.Store.Application.GetPublicStoreHandler>();

@@ -13,5 +13,6 @@
     <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />
     <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Api\Modules.Store.Api.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

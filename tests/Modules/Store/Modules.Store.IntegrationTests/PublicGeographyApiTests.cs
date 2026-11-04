@@ -17,7 +17,7 @@ public sealed class PublicGeographyApiTests
         Assert.DoesNotContain("divipolaCode", body, StringComparison.OrdinalIgnoreCase);
         var names = System.Text.Json.Nodes.JsonNode.Parse(body)!["items"]!.AsArray().Select(item => (string)item!["name"]!).ToList();
         Assert.NotEmpty(names);
-        Assert.Equal(names.OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase), names);
+        Assert.Equal(names.OrderBy(name => name, StringComparer.Create(new System.Globalization.CultureInfo("es-CO"), ignoreCase: true)), names);
     }
 
     [Fact]

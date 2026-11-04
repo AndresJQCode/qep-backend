@@ -1,8 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Modules.Store.Application;
+using Modules.Store.Infrastructure.Captcha;
 using Modules.Store.Infrastructure.Persistence;
 
 namespace Modules.Store.Infrastructure;
@@ -36,6 +39,26 @@ public static class StoreInfrastructureExtensions
         services.AddSingleton<IValidateOptions<StoreOptions>, StoreOptionsValidator>();
         // Los manejadores piden el valor ya enlazado, no IOptions: Application no referencia Microsoft.Extensions.Options.
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<StoreOptions>>().Value);
+
+        // Turnstile: un cliente propio con 5 s, sin redirecciones y sin los loggers por defecto. Enabled=false (sólo Development y
+        // Testing; el arranque lo prohíbe fuera) registra el verificador que siempre pasa.
+        if (configuration.GetValue("Store:Turnstile:Enabled", true))
+        {
+            services.AddHttpClient(CloudflareTurnstileVerifier.HttpClientName, CloudflareTurnstileVerifier.ConfigureClient)
+                .ConfigurePrimaryHttpMessageHandler(() => CloudflareTurnstileVerifier.CreatePrimaryHandler())
+                .RemoveAllLoggers();
+            services.AddScoped<ICaptchaVerifier>(provider => new CloudflareTurnstileVerifier(
+                provider.GetRequiredService<IHttpClientFactory>(),
+                provider.GetRequiredService<StoreOptions>(),
+                // El hostname que reporta Cloudflare es el del sitio donde se pintó el widget: con las llaves de prueba nunca es el de
+                // la tienda, así que sólo se exige en Production.
+                provider.GetRequiredService<IHostEnvironment>().IsProduction(),
+                provider.GetRequiredService<ILogger<CloudflareTurnstileVerifier>>()));
+        }
+        else
+        {
+            services.AddSingleton<ICaptchaVerifier, PassThroughCaptchaVerifier>();
+        }
 
         return services;
     }

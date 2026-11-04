@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- IHttpClientFactory (Turnstile) sale del shared framework, como en Integrations.Infrastructure. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\Modules.Store.Domain\Modules.Store.Domain.csproj" />
     <ProjectReference Include="..\..\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
@@ -14,9 +18,9 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.Store.IntegrationTests" />
+    <InternalsVisibleTo Include="Modules.Store.UnitTests" />
   </ItemGroup>
 </Project>

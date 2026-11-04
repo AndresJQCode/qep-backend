@@ -17,7 +17,8 @@ internal static class ExternalRateLimitRejection
     {
         ArgumentNullException.ThrowIfNull(context);
         var httpContext = context.HttpContext;
-        if (!ExternalApiPaths.IsExternal(httpContext.Request.Path))
+        var storefront = StorefrontPaths.IsStorefront(httpContext.Request.Path);
+        if (!ExternalApiPaths.IsExternal(httpContext.Request.Path) && !storefront)
         {
             return;
         }
@@ -27,6 +28,12 @@ internal static class ExternalRateLimitRejection
         {
             httpContext.Response.Headers.RetryAfter =
                 ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // La tienda pública sólo suma el Retry-After: el storefront decide qué mostrar y el 429 pelado de siempre sigue siendo el cuerpo.
+        if (storefront)
+        {
+            return;
         }
 
         var problem = new ProblemDetails
