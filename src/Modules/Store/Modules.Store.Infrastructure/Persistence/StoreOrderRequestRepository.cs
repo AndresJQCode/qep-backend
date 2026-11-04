@@ -43,7 +43,7 @@ internal sealed class StoreOrderRequestRepository(StoreDbContext dbContext) : IS
         var items = await query
             .OrderByDescending(value => value.ReceivedAt)
             .ThenByDescending(value => value.Number)
-            .Skip((filter.Page - 1) * filter.PageSize)
+            .Skip(filter.Skip)
             .Take(filter.PageSize)
             .ToListAsync(cancellationToken);
         return (items, total);

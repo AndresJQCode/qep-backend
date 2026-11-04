@@ -15,6 +15,19 @@ public sealed class StoreInboxApiTests
         page["items"]!.AsArray().Select(item => (string)item!["id"]!);
 
     [Fact]
+    public async Task AHugePageIsClampedInsteadOfOverflowingTheOffset()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        await rig.SubmitAsync();
+
+        var page = await rig.GetJsonAsync("?view=All&page=2147483647&pageSize=100");
+
+        Assert.Empty(page["items"]!.AsArray());
+        Assert.Equal(1, (int)page["total"]!);
+        Assert.Equal(10_000, (int)page["page"]!);
+    }
+
+    [Fact]
     public async Task TheViewsSplitUntakenMineAndAll()
     {
         await using var rig = await StoreInboxRig.OpenAsync();

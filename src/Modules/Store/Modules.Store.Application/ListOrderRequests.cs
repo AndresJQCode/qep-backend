@@ -41,7 +41,8 @@ public sealed class ListOrderRequestsHandler(
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var view = query.View is null ? StoreInboxView.Untaken : Enum.Parse<StoreInboxView>(query.View, ignoreCase: true);
-        var page = query.Page ?? 1;
+        // Una página fuera de rango se corrige y no se rechaza: la bandeja relee y sigue, sin un 422 que arreglar.
+        var page = StoreInboxFilter.ClampPage(query.Page ?? 1);
         var pageSize = query.PageSize ?? ListOrderRequestsValidator.DefaultPageSize;
         var caller = await members.ResolveCallerAsync(query.TenantId, cancellationToken);
 
