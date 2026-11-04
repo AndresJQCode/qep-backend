@@ -661,8 +661,13 @@ public sealed class OrderEditsApiTests
         var party = Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Billing");
         Assert.Equal(("Otra S.A.S.", "Juridica", "NIT"), (party.Name, party.PersonType, party.IdentificationType));
         Assert.True(saved.Order.RetentionAmount > 0m);
-        Assert.Equal(order.Version + 1, saved.Order.Version);
+        // La versión es token de concurrencia (spec 2026-09-17, decisión 6), no un contador de guardados: cada
+        // mutación del agregado la sube (SetBilling y RecalculatePaymentStatus en este guardado), así que lo que
+        // se exige es que suba y que la respuesta traiga la que quedó guardada, como en
+        // SaveAppliesProductsProofsAndNotesTogetherAndReturnsTheNewVersion.
+        Assert.True(saved.Order.Version > order.Version);
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(saved.Order.Version, fetched.Order.Version);
         Assert.Equal(saved.Order.RetentionAmount, fetched.Order.RetentionAmount);
     }
 
