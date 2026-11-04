@@ -798,6 +798,24 @@ public sealed class ExternalOrderServiceTests
             setup.Billing, [new ExternalOrderLine(setup.ProductId, setup.ProductId, 2m, 11_900m, 0m, 19)],
             OrderPaymentStatus.PaymentPending, DateTimeOffset.UtcNow, shipping, externalKey, externalShippingTitle);
 
+    // Las fuentes que no son de una plataforma no entran por el puerto externo: la tienda se toma desde QEP (Store).
+    [Theory]
+    [InlineData(OrderSource.Quotation)]
+    [InlineData(OrderSource.Manual)]
+    [InlineData(OrderSource.Store)]
+    public async Task CreateRejectsASourceThatIsNotAnExternalPlatform(OrderSource source)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            CreateAsync(factory, Draft(setup, "#9001") with { Source = source }));
+
+        Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
+    }
+
     // Un scope por llamada, como el worker: cada una con su DbContext.
     private static async Task<ExternalOrderResult> CreateAsync(QepApiFactory factory, ExternalOrderDraft draft)
     {

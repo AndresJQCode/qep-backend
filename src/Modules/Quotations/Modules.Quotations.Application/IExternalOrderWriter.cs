@@ -172,53 +172,38 @@ public sealed class ExternalOrderService(
             draft.ClientId, advisor, billingAccount.Currency, draft.PaymentMethod, IsRetail: false,
             GlobalScaleFloor: null, customer.WithRetention, customer.VatSurplus);
 
-        // Mismo consecutivo que los demás pedidos; el contador y el pedido se confirman juntos.
-        var calendar = await tenantClock.GetAsync(draft.TenantId, cancellationToken);
-        var year = calendar.Today.Year;
-        var format = await numberingFormats.GetAsync(draft.TenantId, DocumentNumberType.Order, cancellationToken);
-        var counterYear = format.IncludeYear ? year : 0;
-        var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
-        try
+        var committed = await KeyedOrderCommit.CommitAsync(
+            orderRepository, unitOfWork, numberGenerator, numberingFormats, tenantClock, draft.TenantId, externalKey,
+            (orderNumber, _) =>
+            {
+                var order = Order.CreateExternal(
+                    OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
+                    draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
+                    draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle);
+                // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
+                // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation
+                // lo mantiene así cuando el pedido se edita.
+                order.UsePriceRounding(PriceRoundingDefaults.For(order.Currency), draft.OccurredAt);
+                return Task.FromResult(order);
+            },
+            (order, _) =>
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
+                    OrderChangeSummary.CreatedFromExternal(draft.Source, draft.ExternalReference), draft.OccurredAt));
+                auditPublisher.PublishByIntegration(
+                    draft.TenantId, "quotation.order.created", order.Id.ToString(), "success", draft.OccurredAt);
+                lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
+            },
+            cancellationToken);
+        if (committed is not null)
         {
-            var sequence = await numberGenerator.NextAsync(draft.TenantId, counterYear, cancellationToken);
-            var orderNumber = DocumentNumberFormatter.Format(format, year, sequence);
-            var order = Order.CreateExternal(
-                OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
-                draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
-                draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle);
-            // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
-            // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation
-            // lo mantiene así cuando el pedido se edita.
-            order.UsePriceRounding(PriceRoundingDefaults.For(order.Currency), draft.OccurredAt);
-
-            orderRepository.Add(order);
-            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
-                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
-                OrderChangeSummary.CreatedFromExternal(draft.Source, draft.ExternalReference), draft.OccurredAt));
-            auditPublisher.PublishByIntegration(
-                draft.TenantId, "quotation.order.created", order.Id.ToString(), "success", draft.OccurredAt);
-            lifecycleEvents.PublishOrderCreated(order, draft.OccurredAt);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
             return new ExternalOrderResult(
-                order.Id.Value, order.OrderNumber, order.Total, order.NetTotal, order.Currency, order.ClientId,
-                Shipping: ToExternal(order.Shipping));
-        }
-        catch (QuotationsDomainException error)
-            when (externalKey is not null && error.Code == ExternalOrderErrors.ExternalKeyTaken)
-        {
-            // Otra llamada con la misma clave guardó primero y el índice cerró la carrera. Se sigue abajo: la
-            // transacción se deshace en el finally (el consecutivo vuelve atrás, sin huecos) antes de leer.
-        }
-        finally
-        {
-            await transaction.DisposeAsync();
+                committed.Id.Value, committed.OrderNumber, committed.Total, committed.NetTotal, committed.Currency,
+                committed.ClientId, Shipping: ToExternal(committed.Shipping));
         }
 
-        // Lo que quedó pendiente del intento fallido (el pedido, su historial, el evento y la auditoría) no debe
-        // volver a intentarse en el próximo guardado de este scope.
-        unitOfWork.DiscardPendingChanges();
-        // Sólo se llega acá por el catch, que exige la clave.
+        // Sólo se llega acá si perdió la carrera, que exige la clave.
         var winner = await orderRepository.FindByExternalKeyAsync(
                 draft.TenantId, draft.Source, externalKey!, cancellationToken)
             ?? throw new InvalidOperationException(

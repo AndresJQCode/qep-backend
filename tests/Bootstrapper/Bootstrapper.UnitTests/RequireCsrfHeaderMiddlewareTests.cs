@@ -40,6 +40,24 @@ public sealed class RequireCsrfHeaderMiddlewareTests
     public async Task TheShopifyAnonymousInstallStartPassesWithoutTheHeader() =>
         Assert.True((await RunAsync("POST", "/api/v1/integrations/shopify/install/start", null)).Reached);
 
+    // Tienda pública: la excepción es por prefijo explícito. Las rutas se autentican con la clave del storefront y no leen la cookie.
+    [Fact]
+    public async Task ThePublicStorePrefixSkipsTheCsrfHeader() =>
+        Assert.True((await RunAsync("POST", "/api/v1/public/stores/x/order-requests", null)).Reached);
+
+    [Theory]
+    [InlineData("/api/v1/public/storesx/x/order-requests")]
+    [InlineData("/api/v1/public/stores")]
+    [InlineData("/API/v1/public/stores/x/order-requests")]
+    [InlineData("/api/v1/public/other/x")]
+    public async Task ANearMissPrefixStillNeedsTheCsrfHeader(string path)
+    {
+        var (reached, status) = await RunAsync("POST", path, null);
+
+        Assert.False(reached);
+        Assert.Equal(StatusCodes.Status403Forbidden, status);
+    }
+
     [Theory]
     [InlineData("/api/v1/tenants/x/integrations/shopify/install/start")]
     [InlineData("/api/v1/integrations/shopify/install/start/x")]

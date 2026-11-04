@@ -84,18 +84,36 @@ internal static class CustomerMapping
         CustomerAddress address,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
     {
-        citiesById.TryGetValue(address.CityId, out var city);
+        // Una direccion de afuera no tiene fila en geography.cities: su ciudad es el texto que
+        // escribieron y no hay departamento que resolver.
+        if (address.CityId is not { } cityId)
+        {
+            return new CustomerAddressDto(
+                address.Id.Value,
+                address.Name,
+                address.Address,
+                address.Phone,
+                null,
+                address.CityName ?? string.Empty,
+                null,
+                null,
+                address.IsPrincipal,
+                address.Country);
+        }
+
+        citiesById.TryGetValue(cityId, out var city);
 
         return new CustomerAddressDto(
             address.Id.Value,
             address.Name,
             address.Address,
             address.Phone,
-            address.CityId,
+            cityId,
             city?.CityName ?? string.Empty,
             city?.DepartmentId ?? Guid.Empty,
             city?.DepartmentName ?? string.Empty,
-            address.IsPrincipal);
+            address.IsPrincipal,
+            address.Country);
     }
 
     /// <summary>
@@ -119,8 +137,7 @@ internal static class CustomerMapping
         // arma los campos planos del DTO y el resto acompaña a cada fila de la libreta. Un cliente
         // de afuera no aporta ciudad de domicilio: la suya es texto libre.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses
-                .Select(address => address.CityId)
+            CustomerCityIds.OfAddresses(customer)
                 .Concat(CustomerCityIds.OfDomicile(customer))
                 .Distinct()
                 .ToArray(),

@@ -298,9 +298,22 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
 
-                    b.Property<Guid>("CityId")
+                    b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasDefaultValue("CO")
+                        .HasColumnName("country");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -340,7 +353,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.HasIndex("CustomerId", "IsPrincipal")
                         .HasDatabaseName("IX_customer_addresses_principal");
 
-                    b.ToTable("customer_addresses", "customers");
+                    b.ToTable("customer_addresses", "customers", t =>
+                        {
+                            t.HasCheckConstraint("CK_customer_addresses_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerDataConsent", b =>

@@ -142,10 +142,16 @@ public sealed class PosCustomerLookupTests
             return Task.FromResult(new ProvisionedCustomer(Result, false, true, true));
         }
 
-        public Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken) =>
+        public Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken, Guid? actorUserId = null, string? source = null) =>
             throw new NotSupportedException();
 
-        public Task<ProvisionedCustomer> CreateIncompleteAsync(
+        public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<ProvisionedCustomer> CreateIncompleteAsync(
             Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -221,7 +227,13 @@ public sealed class PosCustomerLookupTests
         public Task<Customer?> FindOldestByPhoneE164Async(Guid tenantId, string phoneE164, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken) =>

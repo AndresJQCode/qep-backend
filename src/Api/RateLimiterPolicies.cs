@@ -20,4 +20,10 @@ public static class RateLimiterPolicies
     /// (<c>ApiAccess:RateLimit:PerIpPerMinute</c>). Se particiona por IP y nunca por el header: una partición por clave
     /// inventada sería memoria gratis para quien ataca.</summary>
     public const string External = "external";
+
+    /// <summary>Tienda pública, lecturas y carrito: 300 por minuto por IP del visitante (la que declara el storefront con su clave).</summary>
+    public const string StorefrontRead = "storefront-read";
+
+    /// <summary>Tienda pública, envío de solicitudes: 5 cada 10 minutos por IP del visitante.</summary>
+    public const string StorefrontSubmit = "storefront-submit";
 }

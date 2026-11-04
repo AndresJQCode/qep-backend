@@ -351,6 +351,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
 
+        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
+        party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
+
         // Una parte por rol y por cotizacion: es lo que hace que "sin fila = usa los datos del
         // cliente" sea una regla y no una convencion. Nombrado, como el numero de cotizacion:
         // la infraestructura discrimina la violacion de unicidad por nombre de indice.
@@ -490,7 +494,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         var order = modelBuilder.Entity<Order>();
         order.ToTable("orders", "quotations", table =>
         {
-            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+            table.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
             table.HasCheckConstraint("CK_orders_freight_charge_mode", FreightChargeModeCheck);
         });
         order.HasKey(value => value.Id);
@@ -757,6 +761,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(QuotationPartyDetails.AddressMaxLength);
         party.Property(value => value.DepartmentId).HasColumnName("department_id");
         party.Property(value => value.CityId).HasColumnName("city_id");
+
+        // Null es Colombia: ninguna fila existente se reescribe (spec de la tienda pública, Task 1B).
+        party.Property(value => value.Country).HasColumnName("country").HasMaxLength(QuotationPartyDetails.CountryLength);
+        party.Property(value => value.CityName).HasColumnName("city_name").HasMaxLength(QuotationPartyDetails.CityNameMaxLength);
 
         party.HasIndex(value => new { value.OrderId, value.Role })
             .IsUnique()

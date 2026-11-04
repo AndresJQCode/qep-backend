@@ -157,8 +157,7 @@ public sealed class ExportCustomersHandler(
         // planos y el resto acompaña a cada direccion de envio del DTO. Un cliente de afuera no
         // aporta ciudad de domicilio — ver CustomerCityIds.
         var cityIds = customers
-            .SelectMany(customer => customer.Addresses
-                .Select(address => address.CityId)
+            .SelectMany(customer => CustomerCityIds.OfAddresses(customer)
                 .Concat(CustomerCityIds.OfDomicile(customer)))
             .Distinct()
             .ToArray();

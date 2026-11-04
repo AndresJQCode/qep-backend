@@ -65,7 +65,8 @@ public sealed class Order
         OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool allowNoClient = false)
     {
         Id = id;
         TenantId = tenantId;
@@ -73,7 +74,8 @@ public sealed class Order
         Source = source;
         QuotationId = quotationId;
         ExternalReference = NormalizeExternalReference(externalReference);
-        ClientId = header.ClientId == Guid.Empty
+        // Sólo QuoteForStore llega sin cliente: es un cálculo que no se guarda (spec de la tienda §5.2).
+        ClientId = header.ClientId == Guid.Empty && !allowNoClient
             ? throw new QuotationsDomainException("order.order.client_required", "The order client is required.")
             : header.ClientId;
         AdvisorId = header.AdvisorId;
@@ -436,7 +438,7 @@ public sealed class Order
         string? externalKey,
         string? externalShippingTitle)
     {
-        if (source is OrderSource.Quotation or OrderSource.Manual)
+        if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
         {
             throw new QuotationsDomainException(
                 ExternalOrderErrors.SourceInvalid,
@@ -462,6 +464,59 @@ public sealed class Order
         return order;
     }
 
+    /// <summary>
+    /// El pedido que nace de una solicitud de la tienda pública al «Tomar» (spec de la tienda §5). Se guarda
+    /// con el cliente ya resuelto en <paramref name="header"/>, entregado (nunca recogida), con las dos partes,
+    /// pago pendiente y sin comprobantes. Pasa por <see cref="EnsureCreatable"/> sin cambios: el correo de la
+    /// tienda es obligatorio, así que la regla completa de partes aplica tal cual. La referencia y la clave son
+    /// las de la solicitud: la clave hace idempotente el reintento de «Tomar».
+    /// </summary>
+    public static Order CreateFromStore(
+        OrderId id,
+        Guid tenantId,
+        string orderNumber,
+        OrderHeader header,
+        QuotationParties parties,
+        QuotationBillingAccount billingAccount,
+        IReadOnlyCollection<OrderLineInput> lines,
+        string? notes,
+        MemberId createdBy,
+        DateTimeOffset occurredAt,
+        string requestNumber,
+        string externalKey)
+    {
+        ArgumentNullException.ThrowIfNull(billingAccount);
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestNumber);
+        var key = NormalizeExternalKey(externalKey);
+        var order = Build(
+            id, tenantId, orderNumber, OrderSource.Store, requestNumber, header, parties, billingAccount,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
+        order.ExternalKey = key;
+        return order;
+    }
+
+    /// <summary>
+    /// El cálculo de la tienda para el carrito (spec de la tienda §5.2): los totales con el mismo motor que un
+    /// pedido, pero sin cliente, sin partes, con los indicadores del cliente apagados y sin cuenta de cobro,
+    /// así que no hay retención ni excedente de IVA. <b>Nunca se guarda</b>. Es el único camino donde
+    /// <see cref="ClientId"/> puede ser vacío, y salta <c>order.order.client_required</c> con una bandera
+    /// privada del constructor para que ningún otro camino pueda hacerlo.
+    /// </summary>
+    public static Order QuoteForStore(
+        Guid tenantId,
+        string currency,
+        bool isRetail,
+        IReadOnlyCollection<OrderLineInput> lines,
+        DateTimeOffset occurredAt)
+    {
+        var nobody = new MemberId(Guid.Empty);
+        var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, false);
+        return Build(
+            OrderId.New(), tenantId, "STORE-QUOTE", OrderSource.Store, null, header, QuotationParties.Empty, null,
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt,
+            allowNoClient: true);
+    }
+
     private static Order Build(
         OrderId id,
         Guid tenantId,
@@ -477,13 +532,14 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool allowNoClient = false)
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(shipping);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
-            paymentStatus, notes, createdBy, occurredAt);
+            paymentStatus, notes, createdBy, occurredAt, allowNoClient);
         order.AssignShipping(shipping.Validated(order.IsStorePickup, order.Currency, "order.order"));
         order.EnsureCashOnDeliveryIsPending(proofs);
         foreach (var line in lines)
@@ -1187,7 +1243,9 @@ public sealed class Order
         }
     }
 
-    private bool IsExternal => Source is not OrderSource.Quotation and not OrderSource.Manual;
+    // Lista positiva a propósito: la tienda se precia y se cobra como un pedido interno (su pago pendiente lo
+    // confirma una persona en QEP), así que una fuente nueva no hereda por descarte el trato de integración.
+    private bool IsExternal => Source is OrderSource.Shopify;
 
     // Spec 2026-10-26 y desvío S1: un pedido no edita sus partes, así que una parte de envío igual salvo el departamento y la
     // ciudad es la que puso la plataforma (en otra ciudad del mismo sinónimo), no una de otra persona.

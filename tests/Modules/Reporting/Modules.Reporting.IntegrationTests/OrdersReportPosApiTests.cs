@@ -246,8 +246,8 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(2, advisor.Count);
         Assert.Equal(2, summary.ByClient.Count);
         Assert.Contains(summary.ByClient, entry => entry.Id == customer.Id && entry.Count == 1);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
-        Assert.Equal([1, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", sale.Total)], summary.BySource[3].Totals);
         Assert.Equal(0, summary.WithoutClient.Count);
     }
@@ -397,7 +397,7 @@ public sealed class OrdersReportPosApiTests
 
         Assert.Equal(1, summary.OrderCount);
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
-        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Empty(summary.ByClient);
         Assert.Equal(1, summary.WithoutClient.Count);
     }
@@ -425,7 +425,7 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(0, page.Total);
         Assert.Empty(page.Items);
         Assert.Equal(0, summary.OrderCount);
-        Assert.Equal([0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal(0, summary.WithoutClient.Count);
     }
 
@@ -495,7 +495,7 @@ public sealed class OrdersReportPosApiTests
         Assert.NotNull(summary);
         Assert.Equal(1, summary.OrderCount);
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
-        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.BySource[3].Totals);
         Assert.Equal((1, PosPrice), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Single().Amount));
         var ranked = Assert.Single(summary.ByAdvisor);
@@ -524,7 +524,7 @@ public sealed class OrdersReportPosApiTests
 
         Assert.Equal(0, summary.OrderCount);
         Assert.Empty(summary.Totals);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
         Assert.All(summary.BySource, slice => Assert.Equal((0, 0), (slice.Count, slice.Totals.Count)));
         Assert.Equal((0, 0), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Count));
     }

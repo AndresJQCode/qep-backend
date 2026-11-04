@@ -271,7 +271,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     private static void ConfigureCustomerAddress(ModelBuilder modelBuilder)
     {
         var address = modelBuilder.Entity<CustomerAddress>();
-        address.ToTable("customer_addresses", "customers");
+        address.ToTable("customer_addresses", "customers", table => table.HasCheckConstraint(
+            "CK_customer_addresses_city_lane",
+            "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) " +
+            "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)"));
         address.HasKey(value => value.Id);
         address.Property(value => value.Id)
             .HasColumnName("id")
@@ -294,7 +297,16 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
         // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion, con
         // migrationBuilder.AddForeignKey — Postgres la impone igual, EF simplemente no la "ve".
+        // Nulo en una direccion de afuera de Colombia (spec tienda publica 4.2): su ciudad es
+        // texto libre. El carril lo respalda CK_customer_addresses_city_lane.
         address.Property(value => value.CityId).HasColumnName("city_id");
+        address.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .HasDefaultValue(Customer.ColombiaCountryCode);
+        address.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
         address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
         address.Property(value => value.CreatedAt).HasColumnName("created_at");
         address.Property(value => value.UpdatedAt).HasColumnName("updated_at");

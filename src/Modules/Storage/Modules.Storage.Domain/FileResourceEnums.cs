@@ -34,5 +34,10 @@ public enum FileOwnerType
     // Spec 2026-09-19: el logo de un tenant. Sube por el mismo pipeline que cualquier imagen
     // (POST /files, PUT prefirmado, complete) y Tenancy lo asigna después con su propio endpoint
     // — ver ITenantLogoStorage. OwnerId es el tenantId.
-    Tenant = 6
+    Tenant = 6,
+
+    // Spec de la tienda en línea, 2026-11-03: el banner de la tienda pública. Sube por el mismo pipeline (POST /files, PUT prefirmado,
+    // complete) y se publica con PUT /files/{fileId}/publication; OwnerId es el tenantId. Se persiste por nombre en character
+    // varying(20), así que no hay migración.
+    Store = 7
 }

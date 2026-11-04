@@ -109,7 +109,9 @@ internal static class OrderMapping
         party.DepartmentId,
         party.CityId,
         party.PersonType?.ToWireValue(),
-        party.IdentificationType?.ToWireValue());
+        party.IdentificationType?.ToWireValue(),
+        party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        party.CityName);
 
     private static QuotationItemDto ToDto(OrderItem item, PriceRounding rounding) => new(
         item.Id.Value,

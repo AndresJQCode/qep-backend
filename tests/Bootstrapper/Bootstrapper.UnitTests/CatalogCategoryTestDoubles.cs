@@ -22,6 +22,12 @@ internal sealed class FakeProductCategoryRepository(params (ProductCategory Cate
             // El POS sólo cuenta activos: si alguien pide todos, el doble no sabe qué contestar.
             : throw new NotSupportedException();
 
+    public Task<IReadOnlyList<ProductCategoryNode>> ListCategoriesWithParentsAsync(
+        Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ProductCategoryNode>>(OfTenant(tenantId)
+            .Select(category => new ProductCategoryNode(category.Id, category.Name, category.ParentId))
+            .ToList());
+
     public Task<IReadOnlyList<ProductCategory>> ListTreeAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ProductCategory>>(OfTenant(tenantId));
 

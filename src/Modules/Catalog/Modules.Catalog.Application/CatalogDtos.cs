@@ -18,6 +18,7 @@ public sealed record ProductDto(
     Guid Id,
     string Name,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
@@ -34,6 +35,9 @@ public sealed record ProductResponse(
     Guid Id,
     string Name,
     bool IsActive,
+    // Si la tienda pública lo publica. Aparte de IsActive: lo cambia el PUT o el lote
+    // POST /products/store-visibility, no /deactivate.
+    bool VisibleInStore,
     string? Description,
     // La imagen principal: el archivo de la primera foto de Gallery. Derivada; se cambia
     // reordenando Gallery en el PUT.
@@ -132,6 +136,7 @@ public sealed record ProductListItemDto(
     string Name,
     string? Code,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
@@ -261,7 +266,8 @@ public sealed record CreateProductRequest(
     Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery);
+    IReadOnlyList<Guid>? Gallery,
+    bool? VisibleInStore = null);
 
 /// <summary>
 /// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
@@ -300,6 +306,10 @@ public sealed record ProductVariantRequest(
 /// **contadas en variantes** contra el tope de 200 (<see cref="PriceScaleCopyLimits.MaxTargets"/>):
 /// la pantalla de copia deja marcar variantes sueltas de productos distintos, y un tope por
 /// productos dejaría pasar un lote de miles de filas. Sin repetidos ni el origen.</param>
+public sealed record SetProductsStoreVisibilityRequest(
+    IReadOnlyList<Guid>? ProductIds,
+    bool Visible);
+
 public sealed record CopyPriceScalesRequest(
     Guid SourceVariantId,
     IReadOnlyList<Guid> TargetVariantIds);
@@ -335,7 +345,8 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    IReadOnlyList<Guid>? DeletedVariantIds = null);
+    IReadOnlyList<Guid>? DeletedVariantIds = null,
+    bool? VisibleInStore = null);
 
 public sealed record TaxRateDto(
     Guid Id,

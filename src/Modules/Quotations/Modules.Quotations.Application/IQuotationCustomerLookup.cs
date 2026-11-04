@@ -112,8 +112,11 @@ public sealed record QuotationCustomerAddressRef(
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
-    string CityName,
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO alfa-2. Fuera de Colombia <see cref="CityId"/> y <see cref="DepartmentId"/> son null y la ciudad
+    /// es el texto de <see cref="CityName"/>.</summary>
+    string Country = "CO");

@@ -19,20 +19,29 @@ public sealed record CustomerAddressDto(
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
+    /// <summary>Null en una dirección de afuera de Colombia: no tiene ciudad DIVIPOLA.</summary>
+    Guid? CityId,
     string CityName,
     /// <summary>El departamento **no** se guarda —es el de la ciudad— pero sí viaja: el
-    /// formulario lo necesita para filtrar el combobox de ciudad al editar la dirección.</summary>
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    /// formulario lo necesita para filtrar el combobox de ciudad al editar la dirección. Null (y
+    /// <c>DepartmentName</c> null) en una dirección de afuera.</summary>
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO-3166-1 alfa-2. Toda dirección anterior al campo es <c>CO</c>.</summary>
+    string Country = "CO");
 
 public sealed record CustomerAddressRequest(
     string Name,
     string Address,
-    Guid CityId,
+    Guid? CityId,
     string? Phone,
-    bool IsPrincipal);
+    bool IsPrincipal,
+    /// <summary>Opcional: sin país la dirección es colombiana, como antes del campo. El mismo cuerpo
+    /// sirve al POST y al PUT de una dirección.</summary>
+    string? Country = null,
+    /// <summary>La ciudad escrita a mano de una dirección de afuera; en <c>CO</c> va <c>CityId</c>.</summary>
+    string? CityName = null);
 
 public sealed record CustomerDto(
     Guid Id,
