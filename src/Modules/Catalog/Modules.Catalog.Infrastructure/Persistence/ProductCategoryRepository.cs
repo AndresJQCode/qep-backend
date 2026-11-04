@@ -36,6 +36,16 @@ internal sealed class ProductCategoryRepository(CatalogDbContext dbContext) : IP
             .ToList();
     }
 
+    public async Task<IReadOnlyList<ProductCategoryNode>> ListCategoriesWithParentsAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken) =>
+        await dbContext.ProductCategories
+            .AsNoTracking()
+            .Where(category => category.TenantId == tenantId)
+            .OrderBy(category => category.Name)
+            .Select(category => new ProductCategoryNode(category.Id, category.Name, category.ParentId))
+            .ToListAsync(cancellationToken);
+
     public async Task<IReadOnlyList<ProductCategory>> ListTreeAsync(
         Guid tenantId,
         CancellationToken cancellationToken) =>

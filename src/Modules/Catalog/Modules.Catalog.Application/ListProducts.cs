@@ -30,7 +30,8 @@ public sealed record ListProductsQuery(
     bool? IsActive,
     int Page,
     int PageSize,
-    bool IncludeVariants = false) : IQuery<ProductPage>;
+    bool IncludeVariants = false,
+    bool? VisibleInStore = null) : IQuery<ProductPage>;
 
 /// <summary>Una página de productos con el total que la UI necesita para paginar.</summary>
 public sealed record ProductPage(
@@ -93,6 +94,7 @@ public sealed class ListProductsHandler(
             query.Name,
             query.Code,
             query.IsActive,
+            query.VisibleInStore,
             categoryIds: null,
             page,
             pageSize,
@@ -136,6 +138,7 @@ public sealed class ListProductsHandler(
                 product.Name,
                 product.Code,
                 product.IsActive,
+                product.VisibleInStore,
                 product.Description,
                 product.ImageFileId,
                 lookups.UrlOf(product.ImageFileId),

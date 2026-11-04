@@ -13,7 +13,8 @@ public sealed record CreateProductCommand(
     Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery) : ICommand<ProductDto>, IProductWriteCommand;
+    IReadOnlyList<Guid>? Gallery,
+    bool? VisibleInStore = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Las reglas viven en ProductWriteRules y se incluyen, no se copian: duplicarlas entre este
 // validador y el del PUT fue el hallazgo `D` de la revisión de 4 lentes. En el POST el precio de
@@ -101,7 +102,9 @@ public sealed class CreateProductHandler(
             optionIds,
             variants,
             gallery,
-            now);
+            now,
+            // null en el POST es oculto: publicar es una decisión explícita.
+            visibleInStore: command.VisibleInStore ?? false);
 
         repository.Add(product);
         auditPublisher.Publish(

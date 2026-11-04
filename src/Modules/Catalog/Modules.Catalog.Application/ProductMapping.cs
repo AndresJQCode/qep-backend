@@ -53,6 +53,7 @@ internal static class ProductMapping
             product.Id.Value,
             product.Name,
             product.IsActive,
+            product.VisibleInStore,
             product.Description,
             product.ImageFileId,
             mainImageUrl,

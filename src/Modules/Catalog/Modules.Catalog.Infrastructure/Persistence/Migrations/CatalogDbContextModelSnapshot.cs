@@ -189,6 +189,12 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<bool>("VisibleInStore")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("visible_in_store");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId")
@@ -204,6 +210,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_products_tenant");
+
+                    b.HasIndex("TenantId", "Name")
+                        .HasDatabaseName("IX_products_tenant_store_visible")
+                        .HasFilter("visible_in_store AND is_active");
 
                     b.ToTable("products", "catalog");
                 });

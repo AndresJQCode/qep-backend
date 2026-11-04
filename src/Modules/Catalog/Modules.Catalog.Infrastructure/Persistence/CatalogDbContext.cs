@@ -60,6 +60,16 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
             .HasColumnName("name")
             .HasMaxLength(Product.NameMaxLength);
         product.Property(value => value.IsActive).HasColumnName("is_active");
+        // Oculto por defecto, también para las filas de antes de la tienda: publicar es decisión del
+        // tenant. El default de base es lo que hace que la migración no publique nada.
+        product.Property(value => value.VisibleInStore)
+            .HasColumnName("visible_in_store")
+            .HasDefaultValue(false);
+        // El predicado de las lecturas de la tienda: sólo los publicados y activos. Incluye el nombre
+        // porque la tienda ordena por él; con sólo tenant_id EF lo fundiría con IX_products_tenant.
+        product.HasIndex(value => new { value.TenantId, value.Name })
+            .HasDatabaseName("IX_products_tenant_store_visible")
+            .HasFilter("visible_in_store AND is_active");
         // CAT-04. Nullable: hay productos ya cargados y una columna NOT NULL sin default los
         // rompe.
         product.Property(value => value.Description)

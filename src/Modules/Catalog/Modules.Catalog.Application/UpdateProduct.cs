@@ -16,7 +16,8 @@ public sealed record UpdateProductCommand(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    IReadOnlyList<Guid>? DeletedVariantIds = null) : ICommand<ProductDto>, IProductWriteCommand;
+    IReadOnlyList<Guid>? DeletedVariantIds = null,
+    bool? VisibleInStore = null) : ICommand<ProductDto>, IProductWriteCommand;
 
 // Mismas reglas que el POST, por inclusión y no por copia. Ver ProductWriteRules. El precio puede
 // faltar en una variante: ProductVariantChanges lo hereda (la suya, o la de la variante de la que
@@ -163,7 +164,8 @@ public sealed class UpdateProductHandler(
             InOriginalPositions(variants, body.Count, kept),
             gallery,
             now,
-            deletedIds);
+            deletedIds,
+            command.VisibleInStore);
 
         auditPublisher.Publish(
             command.TenantId,

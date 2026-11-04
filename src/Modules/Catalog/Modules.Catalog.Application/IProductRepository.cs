@@ -36,6 +36,7 @@ public interface IProductRepository
         string? name,
         string? code,
         bool? isActive,
+        bool? visibleInStore,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
@@ -95,6 +96,62 @@ public interface IProductRepository
     Task<Product?> FindAsync(
         Guid tenantId,
         ProductId productId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los productos de esos ids **con seguimiento**, para el lote de visibilidad en la tienda. Un id
+    /// desconocido o de otro tenant simplemente no aparece: quien llama compara el conteo y tumba el
+    /// lote entero.
+    /// </summary>
+    Task<IReadOnlyList<Product>> FindManyForUpdateAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken);
+
+    // --- Lecturas de la tienda pública (spec 2026-11-03). Todas comparten un mismo predicado: el
+    // producto está activo, es visible en la tienda y tiene al menos una variante activa con precio
+    // en la moneda pedida. «Un producto sin precio en la moneda elegida no se muestra.»
+
+    /// <summary>
+    /// Una página de la búsqueda de la tienda, ordenada por nombre. <paramref name="search"/> tiene la
+    /// misma semántica que en <see cref="SearchAsync"/> (nombre, código o código de barras de una
+    /// variante). <paramref name="categoryIds"/>: null no filtra; una colección vacía no devuelve filas.
+    /// Trae el agregado sin seguimiento: quien llama filtra las variantes por moneda y estado.
+    /// </summary>
+    Task<(IReadOnlyList<Product> Items, int Total)> SearchStoreVisibleAsync(
+        Guid tenantId,
+        string currency,
+        string? search,
+        IReadOnlyCollection<Guid>? categoryIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    /// <summary>Productos visibles por categoría directa (sin descendientes), con el mismo predicado
+    /// que <see cref="SearchStoreVisibleAsync"/>. Los productos sin categoría no cuentan.</summary>
+    Task<IReadOnlyDictionary<ProductCategoryId, int>> CountStoreVisibleByCategoryAsync(
+        Guid tenantId,
+        string currency,
+        CancellationToken cancellationToken);
+
+    /// <summary>El agregado (variantes, precios, escalas y galería, sin seguimiento) de un producto
+    /// visible en la tienda en esa moneda, o null si no lo es.</summary>
+    Task<Product?> FindStoreVisibleAsync(
+        Guid tenantId,
+        ProductId id,
+        string currency,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// De esos ids, los productos que la tienda puede vender en esa moneda: la variante está activa,
+    /// su producto está activo y visible, y la variante tiene precio en <paramref name="currency"/>.
+    /// Los demás ids no aparecen. Lo usa el carrito al enviar. Cada producto trae todas sus variantes
+    /// (quien llama elige por id).
+    /// </summary>
+    Task<IReadOnlyList<Product>> FindStoreVisibleVariantsAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid> variantIds,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -193,6 +250,7 @@ public sealed record ProductSummary(
     ProductId Id,
     string Name,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     TaxRateId? TaxRateId,
     ProductCategoryId? CategoryId,
