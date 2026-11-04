@@ -26,7 +26,7 @@ public sealed class CorrectImpactCalculatorTests
             [],
             Names);
 
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(3, [new ImpactTenantCountDto(TenantA, "Ritual", 2), new ImpactTenantCountDto(TenantB, "Lulo", 1)]),
             impact.OrdersToChange);
         Assert.Equal(0, impact.OrdersEdited.Count);
@@ -44,8 +44,8 @@ public sealed class CorrectImpactCalculatorTests
             [],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToChange);
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersEdited);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersEdited);
     }
 
     // Un pedido que ya no está Pending no se recorrige (con la parte intacta o editada): se lista completo con su estado. Uno que ya
@@ -84,8 +84,8 @@ public sealed class CorrectImpactCalculatorTests
             [],
             Names);
 
-        Assert.Equal(new ImpactCountDto(2, [new ImpactTenantCountDto(TenantA, "Ritual", 2)]), impact.CustomersToChange);
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.CustomersEdited);
+        ImpactAssert.Equal(new ImpactCountDto(2, [new ImpactTenantCountDto(TenantA, "Ritual", 2)]), impact.CustomersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.CustomersEdited);
     }
 
     // Una ocurrencia está corregida si su pedido o su cliente tiene huella; si ninguno, el trabajo falló, se saltó o sigue pendiente.
@@ -111,7 +111,7 @@ public sealed class CorrectImpactCalculatorTests
             [corrected, correctedThroughTheCustomer, uncorrected, uncorrectedOfAnotherTenant, sameOrderOtherTenant],
             Names);
 
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(3, [new ImpactTenantCountDto(TenantB, "Lulo", 2), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
             impact.OccurrencesUncorrected);
     }
@@ -137,7 +137,7 @@ public sealed class CorrectImpactCalculatorTests
             [order, customerOccurrence],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersToChange);
         Assert.Equal(0, impact.OrdersEdited.Count);
         Assert.Equal(0, impact.CustomersToChange.Count);
         Assert.Equal(0, impact.CustomersEdited.Count);

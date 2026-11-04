@@ -40,7 +40,7 @@ public sealed class ResolveImpactCalculatorTests
         var impact = ResolveImpactCalculator.Compute(
             Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: false)], [], Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersMissingData);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersMissingData);
         Assert.Equal(0, impact.OrdersToFix.Count);
     }
 
@@ -52,7 +52,7 @@ public sealed class ResolveImpactCalculatorTests
         var impact = ResolveImpactCalculator.Compute(
             Cali, [occurrence], [Order(occurrence, "Pending", hasShipping: true)], [], Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersWithShipping);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersWithShipping);
         Assert.Equal(0, impact.OrdersToFix.Count);
     }
 
@@ -124,10 +124,10 @@ public sealed class ResolveImpactCalculatorTests
             ],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.CustomersToComplete);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.CustomersToComplete);
         // Sólo los que la importación creó incompletos y les falta algo más que la ciudad, editados o no. El editado, el
         // fusionado y el inactivo que sólo necesitaban la ciudad no están en ningún grupo.
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(2, [new ImpactTenantCountDto(TenantB, "Lulo", 1), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
             impact.CustomersStayIncomplete);
     }
