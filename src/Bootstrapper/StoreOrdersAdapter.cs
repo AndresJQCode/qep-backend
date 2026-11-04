@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Store.Application;
@@ -13,7 +14,7 @@ namespace Bootstrapper;
 /// el tracker de <c>QuotationsDbContext</c> ante una carrera de claves, y en el scope del llamador eso se llevaría lo que otro
 /// adaptador dejó pendiente.</para>
 /// </summary>
-internal sealed class StoreOrdersAdapter(IServiceScopeFactory scopes) : IStoreOrders
+internal sealed partial class StoreOrdersAdapter(IServiceScopeFactory scopes, ILogger<StoreOrdersAdapter> logger) : IStoreOrders
 {
     // Todo rechazo del motor (línea inexistente, inactiva, cantidad que la escala no admite, u otro) es para la tienda una línea que
     // no se puede vender: el código interno quotation.* nunca llega al visitante anónimo.
@@ -54,12 +55,21 @@ internal sealed class StoreOrdersAdapter(IServiceScopeFactory scopes) : IStoreOr
                 quote.TaxAmount,
                 quote.Total);
         }
-        catch (QuotationsDomainException)
+        catch (QuotationsDomainException exception)
         {
+            // Al visitante le llega «línea no disponible», pero una configuración rota del motor (tasa de IVA, redondeo) se vería igual:
+            // el código original queda en el log y la excepción, entera, como interna. Nunca el carrito ni datos del visitante.
+            LogQuoteRejected(logger, tenantId, currency, exception.Code);
             throw new StoreDomainException(
-                StoreErrorCodes.LineUnavailable, "A line of the cart cannot be sold.");
+                StoreErrorCodes.LineUnavailable, "A line of the cart cannot be sold.", exception);
         }
     }
+
+    [LoggerMessage(
+        EventId = 6001,
+        Level = LogLevel.Warning,
+        Message = "The quotation engine rejected a public store quote for tenant {TenantId} in {Currency} with code {Code}")]
+    private static partial void LogQuoteRejected(ILogger logger, Guid tenantId, string currency, string code);
 
     public async Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken)
     {
