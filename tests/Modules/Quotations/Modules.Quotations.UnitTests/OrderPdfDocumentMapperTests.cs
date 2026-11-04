@@ -214,6 +214,6 @@ public sealed class OrderPdfDocumentMapperTests
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "BRONCEADOR RITUAL DEL SOL", "BRO-01", null, [], 12m, 35900m,
             15m, 64620m, 30515m, 307714.29m, 19, 58465.71m, 1, nameof(QuotationDiscountOrigin.Own));
 
-        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], []);
+        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], null);
     }
 }

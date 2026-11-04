@@ -843,9 +843,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer` y `loans`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans` y `store`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging` y `loans` exige `customers`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers` y `store` exige `orders`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -996,6 +996,69 @@ docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenan
 
 En producción, las mismas sentencias por el acceso a la base que QCode ya usa para operaciones
 manuales. Efecto inmediato, sin reiniciar la API.
+
+## Tienda pública
+
+Cada tenant puede publicar una tienda en `{slug}.lulocrm.com` (spec `docs/superpowers/specs/2026-11-03-tienda-publica-design.md`,
+plan `docs/superpowers/plans/2026-11-03-tienda-publica-backend.md`). Es el módulo `store`: exige `orders`, no viene con el signup y se
+prende por tenant desde la consola de operador. Sin él, el backoffice responde `403 tenancy.module_not_enabled`.
+
+- **Backoffice:** `/api/v1/tenants/{tenantId}/store` (ajustes, publicar, bandeja de solicitudes, «Tomar» y «Descartar»). Los ajustes
+  piden `store.settings.manage` (sólo `admin` por defecto); la bandeja, `quotations.order.manage`.
+- **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
+  `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
+  `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
+  `X-Qep-Visitor-Ip`. Los límites son por IP del visitante: 300 lecturas por minuto y 5 envíos cada 10 minutos, más un tope de 500
+  solicitudes por tienda y por día (`Store:DailyRequestCap`).
+- **El pedido:** «Tomar» crea un pedido con origen `Store`. Su detalle (`GET /orders/{orderId}`) trae `storeRequest` con el número de la
+  solicitud, el cliente, el nombre, teléfono y correo de facturación, el total que vio el visitante y `totalDifference`; es `null` para
+  los pedidos de otro origen. `GET /orders?source=Store` los filtra.
+
+### Secretos
+
+Los dos son obligatorios fuera de `Development` y `Testing`: sin ellos el arranque falla. La clave del storefront, cuando está, se
+valida siempre y necesita al menos 32 caracteres. Van en user-secrets en local y en el almacén de secretos del despliegue, nunca en
+`appsettings`:
+
+```powershell
+dotnet user-secrets set "Store:Storefront:SharedSecret" "<el mismo valor que el storefront>" --project src/Api
+dotnet user-secrets set "Store:Turnstile:SecretKey" "<secret key de Cloudflare Turnstile>" --project src/Api
+```
+
+Para comprobar que existen sin verlos: `dotnet user-secrets list --project src/Api | Select-String -Pattern "Store:" | Measure-Object`.
+Una clave del storefront vacía o en blanco no abre la tienda: toda llamada pública responde 401. `Store:Turnstile:Enabled=false` sólo se
+acepta en `Development` y `Testing`.
+
+### Códigos de error de las rutas públicas
+
+| Status | `code` | Cuándo |
+| --- | --- | --- |
+| 400 | `store.public.body_invalid` | El cuerpo de `POST /order-requests` no es JSON o llegó cortado. |
+| 401 | `store.public.client_unauthorized` | Falta `X-Qep-Storefront-Key` o no coincide. |
+| 404 | `store.public.not_found` | No hay tienda publicada en ese host. |
+| 404 | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica. |
+| 413 | `store.public.body_too_large` | El cuerpo de `POST /order-requests` pasa de 64 KB. |
+| 422 | `validation.failed` | Un campo no cumple su forma; el detalle viaja en `errors`. |
+| 422 | `store.public.currency_invalid` | Falta `currency` o no es una moneda de la tienda. |
+| 422 | `store.public.visitor_ip_required` | Un envío sin `X-Qep-Visitor-Ip` legible. |
+| 422 | `store.order_request.consent_required` | No se aceptó la política de datos. |
+| 422 | `store.order_request.captcha_invalid` | Turnstile rechazó el token. |
+| 422 | `store.order_request.country_not_sold` | El país de facturación o envío no es de venta. |
+| 422 | `store.order_request.city_invalid` | La ciudad no cumple su carril (ids en Colombia, texto afuera). |
+| 422 | `store.order_request.phone_invalid` | El teléfono no se normaliza en el país de su bloque. |
+| 422 | `store.order_request.line_unavailable` | Una línea del carrito ya no se puede vender. |
+| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de solicitudes. |
+| 429 | (sin cuerpo, con `Retry-After`) | La IP del visitante superó su límite. |
+| 503 | `store.captcha.unavailable` | Turnstile no responde o su configuración está rota. |
+
+Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con la misma solicitud.
+
+### Despliegue
+
+**El backend va antes que el frontend y el storefront.** El backend nuevo sólo agrega: el módulo nace apagado en todos los tenants, el
+detalle del pedido suma `storeRequest` al final y las direcciones y partes de afuera de Colombia no existen hasta que la tienda las crea.
+Orden: (1) backend con sus migraciones y los dos secretos; (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
+antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
 
 ## API implementada
 
