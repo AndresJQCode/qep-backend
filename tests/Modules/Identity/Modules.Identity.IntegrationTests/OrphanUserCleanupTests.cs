@@ -592,11 +592,11 @@ public sealed class OrphanUserCleanupTests
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await WaitUntilAsync(async () => await InboxAttemptsAsync(connection, poisoned.Id) == 1);
+        await TickUntilAsync(factory, async () => await InboxAttemptsAsync(connection, poisoned.Id) == 1);
 
         // Una baja sana que se procesa después del primer fallo prueba que corrió al menos un tick
         // más, y en ese tick el mensaje fallido no se volvió a intentar: su espera no venció.
-        await RemoveAMemberAndWaitForItsCleanupAsync(connectionString, connection, ownerClient, tenantId);
+        await RemoveAMemberAndWaitForItsCleanupAsync(factory, connectionString, connection, ownerClient, tenantId);
         Assert.Equal(1, await InboxAttemptsAsync(connection, poisoned.Id));
 
         // Más allá del cuarto intento, que es donde antes se abandonaba: sigue sin terminar.
@@ -606,7 +606,7 @@ public sealed class OrphanUserCleanupTests
         {
             var expected = attempt;
             clock.Advance(claims.LeaseFor(attempt - 1) + TimeSpan.FromSeconds(1));
-            await WaitUntilAsync(async () => await InboxAttemptsAsync(connection, poisoned.Id) == expected);
+            await TickUntilAsync(factory, async () => await InboxAttemptsAsync(connection, poisoned.Id) == expected);
             Assert.Equal(0, await CountInboxAsync(connection, poisoned.Id));
         }
 
@@ -617,14 +617,14 @@ public sealed class OrphanUserCleanupTests
 
         // Antes de que venza, otro tick no lo retoma.
         clock.Advance(longestWait - TimeSpan.FromMinutes(1));
-        await RemoveAMemberAndWaitForItsCleanupAsync(connectionString, connection, ownerClient, tenantId);
+        await RemoveAMemberAndWaitForItsCleanupAsync(factory, connectionString, connection, ownerClient, tenantId);
         Assert.Equal(lastFailedAttempt, await InboxAttemptsAsync(connection, poisoned.Id));
 
         // Se arregla la falla: el reintento siguiente borra al usuario y su membresía, y termina el
         // mensaje. Abandonarlo habría dejado ese residuo para siempre.
         fault.UserId = null;
         clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
-        await WaitUntilAsync(async () =>
+        await TickUntilAsync(factory, async () =>
             await CountUsersAsync(connection, poisoned.UserId) == 0 &&
             await CountMembershipsAsync(connection, poisoned.UserId) == 0);
 
@@ -675,7 +675,7 @@ public sealed class OrphanUserCleanupTests
         }
 
         var healthy = await RemoveAMemberAndWaitForItsCleanupAsync(
-            connectionString, connection, ownerClient, tenantId);
+            factory, connectionString, connection, ownerClient, tenantId);
 
         Assert.Equal(1, await CountInboxAsync(connection, healthy.Id));
         Assert.Equal(1, await CountUsersAsync(connection, poisoned.UserId));
@@ -1071,8 +1071,22 @@ public sealed class OrphanUserCleanupTests
     private static OrphanUserCleanupWorker Worker(QepApiFactory factory) =>
         factory.Services.GetServices<IHostedService>().OfType<OrphanUserCleanupWorker>().Single();
 
+    // Corre ticks del worker hasta que la condición se cumpla. Las pruebas que cuentan ticks no pueden
+    // esperar al timer: tarda el PollInterval del worker (15 s desde e7ea2083), lo mismo que PollTimeout.
+    // Un tick del timer a la vez no molesta: el reclamo deja procesar el mensaje a uno solo.
+    private static async Task TickUntilAsync(QepApiFactory factory, Func<Task<bool>> condition)
+    {
+        var worker = Worker(factory);
+        await WaitUntilAsync(async () =>
+        {
+            await worker.TickAsync(TestContext.Current.CancellationToken);
+            return await condition();
+        });
+    }
+
     // Una baja sana, de punta a punta, para saber que el worker corrió otro tick.
     private static async Task<MembershipPayload> RemoveAMemberAndWaitForItsCleanupAsync(
+        QepApiFactory factory,
         string connectionString,
         NpgsqlConnection connection,
         HttpClient ownerClient,
@@ -1081,7 +1095,7 @@ public sealed class OrphanUserCleanupTests
         var member = await InviteAsync(ownerClient, tenantId, NewEmail());
         await ActivateMembershipAsync(connectionString, member.Id);
         Assert.Equal(HttpStatusCode.OK, (await RemoveAsync(ownerClient, tenantId, member.Id)).StatusCode);
-        await WaitUntilAsync(async () => await CountUsersAsync(connection, member.UserId) == 0);
+        await TickUntilAsync(factory, async () => await CountUsersAsync(connection, member.UserId) == 0);
         return member;
     }
 

@@ -143,7 +143,7 @@ internal sealed partial class OrphanUserCleanupWorker(
         {
             try
             {
-                await Claims.ProcessBatchAsync(CleanupAsync, LogFailure, stoppingToken);
+                await TickAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -156,6 +156,12 @@ internal sealed partial class OrphanUserCleanupWorker(
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
+
+    /// <summary>Un tick: un lote. Interno para que las pruebas lo corran cuando lo necesitan en vez de
+    /// esperar el del timer, que tarda <see cref="PollInterval"/>. Correrlo a la vez que el del timer es
+    /// seguro: es el mismo caso que dos réplicas, y el reclamo deja procesar a una sola.</summary>
+    internal Task TickAsync(CancellationToken cancellationToken) =>
+        Claims.ProcessBatchAsync(CleanupAsync, LogFailure, cancellationToken);
 
     // Corre ya reclamado y en su propio scope (ClaimedOutboxConsumer). Si lanza —una sonda o un
     // purgador caídos, un conflicto de concurrencia con SessionRevocationWorker—, el mensaje vuelve
