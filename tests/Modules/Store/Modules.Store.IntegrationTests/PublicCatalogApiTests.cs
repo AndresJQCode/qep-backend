@@ -173,6 +173,20 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task EachCardSaysWhetherTheProductHasVariants()
+    {
+        await using var fixture = await OpenAsync();
+        var (single, _) = await fixture.CreateProductAsync("Taza", "T-1", Prices(5_000m));
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        var page = await fixture.GetJsonAsync("/products?currency=COP");
+
+        var cards = page["items"]!.AsArray().ToDictionary(node => (Guid)node!["id"]!, node => node!);
+        Assert.False((bool)cards[single]["hasVariants"]!);
+        Assert.True((bool)cards[shirt.ProductId]["hasVariants"]!);
+    }
+
+    [Fact]
     public async Task AHiddenProductDetailIs404()
     {
         await using var fixture = await OpenAsync();

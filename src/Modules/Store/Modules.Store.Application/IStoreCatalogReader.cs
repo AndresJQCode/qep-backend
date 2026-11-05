@@ -42,8 +42,9 @@ public interface IStoreCatalogReader
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 }
 
+/// <param name="HasVariants">Más de una variante vendible en la moneda: desde la tarjeta no se puede elegir por el visitante.</param>
 public sealed record StoreProductCard(
-    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo);
+    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo, bool HasVariants);
 
 public sealed record StoreCategoryCount(Guid CategoryId, int ProductCount);
 

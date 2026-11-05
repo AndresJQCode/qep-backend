@@ -77,7 +77,8 @@ internal sealed class StoreCatalogReader(
                 product.CategoryId?.Value,
                 CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId),
                 prices.Min(),
-                prices.Max()));
+                prices.Max(),
+                prices.Count > 1));
         }
 
         return (cards, total);

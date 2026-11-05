@@ -69,7 +69,7 @@ public sealed record PublicCategoriesDto(string Currency, IReadOnlyList<PublicCa
 
 /// <param name="PriceFrom">El precio de lista más bajo entre las variantes vendibles en la moneda, IVA incluido.</param>
 public sealed record PublicProductCardDto(
-    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo);
+    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo, bool HasVariants);
 
 public sealed record PublicProductsPageDto(
     string Currency, IReadOnlyList<PublicProductCardDto> Items, int Total, int Page, int PageSize);
