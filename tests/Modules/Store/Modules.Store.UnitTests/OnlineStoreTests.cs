@@ -18,7 +18,6 @@ public sealed class OnlineStoreTests
         Assert.Equal(
             [
                 StorePublishBlocker.SlugRequired,
-                StorePublishBlocker.DataPolicyRequired,
                 StorePublishBlocker.CurrencyRequired,
                 StorePublishBlocker.SalesCountryRequired,
             ],
@@ -110,15 +109,29 @@ public sealed class OnlineStoreTests
     }
 
     [Fact]
-    public void APublishedStoreCannotBeSavedWithoutItsPolicy()
+    public void AStoreWithoutPolicyIsPublishable()
+    {
+        var store = ConfiguredStore(Input(policy: null));
+
+        Assert.Empty(store.PublishBlockers());
+        store.Publish(Member, Now);
+
+        Assert.True(store.IsPublished);
+        Assert.Null(store.DataPolicyUrl);
+        Assert.Null(store.DataPolicySetAt);
+    }
+
+    [Fact]
+    public void APublishedStoreCanDropItsPolicyAndItsDateGoesWithIt()
     {
         var store = ConfiguredStore();
         store.Publish(Member, Now);
 
-        Assert.Equal(
-            StoreErrorCodes.DataPolicyRequired,
-            CodeOf(() => store.Configure(Input(policy: null), KnowsCoAndEs, Member, Now)));
-        Assert.Equal("https://acme.test/politica", store.DataPolicyUrl);
+        store.Configure(Input(policy: null), KnowsCoAndEs, Member, Now.AddDays(1));
+
+        Assert.True(store.IsPublished);
+        Assert.Null(store.DataPolicyUrl);
+        Assert.Null(store.DataPolicySetAt);
     }
 
     [Fact]

@@ -9,7 +9,13 @@ public sealed class PublicCartQuoteApiTests
     private static object Cart(string currency, params (Guid VariantId, int Quantity)[] lines) =>
         new { currency, lines = lines.Select(line => new { variantId = line.VariantId, quantity = line.Quantity }).ToArray() };
 
-    private static Guid[] Ids(JsonNode? node) => node!.AsArray().Select(item => (Guid)item!).ToArray();
+    // Contrato E: cada no disponible es { variantId, reason: "NotAvailable" }, no un id suelto.
+    private static Guid[] Ids(JsonNode? node) =>
+        node!.AsArray().Select(item =>
+        {
+            Assert.Equal("NotAvailable", (string)item!["reason"]!);
+            return (Guid)item["variantId"]!;
+        }).ToArray();
 
     [Fact]
     public async Task TheQuoteMatchesTheOrderEngineIncludingGrouping()

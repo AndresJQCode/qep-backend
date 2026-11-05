@@ -37,7 +37,7 @@ public sealed class StoreSettingsApiTests
         Assert.Null(settings["colorChecks"]);
         Assert.Equal("RetailOnly", (string)settings["pricingMode"]!);
         Assert.Equal(
-            ["SlugRequired", "DataPolicyRequired", "CurrencyRequired", "SalesCountryRequired"],
+            ["SlugRequired", "CurrencyRequired", "SalesCountryRequired"],
             Strings(settings["publishBlockers"]));
         Assert.Empty(settings["currencies"]!.AsArray());
         Assert.Null(settings["primaryCurrency"]);
@@ -488,15 +488,19 @@ public sealed class StoreSettingsApiTests
     }
 
     [Fact]
-    public async Task PublishingWithABlockerIs422WithItsCode()
+    public async Task PublishingWithoutAPolicyIsAllowed()
     {
+        // Decisión del owner (2026-11-05): la política de datos es opcional para publicar.
         await using var fixture = await StoreSettingsFixture.OpenAsync();
         await fixture.SaveAsync(fixture.Body(b => b["dataPolicyUrl"] = null));
 
         var response = await fixture.PostAsync("/publish", ifMatch: "1");
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("store.settings.data_policy_required", await StoreSettingsFixture.CodeAsync(response));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var settings = await StoreSettingsFixture.JsonAsync(response);
+        Assert.True((bool)settings["isPublished"]!);
+        Assert.Null(settings["dataPolicyUrl"]);
+        Assert.Empty(settings["publishBlockers"]!.AsArray());
     }
 
     [Fact]

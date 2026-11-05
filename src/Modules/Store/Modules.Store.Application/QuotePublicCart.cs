@@ -92,9 +92,10 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
             .Select(line => line.VariantId)
             .ToList();
 
+        var unavailableLines = unavailable.Select(PublicUnavailableLineDto.Of).ToList();
         if (available.Count == 0)
         {
-            return (new PublicCartQuoteDto(currency, [], unavailable, 0m, 0m, 0m, 0m), unavailable, new Dictionary<Guid, string>());
+            return (new PublicCartQuoteDto(currency, [], unavailableLines, 0m, 0m, 0m, 0m), unavailable, new Dictionary<Guid, string>());
         }
 
         var quoted = await orders.QuoteAsync(tenantId, currency, mode, available, cancellationToken);
@@ -111,7 +112,7 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
                 line.DiscountPercentage > 0,
                 line.DiscountedUnitPrice,
                 line.LineTotal)).ToList(),
-            unavailable,
+            unavailableLines,
             quoted.Subtotal,
             quoted.DiscountAmount,
             quoted.TaxAmount,

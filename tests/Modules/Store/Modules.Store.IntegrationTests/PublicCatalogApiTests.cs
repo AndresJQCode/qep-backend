@@ -62,6 +62,20 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task AStoreWithoutPolicyIsServedWithDataPolicyUrlNull()
+    {
+        await using var fixture = await OpenAsync((_, body) => body["dataPolicyUrl"] = null);
+
+        var response = await fixture.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var store = (await PublicStoreFixture.JsonAsync(response)).AsObject();
+        // La clave viaja siempre, aunque sea null: el storefront decide la casilla por ella.
+        Assert.True(store.ContainsKey("dataPolicyUrl"));
+        Assert.Null(store["dataPolicyUrl"]);
+    }
+
+    [Fact]
     public async Task TheStoreDtoCarriesNoBillingAccountOrTenantId()
     {
         await using var fixture = await OpenAsync();
@@ -166,10 +180,57 @@ public sealed class PublicCatalogApiTests
         Assert.Equal(2, scales.Count);
         foreach (var scale in scales)
         {
+            // Contrato E: «discount» y la restricción por nombre («Multiple» | «PackagingUnit»), no el texto del backoffice.
             Assert.Equal(
-                Modules.Catalog.Domain.PriceScale.FinalFor(10_000m, (decimal)scale!["discountPercentage"]!),
+                Modules.Catalog.Domain.PriceScale.FinalFor(10_000m, (decimal)scale!["discount"]!),
                 (decimal)scale["final"]!);
+            Assert.Equal("Multiple", (string)scale["restriction"]!);
         }
+    }
+
+    [Fact]
+    public async Task EachCardSaysWhetherTheProductHasVariants()
+    {
+        await using var fixture = await OpenAsync();
+        var (single, _) = await fixture.CreateProductAsync("Taza", "T-1", Prices(5_000m));
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        var page = await fixture.GetJsonAsync("/products?currency=COP");
+
+        var cards = page["items"]!.AsArray().ToDictionary(node => (Guid)node!["id"]!, node => node!);
+        Assert.False((bool)cards[single]["hasVariants"]!);
+        Assert.True((bool)cards[shirt.ProductId]["hasVariants"]!);
+    }
+
+    [Fact]
+    public async Task TheProductDetailCarriesItsOptionsImagesAndEachVariantsValues()
+    {
+        await using var fixture = await OpenAsync();
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        var product = await fixture.GetJsonAsync($"/products/{shirt.ProductId}?currency=COP");
+
+        Assert.Empty(product["images"]!.AsArray());
+        var option = Assert.Single(product["options"]!.AsArray())!;
+        Assert.Equal("Talla", (string)option["name"]!);
+        var values = option["values"]!.AsArray().ToDictionary(value => (string)value!["name"]!, value => (Guid)value!["id"]!);
+        Assert.Equal(["M", "L"], values.Keys.ToArray());
+        var variants = product["variants"]!.AsArray().ToDictionary(variant => (Guid)variant!["id"]!, variant => variant!);
+        Assert.Equal([values["M"]], variants[shirt.M]["optionValueIds"]!.AsArray().Select(id => (Guid)id!).ToArray());
+        Assert.Equal([values["L"]], variants[shirt.L]["optionValueIds"]!.AsArray().Select(id => (Guid)id!).ToArray());
+    }
+
+    [Fact]
+    public async Task AProductWithoutOptionsHasNoOptionsAndNoValues()
+    {
+        await using var fixture = await OpenAsync();
+        var (productId, _) = await fixture.CreateProductAsync("Taza", "T-1", Prices(5_000m));
+
+        var product = await fixture.GetJsonAsync($"/products/{productId}?currency=COP");
+
+        Assert.Empty(product["options"]!.AsArray());
+        Assert.Empty(product["images"]!.AsArray());
+        Assert.Empty(product["variants"]![0]!["optionValueIds"]!.AsArray());
     }
 
     [Fact]
@@ -335,5 +396,28 @@ public sealed class PublicCatalogApiTests
         var store = await fixture.GetJsonAsync("/");
 
         Assert.Equal(["CO", "ES"], Strings(store["salesCountries"]));
+    }
+
+    [Fact]
+    public async Task TheStoreContactCarriesTheWhatsAppLink()
+    {
+        await using var fixture = await OpenAsync((_, body) => body["whatsApp"] = "+57 300 123 4567");
+
+        var contact = (await fixture.GetJsonAsync("/"))["contact"]!;
+
+        Assert.Equal("+57 300 123 4567", (string)contact["whatsApp"]!);
+        Assert.Equal("https://wa.me/573001234567", (string)contact["whatsAppUrl"]!);
+    }
+
+    [Fact]
+    public async Task WithoutWhatsAppTheLinkIsNullButPresent()
+    {
+        await using var fixture = await OpenAsync();
+
+        var contact = (await fixture.GetJsonAsync("/"))["contact"]!.AsObject();
+
+        // El storefront lo lee con zod .nullable(): una clave ausente es un 503 en cada página de la tienda.
+        Assert.True(contact.ContainsKey("whatsAppUrl"));
+        Assert.Null(contact["whatsAppUrl"]);
     }
 }

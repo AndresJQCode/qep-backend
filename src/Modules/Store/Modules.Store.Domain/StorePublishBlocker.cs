@@ -4,7 +4,6 @@ namespace Modules.Store.Domain;
 public enum StorePublishBlocker
 {
     SlugRequired,
-    DataPolicyRequired,
     CurrencyRequired,
     SalesCountryRequired,
 }

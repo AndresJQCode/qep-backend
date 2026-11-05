@@ -42,21 +42,24 @@ public interface IStoreCatalogReader
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 }
 
+/// <param name="HasVariants">Más de una variante vendible en la moneda: desde la tarjeta no se puede elegir por el visitante.</param>
 public sealed record StoreProductCard(
-    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo);
+    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo, bool HasVariants);
 
 public sealed record StoreCategoryCount(Guid CategoryId, int ProductCount);
 
 public sealed record StoreCategoryNode(Guid Id, string Name, Guid? ParentId);
 
-/// <param name="Restriction"><c>multiple</c> o <c>packaging_unit</c>, como en el catálogo.</param>
+/// <param name="Restriction"><c>Multiple</c> o <c>PackagingUnit</c>, el nombre del enum: así lo fija el contrato E del storefront.</param>
 public sealed record StoreScaleView(
     int FromUnit, int ToUnit, decimal Discount, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
 
 /// <param name="PackagingUnits">Sólo con escalas; las escalas <c>packaging_unit</c> los usan como cantidades válidas.</param>
+/// <param name="OptionValueIds">Un valor por opción del producto, en su orden; vacía en la variante por defecto.</param>
 public sealed record StoreVariantView(
     Guid Id,
     string Name,
+    IReadOnlyList<Guid> OptionValueIds,
     string? ImageUrl,
     decimal Price,
     IReadOnlyList<int> PackagingUnits,
@@ -69,6 +72,11 @@ public sealed record StoreProductView(
     Guid? CategoryId,
     string? ImageUrl,
     IReadOnlyList<string> Gallery,
+    IReadOnlyList<StoreOptionView> Options,
     IReadOnlyList<StoreVariantView> Variants);
+
+public sealed record StoreOptionView(string Name, IReadOnlyList<StoreOptionValueView> Values);
+
+public sealed record StoreOptionValueView(Guid Id, string Name);
 
 public sealed record StoreSellableVariant(Guid VariantId, Guid ProductId, string Name, string? ImageUrl);

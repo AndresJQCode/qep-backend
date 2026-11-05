@@ -77,7 +77,8 @@ internal sealed class StoreCatalogReader(
                 product.CategoryId?.Value,
                 CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId),
                 prices.Min(),
-                prices.Max()));
+                prices.Max(),
+                prices.Count > 1));
         }
 
         return (cards, total);
@@ -109,7 +110,14 @@ internal sealed class StoreCatalogReader(
             return null;
         }
 
-        var valueNames = await CatalogVariantReads.LoadValueNamesAsync(options, tenantId, [product], cancellationToken);
+        // Las opciones del producto en una sola consulta: de ellas salen los nombres visibles y el selector de la ficha.
+        var optionIds = product.OptionIds.Select(id => new OptionDefinitionId(id)).ToArray();
+        var definitions = optionIds.Length == 0
+            ? []
+            : await options.ListByIdsAsync(tenantId, optionIds, cancellationToken);
+        var valueNames = definitions
+            .SelectMany(option => option.Values)
+            .ToDictionary(value => value.Id, value => value.Value);
         var files = await CatalogVariantReads.LoadImagesAsync(
             images,
             sellable.Select(variant => CatalogVariantReads.ImageFileIdOf(product, variant))
@@ -127,6 +135,7 @@ internal sealed class StoreCatalogReader(
             return new StoreVariantView(
                 variant.Id.Value,
                 CatalogVariantReads.DisplayNameOf(product, variant, valueNames),
+                variant.OptionValueIds,
                 CatalogVariantReads.ImageUrlOf(CatalogVariantReads.ImageFileIdOf(product, variant), files, tenantId),
                 price,
                 includeScales ? variant.PackagingUnits : [],
@@ -140,7 +149,26 @@ internal sealed class StoreCatalogReader(
             product.CategoryId?.Value,
             CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId),
             gallery,
+            OptionsOf(product, definitions, sellable),
             variants);
+    }
+
+    // Cada opción en el orden del producto, con sólo los valores que usa alguna variante vendible, en el orden de la opción: el
+    // visitante no elige una talla que no puede comprar. Una opción que ya no está en la biblioteca no se ofrece.
+    private static List<StoreOptionView> OptionsOf(
+        Product product, IReadOnlyList<OptionDefinition> definitions, IReadOnlyList<ProductVariant> sellable)
+    {
+        var used = sellable.SelectMany(variant => variant.OptionValueIds).ToHashSet();
+        var byId = definitions.ToDictionary(option => option.Id.Value);
+        return product.OptionIds
+            .Where(byId.ContainsKey)
+            .Select(id => new StoreOptionView(
+                byId[id].Name,
+                byId[id].Values
+                    .Where(value => used.Contains(value.Id))
+                    .Select(value => new StoreOptionValueView(value.Id, value.Value))
+                    .ToList()))
+            .ToList();
     }
 
     public async Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
@@ -201,11 +229,12 @@ internal sealed class StoreCatalogReader(
                 scale.AllowGrouping))
             .ToList();
 
-    // El mismo texto que el catálogo (ProductPricingMapping, interno a Catalog.Application): el contrato público habla como el del backoffice.
+    // El contrato público (E) nombra la restricción como el enum, «Multiple» | «PackagingUnit»; el backoffice usa otro texto
+    // (ProductPricingMapping) y el storefront valida estos dos valores exactos.
     private static string WireRestriction(PriceScaleRestriction restriction) => restriction switch
     {
-        PriceScaleRestriction.Multiple => "multiple",
-        PriceScaleRestriction.PackagingUnit => "packaging_unit",
+        PriceScaleRestriction.Multiple => "Multiple",
+        PriceScaleRestriction.PackagingUnit => "PackagingUnit",
         _ => throw new ArgumentOutOfRangeException(nameof(restriction), restriction, null),
     };
 }
