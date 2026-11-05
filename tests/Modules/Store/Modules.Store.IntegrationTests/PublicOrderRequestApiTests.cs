@@ -211,6 +211,36 @@ public sealed class PublicOrderRequestApiTests
     }
 
     [Fact]
+    public async Task AStoreWithoutPolicyFreezesTheConsentWithoutPolicy()
+    {
+        await using var rig = await OpenRigAsync((_, settings) => settings["dataPolicyUrl"] = null);
+        var body = Body(rig);
+        var visitorIp = "198.51.100.24";
+
+        var response = await SubmitAsync(rig, body, visitorIp);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var receipt = await PublicStoreFixture.JsonAsync(response);
+        Assert.Equal("T-0001", (string)receipt["number"]!);
+        var saved = await LoadAsync(rig, (Guid)body["clientRequestId"]!);
+        Assert.Equal(visitorIp, saved.Consent.Ip);
+        Assert.Null(saved.Consent.PolicyUrl);
+        DateTimeOffset? policySetAt = saved.Consent.PolicySetAt;
+        Assert.Null(policySetAt);
+    }
+
+    [Fact]
+    public async Task WithoutPolicyTheConsentIsStillRequired()
+    {
+        await using var rig = await OpenRigAsync((_, settings) => settings["dataPolicyUrl"] = null);
+
+        var response = await SubmitAsync(rig, Body(rig, body => body["acceptsDataPolicy"] = false));
+
+        await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.consent_required");
+        Assert.Equal(0, await RequestsAsync(rig));
+    }
+
+    [Fact]
     public async Task TheSameClientRequestIdReturnsTheSameReceipt()
     {
         await using var rig = await OpenRigAsync();

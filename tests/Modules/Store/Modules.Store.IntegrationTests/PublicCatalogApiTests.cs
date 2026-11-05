@@ -62,6 +62,20 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task AStoreWithoutPolicyIsServedWithDataPolicyUrlNull()
+    {
+        await using var fixture = await OpenAsync((_, body) => body["dataPolicyUrl"] = null);
+
+        var response = await fixture.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var store = (await PublicStoreFixture.JsonAsync(response)).AsObject();
+        // La clave viaja siempre, aunque sea null: el storefront decide la casilla por ella.
+        Assert.True(store.ContainsKey("dataPolicyUrl"));
+        Assert.Null(store["dataPolicyUrl"]);
+    }
+
+    [Fact]
     public async Task TheStoreDtoCarriesNoBillingAccountOrTenantId()
     {
         await using var fixture = await OpenAsync();

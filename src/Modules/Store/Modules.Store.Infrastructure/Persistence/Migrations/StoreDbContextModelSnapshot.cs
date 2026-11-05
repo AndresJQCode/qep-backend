@@ -679,12 +679,11 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                                 .HasColumnType("character varying(45)")
                                 .HasColumnName("consent_ip");
 
-                            b1.Property<DateTimeOffset>("PolicySetAt")
+                            b1.Property<DateTimeOffset?>("PolicySetAt")
                                 .HasColumnType("timestamp with time zone")
                                 .HasColumnName("consent_policy_set_at");
 
                             b1.Property<string>("PolicyUrl")
-                                .IsRequired()
                                 .HasMaxLength(500)
                                 .HasColumnType("character varying(500)")
                                 .HasColumnName("consent_policy_url");

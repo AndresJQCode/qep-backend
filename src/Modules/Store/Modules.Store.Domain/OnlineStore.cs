@@ -111,7 +111,7 @@ public sealed class OnlineStore
 
         if (IsPublished)
         {
-            var blockers = Blockers(slug, policyUrl, currencies.Count, countries.Count);
+            var blockers = Blockers(slug, currencies.Count, countries.Count);
             if (blockers.Count > 0)
             {
                 throw new StoreDomainException(StoreErrorCodes.For(blockers[0]), "La tienda publicada no puede quedar incompleta.");
@@ -167,7 +167,7 @@ public sealed class OnlineStore
 
     /// <summary>Lo que falta para publicar, en el orden del contrato; vacío = publicable.</summary>
     public IReadOnlyList<StorePublishBlocker> PublishBlockers() =>
-        Blockers(Slug, DataPolicyUrl, _currencies.Count, _salesCountries.Count);
+        Blockers(Slug, _currencies.Count, _salesCountries.Count);
 
     public void Publish(Guid by, DateTimeOffset now)
     {
@@ -305,17 +305,13 @@ public sealed class OnlineStore
     public static bool IsCurrencyShape(string? code) =>
         code is { Length: 3 } && code.All(char.IsAsciiLetter);
 
-    private static List<StorePublishBlocker> Blockers(string? slug, string? policyUrl, int currencies, int countries)
+    // La política de datos no bloquea: es opcional para publicar (decisión del owner, 2026-11-05).
+    private static List<StorePublishBlocker> Blockers(string? slug, int currencies, int countries)
     {
         var blockers = new List<StorePublishBlocker>();
         if (slug is null)
         {
             blockers.Add(StorePublishBlocker.SlugRequired);
-        }
-
-        if (policyUrl is null)
-        {
-            blockers.Add(StorePublishBlocker.DataPolicyRequired);
         }
 
         if (currencies == 0)

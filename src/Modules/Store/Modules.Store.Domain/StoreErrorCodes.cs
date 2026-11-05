@@ -20,7 +20,6 @@ public static class StoreErrorCodes
     public const string SalesCountryInvalid = "store.settings.sales_country_invalid";
     public const string SalesCountryDuplicate = "store.settings.sales_country_duplicate";
     public const string SlugRequired = "store.settings.slug_required";
-    public const string DataPolicyRequired = "store.settings.data_policy_required";
     public const string CurrencyRequired = "store.settings.currency_required";
     public const string SalesCountryRequired = "store.settings.sales_country_required";
 
@@ -52,7 +51,6 @@ public static class StoreErrorCodes
     public static string For(StorePublishBlocker blocker) => blocker switch
     {
         StorePublishBlocker.SlugRequired => SlugRequired,
-        StorePublishBlocker.DataPolicyRequired => DataPolicyRequired,
         StorePublishBlocker.CurrencyRequired => CurrencyRequired,
         StorePublishBlocker.SalesCountryRequired => SalesCountryRequired,
         _ => throw new ArgumentOutOfRangeException(nameof(blocker)),

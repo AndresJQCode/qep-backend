@@ -32,7 +32,7 @@ public sealed class StoreSettingsHandlerTests
         Assert.Null(settings.ResolvedColors);
         Assert.Null(settings.ColorChecks);
         Assert.Equal("RetailOnly", settings.PricingMode);
-        Assert.Equal(["SlugRequired", "DataPolicyRequired", "CurrencyRequired", "SalesCountryRequired"], settings.PublishBlockers);
+        Assert.Equal(["SlugRequired", "CurrencyRequired", "SalesCountryRequired"], settings.PublishBlockers);
         Assert.Equal("Origen Botánico", settings.EffectiveName);
         Assert.Equal("https://cdn.test/logo.png", settings.LogoUrl);
         Assert.Empty(rig.Log.Entries);
@@ -360,11 +360,6 @@ public sealed class StoreSettingsHandlerTests
             await CodeOfAsync(() => rig.PublishHandler().HandleAsync(new PublishStoreCommand(TenantId, 0, true), Ct)));
         Assert.Empty(rig.Log.Entries);
 
-        var noPolicy = new SettingsRig(ConfiguredStore(Input(policy: null)));
-        Assert.Equal(
-            StoreErrorCodes.DataPolicyRequired,
-            await CodeOfAsync(() => noPolicy.PublishHandler().HandleAsync(new PublishStoreCommand(TenantId, 1, true), Ct)));
-
         var noCurrency = new SettingsRig(ConfiguredStore(Input(currencies: [], primaryCurrency: null)));
         Assert.Equal(
             StoreErrorCodes.CurrencyRequired,
@@ -374,6 +369,19 @@ public sealed class StoreSettingsHandlerTests
         Assert.Equal(
             StoreErrorCodes.SalesCountryRequired,
             await CodeOfAsync(() => noCountry.PublishHandler().HandleAsync(new PublishStoreCommand(TenantId, 1, true), Ct)));
+    }
+
+    [Fact]
+    public async Task PublishingWithoutAPolicyIsAllowed()
+    {
+        // Decisión del owner (2026-11-05): la política de datos es opcional para publicar.
+        var rig = new SettingsRig(ConfiguredStore(Input(policy: null)));
+
+        var published = await rig.PublishHandler().HandleAsync(new PublishStoreCommand(TenantId, 1, true), Ct);
+
+        Assert.True(published.IsPublished);
+        Assert.Null(published.DataPolicyUrl);
+        Assert.Empty(published.PublishBlockers);
     }
 
     [Fact]

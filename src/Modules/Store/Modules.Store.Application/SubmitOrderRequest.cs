@@ -229,11 +229,8 @@ public sealed class SubmitOrderRequestHandler(
                 line.DiscountedUnitPrice,
                 line.LineTotal))
             .ToList();
-        var consent = new StoreConsent(
-            now,
-            command.VisitorIp,
-            store.DataPolicyUrl ?? throw new InvalidOperationException("A published store always has a data policy."),
-            store.DataPolicySetAt ?? throw new InvalidOperationException("A published store always has a data policy date."));
+        // La política se congela tal como está al enviar; una tienda sin política deja las dos en null.
+        var consent = new StoreConsent(now, command.VisitorIp, store.DataPolicyUrl, store.DataPolicySetAt);
 
         try
         {
