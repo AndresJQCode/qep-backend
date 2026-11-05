@@ -61,8 +61,8 @@ public sealed class DiscardOrderRequestHandler(
                 throw new ResourceConflictException(StoreErrorCodes.BeingTaken, "The order request is being taken.");
             }
 
-            // La toma pudo crear el pedido y caer antes de marcar la solicitud: descartarla lo dejaría huérfano. Se marca convertida
-            // (como el reintento de «Tomar») y la interfaz relee con el 409.
+            // The take may have created the order and failed before marking the request: discarding it would orphan
+            // that order. It is marked converted instead (like a retried "Take") and the UI reloads on the 409.
             if (await orders.FindExistingAsync(command.TenantId, request.Id, cancellationToken) is { } existing)
             {
                 request.MarkConverted(
