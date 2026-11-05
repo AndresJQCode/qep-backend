@@ -9,6 +9,8 @@
   funcional (recepción + app Android) ya tiene su diseño en
   `qep-frontend/docs/superpowers/specs/2026-10-31-wms-recepcion-design.md` (en adelante «spec de recepción») y este
   documento lo asume como entrada, no lo reabre.
+  **Ampliado el 2026-11-03 con D-12** (unidad logística —caja o palet, LPN— como dimensión del saldo, decidida por el
+  owner; §16.2, WMS-ADR-13): toca §5, §6, §11.2, §12, §14, §17–§20, §22–§26.
 - **Verificado contra el código:** `qep-backend` en `develop` (`7f981ab0`; re-verificado en `23ae43b8`, que suma el módulo
   `Loans` con clave `loans` y la migración `AddLoansModuleKey`, última clave de `TenantModuleKeys.All`; re-verificado en
   `67240839` el 2026-11-01 al cerrar la segunda ronda de revisión, S1..S26), `qep-frontend` en `develop`, `qep-android` en
@@ -32,7 +34,7 @@ El dominio se organiza en seis áreas dentro del mismo módulo (Inventory, Wareh
 Outbound), no en seis módulos: un movimiento y su documento tienen que cerrar en una sola transacción, y partirlos
 en módulos los pondría a hablar por outbox.
 
-Las once decisiones que requieren validación del owner están en §16. Las tres que cambian el modelo de datos y no se
+Las doce decisiones que requieren validación del owner están en §16 (D-12, la unidad logística, se sumó el 2026-11-03). Las tres que cambian el modelo de datos y no se
 pueden posponer son: **D-01** (dónde vive el perfil logístico del producto), **D-02** (lote/serie/vencimiento desde el
 inicio) y **D-03** (unidad de medida base y conversiones).
 
@@ -265,6 +267,7 @@ Un **saldo** se identifica por la tupla:
 | `location_id` | sí | `wms.locations` | Física o virtual; toda unidad está en una ubicación, siempre |
 | `variant_id` | sí | Catalog (blando) | La unidad de inventario es la **variante**, nunca el producto; coincide con `VariantId` de pedidos y POS |
 | `lot_id` | según perfil | `wms.lots` | `NULL` si la variante no controla lote |
+| `handling_unit_id` | no | `wms.handling_units` | Unidad logística (caja o palet, LPN) dentro de la cual está esa cantidad; `NULL` = suelta. D-12 (§16.2) |
 | `status` | sí | enum cerrado | `Available`, `Received`, `Quarantine`, `Blocked`, `Damaged`, `InTransit` |
 | `expiration_date` | derivada | del lote | No es dimensión propia: vive en `wms.lots` para no duplicarla |
 | `uom` | no es dimensión | — | El saldo está **siempre en la unidad base** de la variante (D-03) |
@@ -279,6 +282,22 @@ dimensión, un cambio de estado es un movimiento de `(loc, Quarantine)` a `(loc,
 ubicación virtual `TRANSIT` de la bodega **destino** dice «ya salió del origen, todavía no es mío físicamente». Un
 traslado despachado mueve de `(origen/PICK-01, Available)` a `(destino/TRANSIT, InTransit)`; recibirlo mueve a
 `(destino/REC-01, Received)`. El saldo de la empresa no cambia en el camino, que es lo que el spec de recepción exige.
+
+**Por qué la unidad logística es dimensión y no una tabla de contenido aparte (D-12).** Al recibir se imprime una
+etiqueta que identifica un grupo de productos armado como caja o palet; al almacenar se escanea esa etiqueta y el grupo
+entero va al bin. Si el contenido de la unidad viviera en su propia tabla, habría dos fuentes de verdad («el palet P1
+tiene 60 de V1» y «REC-01 tiene 60 de V1») que se desincronizan con el primer movimiento que toque una sin la otra. Como
+dimensión, **el contenido de una unidad son los saldos con su `handling_unit_id`**: una sola fuente, el ledger. Cómo
+convive con las demás dimensiones:
+
+| Con | Regla |
+| --- | --- |
+| `location_id` | Una unidad está en **exactamente una** ubicación: todos sus saldos con `on_hand ≠ 0` comparten `location_id`, y `handling_units.current_location_id` es esa misma. Mover la unidad es mover **todos** sus saldos en un solo batch (§6.1); el ledger lo verifica al final del batch (§6.3) |
+| `owner_id` | Una unidad es de un solo dueño (`handling_units.owner_id`); un saldo de otro dueño no entra en ella. En 3PL nunca se mezcla mercancía de dos clientes en un palet |
+| `variant_id`, `lot_id` | Unidad mixta (varias variantes o lotes en un palet): **permitida, ratificado por el owner el 2026-11-03** (regla 1 de §16.2). No hace falta nada en el modelo: son varias claves con el mismo `handling_unit_id` |
+| `status` | No se fuerza uniforme dentro de la unidad: la unidad recibida entra `Received` y el putaway la pasa entera a `Available`; si se marca dañada una parte sin sacarla, esa clave cambia de estado y sigue en la unidad |
+| `serial` | Sin cambio: un serial dentro de una unidad es un saldo de `quantity = 1` con su `handling_unit_id` |
+| Reservas (§7) | Una reserva apunta a una clave de saldo, y la clave incluye la unidad: reservar «3 sueltas del palet P1» es reservar la clave con `handling_unit_id = P1`. Picarlas **rompe** la unidad (regla 3 de §16.2) |
 
 ### 5.2 Entidades y agregados (`Inventory` y `Warehousing`)
 
@@ -296,6 +315,9 @@ erDiagram
   STOCK_MOVEMENT }o--o| LOT : lot
   STOCK_MOVEMENT }o--o| SERIAL_UNIT : serial
   STOCK_BALANCE ||--o{ RESERVATION : reserves
+  HANDLING_UNIT ||--o{ STOCK_BALANCE : "contents (D-12)"
+  HANDLING_UNIT }o--|| LOCATION : "current"
+  STOCK_MOVEMENT }o--o| HANDLING_UNIT : "from / to"
 
   OWNER { uuid id  uuid tenant_id  text name  text kind "Self|Client"  bool is_active }
   WAREHOUSE { uuid id  uuid tenant_id  text code  text name  uuid city_id  bool is_active }
@@ -303,10 +325,14 @@ erDiagram
   VARIANT_PROFILE { uuid variant_id  uuid tenant_id  text base_uom  text tracking "None|Lot|Serial"  bool tracks_expiry  numeric weight_kg  numeric volume_m3  text storage_class }
   LOT { uuid id  uuid tenant_id  uuid owner_id  uuid variant_id  text code  date expiration_date  date manufactured_at }
   SERIAL_UNIT { uuid id  uuid tenant_id  uuid owner_id  uuid variant_id  text serial  uuid current_location_id  text status  uuid lot_id }
-  STOCK_MOVEMENT { uuid id  uuid tenant_id  uuid owner_id  uuid variant_id  uuid lot_id  uuid serial_unit_id  uuid from_location_id  text from_status  uuid to_location_id  text to_status  numeric quantity  text reason  text document_type  uuid document_id  uuid document_line_id  uuid batch_id  text idempotency_key  uuid reverses_movement_id  timestamptz reverses_occurred_at  uuid actor_id  text actor_type  text device_id  timestamptz occurred_at  timestamptz recorded_at }
-  STOCK_BALANCE { uuid tenant_id  uuid owner_id  uuid warehouse_id  uuid location_id  uuid variant_id  uuid lot_id  text status  numeric on_hand  numeric reserved  bool allows_negative  bigint version  timestamptz updated_at }
+  STOCK_MOVEMENT { uuid id  uuid tenant_id  uuid owner_id  uuid variant_id  uuid lot_id  uuid serial_unit_id  uuid from_location_id  text from_status  uuid from_handling_unit_id  uuid to_location_id  text to_status  uuid to_handling_unit_id  numeric quantity  text reason  text document_type  uuid document_id  uuid document_line_id  uuid batch_id  text idempotency_key  uuid reverses_movement_id  timestamptz reverses_occurred_at  uuid actor_id  text actor_type  text device_id  timestamptz occurred_at  timestamptz recorded_at }
+  STOCK_BALANCE { uuid tenant_id  uuid owner_id  uuid warehouse_id  uuid location_id  uuid variant_id  uuid lot_id  uuid handling_unit_id  text status  numeric on_hand  numeric reserved  bool allows_negative  bigint version  timestamptz updated_at }
   RESERVATION { uuid id  uuid tenant_id  uuid owner_id  uuid variant_id  uuid warehouse_id  uuid location_id  uuid lot_id  numeric quantity  text demand_type  uuid demand_id  text status "Open|Consumed|Released|Expired"  timestamptz expires_at }
+  HANDLING_UNIT { uuid id  uuid tenant_id  uuid owner_id  uuid warehouse_id  uuid current_location_id  text kind "Box|Pallet"  text code "HU:{id-corto}"  text sscc "NULL sin prefijo GS1"  text status "Building|Active|Closed"  uuid receipt_id  bigint version  timestamptz created_at  timestamptz closed_at }
 ```
+
+`RESERVATION` gana `handling_unit_id` con la clave cuando lleguen las reservas (fase 3): la tabla nace vacía en WMS-D y
+agregarle una columna nullable entonces no reescribe nada.
 
 **Agregados.** Pocos y con una razón cada uno:
 
@@ -318,17 +344,20 @@ erDiagram
 | `Lot` | `Lot` | Único por `(owner, variant, code)`; vencimiento obligatorio si el perfil `tracks_expiry` |
 | **`InventoryLedger`** (servicio de dominio) | no es agregado; es el único escritor de `StockMovement` + `StockBalance` | §6 |
 | `Reservation` | `Reservation` | `reserved ≤ on_hand` de su saldo; una demanda no reserva dos veces la misma línea |
+| `HandlingUnit` (D-12) | `HandlingUnit` | Un dueño, una bodega, una ubicación actual; `Building → Active → Closed` (`Closed` es terminal y su código no se reutiliza); **no guarda contenido**: el contenido son los saldos con su id. Su `current_location_id` cambia sólo en el mismo batch que mueve todos sus saldos; una unidad que queda sin saldo se cierra en esa misma transacción (regla 3 de §16.2) |
 
 `StockMovement` y `StockBalance` **no son agregados**: son el registro y la proyección que el ledger escribe. Nadie
 más tiene un repositorio para ellos con métodos de escritura.
 
 ### 5.3 Fórmulas
 
-Sea `B(k)` el saldo de la clave `k = (tenant, owner, warehouse, location, variant, lot, status)`.
+Sea `B(k)` el saldo de la clave `k = (tenant, owner, warehouse, location, variant, lot, handling_unit, status)`.
+`handling_unit` (D-12) no cambia ninguna fórmula de existencia: `available`, `pickable` y el resumen suman igual una
+clave suelta que una dentro de una unidad.
 
 ```
-on_hand(k)      = Σ quantity(m) ∀ m con (to_location, to_status) = k
-                − Σ quantity(m) ∀ m con (from_location, from_status) = k        -- recomputable desde el ledger
+on_hand(k)      = Σ quantity(m) ∀ m con (to_location, to_handling_unit, to_status) = k
+                − Σ quantity(m) ∀ m con (from_location, from_handling_unit, from_status) = k   -- recomputable desde el ledger
 
 reserved(k)     = Σ quantity(r) ∀ r ∈ reservations, r.status = Open, key(r) = k  -- nunca en el ledger
 
@@ -348,6 +377,7 @@ Invariantes (una sola redacción, la misma de §6.3 y §11.2):
   on_hand(k) ≥ 0 OR allows_negative(k)                                       -- CHECK
   reserved(k) ≥ 0 AND (allows_negative(k) OR reserved(k) ≤ on_hand(k))       -- CHECK
   Σ_k on_hand(k) sobre todas las ubicaciones incluidas las virtuales = 0   (doble partida: todo salió de algún lado)
+  ∀ u ∈ handling_units: |{ k.location : k.handling_unit = u, on_hand(k) ≠ 0 }| ≤ 1   -- una unidad, una ubicación (D-12)
 ```
 
 `available` responde «¿cuánto puedo prometer?» y cuenta toda la mercancía vendible aunque esté en una ubicación de
@@ -394,6 +424,21 @@ virtuales se escriben (para que la suma total sea cero) pero no se exponen como 
 `Location.AllowsNegative` (S1). `TRANSIT` también es virtual pero **no** admite negativo: lo que está en tránsito salió de
 verdad de un origen, y un `TRANSIT` negativo sería recibir lo que nunca se despachó.
 
+**La unidad logística en el movimiento (D-12).** Como el estado, la unidad puede ser distinta en los dos extremos, así
+que el movimiento lleva **dos** columnas, `from_handling_unit_id` y `to_handling_unit_id` (nullable las dos), y no una:
+
+| Hecho | `from_handling_unit_id` | `to_handling_unit_id` |
+| --- | --- | --- |
+| Recibir dentro de un palet armado en el muelle | `NULL` (`SUPPLIER`) | `P1` |
+| Almacenar o trasladar la unidad entera | `P1` | `P1` |
+| Sacar sueltas de la unidad (picking, movimiento parcial): la rompe | `P1` | `NULL` |
+| Movimiento de mercancía suelta, como hasta hoy | `NULL` | `NULL` |
+
+Variante, dueño y lote siguen siendo iguales en los dos extremos; cambian ubicación, estado y unidad. Mover una unidad
+entera escribe **una fila por clave de su contenido**, todas en el mismo `batch_id` y con el mismo `handling_unit_id` en
+los dos lados: la historia sigue siendo «18 UND de V1 pasaron de REC-01 a A-01-02», y la del palet es el filtro por
+`handling_unit_id`. Pasar mercancía de una unidad a otra (reempacar) no entra en el primer corte.
+
 ### 6.2 Inmutabilidad
 
 - La aplicación no tiene método de `Update`/`Delete` sobre `stock_movements`; EF los mapea sin tracking de cambios.
@@ -412,6 +457,10 @@ verdad de un origen, y un `TRANSIT` negativo sería recibir lo que nunca se desp
   que ubica la partición del original sin recorrerlas todas (S4). Un movimiento se reversa **una sola vez**: el segundo
   intento responde 422 `wms.movement.already_reversed`. La ruta es `POST /stock/movements/{id}/reverse` (RF-025), **IK**:
   un movimiento no tiene `version` de la que derivar una clave de servidor, así que el header es obligatorio (§6.4).
+- El compensatorio invierte también la unidad: `from_handling_unit_id` y `to_handling_unit_id` se intercambian como la
+  ubicación y el estado (D-12). Reversar **una** fila de un movimiento de unidad entera dejaría la unidad en dos
+  ubicaciones, y el ledger lo rechaza con `wms.handling_unit.split_location` (§6.3). Si hace falta una ruta que revierta el
+  batch completo de una unidad, la define el corte que trae las unidades; hasta entonces, la corrección es moverla otra vez.
 
 ### 6.3 Actualización del saldo: síncrona, misma transacción
 
@@ -425,9 +474,9 @@ por lectura es inaceptable. (a) deja una ventana donde dos despachos ven el mism
 Mecánica, en SQL dentro de `WmsUnitOfWork` (Infrastructure):
 
 ```sql
-INSERT INTO wms.stock_balances (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, status, on_hand, reserved, allows_negative, version, updated_at)
-VALUES (@tenant, @owner, @wh, @loc, @variant, @lot, @status, @delta, 0, @allowsNegative, 1, now())
-ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, status)   -- índice único NULLS NOT DISTINCT
+INSERT INTO wms.stock_balances (tenant_id, owner_id, warehouse_id, location_id, variant_id, lot_id, handling_unit_id, status, on_hand, reserved, allows_negative, version, updated_at)
+VALUES (@tenant, @owner, @wh, @loc, @variant, @lot, @handlingUnit, @status, @delta, 0, @allowsNegative, 1, now())
+ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status)   -- índice único NULLS NOT DISTINCT (D-12)
 DO UPDATE SET on_hand = wms.stock_balances.on_hand + EXCLUDED.on_hand,
               version = wms.stock_balances.version + 1,
               updated_at = now()
@@ -445,9 +494,18 @@ RETURNING on_hand, reserved;
 - El `UPDATE` de `ON CONFLICT` toma el bloqueo de fila: dos operarios sobre el mismo saldo se serializan en la base, sin
   `SELECT FOR UPDATE` explícito.
 - **Orden de claves.** Un movimiento toca dos saldos (origen y destino) y un lote de picking toca muchos. Para evitar
-  deadlocks, el ledger ordena las claves de un batch por `(location_id, variant_id, lot_id, status)` antes de ejecutar,
+  deadlocks, el ledger ordena las claves de un batch por `(location_id, variant_id, lot_id, handling_unit_id, status)`
+  (nulos primero; `owner_id` al final para que el orden sea total, `StockKeyComparer`) antes de ejecutar,
   siempre en el mismo orden. Es la misma lección de `BusinessHoursRepository.SwapDefaultAsync` (CLAUDE.md). Por eso hay un
   solo lote por transacción: un segundo lote tomaría saldos después de haber bloqueado la cola de cambios.
+- **Unidades logísticas en el batch (D-12, desde el corte que las crea).** Todo comando que toque saldos con
+  `handling_unit_id` bloquea **primero** las filas de `wms.handling_units` involucradas (`SELECT … FOR UPDATE`, por `id`
+  ascendente) y **después** lee el contenido y escribe los saldos en el orden de arriba: así «mover el palet entero» y
+  «sacar 3 sueltas del palet» se serializan en la unidad y nunca toman bloqueos en orden opuesto. Al final del batch, el
+  ledger verifica con una consulta que cada unidad tocada tiene sus saldos con `on_hand ≠ 0` en **una sola** ubicación,
+  igual a su `current_location_id`, y del mismo dueño; si no, 422 `wms.handling_unit.split_location` (o
+  `wms.handling_unit.owner_mismatch`) y la transacción se deshace. Una unidad que queda sin saldo pasa a `Closed` en la
+  misma transacción. En WMS-D la columna existe en la clave pero ningún endpoint la llena: siempre es `NULL`.
 - **Cola de `balance.changed`.** La última escritura del lote es un solo `INSERT … ON CONFLICT … DO UPDATE` multi-fila y
   ordenado sobre `wms.balance_change_queue`. No es `DO NOTHING` porque eso no bloquea una fila ya commiteada: el worker podría
   sacarla antes del commit del movimiento, publicar el saldo viejo y perder el cambio para siempre. El costo es que los
@@ -514,6 +572,14 @@ Orden de compra `OC-0042`, 100 UND de la variante `V1` (lote obligatorio), bodeg
 3. Putaway: otra persona escanea `A-01-02` y pone 36, luego `A-01-03` y pone 24. Dos movimientos
    `(REC-01, Received) → (A-01-02, Available)` 36 y `→ (A-01-03, Available)` 24, `reason = Putaway`. Recién ahora
    `available(V1, BOG) = 60`.
+
+   **Con unidad logística (D-12).** Si en el paso 1 el operario armó el palet `P1` con las 60 y lo cerró desde la app, la
+   etiqueta `HU:{id-corto}` se imprime en ese momento, y la confirmación escribe
+   `(SUPPLIER, —, NULL) → (REC-01, Received, P1)` 60; `P1` pasa de `Building` a `Active` en `REC-01`. En el putaway el
+   operario escanea la etiqueta del palet y luego `A-01-02`: el ledger escribe `(REC-01, Received, P1) → (A-01-02,
+   Available, P1)` 60 —una fila por clave del contenido, aquí una sola— y `P1.current_location_id = A-01-02` en la misma
+   transacción. Repartir 36 y 24 en dos bins, como arriba, es sacar sueltas: `(…, P1) → (A-01-02, Available, NULL)` 36 y
+   `→ (A-01-03, Available, NULL)` 24; `P1` queda sin saldo y se cierra (regla 3 de §16.2).
 4. Al día siguiente llegan 45 (5 de más). El `Receipt` nuevo confirma 40 contra la línea
    (`SUPPLIER → (REC-01, Received)` 40) y registra una `ReceiptDiscrepancy` tipo `Overage` por 5 en estado `Reported`.
    Las 5 físicas entran al ledger **en la misma confirmación** como `(REC-01, Quarantine)`, vía un movimiento
@@ -537,6 +603,7 @@ Cada paso es reconstruible, cada paso tiene actor, dispositivo y documento, y ni
 | Vida | `Open → Consumed` (el picking confirmó el movimiento) · `Open → Released` (cancelación, cambio de línea) · `Open → Expired` (TTL opcional por tenant, para pedidos abandonados) |
 | Invariante | `reserved(k) ≤ on_hand(k)`; un movimiento que saca de `k` más de `on_hand − reserved` falla con `wms.stock.reserved` salvo que **consuma** la reserva |
 | Sobreventa | Se evita en la base: el `CHECK` sobre `stock_balances` y la serialización por fila del upsert; no hay comprobación previa en el handler que una carrera pueda saltarse |
+| Unidad logística (D-12) | La clave reservada incluye `handling_unit_id`. Reservar una unidad entera es reservar todas sus claves; reservar sueltas de una unidad es reservar esa clave, y picarlas rompe la unidad (regla 3 de §16.2). La columna entra en `reservations` con la fase 3 |
 | Estrategia de elección | `IPickAllocationStrategy` con `Fifo` (por `lot.manufactured_at`, luego `movement.occurred_at`), `Fefo` (por `lot.expiration_date`), `LocationPriority`. Ordenamiento SQL determinístico, sin heurística |
 
 ---
@@ -740,9 +807,10 @@ token de concurrencia en documentos.
 | `owners`, `warehouses`, `locations` | `UNIQUE (tenant_id, code)` / `(warehouse_id, code)`; índice `(warehouse_id, role)`; `path` con `text_pattern_ops` | Pequeñas |
 | `variant_profiles` | PK `(tenant_id, variant_id)` | Una por variante |
 | `lots`, `serial_units` | `UNIQUE (tenant_id, owner_id, variant_id, code)`; `serial_units UNIQUE (tenant_id, variant_id, serial)`; índice `(current_location_id)` | Serial puede ser grande: índice por ubicación, no por tenant solo |
-| **`stock_movements`** | PK `(id, occurred_at)` (UUID v7 + columna de partición); la unicidad de la clave de idempotencia vive en `operation_receipts` (ADR-06; el motivo, en ADR-10); `idempotency_key` se guarda igual en el movimiento para trazar; `reverses_movement_id` + `reverses_occurred_at` como referencia blanda (S4); índices `(tenant_id, variant_id, occurred_at DESC)`, `(tenant_id, document_type, document_id)`, `(from_location_id, occurred_at)`, `(to_location_id, occurred_at)`, `(batch_id)`; trigger de inmutabilidad | **Particionada por rango de `occurred_at` (mensual, límites en UTC)** desde el inicio. Es barato ahora y muy caro después: con 1–5 k movimientos/día por tenant mediano y decenas de tenants, llega a 10⁷ filas en el primer año. Archivado = `DETACH PARTITION` + volcado a R2, **nunca de un mes dentro de la ventana de `occurredAt`** de §6.4 (`[now − 30 días, now + 5 min]`): una sincronización tardía no puede caer en una partición desprendida (S12). La partición `DEFAULT` existe como red |
-| **`stock_balances`** | `UNIQUE (tenant_id, owner_id, location_id, variant_id, lot_id, status) NULLS NOT DISTINCT`; índices `(tenant_id, variant_id, status)`, `(location_id)`; `allows_negative boolean NOT NULL` escrita por el ledger en el upsert (S1); `CHECK (on_hand >= 0 OR allows_negative)`, `CHECK (reserved >= 0 AND (allows_negative OR reserved <= on_hand))`; filas con `on_hand = 0 AND reserved = 0` se podan por worker | Filas = claves vivas, acotado |
+| **`stock_movements`** | PK `(id, occurred_at)` (UUID v7 + columna de partición); `from_handling_unit_id` y `to_handling_unit_id` nullable (D-12, §6.1), con FK a `handling_units` cuando la tabla exista; la unicidad de la clave de idempotencia vive en `operation_receipts` (ADR-06; el motivo, en ADR-10); `idempotency_key` se guarda igual en el movimiento para trazar; `reverses_movement_id` + `reverses_occurred_at` como referencia blanda (S4); índices `(tenant_id, variant_id, occurred_at DESC)`, `(tenant_id, document_type, document_id)`, `(from_location_id, occurred_at)`, `(to_location_id, occurred_at)`, `(batch_id)`; trigger de inmutabilidad | **Particionada por rango de `occurred_at` (mensual, límites en UTC)** desde el inicio. Es barato ahora y muy caro después: con 1–5 k movimientos/día por tenant mediano y decenas de tenants, llega a 10⁷ filas en el primer año. Archivado = `DETACH PARTITION` + volcado a R2, **nunca de un mes dentro de la ventana de `occurredAt`** de §6.4 (`[now − 30 días, now + 5 min]`): una sincronización tardía no puede caer en una partición desprendida (S12). La partición `DEFAULT` existe como red |
+| **`stock_balances`** | `UNIQUE (tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status) NULLS NOT DISTINCT` (`handling_unit_id` desde D-12, nullable: `NULL` = suelta); índice parcial `(handling_unit_id) WHERE handling_unit_id IS NOT NULL` para leer el contenido de una unidad (con el corte que crea las unidades); índices `(tenant_id, variant_id, status)`, `(location_id)`; `allows_negative boolean NOT NULL` escrita por el ledger en el upsert (S1); `CHECK (on_hand >= 0 OR allows_negative)`, `CHECK (reserved >= 0 AND (allows_negative OR reserved <= on_hand))`; filas con `on_hand = 0 AND reserved = 0` se podan por worker | Filas = claves vivas, acotado |
 | `reservations` | índice parcial `(tenant_id, owner_id, location_id, variant_id, lot_id, status) WHERE status = 'Open'`; `(demand_type, demand_id)` | Media |
+| `handling_units` (D-12) | PK `id`; `UNIQUE (tenant_id, code)`; `UNIQUE (tenant_id, sscc) WHERE sscc IS NOT NULL`; índices `(tenant_id, current_location_id) WHERE status <> 'Closed'` y `(tenant_id, receipt_id)`; `Version`. El `HU:` y el SSCC se registran además en `identifiers` con `kind = LogisticUnit` (§25) | Media: una por caja o palet recibido; las `Closed` no se borran (la historia las nombra) |
 | `operation_receipts` | PK `(tenant_id, idempotency_key)`; purga a **45 días** (S13) | Alta rotación |
 | Documentos (`purchase_orders`, `transfers`, `receipts`, `discrepancies`, `counts`, `adjustments`, `outbound_orders`, …) | `UNIQUE (tenant_id, number)`; `Version`; índices por estado y bodega | Normal |
 | `member_scopes` | PK técnica `id`; `IX_member_scopes_tenant_member (tenant_id, member_id)`; `CK_member_scopes_target (owner_id IS NOT NULL OR warehouse_id IS NOT NULL)`; sin FKs a `owners`/`warehouses` todavía | Nace vacía en `InitialWms` (D-07, S18); fase 3 la cambia por migración sin mover datos |
@@ -755,6 +823,8 @@ available, pickable, reserved, blocked, in_transit` con las fórmulas de §5.3: 
 `available = Σ (on_hand − reserved)` de claves `Available` en ubicación física; `pickable` es lo mismo restringido a
 `allows_picking`; `received`, `blocked` e `in_transit` por `status` y `role`. `expected` **no** está en la vista: se
 compone aparte desde los documentos abiertos (§5.3), y en WMS-D vale 0 porque todavía no hay documentos.
+`wms.v_stock_rows` (la vista por clave sobre la que se define el resumen) expone además `handling_unit_id`; el resumen no
+cambia porque agrupa por variante (D-12).
 
 Sin FKs hacia otros esquemas (regla de la plataforma). **Ninguna FK apunta a `stock_movements`** (está particionada y su
 PK es compuesta; `reverses_movement_id` es blanda, S4). Las FKs internas restantes sí existen, con `ON DELETE RESTRICT`:
@@ -770,6 +840,7 @@ una ubicación con movimientos no se borra, se desactiva.
 | Sobreventa / stock negativo | `CHECK` en `stock_balances` + serialización por fila del upsert; nunca comprobación previa sola |
 | Dos operarios sobre el mismo saldo | Serialización por fila; orden fijo de claves por batch contra deadlocks; `pg_try_advisory_xact_lock(hash(document_id))` en confirmaciones de documento, con 409 `wms.document.busy` si está tomado (como el lock de conversación de Automations) |
 | Edición concurrente de documento | `Version` + 412 `concurrency.conflict` |
+| Mover una unidad entera mientras otro saca sueltas de ella (D-12) | `SELECT … FOR UPDATE` de la fila de `handling_units` antes de leer su contenido, por `id` ascendente y antes que los saldos; verificación de «una unidad, una ubicación» al final del batch (§6.3) |
 | Lectura vs escritura masiva | Las consultas de saldo leen `stock_balances`, nunca el ledger; el ledger sólo se lee para historia y reconciliación |
 
 ### 11.4 Eventos
@@ -825,7 +896,7 @@ una ubicación con movimientos no se borra, se desactiva.
 
 Base `/api/v1/tenants/{tenantId:guid}/wms`. Recursos: `warehouses`, `warehouses/{id}/locations`, `owners`,
 `variant-profiles`, `purchase-orders`, `transfers`, `receipts` (+ `/{id}/counts`, `/{id}/confirm`), `putaway-tasks`,
-`discrepancies` (+ `/{id}/resolve`), `adjustments`, `counts`, `stock` (saldos: `?warehouseId&ownerId&variantId&status`),
+`discrepancies` (+ `/{id}/resolve`), `adjustments`, `counts`, `handling-units` (D-12, fase 2), `stock` (saldos: `?warehouseId&ownerId&variantId&status`),
 `stock/movements` (historia), `stock/export`, y en fase 4 `outbound-orders`, `waves`, `pick-tasks`, `shipments`.
 
 Convenciones heredadas: `page`/`pageSize` con `WmsPaging` (default 50, máximo 200: sigue el precedente de Catalog,
@@ -859,11 +930,16 @@ Lo que esta arquitectura le impone a la app:
   guarda el código crudo.
 - Identificadores soportados en fase 2: EAN-13/8, UPC, Code 128, QR (bins). **GS1-128 / DataMatrix** (lote y vencimiento
   dentro del código, AIs 10/17) en fase 5: el parser es pequeño y el valor es alto para lotes, pero exige que los
-  proveedores etiqueten así. Modelo de identificadores (§25): `wms.identifiers (tenant_id, kind:
+  proveedores etiqueten así. La etiqueta `HU:` de una unidad logística (Code 128, D-12) sí entra en fase 2. Modelo de identificadores (§25): `wms.identifiers (tenant_id, kind:
   Variant|Presentation|Lot|LogisticUnit, symbology, value, target_id)` con unicidad por `(tenant_id, value)`, que absorbe
   varios códigos por variante sin tocar `ProductVariant.Barcode` (que sigue siendo el principal de Catalog). **Las
   ubicaciones no entran** (S7): su código es único por bodega y se resuelve contra la cache de
   `GET /warehouses/{id}/locations/scannable`.
+- **Unidades logísticas (D-12, fase 2).** Un escaneo que empieza por `HU:` es una unidad, no mercancía ni ubicación: la app
+  la resuelve con `GET /handling-units/by-code` (con señal) y recibe la unidad con su contenido. En recepción, «Cerrar
+  caja / palet» crea la unidad (`POST /receipts/{id}/handling-units`, exige conexión porque imprime la etiqueta) y los
+  conteos siguientes llevan su `handlingUnitId` hasta que el operario abre otra; contar sin señal sigue funcionando para
+  mercancía suelta. En almacenamiento, escanear la etiqueta de la unidad y luego el bin mueve la unidad entera.
 
 ---
 
@@ -901,6 +977,12 @@ Ninguna estrategia escribe en el ledger: proponen, el operario confirma, el coma
   diseñan en una sesión corta **después de construir WMS-G y antes de planear WMS-H**, con lo aprendido de cámara,
   cache y cola local de la recepción, siguiendo el formato de ese spec. Conteos (fase 3), picking y devoluciones
   (fase 4) y reabastecimiento (fase 5) se diseñan al planear su fase.
+- **Unidades logísticas (D-12).** En la app: la recepción gana la acción «Cerrar caja / palet» (elige `Box` o `Pallet`,
+  imprime la etiqueta y deja la siguiente vacía lista para contar), y el almacenamiento acepta como primer escaneo la
+  etiqueta de una unidad, muestra su contenido y pide sólo el bin. Sacar sueltas de una unidad avisa que la rompe. En la
+  web: la consulta de saldos muestra la unidad de cada fila y filtra por ella, y una ficha de unidad muestra su contenido,
+  su ubicación y su historia (movimientos filtrados por la unidad). Las pantallas se diseñan con las de recepción y
+  almacenamiento de WMS-G/H; aquí sólo queda el requisito.
 
 ---
 
@@ -922,6 +1004,11 @@ Alineado a los cortes WMS-A…J ya aprobados, con las fases del prompt después.
 en su forma de datos (`reserved` en el saldo, `status` como dimensión) aunque la pantalla llegue en fase 3. Agregarlos
 después obliga a reescribir la clave única de `stock_balances` con datos vivos.
 
+Por el mismo argumento, **`handling_unit_id` entra en la clave en WMS-D** (D-12, 2026-11-03), aunque las unidades se
+creen recién con la recepción y el putaway de fase 2: el ledger sólo existe en `feature/wms-d`, no está mergeado a
+`develop` y no hay datos en producción, así que hoy es una columna y un índice; después sería reescribir la clave única
+de `stock_balances` y la tabla particionada de movimientos con stock vivo.
+
 ---
 
 ## 16. Decisiones que requieren validación del owner
@@ -941,6 +1028,7 @@ Por impacto. Las primeras tres bloquean WMS-B.
 | D-09 | Evento `quotations.order.approved.v1` | Agregarlo en Quotations (pequeño) | Que el WMS prepare pedidos `Pending` | Fase 4, pero define el contrato publicado |
 | D-10 | Alcance del primer corte 3PL | Sólo `Owner Self` visible en UI hasta fase 6; el campo existe en todas las tablas | Owners cliente desde fase 2 | Sólo UI; el modelo ya lo soporta |
 | D-11 | `Idempotency-Key` como header obligatorio en mutaciones de stock | Sí, 428 si falta, en las mutaciones **sin documento previo** (IK); las acciones sobre un documento existente derivan la clave en el servidor y el header se ignora (SK, §6.4, S2) | Opcional (y entonces inútil) | Contrato de la app en WMS-G |
+| **D-12** ✅ | ¿Cómo se modela la unidad logística (LPN: caja o palet) que se etiqueta al recibir y se escanea al almacenar? | **Opción A: dimensión del saldo.** `handling_unit_id` nullable en la clave única de `stock_balances` (con el `NULLS NOT DISTINCT` existente) y en el movimiento (`from_`/`to_handling_unit_id`); agregado `HandlingUnit` en `wms.handling_units` **sin contenido propio**: el contenido son los saldos con su id. **Decidida por el owner, 2026-11-03**; análisis y reglas en §16.2. La regla 1 (unidades mixtas: **permitidas**) la ratificó el owner el mismo día | **Opción B:** tabla de agrupación con su propio contenido y el ledger intacto. Rechazada: dos fuentes de verdad que divergen | La clave única de `stock_balances` y la tabla particionada de movimientos sólo se cambian gratis antes de tener datos (§15) |
 
 ### 16.1 D-03, análisis y decisión: el saldo vive en la unidad base
 
@@ -983,10 +1071,62 @@ esa variante: `UND` para casi todo, `KG` o `L` con decimales para lo que se vend
 **Riesgo aceptado.** Un producto que de verdad existe en dos unidades no convertibles (rollos de tela de largo variable,
 donde «1 rollo» no equivale a un número fijo de metros) no cabe en A. Es el caso de **captura de cantidad variable**
 (GS1 AI 3103 en el código): la unidad base es `M` o `KG` y el rollo es un *logistic unit* con su cantidad propia, no
-una conversión fija. Entra en fase 5 con `wms.identifiers kind = LogisticUnit`; el modelo no cambia.
+una conversión fija. Entra en fase 5 con `wms.identifiers kind = LogisticUnit`; el modelo no cambia. (Desde D-12,
+§16.2, ese rollo es una fila de `wms.handling_units` con un solo saldo de N metros.)
 
 Más las abiertas del spec de recepción que siguen sin respuesta: **P-5** queda resuelta por D-03 (§16.1),
 **P-7** (recepción ciega como opción por propietario), **P-11** (rol que resuelve novedades), **P-12** (stock inicial por Excel).
+
+### 16.2 D-12, análisis y decisión: la unidad logística es una dimensión del saldo
+
+**Problema.** El owner (2026-11-03): al hacer una recepción se imprime una etiqueta que identifica ese grupo de productos
+armado como caja o palet; en el almacenamiento se escanea la etiqueta y el grupo entero es lo que entra al bin. Hace falta
+saber, en todo momento, qué hay dentro de cada caja o palet y dónde está.
+
+**Alternativas.**
+
+| | A. Dimensión del saldo (`handling_unit_id` en la clave) | B. Tabla de agrupación con contenido propio; ledger intacto |
+| --- | --- | --- |
+| Fuente de verdad del contenido | Una: los saldos con ese `handling_unit_id`, escritos sólo por el ledger | Dos: `handling_unit_lines` y `stock_balances`, que hay que mantener iguales a mano |
+| Mover la unidad | Un batch del ledger con una fila por clave del contenido; la base garantiza que todo o nada | Un movimiento de ledger por línea **más** actualizar la tabla de la unidad; un camino que olvide uno de los dos los separa sin error |
+| Sacar sueltas | Movimiento `(…, P1) → (…, NULL)`; la unidad queda con el resto por construcción | Movimiento más descuento en la línea de la unidad; misma divergencia posible |
+| Reconciliación (§6.5) | La de siempre: ledger contra saldos | Haría falta una segunda reconciliación unidad contra saldos |
+| Costo | Reescribir la clave ahora, sin datos (§15); una columna más en cada consulta por clave | Nada en el ledger; todo el costo en consistencia |
+| Referentes (sólo contexto) | Odoo guarda el paquete en el quant (`package_id` en `stock.quant`); SAP EWM modela la handling unit como portadora del stock | — |
+
+**Decisión: A**, por el owner el 2026-11-03. B se rechaza porque crea dos fuentes de verdad que pueden divergir, y el
+único remedio sería una reconciliación más. Se hace **ahora** porque el ledger sólo existe en `feature/wms-d`, sin merge a
+`develop` ni datos en producción: es el mismo argumento de §15 para reservas y estado.
+
+**Las cuatro reglas.**
+
+1. **Unidades mixtas** (varias variantes o lotes en un palet): **permitidas, ratificado por el owner el 2026-11-03.** El
+   modelo no necesita nada: son varias claves con el mismo `handling_unit_id`. Por eso no existe un código que rechace una
+   segunda variante o lote en la misma unidad. Lo que no se mezcla es el dueño: **un solo dueño por unidad** (`owner_id`
+   de la unidad, §5.1).
+2. **Anidamiento** (cajas dentro de un palet): **fuera del primer corte.** Una unidad no contiene otras unidades. Si llega,
+   entra con `parent_id` en `handling_units` y la regla de ubicación se extiende al árbol; no cambia la clave del saldo.
+3. **Sacar sueltas rompe la unidad.** Lo que sale de una unidad (picking, movimiento parcial, traslado parcial) va **sin**
+   `handling_unit_id` (`to_handling_unit_id = NULL`); la unidad conserva el resto en su ubicación; una unidad que queda sin
+   saldo pasa a `Closed` en la misma transacción, y su código no se reutiliza.
+4. **Etiqueta.** Interna `HU:{id-corto}` en Code 128 (QR opcional con la misma carga), y además **SSCC** si el tenant tiene
+   `gs1_company_prefix` (§23.3); reutiliza `qcode-pdf` con una plantilla nueva `handling-unit-label.typ`. Se imprime al
+   **confirmar la recepción** o cuando el operario **cierra una caja o palet** durante la recepción, desde la app.
+
+**Estados de la unidad.** `Building` (creada en una recepción abierta, todavía sin saldo; los conteos la nombran) →
+`Active` (tiene saldo; entra así al confirmar) → `Closed` (sin saldo; terminal). Una `Building` que llega a la
+confirmación sin conteos se cierra en esa confirmación.
+
+**Identificadores.** El `HU:` y el SSCC se registran en `wms.identifiers` con `kind = LogisticUnit` y `target_id` = id de
+la unidad (§25). Cambia lo que §16.1 decía de `LogisticUnit`: deja de ser «una unidad con cantidad propia, fase 5» y pasa
+a ser **siempre** una fila de `handling_units`. El rollo de cantidad variable de §16.1 cabe igual: es una unidad con un
+solo saldo de N metros; si necesita un `kind` propio (`Roll`), se agrega en fase 5 sin tocar la clave.
+
+**Dónde se construye.** La dimensión (columnas, clave única, orden de claves, upsert, reconciliación y vista por clave)
+entra en **WMS-D**, siempre en `NULL`, para que la clave no se reescriba nunca con datos vivos. El agregado
+`HandlingUnit`, su tabla, sus endpoints, la etiqueta y la verificación de «una unidad, una ubicación» entran con el corte
+que confirme recepciones (WMS-G según §11.6) y el putaway de unidad entera con el de almacenamiento (WMS-H); el corte
+exacto se ratifica al planearlos.
 
 ---
 
@@ -1003,6 +1143,9 @@ Más las abiertas del spec de recepción que siguen sin respuesta: **P-5** queda
 | `NULLS NOT DISTINCT` y particionamiento requieren PG ≥ 15 y que la PK incluya la columna de partición | Migración rechazada | PG 18 en prod y Testcontainers; PK de `stock_movements` = `(id, occurred_at)` |
 | `balance.changed` publicado por movimiento satura el outbox | Cola `outbox` crece | Coalescencia por worker; métrica en `QueueNames` |
 | Sin `OrderStatus` de despacho en Quotations, la pantalla de pedidos no refleja el WMS | Confusión | Decisión del owner en fase 4; el WMS publica el evento igual |
+| Un camino nuevo mueve parte del contenido de una unidad conservando su `handling_unit_id` en otra ubicación (D-12) | La unidad queda partida en dos bins y la etiqueta miente | Verificación de «una unidad, una ubicación» al final de todo batch que toque unidades (§6.3), con 422 `wms.handling_unit.split_location`; prueba de integración que lo intenta |
+| Una consulta, sonda o reconciliación agrupa por la clave vieja (sin `handling_unit_id`) (D-12) | Drift falso en `balance_checks`, o dos saldos de la misma clave contados como uno | `handling_unit_id` en la reconciliación, en `v_stock_rows` y en el `WHERE` de toda lectura por clave desde WMS-D; prueba que siembra la misma clave suelta y dentro de una unidad |
+| La fila de la unidad y sus saldos se bloquean en orden distinto en dos comandos (D-12) | Deadlock entre «mover el palet» y «sacar sueltas» | Unidades primero (`FOR UPDATE` por `id`), saldos después en el orden de `StockKeyComparer` (§6.3) |
 | Suppliers no tiene sedes: una compra que llega a otra bodega del mismo proveedor | Modelo pobre | La OC guarda `supplier_id` + bodega destino; sede del proveedor es texto libre hasta que Suppliers lo modele |
 
 ---
@@ -1023,6 +1166,7 @@ Más las abiertas del spec de recepción que siguen sin respuesta: **P-5** queda
 | WMS-ADR-10 | `stock_movements` particionada por mes desde la creación: PK `(id, occurred_at)`, ninguna FK hacia la tabla, ventana de `occurredAt` que ningún `DETACH` cruza | §6.4, §11.2 |
 | WMS-ADR-11 | Sin Event Sourcing: domain events en proceso, integration events por el outbox de la plataforma (`WmsOutboxMessage` sobre `platform.outbox_messages`), ledger como registro de negocio | §11.4 |
 | WMS-ADR-12 | Operación móvil nativa Android; web sólo para supervisión | §12 (decisión del owner, spec de recepción §5) |
+| WMS-ADR-13 | Unidad logística (LPN) como dimensión del saldo: `handling_unit_id` en la clave y en el movimiento desde WMS-D; el agregado `HandlingUnit` no guarda contenido | D-12, §16.2 (decisión del owner, 2026-11-03) |
 
 ---
 
@@ -1037,6 +1181,14 @@ Más las abiertas del spec de recepción que siguen sin respuesta: **P-5** queda
 - `BalanceReconciliationTests`: ledger sembrado ≠ saldo → `balance_checks` y novedad, sin corrección automática.
 - `OwnerScopeTests`: miembro con scope de un owner no ve filas de otro en saldos, movimientos, documentos ni exportación (403/filtrado, nunca 404).
 - `CatalogVariantUsageCheckerTests`: variante con movimiento del WMS cuenta como «en uso».
+- **Unidad logística (D-12).** En WMS-D: `StockKeyComparerTests` (la unidad entra en el orden total, nula primero);
+  una prueba de migración que lee el índice `UQ_stock_balances_key` (`WmsDbContext.StockBalanceKeyIndex`) de `pg_indexes` y exige `handling_unit_id` entre sus
+  columnas con `NULLS NOT DISTINCT`; `InventoryLedgerPostingTests` (la misma clave suelta y dentro de una unidad son dos
+  saldos; una fila con unidad y otra sin ella no chocan); `BalanceReconciliationTests` (sin drift falso con dos saldos que
+  sólo difieren en la unidad). En el corte que crea las unidades: mover una unidad mueve todos sus saldos en un batch o
+  ninguno; un batch que deja una unidad en dos ubicaciones responde `wms.handling_unit.split_location` y no escribe nada;
+  `current_location_id` coincide con la ubicación de sus saldos después de cada operación; sacar sueltas deja la salida con
+  `handling_unit_id` nulo y cierra la unidad vacía; dos comandos concurrentes sobre la misma unidad no terminan en `40P01`.
 
 ---
 
@@ -1057,7 +1209,7 @@ recepción llevan su referencia.
 | RF-006 | Perfil logístico por variante: `base_uom`, precisión, `tracking` (`None/Lot/Serial`), `tracks_expiry`, peso, volumen, dimensiones, `storage_class`, `display_uom` | 1 |
 | RF-007 | Conversiones de unidad por variante (`code`, `factor`, código de barras opcional), sembradas desde `PackagingUnits` | 1 |
 | RF-008 | Catálogo de unidades por tenant con `UND`, `KG`, `G`, `L`, `ML`, `M` sembradas | 1 |
-| RF-009 | Identificadores múltiples (`kind ∈ Variant | Presentation | Lot | LogisticUnit`, §25): varios códigos por variante, por presentación, por lote y por unidad logística, únicos por tenant. Las ubicaciones **no** entran: su código es único por bodega (S7) | 1 (variante/presentación), 5 (lote/SSCC) |
+| RF-009 | Identificadores múltiples (`kind ∈ Variant | Presentation | Lot | LogisticUnit`, §25): varios códigos por variante, por presentación, por lote y por unidad logística, únicos por tenant. `LogisticUnit` apunta siempre a una fila de `handling_units` (D-12). Las ubicaciones **no** entran: su código es único por bodega (S7) | 1 (variante/presentación), 2 (unidad logística: `HU:` y SSCC impreso por QEP, D-12), 5 (lote; SSCC leído de GS1-128 ajeno) |
 | RF-010 | Cambiar `tracking` de una variante con saldo exige un documento de identificación que asigne lote o serial a lo existente | 3 |
 
 ### 20.2 Inventario
@@ -1089,6 +1241,8 @@ recepción llevan su referencia.
 | RF-046 | Tareas de putaway por recepción confirmada; mover a uno o varios bins con sugerencia del sistema y posibilidad de forzar con motivo | 2 |
 | RF-047 | Recepción de traslado entrante desde `TRANSIT`; faltante abre `TransitShortage` | 2 |
 | RF-048 | Devolución de cliente contra un despacho o pedido; devolución a proveedor contra una recepción (§23.1) | 4 |
+| RF-049 | Durante la recepción, armar unidades logísticas (`Box` o `Pallet`) desde la app: «Cerrar caja / palet» crea la unidad y le imprime la etiqueta (`HU:` en Code 128, SSCC si el tenant tiene prefijo GS1); los conteos la nombran y la confirmación escribe su contenido como saldos con su `handling_unit_id`. Unidades mixtas permitidas (regla 1 de §16.2, ratificada por el owner el 2026-11-03) (D-12) | 2 |
+| RF-050 | Almacenar una unidad entera escaneando su etiqueta y el bin destino: todos sus saldos se mueven en un solo batch y la unidad queda en ese bin (D-12) | 2 |
 
 ### 20.4 Internos y control
 
@@ -1102,6 +1256,8 @@ recepción llevan su referencia.
 | RF-065 | Novedades de inventario (`FoundUnregistered`, `Unidentified`, `Missing`, `Damaged`, `Expired`, `Misplaced`, `ThirdParty`, `LedgerDrift`) con el flujo de §9.3 | 2 (reporte), 3 (resolución completa) |
 | RF-066 | Reabastecimiento min/max de ubicaciones de picking con tareas generadas por worker y ejecutadas en la app | 5 |
 | RF-067 | Productos próximos a vencer: consulta y alerta por días configurables | 3 |
+| RF-068 | Mover una unidad logística entera entre ubicaciones de una bodega (movimiento interno) o entre bodegas (despacho de traslado y recepción en destino), siempre con todos sus saldos en un batch; una unidad está en una sola ubicación (D-12) | 2 |
+| RF-069 | Sacar cantidades sueltas de una unidad logística la rompe: lo que sale va sin `handling_unit_id`, la unidad conserva el resto y, si queda vacía, se cierra; consultar una unidad muestra su contenido (los saldos con su id), su ubicación y su historia (D-12) | 2 (movimiento interno, traslado), 4 (picking) |
 
 ### 20.5 Salidas
 
@@ -1176,6 +1332,12 @@ Reglas: el despacho es el único paso que toca el origen; cancelar después de `
 devuelve con otro traslado. Un traslado **dentro** de la misma bodega no es un `Transfer`: es `InternalMove` (RF-061),
 un solo movimiento `(A, Available) → (B, Available)` sin tránsito ni documento de dos pasos.
 
+**Con unidades logísticas (D-12, RF-068).** Despachar una unidad entera mueve todos sus saldos a
+`(MDE/TRANSIT, InTransit, P1)` y la unidad pasa a esa ubicación (y a la bodega destino); la recepción en destino la mueve
+entera a `(MDE/REC-01, Received, P1)` y de ahí al putaway de unidad (RF-050). Si al recibir falta parte del contenido, lo
+contado sale de la unidad hacia el muelle como suelto y el faltante queda en `TRANSIT` dentro de la unidad con su
+`TransitShortage`; el corte que lo implemente decide si conviene otro tratamiento.
+
 ### 22.2 Conteo cíclico con ajuste
 
 1. Worker `CycleCountScheduler` (fase 3) propone un `Count` por `abc_class` y antigüedad del último conteo: A cada 30 días,
@@ -1219,7 +1381,8 @@ un solo movimiento `(A, Available) → (B, Available)` sin tránsito ni document
    `Reservation(Open)` por cada clave hasta cubrir; línea `Short` si no alcanza. Estado `Allocated`.
 3. `ReleaseToPicking` crea `PickTask`s ordenadas por `location.path`; estado `Released`.
 4. App: `ConfirmPick(task, qty, idempotencyKey)` valida bin y producto escaneados; movimiento
-   `(bin, Available) → (SHIP-01, Available)` que **consume** la reserva en la misma transacción. Sustitución sólo con
+   `(bin, Available) → (SHIP-01, Available)` que **consume** la reserva en la misma transacción. Si la clave picada está
+   dentro de una unidad logística, la salida va sin `handling_unit_id` y la unidad conserva el resto (regla 3 de §16.2). Sustitución sólo con
    variante equivalente declarada por el tenant y con `wms.discrepancy.resolve` (el permiso de supervisión que ya existe
    en los 16 de §11.5; el corte de fase 4 decide si merece uno propio, S8). Estado `Picking` → `Picked` cuando todas las
    tareas cierran.
@@ -1265,6 +1428,13 @@ toda unidad entra como `(RET-01, Quarantine)`; inspección en web asigna disposi
   `package-label.typ`. Code 128 para ubicaciones y lotes internos; QR opcional con la misma carga.
 - Lote interno sin GS1: `LOT:{lot_id-corto}`; bulto: SSCC real si el tenant tiene prefijo GS1 configurado
   (`wms.tenant_settings.gs1_company_prefix`), si no `PKG:{id}` interno.
+- **Unidad logística (D-12, fase 2):** plantilla nueva `handling-unit-label.typ`, por el mismo camino que la de
+  ubicaciones (`LocationLabelRenderer`). Lleva siempre `HU:{id-corto}` en Code 128 (QR opcional con la misma carga), el
+  tipo (`Box`/`Pallet`), la bodega y la recepción de origen; si el tenant tiene `gs1_company_prefix`, además el SSCC en
+  GS1-128 (AI `00`). Se imprime al cerrar la unidad en la recepción o al confirmar la recepción. **Pendiente del corte que
+  la implemente:** cuántos caracteres del id forman el `id-corto` (tiene que ser único por tenant; `UNIQUE (tenant_id,
+  code)` lo garantiza y una colisión se reintenta) y cómo se numera la referencia serial del SSCC. El bulto de packing de
+  fase 4 (`PKG:`) se evalúa como otro `kind` de `handling_units` al planear esa fase.
 - Parser GS1 (fase 5, `Modules.Wms.Domain/Inventory/Gs1ElementString.cs`): reconoce FNC1, AIs de longitud fija
   `00` (18), `01` (14), `02` (14), `17` (6, `YYMMDD`), y variables con separador GS `10` (≤20), `30`, `37`, `21` (serial).
   Devuelve `{gtin, lot, expiry, serial, count, sscc}`; el GTIN se resuelve a variante por `wms.identifiers`
@@ -1351,6 +1521,10 @@ sobre un documento existente, el servidor deriva la clave `"{documento}:{id}:{ac
 | `wms.export.empty` / `wms.export.too_many_rows` | 422 | `POST /stock/export` sin filas que exportar, o con más de 50 000 |
 | `storage.file.expired` | 422 | `download-url` de un `WmsExport` con más de 24 h: el objeto vive bajo `exports/`, que el bucket borra a los dos días |
 | `wms.movement.already_reversed` | 422 | Segundo `POST /stock/movements/{id}/reverse` sobre el mismo movimiento: se revierte una sola vez (§6.2) |
+| `wms.handling_unit.not_found` | 404 | **Propuesto (D-12).** Unidad o código `HU:`/SSCC que no existe en el tenant (`WmsNotFound`, como `wms.movement.not_found`) |
+| `wms.handling_unit.split_location` | 422 | **Propuesto (D-12).** El batch dejaría saldos de una misma unidad en dos ubicaciones, o en otra que su `current_location_id`; incluye reversar una sola fila de un movimiento de unidad entera (§6.2). Extensiones `{ handlingUnitCode }` |
+| `wms.handling_unit.owner_mismatch` | 422 | **Propuesto (D-12).** Contenido de otro dueño dentro de una unidad |
+| `wms.handling_unit.closed` | 422 | **Propuesto (D-12).** Contar o mover hacia una unidad `Closed`, o mover una que no tiene saldo |
 
 Los códigos de validación finos que cada corte necesite (jerarquía de ubicaciones, formato de código, etc.) los define
 su plan y se suman a esta tabla al mergear el corte; el plan de WMS-B ya lista los suyos. También se agrega
@@ -1367,11 +1541,11 @@ ruta en fases 1–2 (`wms.purchase_order.manage`, `wms.count.*`) se registra igu
 | `wms.warehouse.manage` | `POST/PUT /warehouses`, `POST/PUT/DELETE /warehouses/{id}/locations[/{locationId}]`, `POST /warehouses/{id}/locations/labels` |
 | `wms.owner.manage` | `POST/PUT /owners` |
 | `wms.profile.manage` | `POST /uoms`, `PUT /variant-profiles/{variantId}` |
-| `wms.document.read` | `GET /warehouses`, `GET /warehouses/{id}/locations[/scannable]`, `GET /owners`, `GET /uoms`, `GET /variant-profiles`, `GET /adjustments`, `GET /receipts/pending`, `GET /purchase-orders/{id}/for-receiving`, `GET /transfers/{id}/for-receiving`, `GET /putaway-tasks`, `GET /discrepancies` |
+| `wms.document.read` | `GET /warehouses`, `GET /warehouses/{id}/locations[/scannable]`, `GET /owners`, `GET /uoms`, `GET /variant-profiles`, `GET /adjustments`, `GET /receipts/pending`, `GET /purchase-orders/{id}/for-receiving`, `GET /transfers/{id}/for-receiving`, `GET /putaway-tasks`, `GET /discrepancies`, `GET /handling-units/{id}`, `GET /handling-units/by-code` (D-12) |
 | `wms.stock.read` | `GET /stock`, `GET /stock/summary`, `GET /stock/movements` |
 | `wms.stock.export` | `POST /stock/export` |
 | `wms.purchase_order.manage` | Fase 2 (web de órdenes de compra; las rutas llegan con WMS-C) |
-| `wms.receipt.perform` | `POST /receipts`, `POST /receipts/{id}/counts`, `POST /receipts/{id}/discrepancies`, `POST /receipts/{id}/confirm`, `POST /receipts/{id}/discard` |
+| `wms.receipt.perform` | `POST /receipts`, `POST /receipts/{id}/counts`, `POST /receipts/{id}/discrepancies`, `POST /receipts/{id}/confirm`, `POST /receipts/{id}/discard`, `POST /receipts/{id}/handling-units`, `POST /handling-units/labels` (D-12) |
 | `wms.putaway.perform` | `POST /putaway-tasks/{id}/moves`, `POST /internal-moves` |
 | `wms.discrepancy.resolve` | `POST /discrepancies/{id}/review`, `POST /discrepancies/{id}/resolve`, `POST /discrepancies/{id}/reject`; en fases 4–5 también sustitución en picking y disposición de devoluciones hasta que tengan permiso propio |
 | `wms.transfer.manage` | `POST /transfers`, `POST /transfers/{id}/approve` |
@@ -1383,6 +1557,9 @@ ruta en fases 1–2 (`wms.purchase_order.manage`, `wms.count.*`) se registra igu
 
 `POST /internal-moves` no tiene permiso propio entre los 16: usa `wms.putaway.perform`, el permiso del operario que ya
 mueve mercancía entre bins. Queda así y se ratifica en WMS-H.
+
+Las rutas de unidades logísticas (D-12) **no** agregan permisos: usan `wms.receipt.perform` (crearlas e imprimir),
+`wms.putaway.perform` (moverlas) y `wms.document.read` (consultarlas). La lista sigue en 16 y `CompositionRootTests` en 89.
 
 ### 24.3 Endpoints de fase 1
 
@@ -1516,6 +1693,34 @@ POST /discrepancies/{id}/resolve  SK  [wms.discrepancy.resolve]  { version, deci
 POST /discrepancies/{id}/reject       [wms.discrepancy.resolve]  { version, note }
 ```
 
+**Unidades logísticas (D-12, propuesto; se congela al planear WMS-G/H).** Cambios a las rutas de arriba y rutas nuevas:
+
+```
+POST /receipts/{id}/handling-units  IK  [wms.receipt.perform]  { kind: "Box"|"Pallet", occurredAt, deviceId }
+   → 201 HandlingUnitDto (status Building)   // «Cerrar caja / palet»: la app imprime la etiqueta con la ruta de labels
+POST /receipts/{id}/counts  …  + handlingUnitId?          // el conteo cae dentro de esa unidad; 422 wms.handling_unit.closed si está Closed
+POST /receipts/{id}/confirm  …  → 200 { …, handlingUnits: [{ id, code, status }] }   // Building con conteos → Active; sin conteos → Closed
+POST /handling-units/labels      [wms.receipt.perform]  { handlingUnitIds: [] }  → 200 application/pdf   // handling-unit-label.typ (§23.3)
+
+GET  /handling-units/{id}        [wms.document.read]  → HandlingUnitDto
+GET  /handling-units/by-code?code=   [wms.document.read]  → HandlingUnitDto   // acepta HU:… y el SSCC; 404 wms.handling_unit.not_found
+HandlingUnitDto { id, code, sscc, kind, status, ownerId, warehouseId, locationId, locationCode, receiptId,
+                  contents: [{ variantId, productName, variantCode, lotId, lotCode, expirationDate, status, onHand, reserved, baseUom }],
+                  version }
+// contents son los saldos con ese handling_unit_id (no hay tabla de contenido): viaja completo porque la app lo muestra
+// antes de pedir el bin.
+
+POST /putaway-tasks/{id}/moves  IK  [wms.putaway.perform]  { clientEventId, handlingUnitId, toLocationId, overrideReason?, occurredAt, deviceId }
+   → 200 { remainingQty, taskStatus }   // forma alternativa sin variantId ni quantity: mueve la unidad entera (RF-050)
+POST /internal-moves  IK  [wms.putaway.perform]  { warehouseId, handlingUnitId, toLocationId, note?, occurredAt, deviceId? } → 201 { batchId, movements: MovementDto[] }   // unidad entera (RF-068)
+POST /internal-moves  …  + fromHandlingUnitId?   // forma de hoy con variante y cantidad: saca sueltas de la unidad y la rompe (RF-069)
+POST /transfers/{id}/dispatch  SK  …  lines[].handlingUnitId?   // despacha la unidad entera de esa línea (RF-068)
+```
+
+`StockRowDto` y `MovementDto` (§24.3) suman `handlingUnitId` y `handlingUnitCode` (en `MovementDto`, de origen y destino)
+con el corte que crea las unidades; en WMS-D la columna existe pero siempre vale `null`, así que el contrato de fase 1 no
+cambia.
+
 ### 24.5 API externa (fase 6)
 
 Bajo `/api/v1/external/wms`, esquema `ApiKey`, scopes registrados con `ApiScopeDefinition`:
@@ -1547,6 +1752,12 @@ UNIQUE (tenant_id, value)
   escaneo de ubicación se resuelve siempre dentro de la bodega activa, contra `GET /warehouses/{id}/locations/scannable`
   (cache en la app, etag). La etiqueta del bin codifica sólo el `code`; si un día hace falta un código global de ubicación
   (p. ej. GLN + extensión), será una columna propia de `locations`, no una fila de `identifiers`.
+- **`kind = LogisticUnit` apunta a `wms.handling_units`** (D-12, 2026-11-03): `target_id` es el id de la unidad;
+  `symbology = Internal` para el `HU:{id-corto}` y `SSCC` para el SSCC. El valor del enum y el `CK_identifiers_kind` ya
+  existen desde WMS-B (`IdentifierKind.LogisticUnit`) y no cambian; cambia el significado: antes era «unidad con cantidad
+  propia, fase 5» (§16.1), ahora es siempre una fila de `handling_units`, y llega en fase 2. A diferencia de las
+  ubicaciones, el código de una unidad **sí** es único por tenant, así que `UNIQUE (tenant_id, value)` le sirve. Un
+  escaneo que empieza por `HU:` se resuelve contra unidades antes que contra mercancía (§12).
 
 ## 26. ADRs
 
@@ -1579,6 +1790,7 @@ Formato completo. Las alternativas detalladas ya están en la sección citada; a
   la fila lleva además `allows_negative boolean NOT NULL`, que el ledger escribe en el upsert desde `Location.AllowsNegative`
   (`Supplier`, `Customer`, `Adjustment`), con `CHECK (on_hand >= 0 OR allows_negative)` y
   `CHECK (reserved >= 0 AND (allows_negative OR reserved <= on_hand))` (S1). No hay columna `location_is_virtual`.
+  WMS-ADR-13 (D-12) suma `handling_unit_id`, también nullable, a la misma clave.
 - **Consecuencias:** +3PL y lotes sin migración; +el `CHECK` no necesita join a `locations`; −toda consulta de «cuánto hay» agrupa; −el modelo A arrastra un `owner_id` que la UI oculta.
 - **Riesgos:** confusión al sumar estados. Mitigación: `available`, `pickable` y `summary` calculados en una sola vista SQL (`wms.v_stock_summary`,
   definida en §11.2 con `l.is_virtual` y `l.allows_picking` del join a `locations`) que todos usan (S10).
@@ -1635,6 +1847,21 @@ Formato completo. Las alternativas detalladas ya están en la sección citada; a
 - **Contexto:** decisión del owner, spec de recepción §5. **Decisión:** Kotlin + Compose + ML Kit bundled; sin PWA.
 - **Consecuencias:** +offline real y cámara en gama baja; −dos frontends; −contratos de API congelados por corte.
 - **Riesgos:** el rate limit de login por IP. Ya documentado.
+
+### WMS-ADR-13 · Unidad logística (LPN) como dimensión del saldo
+- **Estado:** decidido por el owner, 2026-11-03 (D-12), incluida la regla de unidades mixtas (permitidas).
+  **Contexto:** §5.1, §6.1, §6.3, §16.2. **Decisión:** `handling_unit_id` nullable en la clave única de `stock_balances`
+  (`NULLS NOT DISTINCT`) y en `StockKey`; el movimiento lleva `from_handling_unit_id` y `to_handling_unit_id`; agregado
+  `HandlingUnit` (`wms.handling_units`) sin contenido propio: su contenido son sus saldos. Una unidad está en una sola
+  ubicación, es de un solo dueño y se cierra al quedar vacía; sacar sueltas la rompe; sin anidamiento en el primer corte.
+  La dimensión entra en WMS-D (siempre `NULL`); el agregado y sus rutas, con la recepción y el putaway de fase 2.
+- **Alternativa rechazada:** tabla de agrupación con su propio contenido y el ledger intacto: dos fuentes de verdad.
+- **Consecuencias:** +una sola fuente de verdad, reconciliable con el mecanismo de §6.5; +mover un palet es un batch
+  atómico; +la historia del palet es un filtro del ledger; −una columna más en la clave, en el orden de claves y en toda
+  consulta por clave; −mover una unidad escribe una fila por clave de su contenido; −todo comando sobre unidades bloquea
+  primero la fila de la unidad.
+- **Riesgos:** un camino que parta una unidad entre ubicaciones. Mitigación: verificación al final del batch con
+  `wms.handling_unit.split_location` y su prueba (§19).
 
 ## 27. Fuentes consultadas (2026-10-31)
 

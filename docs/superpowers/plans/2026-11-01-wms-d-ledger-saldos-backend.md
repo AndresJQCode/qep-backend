@@ -1080,7 +1080,108 @@ git status --short
 ```
 Expected: build sin warnings nuevos; todas las pruebas listadas PASS; `git status` sin `.cs` de 0 bytes ni `packages.lock.json` sin commitear (si cambió alguno, va en este commit). `dotnet format` se mide contra el baseline del repo (CRLF): sólo cuentan los archivos tocados.
 - [x] **Step 4: Commit** — `git commit -m "docs(wms): document the immutable ledger, partitions and idempotency contract"`.
-- [ ] **Step 5: Cierre**: `git log --oneline develop..feature/wms-d`; la rama queda lista para revisión y merge a `develop` (nunca a `main`); `docs/estado.md` se actualiza en `develop` al mergear.
+- [ ] **Step 5: Cierre**: `git log --oneline develop..feature/wms-d`; la rama queda lista para revisión y merge a `develop` (nunca a `main`); `docs/estado.md` se actualiza en `develop` al mergear. **Corre después de Task 18** (D-12, 2026-11-03): la rama no se cierra sin la dimensión `handling_unit_id`.
+
+---
+
+### Task 18: Dimensión `handling_unit_id` en la clave del saldo y en el movimiento (D-12)
+
+> **Agregada el 2026-11-03**, con Tasks 1–17 ya implementadas en la rama. Spec §5.1, §6.1, §6.3, §16.2, WMS-ADR-13.
+
+**Cubre:** D-12 (sólo la dimensión), RNF-01, RNF-03, RNF-13 (el mismo argumento: la clave no se reescribe con datos vivos).
+
+**Por qué aquí y no después.** El owner decidió el 2026-11-03 que la unidad logística (caja o palet, LPN) es una
+dimensión del saldo. La clave única de `stock_balances` y la tabla particionada `stock_movements` existen sólo en
+`feature/wms-d`, sin merge a `develop` ni datos en producción: hoy cambiarlas es una columna y un índice; después del
+merge sería reescribir la clave con stock vivo (spec §15).
+
+**Qué entra en WMS-D y qué no.** Entra **sólo la dimensión**, y siempre en `NULL`: columnas, clave única, `StockKey` y su
+orden, upsert y débito del ledger, reverso, reconciliación, `balance_checks` y la vista por clave. **No** entran —van con
+el corte que confirme recepciones (WMS-G) y con el putaway (WMS-H), a ratificar al planearlos—: el agregado
+`HandlingUnit` y la tabla `wms.handling_units`, las FKs hacia ella, el índice parcial de contenido, la verificación de
+«una unidad, una ubicación» (`wms.handling_unit.split_location`), el bloqueo de la fila de la unidad, las rutas de §24.4,
+la etiqueta `handling-unit-label.typ`, los campos `handlingUnitId` de `StockRowDto`/`MovementDto`, la columna en
+`reservations` (fase 3) y en `adjustment_lines`. Todo eso es aditivo (columnas nullable, tablas nuevas) y no toca la
+clave. Ningún código de error nuevo nace en esta tarea.
+
+**Lo que ya existe y cambia** (estado de la rama en `470088d8`):
+- `src/Modules/Wms/Modules.Wms.Domain/Inventory/StockKey.cs:7` — `StockKey(Guid OwnerId, Guid LocationId, Guid VariantId, Guid? LotId, StockStatus Status)`; `StockKeyComparer` (`:13-40`) ordena ubicación, variante, lote, estado, dueño.
+- `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/InventoryLedgerModel.cs:93-96` — `UQ_stock_balances_key` sobre `(TenantId, OwnerId, LocationId, VariantId, LotId, Status)` con `AreNullsDistinct(false)`.
+- `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/InventoryLedger.cs` — `DebitAsync` filtra por `lot_id IS NOT DISTINCT FROM` (`:232`, `:247`) y `UpsertAsync` hace `ON CONFLICT (tenant_id, owner_id, location_id, variant_id, lot_id, status)` (`:269`).
+- `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/InventoryLedgerSql.cs` — `CreateStockMovements` (sin columnas de unidad) y `CreateStockRowsView` (`v_stock_rows` sin `handling_unit_id`). Su comentario lo fija: **estas constantes son historia de `AddInventoryLedger`; un cambio va en una migración nueva**.
+- `src/Modules/Wms/Modules.Wms.Domain/Inventory/StockMovement.cs` (`Record`, `:112-125`: guarda un solo `LotId` y las ubicaciones/estados de cada lado) y `StockBalance.cs`.
+- `src/Modules/Wms/Modules.Wms.Application/Inventory/ReverseMovement.cs:116-117` — rearma las dos claves desde el movimiento guardado: sin la unidad, el reverso de un movimiento con unidad compensaría saldos sueltos.
+- `src/Modules/Wms/Modules.Wms.Application/Control/AdjustmentPosting.cs:23-24` — construye claves sin unidad (correcto: los ajustes de WMS-D son siempre sueltos).
+- `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/BalanceReconciliation.cs:76-109` — agrupa ledger y saldos por `(tenant, owner, location, variant, lot, status)` y escribe `balance_checks`; `src/Modules/Wms/Modules.Wms.Domain/Control/BalanceCheck.cs` guarda `LotId`.
+- No cambian: `LedgerDeltas` (netea por `StockKey`, hereda la unidad), `BalanceChangeQueue` (por variante), `StockProbes` (suman), `StockReadQueries.FindNonZeroBalanceKeysAsync` (la carga inicial sigue siendo suelta), `v_stock_summary` (agrupa por variante), `IdentifierKind.LogisticUnit` (ya existe desde WMS-B).
+
+**Files:**
+- Modify: `src/Modules/Wms/Modules.Wms.Domain/Inventory/StockKey.cs`, `StockMovement.cs`, `StockBalance.cs`, `LedgerEntry.cs` (sólo el comentario: la unidad puede cambiar entre extremos, como el estado), `src/Modules/Wms/Modules.Wms.Domain/Control/BalanceCheck.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Application/Inventory/ReverseMovement.cs`
+- Modify: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/InventoryLedger.cs`, `InventoryLedgerModel.cs`, `BalanceReconciliation.cs`
+- Create: `src/Modules/Wms/Modules.Wms.Infrastructure/Persistence/HandlingUnitDimensionSql.cs`, `Migrations/<ts>_AddHandlingUnitDimension.cs` (+ `.Designer.cs`, snapshot)
+- Test: `tests/Modules/Wms/Modules.Wms.UnitTests/Inventory/StockKeyComparerTests.cs`, `LedgerEntryRulesTests.cs` (ya cubre `LedgerEntry.Reverse`), `tests/Modules/Wms/Modules.Wms.IntegrationTests/InventoryLedgerMigrationTests.cs`, `InventoryLedgerPostingTests.cs`, `ReverseMovementApiTests.cs`, `BalanceReconciliationTests.cs`
+
+**Interfaces:**
+- `public readonly record struct StockKey(Guid OwnerId, Guid LocationId, Guid VariantId, Guid? LotId, StockStatus Status, Guid? HandlingUnitId = null)` — al final y con default para que los llamadores de WMS-D sigan compilando sin cambios.
+- `StockKeyComparer`: ubicación, variante, lote (`null` primero), **unidad (`null` primero, `Nullable.Compare`)**, estado, dueño. Spec §6.3.
+- `StockMovement`: `FromHandlingUnitId`, `ToHandlingUnitId` (`Guid?`), llenados por `Record` desde `from.HandlingUnitId` y `to.HandlingUnitId`; columnas `from_handling_unit_id`, `to_handling_unit_id`. `StockBalance.HandlingUnitId`; columna `handling_unit_id`. `BalanceCheck.HandlingUnitId`.
+- `LedgerEntry` **no** exige la misma unidad en los dos extremos (spec §6.1: recibir dentro de un palet, almacenarlo entero o sacar sueltas cambian la unidad); sigue exigiendo misma variante, dueño y lote.
+- Guard interno mientras no exista el agregado: `InventoryLedger.PostAsync` lanza `InvalidOperationException("Handling units are not supported until the HandlingUnit aggregate exists.")` si alguna clave de una entrada **sin** `ReversesMovementId` trae `HandlingUnitId`. No es un código de negocio (ningún endpoint de WMS-D puede producirla) y lo retira el corte que crea las unidades.
+
+- [ ] **Step 1: RED — orden y clave en unitarias**
+  - `StockKeyComparerTests.NullHandlingUnitSortsBeforeAnyUnitAndTheOrderIsTotal`: cuatro claves que sólo difieren en la unidad (`null`, `U1`, `U2`) y en el estado; el orden directo y el inverso coinciden y la de `null` va primero dentro de la misma `(ubicación, variante, lote)`.
+  - `StockKeyComparerTests.KeysThatDifferOnlyInHandlingUnitAreDifferent`: `Compare ≠ 0` y `!=` entre la clave suelta y la misma con `U1`.
+  - Reverso: `LedgerEntry.Reverse` de una entrada `(A, Received, null) → (B, Available, U1)` devuelve `(B, Available, U1) → (A, Received, null)`.
+
+```powershell
+dotnet test tests/Modules/Wms/Modules.Wms.UnitTests --filter "FullyQualifiedName~StockKeyComparerTests|FullyQualifiedName~LedgerEntryRulesTests"
+```
+Expected: error de compilación (`StockKey` no tiene `HandlingUnitId`).
+
+- [ ] **Step 2: GREEN — dominio.** `StockKey` con el parámetro final, comparador, `StockMovement`/`StockBalance`/`BalanceCheck` con sus propiedades. Mismo comando: PASS, y `dotnet test tests/ArchitectureTests/ArchitectureTests --filter "FullyQualifiedName~WmsLayerTests"` sigue verde (`Inventory` sigue con `Guid` blandos: la unidad tampoco es un tipo fuerte).
+
+- [ ] **Step 3: RED — esquema e integración**
+  - `InventoryLedgerMigrationTests.TheBalanceKeyIncludesTheHandlingUnitWithNullsNotDistinct`: lee `indexdef` de `pg_indexes` para `UQ_stock_balances_key` y exige `handling_unit_id` entre las columnas y `NULLS NOT DISTINCT`.
+  - `InventoryLedgerMigrationTests.MovementsCarryFromAndToHandlingUnit`: `information_schema.columns` de `wms.stock_movements` (y de una partición mensual, que hereda) tiene `from_handling_unit_id` y `to_handling_unit_id` nullable; `wms.v_stock_rows` expone `handling_unit_id`.
+  - `InventoryLedgerPostingTests.TheSameKeyLooseAndInsideAUnitAreTwoBalances`: siembra a mano (SQL, como `WmsLedgerSeeding`) un saldo suelto y otro de la misma `(dueño, ubicación, variante, lote, estado)` con `handling_unit_id = U1`; no chocan, y un ajuste posteado por la API (suelto) suma sólo al suelto.
+  - `InventoryLedgerPostingTests.APostedBatchWithAHandlingUnitIsRejectedUntilTheAggregateExists`: el guard interno de arriba.
+  - `ReverseMovementApiTests.TheReversalRestoresTheHandlingUnitOfEachSide`: sembrado un movimiento `(REC-01, Received, NULL) → (A-01-02, Available, U1)` con su saldo, el reverso por la API compensa `(A-01-02, Available, U1)` y no el saldo suelto de `A-01-02`. Es el único camino de WMS-D que escribe una unidad no nula, porque copia la del original: **el guard exceptúa las entradas con `ReversesMovementId`** (la unidad que traen ya la aceptó el ledger, o la sembró la prueba), y el comentario del guard lo dice.
+  - `BalanceReconciliationTests.TwoBalancesThatDifferOnlyInHandlingUnitDoNotDrift`: ledger y saldos sembrados con la misma clave suelta y en `U1`; la reconciliación no escribe `balance_checks`. Y si uno de los dos difiere, la fila de `balance_checks` lleva su `handling_unit_id`.
+
+```powershell
+Stop-Process -Name Api -ErrorAction SilentlyContinue
+$env:Seed__Enabled = "false"
+dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~InventoryLedgerMigrationTests|FullyQualifiedName~InventoryLedgerPostingTests|FullyQualifiedName~ReverseMovementApiTests|FullyQualifiedName~BalanceReconciliationTests"
+```
+Expected: FAIL (la columna no existe; `42703` en los sembrados).
+
+- [ ] **Step 4: GREEN — migración `AddHandlingUnitDimension`**
+
+```powershell
+dotnet ef migrations add AddHandlingUnitDimension --project src/Modules/Wms/Modules.Wms.Infrastructure --context WmsDbContext -o Persistence/Migrations
+```
+
+  - En `InventoryLedgerModel`: `HandlingUnitId` en `StockBalance` (`handling_unit_id`) y en el índice `UQ_stock_balances_key` **entre `LotId` y `Status`**, con `AreNullsDistinct(false)`; `FromHandlingUnitId`/`ToHandlingUnitId` en `StockMovement`; `HandlingUnitId` en `BalanceCheck`. EF genera el `AddColumn` de `stock_balances` y `balance_checks` y el drop/create del índice único (tabla vacía en todo ambiente: no hay datos que reescribir).
+  - `stock_movements` es `ExcludeFromMigrations`: sus columnas van por SQL crudo en `HandlingUnitDimensionSql` (nuevo; **no** se edita `InventoryLedgerSql`, que es historia de `AddInventoryLedger`): `ALTER TABLE wms.stock_movements ADD COLUMN IF NOT EXISTS from_handling_unit_id uuid NULL, ADD COLUMN IF NOT EXISTS to_handling_unit_id uuid NULL;` (en una tabla particionada se propaga a todas las particiones, incluida `DEFAULT`, y a las que cree después `ensure_movement_partition`).
+  - `CREATE OR REPLACE VIEW wms.v_stock_rows` con `b.handling_unit_id` **al final** de la lista: PostgreSQL sólo deja agregar columnas al final en un `OR REPLACE`, y `v_stock_summary` depende de esta vista.
+  - `Down` vacío y comentado, por la misma razón que `AddInventoryLedger` (S11).
+  - Sin FKs: `wms.handling_units` no existe todavía; las agrega el corte que la crea (las columnas están en `NULL`, así que validar la FK es inmediato).
+  - `InventoryLedger`: `UpsertAsync` inserta `handling_unit_id` y su `ON CONFLICT` lleva `(tenant_id, owner_id, location_id, variant_id, lot_id, handling_unit_id, status)`; `DebitAsync` suma `AND handling_unit_id IS NOT DISTINCT FROM {key.HandlingUnitId}::uuid` en el `UPDATE` y en la relectura; el guard interno al entrar a `PostAsync`.
+  - `ReverseMovement` arma las claves con `movement.FromHandlingUnitId`/`ToHandlingUnitId`.
+  - `BalanceReconciliation`: `handling_unit_id` en las dos ramas del `UNION ALL` (`to_handling_unit_id` y `from_handling_unit_id`), en los `GROUP BY`, en el `JOIN` con `IS NOT DISTINCT FROM` y en el `INSERT` a `balance_checks`.
+
+  Mismo comando del Step 3: PASS. Además, sin regresiones en lo ya construido:
+
+```powershell
+dotnet test tests/Modules/Wms/Modules.Wms.IntegrationTests --filter "FullyQualifiedName~AdjustmentApiTests|FullyQualifiedName~InitialBalanceImportTests|FullyQualifiedName~StockQueryTests|FullyQualifiedName~LedgerImmutabilityTests|FullyQualifiedName~LedgerPartitionTests|FullyQualifiedName~StockProbeTests"
+dotnet test tests/Bootstrapper/Bootstrapper.UnitTests --filter "FullyQualifiedName~CatalogVariantUsageCheckerTests"
+```
+Expected: PASS.
+
+- [ ] **Step 5: Docs.** `CLAUDE.md`, en la entrada de la clave de `stock_balances`: la clave incluye `handling_unit_id` (`NULL` = suelta, también `NULLS NOT DISTINCT`) y un `INSERT` a mano lo lleva en `NULL`; `CatalogVariantUsageChecker` no cambia. README: una línea en la sección del ledger.
+
+- [ ] **Step 6: Commit** — `git commit -m "feat(wms): add the handling unit dimension to the balance key and the movement"`.
 
 ---
 
@@ -1099,5 +1200,7 @@ Expected: build sin warnings nuevos; todas las pruebas listadas PASS; `git statu
 **Verificación de pasos:** cada tarea tiene comando RED y GREEN con `--filter` por clase; las de integración (T3, T4, T5, T7, T8, T9, T10, T11, T12, T13, T14, T15) llevan `$env:Seed__Enabled = "false"` en línea aparte antes del `dotnet test`; cada tarea cierra con su commit convencional sin atribución.
 
 **Review Focus:** los siete riesgos tienen prueba en T1/T4, T3/T14, T8, T7, T10, T8 (`AnotherTenantReplayingAKeyIs403`) y T4 (`MovingIntoTheReservedPortionFailsWithReservedAndLeavesTheBalance`).
+
+**D-12 (2026-11-03, Task 18):** de la unidad logística, WMS-D lleva sólo la dimensión (`StockKey.HandlingUnitId`, `UQ_stock_balances_key`, `from_`/`to_handling_unit_id`, upsert, débito, reverso, reconciliación, `v_stock_rows`), siempre en `NULL` salvo lo que copie un reverso; el agregado `HandlingUnit`, la tabla, las FKs, la regla «una unidad, una ubicación», los códigos `wms.handling_unit.*` (propuestos en §24.2), las rutas y la etiqueta quedan para WMS-G/H. La regla 1 (unidades mixtas) la ratificó el owner el 2026-11-03: se permiten, y no afecta esta tarea.
 
 **Proporción:** el plan es más corto que el spec; los bloques de código son pruebas, SQL de migración y firmas.
