@@ -23,7 +23,11 @@ public sealed class OrderDraftBuilderPersonTypeTests
                     "Otra S.A.S.", "900123456", "3001234567", "otra@example.com", "Calle 1 # 2-3",
                     Guid.CreateVersion7(), Guid.CreateVersion7(),
                     PersonType: billingPersonType, IdentificationType: "NIT"),
-                null),
+                null,
+                // Una fila propia sin perfil fiscal no se puede crear (order.billing.tax_profile_required), y esa
+                // regla del agregado corre antes que la del tipo de persona.
+                BillingWithRetention: false,
+                BillingVatSurplus: false),
             new QuotationBillingAccountRequest(CompanyId, "Bancolombia", "7542", "COP"),
             [new OrderItemAddition(VariantId, 1m)],
             OrderPaymentStatus.PaymentPending, [], AllowIncompleteCustomer: false);

@@ -235,7 +235,7 @@ public sealed class StoreOrderRequest
         }
     }
 
-    // Cualquier lease vivo, también el propio: la toma ya pudo crear el pedido, y descartar ahí lo dejaría huérfano.
+    // Any live lease, including our own: the take may already have created the order, and discarding now would orphan it.
     private void RequireNoLiveLease(DateTimeOffset now)
     {
         if (IsBeingTaken(now))

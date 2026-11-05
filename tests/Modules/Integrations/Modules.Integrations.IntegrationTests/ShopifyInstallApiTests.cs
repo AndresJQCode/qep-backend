@@ -251,7 +251,11 @@ public sealed class ShopifyInstallApiTests
         var state = await StartFromTenantAsync(owner, tenant.TenantId);
         using var anonymous = factory.CreateClient();
 
+        // El canje fecha con el reloj de la API (SystemClock, el del host), no con el de Postgres: el contenedor
+        // puede ir corrido respecto del host, así que la ventana se arma con el reloj del host alrededor del canje.
+        var beforeExchange = DateTimeOffset.UtcNow;
         var completed = await SendAsync(anonymous, HttpMethod.Post, CompleteUrl, CompleteBody(state));
+        var afterExchange = DateTimeOffset.UtcNow;
         var completedText = await completed.Content.ReadAsStringAsync(Ct);
 
         Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
@@ -270,10 +274,12 @@ public sealed class ShopifyInstallApiTests
             SELECT count(*) FROM integrations.shopify_installs
             WHERE id = @id AND shop_id = '12345678' AND shop_name = 'Mi Tienda' AND scopes = 'read_orders,read_customers'
               AND access_token_protected IS NOT NULL AND key_id = 'test'
-              AND expires_at > now() + interval '6 days 23 hours' AND expires_at <= now() + interval '7 days'
+              AND expires_at >= @earliest AND expires_at <= @latest
               AND position(convert_to(@token, 'UTF8') in access_token_protected) = 0
             """,
             ("id", install.InstallId),
+            ("earliest", beforeExchange.AddDays(7)),
+            ("latest", afterExchange.AddDays(7)),
             ("token", SentinelShopifyAccessToken)));
 
         // A Shopify: el canje con el par de la app y el code; la Admin API con el token recién canjeado.

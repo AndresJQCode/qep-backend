@@ -174,7 +174,7 @@ public sealed class CustomerWriteHandlersTests
         target.Update(
             target.Name, null, new CustomerIdentification { Type = IdentificationType.Nit, Number = "900123456" }, PersonType.Juridica,
             new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
-            new CustomerCommercialInfo { ClassificationId = Classification.Id }, null, Now, new PlusNormalizer());
+            new CustomerCommercialInfo { ClassificationId = Classification.Id }, Classification.Prefix, Now, new PlusNormalizer());
         Assert.Equal(PersonType.Juridica, target.PersonType);
 
         try

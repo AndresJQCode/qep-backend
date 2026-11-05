@@ -14,10 +14,18 @@ using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
 namespace Modules.Messaging.IntegrationTests;
 
+/// <summary>xUnit runs a collection without parallelization after all the parallel ones, alone.</summary>
+[CollectionDefinition(nameof(ExternalApiRequestLogTests), DisableParallelization = true)]
+public sealed class ExternalApiRequestLogTestsRunAlone;
+
 /// <summary>
 /// Spec 2026-11-01 parte 1 por HTTP y contra la base real: cada llamada identificada deja una fila, sin nada de lo que mandó el
 /// integrador, y quien sólo conoce un prefijo no escribe nada. Las filas se escriben después de responder, así que se esperan sondeando.
+/// Not run in parallel: <see cref="ABlockedLogWriteDoesNotDelayTheNextCall"/> bounds two calls by wall clock, and with the rest of the
+/// suite sharing the container a cold send took over 10 s in every full run (about 2 s alone), so the bound measured the suite's load
+/// instead of the writer.
 /// </summary>
+[Collection(nameof(ExternalApiRequestLogTests))]
 public sealed class ExternalApiRequestLogTests
 {
     private const string Phone = "573001234567";
