@@ -196,6 +196,12 @@ internal static class MessagingApiHarness
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
+    // Every started host, with the database it points at. Most tests build their host in an arrange helper and take ownership
+    // only after it returns, so an arrange that throws leaves the host running; its workers would then poll the database
+    // dropped below, fail on every tick and log the exception, and with enough leaked hosts that logging starved the thread
+    // pool and stalled the whole suite. The database stops its hosts before it drops.
+    private static readonly ConcurrentDictionary<QepApiFactory, string> StartedHosts = new();
+
     /// <summary>La base de una prueba.</summary>
     public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
@@ -203,6 +209,11 @@ internal static class MessagingApiHarness
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var host in StartedHosts.Where(entry => entry.Value == name).Select(entry => entry.Key).ToList())
+            {
+                await host.DisposeAsync();
+            }
+
             NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
             // FORCE: un worker del host que todavía no soltó su conexión no puede dejar la base viva.
             await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
@@ -215,8 +226,16 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        public override async ValueTask DisposeAsync()
+        {
+            StartedHosts.TryRemove(this, out _);
+            await base.DisposeAsync();
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Runs when the host is first built, so only a host that can be running is tracked.
+            StartedHosts.TryAdd(this, new NpgsqlConnectionStringBuilder(connectionString).Database!);
             builder.UseEnvironment("Development");
             // Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador
             // a un tenant ajeno (mismo criterio que ShopifyApiHarness). Cambia el comportamiento de las pruebas de Messaging que
