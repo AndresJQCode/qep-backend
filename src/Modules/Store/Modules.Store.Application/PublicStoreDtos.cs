@@ -131,8 +131,16 @@ public sealed record PublicCartQuoteLineDto(
 public sealed record PublicCartQuoteDto(
     string Currency,
     IReadOnlyList<PublicCartQuoteLineDto> Lines,
-    IReadOnlyList<Guid> Unavailable,
+    IReadOnlyList<PublicUnavailableLineDto> Unavailable,
     decimal Subtotal,
     decimal DiscountAmount,
     decimal TaxAmount,
     decimal Total);
+
+/// <param name="Reason">Hoy siempre <see cref="NotAvailable"/>; es texto para que un motivo nuevo no rompa al storefront.</param>
+public sealed record PublicUnavailableLineDto(Guid VariantId, string Reason)
+{
+    public const string NotAvailable = "NotAvailable";
+
+    public static PublicUnavailableLineDto Of(Guid variantId) => new(variantId, NotAvailable);
+}
