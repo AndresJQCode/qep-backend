@@ -336,4 +336,27 @@ public sealed class PublicCatalogApiTests
 
         Assert.Equal(["CO", "ES"], Strings(store["salesCountries"]));
     }
+
+    [Fact]
+    public async Task TheStoreContactCarriesTheWhatsAppLink()
+    {
+        await using var fixture = await OpenAsync((_, body) => body["whatsApp"] = "+57 300 123 4567");
+
+        var contact = (await fixture.GetJsonAsync("/"))["contact"]!;
+
+        Assert.Equal("+57 300 123 4567", (string)contact["whatsApp"]!);
+        Assert.Equal("https://wa.me/573001234567", (string)contact["whatsAppUrl"]!);
+    }
+
+    [Fact]
+    public async Task WithoutWhatsAppTheLinkIsNullButPresent()
+    {
+        await using var fixture = await OpenAsync();
+
+        var contact = (await fixture.GetJsonAsync("/"))["contact"]!.AsObject();
+
+        // El storefront lo lee con zod .nullable(): una clave ausente es un 503 en cada página de la tienda.
+        Assert.True(contact.ContainsKey("whatsAppUrl"));
+        Assert.Null(contact["whatsAppUrl"]);
+    }
 }

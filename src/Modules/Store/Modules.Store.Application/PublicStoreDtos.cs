@@ -1,3 +1,5 @@
+using Modules.Store.Domain;
+
 namespace Modules.Store.Application;
 
 // Las formas del contrato público. Son records propios y a propósito más chicos que los del backoffice: nunca viajan costos, pisos,
@@ -9,6 +11,40 @@ public sealed record PublicRegionalFormatDto(
 
 public sealed record PublicBannerDto(string? ImageUrl, string? Text);
 
+/// <summary>
+/// El contacto como lo pinta la tienda: el del backoffice más el enlace <c>wa.me</c> ya armado, para que el storefront no tenga que
+/// saber limpiar un número. Va siempre, null sin número: el storefront lo lee como obligatorio y anulable.
+/// </summary>
+/// <param name="WhatsAppUrl"><c>https://wa.me/</c> más sólo los dígitos del número (el formato que exige wa.me, sin «+» ni espacios).</param>
+public sealed record PublicStoreContactDto(
+    string? WhatsApp,
+    string? WhatsAppUrl,
+    string? Address,
+    string? Schedule,
+    string? InstagramUrl,
+    string? FacebookUrl,
+    string? TiktokUrl)
+{
+    public static PublicStoreContactDto From(StoreContact contact)
+    {
+        ArgumentNullException.ThrowIfNull(contact);
+        return new PublicStoreContactDto(
+            contact.WhatsApp,
+            WhatsAppUrlOf(contact.WhatsApp),
+            contact.Address,
+            contact.Schedule,
+            contact.InstagramUrl,
+            contact.FacebookUrl,
+            contact.TiktokUrl);
+    }
+
+    private static string? WhatsAppUrlOf(string? whatsApp)
+    {
+        var digits = new string((whatsApp ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        return digits.Length == 0 ? null : $"https://wa.me/{digits}";
+    }
+}
+
 /// <param name="Colors">Sólo los colores ya resueltos; los contrastes y los overrides son del backoffice.</param>
 /// <param name="Currencies">Los códigos en el orden guardado; la principal se informa aparte y la tienda decide cuál muestra primero.</param>
 /// <param name="FeaturedCategories">Las destacadas que tienen productos en alguna de las monedas de la tienda; la app las cruza con la moneda elegida.</param>
@@ -17,7 +53,7 @@ public sealed record PublicStoreDto(
     string? LogoUrl,
     StoreColorsDto? Colors,
     PublicBannerDto Banner,
-    StoreContactDto Contact,
+    PublicStoreContactDto Contact,
     string? DataPolicyUrl,
     string PricingMode,
     IReadOnlyList<string> Currencies,
