@@ -93,5 +93,20 @@ internal sealed class ProductCategoryRepository(CatalogDbContext dbContext) : IP
 
     public void Add(ProductCategory category) => dbContext.ProductCategories.Add(category);
 
-    public void Remove(ProductCategory category) => dbContext.ProductCategories.Remove(category);
+    // DeleteBehavior.Restrict nulls the parent_id of every child this context tracks as soon as the
+    // parent is marked Deleted, so the RESTRICT FK never sees them and they silently become roots. A
+    // tracked child is refused here, before EF touches it; an untracked one (the race after the
+    // load) still reaches the FK, which CatalogUnitOfWork translates to the same code. A child
+    // deleted in the same unit of work is not in the way.
+    public void Remove(ProductCategory category)
+    {
+        var hasTrackedChild = dbContext.ChangeTracker.Entries<ProductCategory>().Any(entry =>
+            entry.State != EntityState.Deleted && entry.Entity.ParentId == category.Id);
+        if (hasTrackedChild)
+        {
+            throw CategoryInUse.HasChildren();
+        }
+
+        dbContext.ProductCategories.Remove(category);
+    }
 }
