@@ -166,9 +166,11 @@ public sealed class PublicCatalogApiTests
         Assert.Equal(2, scales.Count);
         foreach (var scale in scales)
         {
+            // Contrato E: «discount» y la restricción por nombre («Multiple» | «PackagingUnit»), no el texto del backoffice.
             Assert.Equal(
-                Modules.Catalog.Domain.PriceScale.FinalFor(10_000m, (decimal)scale!["discountPercentage"]!),
+                Modules.Catalog.Domain.PriceScale.FinalFor(10_000m, (decimal)scale!["discount"]!),
                 (decimal)scale["final"]!);
+            Assert.Equal("Multiple", (string)scale["restriction"]!);
         }
     }
 

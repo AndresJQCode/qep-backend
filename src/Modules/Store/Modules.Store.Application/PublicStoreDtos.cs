@@ -76,7 +76,7 @@ public sealed record PublicProductsPageDto(
 
 /// <param name="Final">El precio por unidad con este descuento, derivado en el servidor.</param>
 public sealed record PublicScaleDto(
-    int FromUnit, int ToUnit, decimal DiscountPercentage, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
+    int FromUnit, int ToUnit, decimal Discount, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
 
 /// <param name="Scales">Vacías en una tienda «sólo detal».</param>
 /// <param name="OptionValueIds">Los ids de <see cref="PublicOptionValueDto"/> que arman la variante; vacía en un producto sin opciones.</param>

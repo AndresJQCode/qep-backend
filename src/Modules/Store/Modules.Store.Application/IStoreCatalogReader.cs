@@ -50,7 +50,7 @@ public sealed record StoreCategoryCount(Guid CategoryId, int ProductCount);
 
 public sealed record StoreCategoryNode(Guid Id, string Name, Guid? ParentId);
 
-/// <param name="Restriction"><c>multiple</c> o <c>packaging_unit</c>, como en el catálogo.</param>
+/// <param name="Restriction"><c>Multiple</c> o <c>PackagingUnit</c>, el nombre del enum: así lo fija el contrato E del storefront.</param>
 public sealed record StoreScaleView(
     int FromUnit, int ToUnit, decimal Discount, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
 

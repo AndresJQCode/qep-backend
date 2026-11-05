@@ -229,11 +229,12 @@ internal sealed class StoreCatalogReader(
                 scale.AllowGrouping))
             .ToList();
 
-    // El mismo texto que el catálogo (ProductPricingMapping, interno a Catalog.Application): el contrato público habla como el del backoffice.
+    // El contrato público (E) nombra la restricción como el enum, «Multiple» | «PackagingUnit»; el backoffice usa otro texto
+    // (ProductPricingMapping) y el storefront valida estos dos valores exactos.
     private static string WireRestriction(PriceScaleRestriction restriction) => restriction switch
     {
-        PriceScaleRestriction.Multiple => "multiple",
-        PriceScaleRestriction.PackagingUnit => "packaging_unit",
+        PriceScaleRestriction.Multiple => "Multiple",
+        PriceScaleRestriction.PackagingUnit => "PackagingUnit",
         _ => throw new ArgumentOutOfRangeException(nameof(restriction), restriction, null),
     };
 }
