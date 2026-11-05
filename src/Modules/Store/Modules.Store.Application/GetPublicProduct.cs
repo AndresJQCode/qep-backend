@@ -25,10 +25,15 @@ public sealed class GetPublicProductHandler(StorefrontResolver resolver, IStoreC
             product.CategoryId,
             product.ImageUrl,
             product.Gallery,
+            product.Options
+                .Select(option => new PublicOptionDto(
+                    option.Name, option.Values.Select(value => new PublicOptionValueDto(value.Id, value.Name)).ToList()))
+                .ToList(),
             currency,
             product.Variants.Select(variant => new PublicVariantDto(
                 variant.Id,
                 variant.Name,
+                variant.OptionValueIds,
                 variant.ImageUrl,
                 variant.Price,
                 variant.PackagingUnits,

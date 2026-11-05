@@ -187,6 +187,37 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task TheProductDetailCarriesItsOptionsImagesAndEachVariantsValues()
+    {
+        await using var fixture = await OpenAsync();
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        var product = await fixture.GetJsonAsync($"/products/{shirt.ProductId}?currency=COP");
+
+        Assert.Empty(product["images"]!.AsArray());
+        var option = Assert.Single(product["options"]!.AsArray())!;
+        Assert.Equal("Talla", (string)option["name"]!);
+        var values = option["values"]!.AsArray().ToDictionary(value => (string)value!["name"]!, value => (Guid)value!["id"]!);
+        Assert.Equal(["M", "L"], values.Keys.ToArray());
+        var variants = product["variants"]!.AsArray().ToDictionary(variant => (Guid)variant!["id"]!, variant => variant!);
+        Assert.Equal([values["M"]], variants[shirt.M]["optionValueIds"]!.AsArray().Select(id => (Guid)id!).ToArray());
+        Assert.Equal([values["L"]], variants[shirt.L]["optionValueIds"]!.AsArray().Select(id => (Guid)id!).ToArray());
+    }
+
+    [Fact]
+    public async Task AProductWithoutOptionsHasNoOptionsAndNoValues()
+    {
+        await using var fixture = await OpenAsync();
+        var (productId, _) = await fixture.CreateProductAsync("Taza", "T-1", Prices(5_000m));
+
+        var product = await fixture.GetJsonAsync($"/products/{productId}?currency=COP");
+
+        Assert.Empty(product["options"]!.AsArray());
+        Assert.Empty(product["images"]!.AsArray());
+        Assert.Empty(product["variants"]![0]!["optionValueIds"]!.AsArray());
+    }
+
+    [Fact]
     public async Task AHiddenProductDetailIs404()
     {
         await using var fixture = await OpenAsync();

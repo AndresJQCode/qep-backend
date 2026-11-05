@@ -79,23 +79,32 @@ public sealed record PublicScaleDto(
     int FromUnit, int ToUnit, decimal DiscountPercentage, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
 
 /// <param name="Scales">Vacías en una tienda «sólo detal».</param>
+/// <param name="OptionValueIds">Los ids de <see cref="PublicOptionValueDto"/> que arman la variante; vacía en un producto sin opciones.</param>
 public sealed record PublicVariantDto(
     Guid Id,
     string Name,
+    IReadOnlyList<Guid> OptionValueIds,
     string? ImageUrl,
     decimal Price,
     IReadOnlyList<int> PackagingUnits,
     IReadOnlyList<PublicScaleDto> Scales);
 
+/// <param name="Images">La galería en orden; la primera es la principal.</param>
+/// <param name="Options">Las opciones con los valores que alguna variante vendible usa: el selector de la ficha.</param>
 public sealed record PublicProductDto(
     Guid Id,
     string Name,
     string? Description,
     Guid? CategoryId,
     string? ImageUrl,
-    IReadOnlyList<string> Gallery,
+    IReadOnlyList<string> Images,
+    IReadOnlyList<PublicOptionDto> Options,
     string Currency,
     IReadOnlyList<PublicVariantDto> Variants);
+
+public sealed record PublicOptionDto(string Name, IReadOnlyList<PublicOptionValueDto> Values);
+
+public sealed record PublicOptionValueDto(Guid Id, string Name);
 
 public sealed record PublicGeoItemDto(Guid Id, string Name);
 

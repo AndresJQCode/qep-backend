@@ -55,9 +55,11 @@ public sealed record StoreScaleView(
     int FromUnit, int ToUnit, decimal Discount, decimal Final, string Restriction, int? Multiple, bool AllowGrouping);
 
 /// <param name="PackagingUnits">Sólo con escalas; las escalas <c>packaging_unit</c> los usan como cantidades válidas.</param>
+/// <param name="OptionValueIds">Un valor por opción del producto, en su orden; vacía en la variante por defecto.</param>
 public sealed record StoreVariantView(
     Guid Id,
     string Name,
+    IReadOnlyList<Guid> OptionValueIds,
     string? ImageUrl,
     decimal Price,
     IReadOnlyList<int> PackagingUnits,
@@ -70,6 +72,11 @@ public sealed record StoreProductView(
     Guid? CategoryId,
     string? ImageUrl,
     IReadOnlyList<string> Gallery,
+    IReadOnlyList<StoreOptionView> Options,
     IReadOnlyList<StoreVariantView> Variants);
+
+public sealed record StoreOptionView(string Name, IReadOnlyList<StoreOptionValueView> Values);
+
+public sealed record StoreOptionValueView(Guid Id, string Name);
 
 public sealed record StoreSellableVariant(Guid VariantId, Guid ProductId, string Name, string? ImageUrl);
