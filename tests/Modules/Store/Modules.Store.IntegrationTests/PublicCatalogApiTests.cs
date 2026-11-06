@@ -203,6 +203,36 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task ACardWithoutVariantsCarriesItsVariantIdAndOneWithVariantsCarriesNull()
+    {
+        await using var fixture = await OpenAsync();
+        var single = await fixture.CreateProductAsync("Taza", "T-1", Prices(5_000m));
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        var page = await fixture.GetJsonAsync("/products?currency=COP");
+
+        var cards = page["items"]!.AsArray().ToDictionary(node => (Guid)node!["id"]!, node => node!.AsObject());
+        Assert.Equal(single.VariantId, (Guid)cards[single.ProductId]["variantId"]!);
+        // The key travels even when null: the storefront schema expects it in every item.
+        Assert.True(cards[shirt.ProductId].ContainsKey("variantId"));
+        Assert.Null(cards[shirt.ProductId]["variantId"]);
+    }
+
+    [Fact]
+    public async Task AProductWithASingleSellableVariantCarriesThatVariant()
+    {
+        await using var fixture = await OpenAsync();
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+        await fixture.ExecuteAsync("UPDATE catalog.product_variants SET is_active = false WHERE id = @id", shirt.L);
+
+        var page = await fixture.GetJsonAsync("/products?currency=COP");
+
+        var card = Assert.Single(page["items"]!.AsArray(), node => (Guid)node!["id"]! == shirt.ProductId)!;
+        Assert.False((bool)card["hasVariants"]!);
+        Assert.Equal(shirt.M, (Guid)card["variantId"]!);
+    }
+
+    [Fact]
     public async Task TheProductDetailCarriesItsOptionsImagesAndEachVariantsValues()
     {
         await using var fixture = await OpenAsync();
