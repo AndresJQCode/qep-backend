@@ -68,8 +68,13 @@ public sealed record PublicCategoryDto(Guid Id, string Name, Guid? ParentId, int
 public sealed record PublicCategoriesDto(string Currency, IReadOnlyList<PublicCategoryDto> Items);
 
 /// <param name="PriceFrom">El precio de lista más bajo entre las variantes vendibles en la moneda, IVA incluido.</param>
+/// <param name="VariantId">
+/// La única variante vendible en la moneda cuando <paramref name="HasVariants"/> es falso; null cuando es verdadero. Existe para el botón
+/// «Agregar al carrito» de la grilla del storefront: sin él tendría que pedir la ficha en cada clic para saber qué variante agregar
+/// (spec 2026-11-05 tienda-publica-variant-id-en-listado). Viaja siempre, también en null.
+/// </param>
 public sealed record PublicProductCardDto(
-    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo, bool HasVariants);
+    Guid Id, string Name, Guid? CategoryId, string? ImageUrl, decimal PriceFrom, decimal PriceTo, bool HasVariants, Guid? VariantId);
 
 public sealed record PublicProductsPageDto(
     string Currency, IReadOnlyList<PublicProductCardDto> Items, int Total, int Page, int PageSize);

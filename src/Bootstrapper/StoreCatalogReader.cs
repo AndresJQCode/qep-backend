@@ -64,13 +64,18 @@ internal sealed class StoreCatalogReader(
         var cards = new List<StoreProductCard>(found.Count);
         foreach (var product in found)
         {
-            var prices = SellablePrices(product, currency);
-            if (prices.Count == 0)
+            var sellable = product.Variants.Where(variant => IsSellableIn(product, variant, currency)).ToList();
+            if (sellable.Count == 0)
             {
                 // El predicado de la consulta lo garantiza; si el dato cambió entre la consulta y acá, no se pinta una tarjeta sin precio.
                 continue;
             }
 
+            var prices = sellable.Select(variant => variant.PriceIn(currency)!.Value).ToList();
+            var hasVariants = sellable.Count > 1;
+
+            // Con una sola vendible la grilla agrega sin pasar por la ficha; es la misma que el carrito acepta al cotizar.
+            var variantId = hasVariants ? (Guid?)null : sellable[0].Id.Value;
             cards.Add(new StoreProductCard(
                 product.Id.Value,
                 product.Name,
@@ -78,7 +83,8 @@ internal sealed class StoreCatalogReader(
                 CatalogVariantReads.ImageUrlOf(product.ImageFileId, files, tenantId),
                 prices.Min(),
                 prices.Max(),
-                prices.Count > 1));
+                hasVariants,
+                variantId));
         }
 
         return (cards, total);
@@ -207,12 +213,6 @@ internal sealed class StoreCatalogReader(
 
     private static bool IsSellableIn(Product product, ProductVariant variant, string currency) =>
         product.IsActive && product.VisibleInStore && variant.IsActive && variant.PriceIn(currency) is not null;
-
-    private static List<decimal> SellablePrices(Product product, string currency) =>
-        product.Variants
-            .Where(variant => IsSellableIn(product, variant, currency))
-            .Select(variant => variant.PriceIn(currency)!.Value)
-            .ToList();
 
     // Una escala sin restricción es una copia incompleta que nadie puede cotizar: no se ofrece. El final lo deriva el servidor.
     private static List<StoreScaleView> ScalesOf(ProductVariant variant, decimal price) =>

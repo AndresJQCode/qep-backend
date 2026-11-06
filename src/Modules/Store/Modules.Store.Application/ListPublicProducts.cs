@@ -38,7 +38,7 @@ public sealed class ListPublicProductsHandler(StorefrontResolver resolver, IStor
         return new PublicProductsPageDto(
             currency,
             items.Select(card => new PublicProductCardDto(
-                card.Id, card.Name, card.CategoryId, card.ImageUrl, card.PriceFrom, card.PriceTo, card.HasVariants)).ToList(),
+                card.Id, card.Name, card.CategoryId, card.ImageUrl, card.PriceFrom, card.PriceTo, card.HasVariants, card.VariantId)).ToList(),
             total,
             page,
             pageSize);
