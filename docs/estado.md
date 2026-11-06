@@ -242,12 +242,16 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-06 — Mergeado a `develop` (`eff2302f`, sin push) el hotfix **pool del bloque HTTP del chatbot** (`e9906e52`, D-8 del spec
+  `2026-11-03-bloque-http-reintento-red-design.md`). Ese día `buscar-conductor` (`GET`) y `crear-legalizacion` (`POST`) fallaron con
+  `network:unknown:connection_reset` en menos de 90 ms, y el `POST` no se reintenta. El cliente `automations.external-api` suelta las conexiones
+  ociosas a los 4 s y las recicla a los 5 min (antes, el default de .NET: 1 min y sin límite). Sin migración ni configuración.
 - 2026-11-06 — Mergeado a `develop` (`d9611601`, sin push) **`variantId` en el listado público de la tienda** (`290f8186`). Spec
   `docs/superpowers/specs/2026-11-05-tienda-publica-variant-id-en-listado-design.md`. Sin migración; despliegue independiente del storefront.
 - 2026-11-03 — Hotfix **reintento de red del bloque HTTP del chatbot** (`700b0d68`), mergeado a `main` (`fb47e750`) y a `develop` (`3f5e071f`). Ante una
   falla de red el bloque repite la llamada una vez, a 1 s: cualquier método si el request no salió, sólo `GET` si pudo llegar; nunca timeout, status ni
   multipart. Cada intento deja su fila en `http_calls` con un `error_code` detallado (`network:<error>[:<socket>]`). Spec
-  `docs/superpowers/specs/2026-11-03-bloque-http-reintento-red-design.md`. Sin migración. **Pendiente:** el ajuste del pool, cuando el `error_code` de
+  `docs/superpowers/specs/2026-11-03-bloque-http-reintento-red-design.md`. Sin migración. **Pendiente (resuelto el 2026-11-06, `e9906e52`):** el ajuste del pool, cuando el `error_code` de
   producción muestre la causa real del incidente de `buscar-conductor`.
 - 2026-11-03 — Aprobado y commiteado (`27c8ae99`, sin push) **el spec «cuándo toma el bot la conversación»**, revisado contra `develop` (§9). El owner
   resolvió DP-8 (margen de 0 a 240 minutos, default 30), DP-9 (D-16 mide la última actividad de una persona, no `AutomationPausedAt`) y DP-10 (un eco de la
