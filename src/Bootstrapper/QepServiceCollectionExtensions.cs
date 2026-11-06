@@ -1237,7 +1237,14 @@ public static class QepServiceCollectionExtensions
         // Sin loggers: el de HttpClient registraría la URL con la query del cliente. CompositionRootTests lo amarra.
         services.AddSingleton<IExternalApiUrlPolicy, AutomationExternalApiUrlPolicy>();
         services.AddHttpClient(HttpBlockExecutor.HttpClientName, HttpBlockExecutor.ConfigureClient)
-            .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                // Spec 2026-11-03 D-8: el pool va acá y no en CreateHandler, que también usa el probador de la conexión, una llamada suelta.
+                var handler = ExternalApiUrlPolicy.CreateHandler();
+                handler.PooledConnectionIdleTimeout = HttpBlockExecutor.PooledConnectionIdleTimeout;
+                handler.PooledConnectionLifetime = HttpBlockExecutor.PooledConnectionLifetime;
+                return handler;
+            })
             .RemoveAllLoggers();
         // Spec 2026-10-21 §5.3, D-M5 y D-M14: los puertos del motor sobre la cola, la conversación, la salida del bot y los medios de
         // Mensajería, y el nombre de la empresa por Tenancy.
