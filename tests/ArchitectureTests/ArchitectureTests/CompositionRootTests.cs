@@ -765,6 +765,11 @@ public sealed class CompositionRootTests
         Assert.NotNull(primary.ConnectCallback);
         Assert.False(primary.AllowAutoRedirect);
         Assert.False(primary.UseProxy);
+        // Spec 2026-11-03 D-8: el pool suelta una conexión ociosa a los 4 s, antes que el keep-alive de cualquier salto (Cloudflare, ingress,
+        // NAT del hairpin), y la recicla a los 5 min aunque no esté ociosa. Con el default de .NET (1 min, vida sin límite) el bloque
+        // reutilizaba un socket que alguien ya había cerrado y recibía connection_reset (producción, 2026-11-06).
+        Assert.Equal(TimeSpan.FromSeconds(4), primary.PooledConnectionIdleTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(5), primary.PooledConnectionLifetime);
         using var scope = provider.CreateScope();
         Assert.IsType<Modules.Automations.Infrastructure.Http.HttpBlockExecutor>(
             scope.ServiceProvider.GetRequiredService<Modules.Automations.Application.Http.IHttpBlockExecutor>());
