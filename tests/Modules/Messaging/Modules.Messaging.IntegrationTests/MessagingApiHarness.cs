@@ -19,6 +19,12 @@ using Modules.Messaging.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
+// The connection budget below (max_connections=800) only holds for a bounded number of live hosts, and xUnit runs one class
+// per logical processor by default. Each host keeps about 17-24 pooled connections idle, one per worker that ticked, so on a
+// 32-thread machine 32 hosts sat at ~530 idle connections, and the bursts on top hit 53300 (too many clients). An arrange
+// that fails that way used to leak its host and snowball. Fixed here so the suite does not depend on the machine's core count.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
+
 namespace Modules.Messaging.IntegrationTests;
 
 /// <summary>
@@ -178,6 +184,7 @@ internal static class MessagingApiHarness
             // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
             // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
             // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
+            // That margin assumes the class parallelism capped at the top of this file (MaxParallelThreads).
             .WithCommand("-c", "max_connections=800")
             .Build();
         await container.StartAsync(CancellationToken.None);
@@ -196,6 +203,12 @@ internal static class MessagingApiHarness
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
+    // Every started host, with the database it points at. Most tests build their host in an arrange helper and take ownership
+    // only after it returns, so an arrange that throws leaves the host running; its workers would then poll the database
+    // dropped below, fail on every tick and log the exception, and with enough leaked hosts that logging starved the thread
+    // pool and stalled the whole suite. The database stops its hosts before it drops.
+    private static readonly ConcurrentDictionary<QepApiFactory, string> StartedHosts = new();
+
     /// <summary>La base de una prueba.</summary>
     public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
@@ -203,6 +216,11 @@ internal static class MessagingApiHarness
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var host in StartedHosts.Where(entry => entry.Value == name).Select(entry => entry.Key).ToList())
+            {
+                await host.DisposeAsync();
+            }
+
             NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
             // FORCE: un worker del host que todavía no soltó su conexión no puede dejar la base viva.
             await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
@@ -215,8 +233,16 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        public override async ValueTask DisposeAsync()
+        {
+            StartedHosts.TryRemove(this, out _);
+            await base.DisposeAsync();
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Runs when the host is first built, so only a host that can be running is tracked.
+            StartedHosts.TryAdd(this, new NpgsqlConnectionStringBuilder(connectionString).Database!);
             builder.UseEnvironment("Development");
             // Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador
             // a un tenant ajeno (mismo criterio que ShopifyApiHarness). Cambia el comportamiento de las pruebas de Messaging que

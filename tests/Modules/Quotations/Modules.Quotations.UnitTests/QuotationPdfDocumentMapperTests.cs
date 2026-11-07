@@ -314,6 +314,24 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(string.Empty, document.Billing.TaxId);
     }
 
+    // Task 1B de la tienda publica: fuera de Colombia la parte no tiene ciudad de DIVIPOLA, asi que la ciudad
+    // escrita y el pais se imprimen tras la direccion. Una parte colombiana sigue imprimiendo solo la direccion.
+    [Fact]
+    public void ThePdfPrintsTheForeignCity()
+    {
+        var foreign = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega Madrid", null, null, null,
+            "Calle Mayor 1", null, null, Country: "ES", CityName: "Madrid");
+        var colombian = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Billing", "Sede", null, null, null,
+            "Carrera 7", Guid.CreateVersion7(), Guid.CreateVersion7(), Country: "CO");
+
+        var document = Map(Response() with { Parties = [foreign, colombian] });
+
+        Assert.Equal("Calle Mayor 1, Madrid, ES", document.Shipping.Location);
+        Assert.Equal("Carrera 7", document.Billing.Location);
+    }
+
     [Fact]
     public void MapsTheShippingFields()
     {

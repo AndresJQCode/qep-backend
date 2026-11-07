@@ -29,10 +29,15 @@ public sealed record VerifiedApiKey(
     IReadOnlyList<string> Scopes,
     IReadOnlyList<Guid>? ConnectionIds);
 
+/// <summary>Una clave con el secreto correcto que ya no sirve: alcanza para atribuirle la llamada a su tenant.</summary>
+public sealed record RejectedApiKey(Guid Id, string Name, Guid TenantId);
+
 /// <param name="Key">La clave válida, o <c>null</c> si se rechazó.</param>
 /// <param name="Rejection">La causa del rechazo, o <c>null</c> si pasó.</param>
 /// <param name="KeyPrefix">El prefijo de una clave con forma válida, para el log. Nunca el secreto. Una clave malformada no lo trae.</param>
-public sealed record ApiKeyVerification(VerifiedApiKey? Key, ApiKeyRejection? Rejection, string? KeyPrefix);
+/// <param name="RejectedKey">Sólo en <c>Revoked</c> y <c>Expired</c>, que se deciden después de comparar el secreto: el prefijo es público
+/// y con él solo nadie puede escribir en el registro de un tenant.</param>
+public sealed record ApiKeyVerification(VerifiedApiKey? Key, ApiKeyRejection? Rejection, string? KeyPrefix, RejectedApiKey? RejectedKey = null);
 
 public interface IApiKeyVerifier
 {
@@ -71,12 +76,12 @@ public sealed class ApiKeyVerifier(IApiKeyRepository keys, ITenantDirectory tena
 
         if (key.RevokedAt is not null)
         {
-            return Rejected(ApiKeyRejection.Revoked, prefix);
+            return Rejected(ApiKeyRejection.Revoked, prefix, new RejectedApiKey(key.Id.Value, key.Name, key.TenantId));
         }
 
         if (key.ExpiresAt is { } expiresAt && expiresAt <= clock.UtcNow)
         {
-            return Rejected(ApiKeyRejection.Expired, prefix);
+            return Rejected(ApiKeyRejection.Expired, prefix, new RejectedApiKey(key.Id.Value, key.Name, key.TenantId));
         }
 
         // Un tenant sin fila (nulo) tampoco pasa: una clave nunca se apoya en el tenant simulado del stub.
@@ -92,5 +97,5 @@ public sealed class ApiKeyVerifier(IApiKeyRepository keys, ITenantDirectory tena
             prefix);
     }
 
-    private static ApiKeyVerification Rejected(ApiKeyRejection rejection, string? prefix) => new(null, rejection, prefix);
+    private static ApiKeyVerification Rejected(ApiKeyRejection rejection, string? prefix, RejectedApiKey? key = null) => new(null, rejection, prefix, key);
 }

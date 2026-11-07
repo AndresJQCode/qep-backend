@@ -283,8 +283,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veinte módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
-  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Suppliers y Tenancy — cada
+  Los veintiún módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
   Integrations, Customers ni Storage: lo que necesita entra por `IMessagingConnectionDirectory`,

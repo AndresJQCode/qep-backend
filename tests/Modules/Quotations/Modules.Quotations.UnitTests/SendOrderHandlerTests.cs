@@ -427,7 +427,8 @@ public sealed class SendOrderHandlerTests
                 customers,
                 new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
                 new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>())),
+                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
+                new NoOrderStoreRequestLookup()),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
                 tenant),

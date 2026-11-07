@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using Api;
 using Bootstrapper;
+using Bootstrapper.ApiKeys;
 using Bootstrapper.Authentication;
 using Bootstrapper.Cors;
 using Bootstrapper.Csrf;
@@ -50,6 +51,9 @@ using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
+using Modules.Store.Api;
+using Modules.Store.Application;
+using Modules.Store.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
@@ -153,6 +157,34 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+
+    // Tienda pública: la cubeta es la IP del visitante, no la del servidor del storefront (si no, todos los visitantes
+    // compartirían una). StorefrontClient.VisitorIp solo cree el header X-Qep-Visitor-Ip con la clave válida; sin ella
+    // cae a la IP del par directo, así que quien no tiene la clave no escapa de su cubeta cambiando el header. Corre antes
+    // del filtro de la clave: los intentos con clave inventada también gastan el cupo de su IP.
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontRead,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontSubmit,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+
+    static string? StorefrontSecret(HttpContext httpContext) =>
+        httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
 });
 
 var app = builder.Build();
@@ -171,6 +203,7 @@ app.UseExceptionHandler();
 // aplican al empezar la respuesta, así que sobreviven a que UseExceptionHandler la limpie. Ver
 // CorsSettings.
 app.UseQepCors();
+app.UseMiddleware<ExternalApiCallLoggingMiddleware>();
 // Afuera de autenticacion y autorizacion a proposito: es la unica posicion desde la que se puede
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.
@@ -267,6 +300,10 @@ app.MapSupplierEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+// Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
+app.MapStoreEndpoints();
+// Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
+app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontSubmit);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -346,6 +383,11 @@ await app.Services.InitializeServiceContractsDatabaseAsync(
 // Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
 // referencias blandas.
 await app.Services.InitializeLoansDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
+// clientes, pedidos y membresías son referencias blandas.
+await app.Services.InitializeStoreDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 
 // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y

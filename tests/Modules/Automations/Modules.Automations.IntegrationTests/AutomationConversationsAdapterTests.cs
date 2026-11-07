@@ -404,9 +404,17 @@ public sealed class AutomationConversationsAdapterTests
         });
 
         Assert.NotNull(state);
+        // El cliente escribió, así que la ventana de 24 h cierra 24 h después de su último entrante (spec 2026-10-31).
+        var lastInbound = new DateTimeOffset(lastInboundAt, TimeSpan.Zero);
         Assert.Equal(
-            new AutomationConversationState("Open", null, "Active", chatbotId, connectionId, new DateTimeOffset(lastInboundAt, TimeSpan.Zero), "Laura Gómez", WaId),
-            state with { LastInboundAt = state.LastInboundAt?.ToUniversalTime() });
+            new AutomationConversationState(
+                "Open", null, "Active", chatbotId, connectionId, lastInbound, "Laura Gómez", WaId,
+                WindowExpiresAt: lastInbound.AddHours(24)),
+            state with
+            {
+                LastInboundAt = state.LastInboundAt?.ToUniversalTime(),
+                WindowExpiresAt = state.WindowExpiresAt?.ToUniversalTime(),
+            });
         Assert.Null(foreign);
     }
 

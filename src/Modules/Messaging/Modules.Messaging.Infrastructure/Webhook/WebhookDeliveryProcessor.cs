@@ -402,6 +402,8 @@ internal sealed partial class WebhookDeliveryProcessor(
         var outcome = DeliveryOutcome.Processed;
         foreach (var status in change.Statuses)
         {
+            // Antes de aplicar: un failed borra el wamid de la fila, y esta consulta también la encuentra por él.
+            var optedOut = await StatusIngestion.FindMarketingOptOutCustomerAsync(dbContext, route.ConnectionId, status, cancellationToken);
             var applied = await StatusIngestion.ApplyAsync(dbContext, route.ConnectionId, status, cancellationToken);
             var result = applied.Outcome;
             if (result == StatusOutcome.NotFound && status.CallbackMessageId is not null)
@@ -413,7 +415,7 @@ internal sealed partial class WebhookDeliveryProcessor(
             {
                 LogForeignStatus(logger, deliveryId);
             }
-            else if (await StatusIngestion.FindMarketingOptOutCustomerAsync(dbContext, route.ConnectionId, status, cancellationToken) is { } customerId)
+            else if (optedOut is { } customerId)
             {
                 // Spec 2026-10-11 decisión 10: la persona apagó el marketing. Idempotente; si falla, la entrega se reintenta.
                 await customers.MarkMarketingOptOutAsync(route.TenantId, customerId, cancellationToken);

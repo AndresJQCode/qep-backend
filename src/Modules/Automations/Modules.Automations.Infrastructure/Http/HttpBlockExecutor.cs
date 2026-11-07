@@ -41,6 +41,17 @@ public sealed partial class HttpBlockExecutor(
     public const int MaxResponseBytes = 1024 * 1024;
 
     /// <summary>
+    /// Spec 2026-11-03 D-8: el pool suelta una conexión ociosa a los 4 s. La API sale por la IP pública aunque viva en el mismo clúster
+    /// (D-H2), y algún salto (proxy, ingress, NAT o un servidor con keep-alive de 5 s) cerraba la conexión antes que el default de .NET
+    /// (1 min): el siguiente request salía por un socket muerto y volvía <c>connection_reset</c> (producción, 2026-11-06). El costo es un
+    /// handshake TLS más cuando pasan más de 4 s entre llamadas.
+    /// </summary>
+    public static readonly TimeSpan PooledConnectionIdleTimeout = TimeSpan.FromSeconds(4);
+
+    /// <summary>Spec 2026-11-03 D-8: recicla la conexión aunque no esté ociosa, para que un cambio de DNS del proveedor se vea.</summary>
+    public static readonly TimeSpan PooledConnectionLifetime = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Desvío de D-H8 (plan 2, tarea 11): el spec dice 60 s de espera por el adjunto, pero la unidad entera corre dentro de un lease de 30 s y
     /// esperar 60 haría que otra réplica reclamara la misma fila a mitad. Se espera 20 s (4 reintentos cada 5 s): <c>MediaCopyWorker</c> corre
     /// cada 5 s y copia una imagen en menos de un segundo.

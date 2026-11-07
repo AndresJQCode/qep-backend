@@ -402,11 +402,11 @@ public sealed class OrdersReportSummaryApiTests
     }
 
     /// <summary>
-    /// Spec 2026-10-23 §2: <c>bySource</c> trae siempre los cuatro orígenes, en orden fijo e
+    /// Spec 2026-10-23 §2: <c>bySource</c> trae siempre todos los orígenes (la tienda, al final desde su spec), en orden fijo e
     /// incluso en cero, y <c>withoutClient</c> viene aunque no haya ventas a consumidor final.
     /// </summary>
     [Fact]
-    public async Task BySourceAlwaysCarriesTheFourSourcesInOrder()
+    public async Task BySourceAlwaysCarriesEverySourceInOrder()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -423,17 +423,18 @@ public sealed class OrdersReportSummaryApiTests
             $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
 
         Assert.NotNull(summary);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
-        Assert.Equal([1, 1, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 1, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", quotation.Total)], summary.BySource[0].Totals);
         Assert.Equal([new MoneyAmount("COP", manual.Total)], summary.BySource[1].Totals);
         Assert.Empty(summary.BySource[2].Totals);
         Assert.Empty(summary.BySource[3].Totals);
+        Assert.Empty(summary.BySource[4].Totals);
         Assert.Equal(0, summary.WithoutClient.Count);
         Assert.Empty(summary.WithoutClient.Totals);
     }
 
-    /// <summary>Un tenant sin pedidos también trae los cuatro orígenes en cero: la salida temprana
+    /// <summary>Un tenant sin pedidos también trae todos los orígenes en cero: la salida temprana
     /// del cero no puede saltarse la regla de colecciones fijas.</summary>
     [Fact]
     public async Task BySourceComesCompleteEvenWithoutOrders()
@@ -447,7 +448,7 @@ public sealed class OrdersReportSummaryApiTests
             $"{ReportsUrl(tenant.TenantId)}/orders/summary", TestContext.Current.CancellationToken);
 
         Assert.NotNull(summary);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
         Assert.All(summary.BySource, slice => Assert.Equal(0, slice.Count));
         Assert.NotNull(summary.WithoutClient);
         Assert.Equal(0, summary.WithoutClient.Count);

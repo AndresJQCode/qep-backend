@@ -466,7 +466,9 @@ public static class CustomerEndpoints
                 request.Address,
                 request.CityId,
                 request.Phone,
-                request.IsPrincipal),
+                request.IsPrincipal,
+                request.Country,
+                request.CityName),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -489,7 +491,9 @@ public static class CustomerEndpoints
                 request.Address,
                 request.CityId,
                 request.Phone,
-                request.IsPrincipal),
+                request.IsPrincipal,
+                request.Country,
+                request.CityName),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));

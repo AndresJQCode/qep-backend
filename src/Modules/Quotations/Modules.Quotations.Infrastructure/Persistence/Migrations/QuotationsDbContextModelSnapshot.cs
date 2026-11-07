@@ -442,7 +442,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_orders_freight_charge_mode", "freight_charge_mode IS NULL OR freight_charge_mode IN ('Charged','OnDelivery','Free')");
 
-                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify')");
+                            t.HasCheckConstraint("CK_orders_source", "source IN ('Quotation','Manual','Shopify','Store')");
                         });
                 });
 
@@ -592,6 +592,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
 
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid")
@@ -1106,6 +1116,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
 
                     b.Property<Guid?>("DepartmentId")
                         .HasColumnType("uuid")

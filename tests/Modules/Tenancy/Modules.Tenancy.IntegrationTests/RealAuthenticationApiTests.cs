@@ -873,6 +873,10 @@ public sealed class RealAuthenticationApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+            // tarea 7); valores de prueba, igual que los de R2.
+            builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
             // Fijado, no heredado: appsettings.json lleva el proveedor con el que se despliega el
             // producto, y una suite de integración que depende de eso termina dependiendo de las
             // credenciales de quien la corra. Con "infobip" y las claves de Infobip ausentes —CI,

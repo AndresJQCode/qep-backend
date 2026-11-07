@@ -83,6 +83,8 @@ plan 3, ya mergeado en `develop` del frontend (`a2d28c17`).
 
 | Spec | Estado | Notas |
 | --- | --- | --- |
+| 2026-11-05 tienda pública: `variantId` en el listado | Construido y mergeado (2026-11-06, merge `d9611601`, sin push; commit `290f8186`) | `GET /api/v1/public/stores/{host}/products` devuelve `variantId` por ítem: el ID de la única variante vendible si `hasVariants` es `false`, `null` si no. Sin migración ni consulta nueva. Lo consume el botón «Agregar al carrito» de la grilla de `qep-storefront` (ya en su `develop`), que sin el campo muestra «Ver producto»; se puede desplegar en cualquier orden. Pruebas: Store integración 180/180, unitarias de los 24 módulos y Bootstrapper en verde, ArchitectureTests 172/172; la integración de los demás módulos no se corrió (no usan los tipos tocados) |
+| 2026-10-26 cuándo toma el bot la conversación | Aprobado 2026-11-03 (`27c8ae99`). Parte en horario construida (`0c50700a`); **cobertura fuera de horario pendiente**, sin plan ni código | Pausado por el owner para trabajar en otro feature. Siguiente paso: plan de implementación. Falta D-15 (slice aparte), D-5..D-11, D-14, D-16..D-16c, el CHECK y el frontend; el mapa de qué cambia y dónde está en §9 del spec. Cambiar `BotAttendance.HumanTookOver` arrastra «Iniciar» y «Continuar asistente» |
 | 2026-10-29 cobros recurrentes (contratos de servicio) | Por verificar (backend sin compilar tras el renombre y el historial de precios; merges backend `0165a99`, `cbaf506`, frontend `517bf22`, `893a795`) | Renombre a `ServiceContracts` y historial de precios del owner, 2026-10-30; el spec lleva la nota del renombre en §1 |
 | 2026-10-31 iniciar el bot desde el hilo | Construido (backend `5df69090`, `ManualRunStarter`; frontend `1e0e0033`) | Sin migración; backend primero. Falta la prueba manual. Decisión pendiente del owner: el aviso de 24 horas en conversaciones sin entrantes |
 | 2026-10-29 WhatsApp: historial por coexistencia | Construido (backend `ab353bdb`, frontend `18627637`) | Rulings R1-R16 en el ledger de la sesión; decisiones del owner del 2026-10-30: aviso propio en el compositor, eco a número desconocido nace resuelto, el reporte de Mensajería excluye lo importado |
@@ -240,6 +242,21 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-06 — Mergeado a `develop` (`eff2302f`, sin push) el hotfix **pool del bloque HTTP del chatbot** (`e9906e52`, D-8 del spec
+  `2026-11-03-bloque-http-reintento-red-design.md`). Ese día `buscar-conductor` (`GET`) y `crear-legalizacion` (`POST`) fallaron con
+  `network:unknown:connection_reset` en menos de 90 ms, y el `POST` no se reintenta. El cliente `automations.external-api` suelta las conexiones
+  ociosas a los 4 s y las recicla a los 5 min (antes, el default de .NET: 1 min y sin límite). Sin migración ni configuración.
+- 2026-11-06 — Mergeado a `develop` (`d9611601`, sin push) **`variantId` en el listado público de la tienda** (`290f8186`). Spec
+  `docs/superpowers/specs/2026-11-05-tienda-publica-variant-id-en-listado-design.md`. Sin migración; despliegue independiente del storefront.
+- 2026-11-03 — Hotfix **reintento de red del bloque HTTP del chatbot** (`700b0d68`), mergeado a `main` (`fb47e750`) y a `develop` (`3f5e071f`). Ante una
+  falla de red el bloque repite la llamada una vez, a 1 s: cualquier método si el request no salió, sólo `GET` si pudo llegar; nunca timeout, status ni
+  multipart. Cada intento deja su fila en `http_calls` con un `error_code` detallado (`network:<error>[:<socket>]`). Spec
+  `docs/superpowers/specs/2026-11-03-bloque-http-reintento-red-design.md`. Sin migración. **Pendiente (resuelto el 2026-11-06, `e9906e52`):** el ajuste del pool, cuando el `error_code` de
+  producción muestre la causa real del incidente de `buscar-conductor`.
+- 2026-11-03 — Aprobado y commiteado (`27c8ae99`, sin push) **el spec «cuándo toma el bot la conversación»**, revisado contra `develop` (§9). El owner
+  resolvió DP-8 (margen de 0 a 240 minutos, default 30), DP-9 (D-16 mide la última actividad de una persona, no `AutomationPausedAt`) y DP-10 (un eco de la
+  app de WhatsApp Business cuenta como actividad). **Queda pendiente:** plan e implementación de la cobertura fuera de horario y de D-15; el owner lo pospuso
+  para trabajar en otro feature. Siguen sin correrse las pruebas de la parte en horario (entrada del 2026-10-31).
 - 2026-11-01 — Mergeado a `develop` (`--no-ff`, sin push) **las últimas lecturas del catálogo por línea** (merge `adb183d4`): `OrderDraftBuilder`, `AddOrderItems` y
   `BatchUpdateQuotationItems` hacen una lectura por operación con `QuotationProductPricingResolver.FindVariantsAsync`, con los mismos rechazos y el mismo orden; también
   la usan `QuotationItemEdits` y `OrderItemEdits`. Medido contra Postgres con 2 y 10 líneas: `POST orders/preview` de 53 y 117 sentencias a 45; `POST orders/{id}/items` de

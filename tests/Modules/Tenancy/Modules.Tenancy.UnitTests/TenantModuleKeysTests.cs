@@ -10,7 +10,7 @@ public sealed class TenantModuleKeysTests
     public void AllKeepsTheContractOrder()
     {
         Assert.Equal(
-            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans"],
+            ["catalog", "customers", "companies", "quotations", "orders", "reporting", "pos", "messaging", "pipeline", "shopify", "automations", "suppliers", "billing", "developer", "loans", "store"],
             TenantModuleKeys.All.Select(key => key.Value));
     }
 
@@ -92,11 +92,19 @@ public sealed class TenantModuleKeysTests
 
     // Spec 2026-10-31: préstamos; se emite a un cliente, así que depende de customers.
     [Fact]
-    public void LoansIsLastDependsOnCustomersAndIsOffForNewTenants()
+    public void LoansDependsOnCustomersAndIsOffForNewTenants()
     {
-        Assert.Equal("loans", TenantModuleKeys.All[^1].Value);
         Assert.Equal([TenantModuleKeys.Customers], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Loans));
         Assert.DoesNotContain(TenantModuleKeys.Loans, TenantModuleKeys.DefaultForNewTenants);
+    }
+
+    // Spec 2026-11-03 §4.2: la tienda pública; una solicitud se convierte en pedido, así que depende de orders.
+    [Fact]
+    public void StoreIsLastDependsOnOrdersAndIsOffForNewTenants()
+    {
+        Assert.Equal("store", TenantModuleKeys.All[^1].Value);
+        Assert.Equal([TenantModuleKeys.Orders], TenantModuleKeys.DependenciesOf(TenantModuleKeys.Store));
+        Assert.DoesNotContain(TenantModuleKeys.Store, TenantModuleKeys.DefaultForNewTenants);
     }
 
     [Fact]

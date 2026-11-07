@@ -91,6 +91,15 @@ public static class BillingTemplateDefinitions
 
     public static readonly IReadOnlyList<BillingTemplateDefinition> All = [Reminder, Overdue];
 
+    /// <summary>La categoría que QEP pidió, sólo si <paramref name="name"/> es una plantilla de cobro (por tipo o por ser una de sus versiones) y
+    /// Meta la dejó en otra: así la pantalla avisa que un cobro pasó a MARKETING sin comparar nombres en el navegador. Sin diferencia o sin
+    /// plantilla de cobro, <c>null</c>.</summary>
+    public static string? RequestedCategoryFor(MessageTemplateKind kind, string name, string actualCategory) =>
+        All.Any(definition => definition.Kind == kind || definition.VersionOf(name) is not null)
+        && !string.Equals(actualCategory, Category, StringComparison.OrdinalIgnoreCase)
+            ? Category
+            : null;
+
     public static BillingTemplateDefinition For(MessageTemplateKind kind) =>
         All.FirstOrDefault(definition => definition.Kind == kind)
         ?? throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a billing template kind.");
@@ -212,6 +221,10 @@ public sealed partial class ProvisionBillingTemplatesHandler(
                     command.TenantId, command.ConnectionId, made.Id, name, BillingTemplateDefinitions.Language, made.Category,
                     TemplateComponentsBuilder.Named, made.Status, TemplateComponentsBuilder.Components(definition.Draft(name, body)).ToJsonString(),
                     definition.Kind, memberId, now);
+                if (BillingTemplateDefinitions.RequestedCategoryFor(definition.Kind, name, made.Category) is { } requested)
+                {
+                    LogCategoryChanged(logger, command.TenantId, command.ConnectionId, name, requested, made.Category);
+                }
             }
             catch (MessagingDomainException error) when (error.Code == MessagingErrorCodes.TemplateRejectedByMeta)
             {
@@ -273,6 +286,13 @@ public sealed partial class ProvisionBillingTemplatesHandler(
 
         LogPreviousVersionNotDeleted(logger, command.TenantId, command.ConnectionId, previous.MetaTemplateId);
     }
+
+    // El aviso no frena la creación: la plantilla queda en el espejo con la categoría que Meta le dio. Sin token ni respuesta de Meta.
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Meta reclassified billing template {TemplateName} of connection {ConnectionId} in tenant {TenantId}: requested {RequestedCategory}, got {ActualCategory}.")]
+    private static partial void LogCategoryChanged(
+        ILogger logger, Guid tenantId, Guid connectionId, string templateName, string requestedCategory, string actualCategory);
 
     // Sin el token ni la respuesta de Meta: sólo lo que hace falta para encontrar la plantilla huérfana.
     [LoggerMessage(

@@ -114,13 +114,20 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
         string? name,
         string? code,
         bool? isActive,
+        bool? visibleInStore,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
+        var source = dbContext.Products.AsNoTracking();
+        if (visibleInStore is not null)
+        {
+            source = source.Where(product => product.VisibleInStore == visibleInStore);
+        }
+
         var (ordered, total) = await SearchQueryAsync(
-            dbContext.Products.AsNoTracking(), tenantId, search, name, code, isActive, categoryIds, cancellationToken);
+            source, tenantId, search, name, code, isActive, categoryIds, cancellationToken);
 
         var rows = await ordered
             .Skip((page - 1) * pageSize)
@@ -130,6 +137,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 product.Id,
                 product.Name,
                 product.IsActive,
+                product.VisibleInStore,
                 product.Description,
                 product.TaxRateId,
                 product.CategoryId,
@@ -200,6 +208,7 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
                 row.Id,
                 row.Name,
                 row.IsActive,
+                row.VisibleInStore,
                 row.Description,
                 row.TaxRateId,
                 row.CategoryId,
@@ -465,6 +474,126 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
             .SingleOrDefaultAsync(
                 product => product.TenantId == tenantId && product.Id == productId,
                 cancellationToken);
+
+    // Con seguimiento: el lote de visibilidad muta lo que trae. La visibilidad no toca variantes,
+    // pero el agregado es el único camino de escritura.
+    public async Task<IReadOnlyList<Product>> FindManyForUpdateAsync(
+        Guid tenantId,
+        IReadOnlyCollection<ProductId> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await Aggregates()
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .ToListAsync(cancellationToken);
+    }
+
+    // El predicado único de la tienda pública: producto activo, publicado y con al menos una variante
+    // activa con precio en la moneda. Búsqueda, conteos y ficha lo comparten para que lo que se cuenta
+    // sea exactamente lo que se puede abrir. Lo sirve IX_products_tenant_store_visible.
+    private IQueryable<Product> StoreVisible(Guid tenantId, string currency) =>
+        dbContext.Products.Where(product =>
+            product.TenantId == tenantId
+            && product.IsActive
+            && product.VisibleInStore
+            && product.Variants.Any(variant =>
+                variant.IsActive && variant.Prices.Any(price => price.Currency == currency)));
+
+    public async Task<(IReadOnlyList<Product> Items, int Total)> SearchStoreVisibleAsync(
+        Guid tenantId,
+        string currency,
+        string? search,
+        IReadOnlyCollection<Guid>? categoryIds,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        // Sólo por nombre: `search` también encuentra por código y código de barras de una variante, y esos dos nunca salen de la
+        // tienda pública, así que no pueden servir para dar con un producto.
+        var query = ApplyTextFilters(StoreVisible(tenantId, currency).AsNoTracking(), search: null, name: search, code: null);
+        if (categoryIds is not null)
+        {
+            // Mismo tipo exacto que en SearchQueryAsync: ver el comentario de allá.
+            var ids = categoryIds.Select(id => (ProductCategoryId?)new ProductCategoryId(id)).ToArray();
+            query = query.Where(product => ids.Contains(product.CategoryId));
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+
+        // Por nombre y no por relevancia: la tienda es un catálogo, y el orden estable (con el id de
+        // desempate) evita repetir o saltear filas entre páginas.
+        var items = await query
+            .OrderBy(product => product.Name)
+            .ThenBy(product => product.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyDictionary<ProductCategoryId, int>> CountStoreVisibleByCategoryAsync(
+        Guid tenantId,
+        string currency,
+        CancellationToken cancellationToken)
+    {
+        var rows = await StoreVisible(tenantId, currency)
+            .AsNoTracking()
+            .Where(product => product.CategoryId != null)
+            .GroupBy(product => product.CategoryId)
+            .Select(group => new { CategoryId = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(row => row.CategoryId!.Value, row => row.Count);
+    }
+
+    public Task<Product?> FindStoreVisibleAsync(
+        Guid tenantId,
+        ProductId id,
+        string currency,
+        CancellationToken cancellationToken) =>
+        StoreVisible(tenantId, currency)
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(product => product.Id == id, cancellationToken);
+
+    // Un producto entra si alguna de las variantes pedidas es vendible; cada uno trae todas sus
+    // variantes, y quien llama elige por id y vuelve a comprobar la variante concreta.
+    public async Task<IReadOnlyList<Product>> FindStoreVisibleVariantsAsync(
+        Guid tenantId,
+        string currency,
+        IReadOnlyCollection<Guid> variantIds,
+        CancellationToken cancellationToken)
+    {
+        if (variantIds.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = variantIds.Select(id => new VariantId(id)).ToArray();
+        return await StoreVisible(tenantId, currency)
+            .Where(product => product.Variants.Any(variant =>
+                ids.Contains(variant.Id)
+                && variant.IsActive
+                && variant.Prices.Any(price => price.Currency == currency)))
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.PriceScales)
+            .Include(product => product.Gallery)
+            .AsSplitQuery()
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+    }
 
     // Igualdad exacta y con mayúsculas, servida por IX_product_variants_tenant_code: es la misma
     // comparación del índice único y del agregado (ordinal), así que un código que este método no

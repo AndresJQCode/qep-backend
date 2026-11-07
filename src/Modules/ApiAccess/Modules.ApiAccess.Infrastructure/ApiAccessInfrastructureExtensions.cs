@@ -26,6 +26,9 @@ public static class ApiAccessInfrastructureExtensions
         services.AddScoped<IApiKeyRepository, ApiKeyRepository>();
         services.AddScoped<IApiAccessUnitOfWork, ApiAccessUnitOfWork>();
         services.AddScoped<IApiAccessAuditRecorder, ApiAccessAuditRecorder>();
+        services.AddScoped<IApiKeyRequestLog, ApiKeyRequestLog>();
+        services.AddScoped<IApiKeyRequestRepository, ApiKeyRequestRepository>();
+        services.AddHostedService<ApiKeyRequestPurgeWorker>();
 
         return services;
     }

@@ -661,9 +661,43 @@ public sealed class OrderEditsApiTests
         var party = Assert.Single(saved.Order.Parties, candidate => candidate.Role == "Billing");
         Assert.Equal(("Otra S.A.S.", "Juridica", "NIT"), (party.Name, party.PersonType, party.IdentificationType));
         Assert.True(saved.Order.RetentionAmount > 0m);
-        Assert.Equal(order.Version + 1, saved.Order.Version);
+        // La versión es token de concurrencia (spec 2026-09-17, decisión 6), no un contador de guardados: cada
+        // mutación del agregado la sube (SetBilling y RecalculatePaymentStatus en este guardado), así que lo que
+        // se exige es que suba y que la respuesta traiga la que quedó guardada, como en
+        // SaveAppliesProductsProofsAndNotesTogetherAndReturnsTheNewVersion.
+        Assert.True(saved.Order.Version > order.Version);
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal(saved.Order.Version, fetched.Order.Version);
         Assert.Equal(saved.Order.RetentionAmount, fetched.Order.RetentionAmount);
+    }
+
+    // Task 1B de la tienda publica: un pedido no edita su parte de envio (solo la facturacion, ver el DTO), asi que el
+    // editor acepta la parte foranea por el bloque de facturacion; la de envio llega ya foranea desde la cotizacion.
+    [Fact]
+    public async Task TheOrderEditorAcceptsAForeignShippingParty()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        // Natural: en un tenant colombiano una jurídica exige NIT aunque la parte sea de afuera (BillingPartyFiscalRules.cs:18-35).
+        var foreign = new OrderBillingEditRequest(
+            new QuotationPartyRequest(
+                "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+                PersonType: "Natural", IdentificationType: "CE", Country: "ES", CityName: "Madrid"),
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null, Billing: foreign));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var party = Assert.Single((await ReadDetailAsync(response)).Order.Parties, candidate => candidate.Role == "Billing");
+        Assert.Equal(("ES", "Madrid", null, null), (party.Country, party.CityName, party.DepartmentId, party.CityId));
+        var fetched = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal("ES", Assert.Single(fetched.Order.Parties, candidate => candidate.Role == "Billing").Country);
     }
 
     // Cubre IX_order_parties_order_role: la segunda edición modifica la fila, no la borra y la vuelve a crear.

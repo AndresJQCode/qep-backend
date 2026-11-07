@@ -142,7 +142,8 @@ public sealed class QuotationResponseComposer(
                         address.CityName,
                         address.DepartmentId,
                         address.DepartmentName,
-                        address.IsPrincipal))
+                        address.IsPrincipal,
+                        address.Country))
                     .ToArray(),
                 customer.Country,
                 customer.PersonType,
@@ -270,7 +271,9 @@ public sealed class QuotationResponseComposer(
         party.DepartmentId,
         party.CityId,
         party.PersonType,
-        party.IdentificationType);
+        party.IdentificationType,
+        party.Country,
+        party.CityName);
 
     // Mismos literales que Catalog pone en PriceScaleResponse.Restriction: el diccionario lo
     // tiene el frontend y tiene que ser uno solo para los dos módulos. Null también igual que

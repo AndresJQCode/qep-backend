@@ -808,6 +808,8 @@
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )",
+          "Modules.Store.Infrastructure": "[1.0.0, )",
           "Modules.Suppliers.Api": "[1.0.0, )",
           "Modules.Suppliers.Infrastructure": "[1.0.0, )",
           "Scalar.AspNetCore": "[2.16.16, )"
@@ -859,6 +861,8 @@
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Infrastructure": "[1.0.0, )",
           "Modules.Suppliers.Application": "[1.0.0, )",
           "Modules.Suppliers.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",
@@ -1604,6 +1608,42 @@
           "Modules.Storage.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )",
           "SixLabors.ImageSharp": "[3.1.12, )"
+        }
+      },
+      "modules.store.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.store.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "Modules.Store.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.store.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.store.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
       "modules.suppliers.api": {

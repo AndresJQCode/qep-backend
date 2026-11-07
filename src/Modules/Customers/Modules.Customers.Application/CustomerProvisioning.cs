@@ -23,7 +23,16 @@ public sealed record CompleteCustomerData(
     string Country,
     Guid? CityId,
     string? CityName,
-    Guid ClassificationId);
+    Guid? ClassificationId);
+
+/// <summary>Qué hizo <see cref="ICustomerProvisioning.EnsureAddressesAsync"/> con una dirección: la libreta ya la tenía o la agregó.</summary>
+public enum EnsuredAddressKind
+{
+    Reused,
+    Added,
+}
+
+public sealed record EnsuredAddress(Guid AddressId, EnsuredAddressKind Kind);
 
 /// <summary>Lo que la caja del POS sabe del comprador al darlo de alta: nombre, documento y, si lo dio, teléfono. El correo
 /// lo trae la importación de cobros recurrentes (spec cobros-recurrentes §5); la caja no lo pide.</summary>
@@ -53,7 +62,15 @@ public interface ICustomerProvisioning
     /// <exception cref="InvalidOperationException">El documento quedó tomado pero el ganador no se pudo releer. No
     /// debería pasar: el índice es parcial sobre los no fusionados, pero un cliente no se borra y el que ganó la carrera no
     /// está fusionado.</exception>
-    Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken);
+    /// <param name="actorUserId">La persona detrás del alta (la tienda pública, al «Tomar»); con ella la bitácora la nombra y no cae en
+    /// <c>Integration</c>. <c>null</c> deja el alta como de una integración, que es lo que hace Shopify.</param>
+    /// <param name="source">El origen que va a la bitácora (<c>"store"</c> desde la tienda); sólo cuenta con <paramref name="actorUserId"/>.</param>
+    Task<ProvisionedCustomer> CreateCompleteAsync(
+        Guid tenantId,
+        CompleteCustomerData data,
+        CancellationToken cancellationToken,
+        Guid? actorUserId = null,
+        string? source = null);
 
     Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken);
@@ -103,6 +120,34 @@ public interface ICustomerProvisioning
         Guid cityId,
         IReadOnlyCollection<Guid> requestedCityIds,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Tienda pública, «Tomar»: completa al cliente incompleto que la persona eligió, <b>llenando sólo lo que está en blanco</b>.
+    /// Gana lo que el cliente ya tiene: nombre, documento (tipo y número como par), teléfono, correo, dirección y país. La ciudad
+    /// sigue al país ya mezclado: con país propio sólo se usa la de <paramref name="data"/> si es el mismo país; si no, queda la
+    /// que tiene y, de estar vacía, las reglas fallan con <c>validation.failed</c>. Después, los mismos pasos que
+    /// <see cref="CompleteExternalSaleAsync"/>: reglas del <c>POST</c>, clasificación y ciudad antes del CUC, <c>Customer.Complete</c>
+    /// y auditoría <see cref="CustomerAuditActions.Completed"/> con <paramref name="actorUserId"/>. Uno que ya es completo vuelve
+    /// sin tocarse (la versión no sube).
+    /// </summary>
+    /// <exception cref="BuildingBlocks.Application.ResourceNotFoundException">Con <c>customers.customer.not_found</c> si no existe en
+    /// el tenant, está fusionado o inactivo.</exception>
+    /// <exception cref="FluentValidation.ValidationException">El resultado de mezclar no pasa <c>CustomerWriteRules</c>.</exception>
+    /// <exception cref="CustomersDomainException">Con <c>customers.customer.identification_taken</c> si el documento ya lo tiene otro
+    /// cliente; con <c>classification_not_found</c> o <c>city_not_found</c> como el alta.</exception>
+    Task<ProvisionedCustomer> CompleteFromStoreAsync(
+        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Tienda pública, «Tomar»: busca cada dirección en la libreta del cliente (<see cref="Customer.EnsureAddress"/>) y agrega las que
+    /// faltan, una salida por entrada y en el mismo orden. Un solo guardado. Idempotente: un reintento tras una caída reutiliza lo
+    /// que agregó el primero. Cada dirección nueva se audita.
+    /// </summary>
+    /// <exception cref="CustomersDomainException">Con <c>customers.customer.incomplete</c> si el cliente sigue incompleto (el «Tomar» lo
+    /// completa antes, así que sólo avisa de un bug); con <c>customers.address.*</c> si una dirección no vale.</exception>
+    /// <exception cref="BuildingBlocks.Application.RequestConcurrencyException">El cliente cambió mientras se guardaba.</exception>
+    Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(
+        Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken);
 }
 
 public sealed class CustomerProvisioning(
@@ -123,8 +168,14 @@ public sealed class CustomerProvisioning(
 
     private const string ValidationFailed = "validation.failed";
 
+    private const string StoreSource = "store";
+
     public async Task<ProvisionedCustomer> CreateCompleteAsync(
-        Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken)
+        Guid tenantId,
+        CompleteCustomerData data,
+        CancellationToken cancellationToken,
+        Guid? actorUserId = null,
+        string? source = null)
     {
         ArgumentNullException.ThrowIfNull(data);
         // Las mismas reglas del POST, armando su comando: un cliente que nace de Shopify no puede quedar con algo que el
@@ -152,7 +203,15 @@ public sealed class CustomerProvisioning(
             phoneNormalizer);
 
         repository.Add(customer);
-        auditPublisher.PublishByIntegration(tenantId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now);
+        if (actorUserId is { } actor)
+        {
+            auditPublisher.Publish(tenantId, actor, CustomerAuditActions.Created, customer.Id.ToString(), Success, now, source);
+        }
+        else
+        {
+            auditPublisher.PublishByIntegration(tenantId, CustomerAuditActions.Created, customer.Id.ToString(), Success, now);
+        }
+
         try
         {
             await unitOfWork.SaveChangesAsync(cancellationToken);
@@ -241,6 +300,110 @@ public sealed class CustomerProvisioning(
 
         return new(ExternalCustomerCityOutcomeKind.Applied, customer.Version, null, customer.CityId);
     }
+
+    public async Task<ProvisionedCustomer> CompleteFromStoreAsync(
+        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        var customer = await repository.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
+        if (customer is null || customer.IsMerged || !customer.IsActive)
+        {
+            throw CustomerNotFound.For(customerId);
+        }
+
+        // Ya completo: la tienda sólo le agrega direcciones, y su ficha no se toca ni sube de versión.
+        if (customer.IsComplete)
+        {
+            return new ProvisionedCustomer(customer.Id.Value, IsComplete: true, IsActive: true, Created: false, customer.Version);
+        }
+
+        var command = MergeForStore(tenantId, customer, data);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var parts = await PrepareAsync(command, cancellationToken);
+
+        var now = clock.UtcNow;
+        customer.Complete(
+            parts.Cuc, command.Name, command.BusinessName, parts.Address, parts.Identification,
+            customer.PersonType, parts.Contact, parts.Commercial, now, phoneNormalizer);
+        auditPublisher.Publish(tenantId, actorUserId, CustomerAuditActions.Completed, customer.Id.ToString(), Success, now, StoreSource);
+        // IdentificationTaken sube tal cual: otro cliente ya tiene ese documento y la tienda no cambia en silencio al otro cliente.
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return new ProvisionedCustomer(customer.Id.Value, IsComplete: true, IsActive: true, Created: false, customer.Version);
+    }
+
+    public async Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(
+        Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(addresses);
+        var customer = await repository.FindAsync(tenantId, new CustomerId(customerId), cancellationToken)
+            ?? throw CustomerNotFound.For(customerId);
+
+        var now = clock.UtcNow;
+        var outcomes = new List<EnsuredAddress>(addresses.Count);
+        var added = new List<CustomerAddress>();
+        foreach (var details in addresses)
+        {
+            // Sólo se comparan direcciones del mismo país, así que el normalizador lleva el de ESTA dirección.
+            var country = string.IsNullOrWhiteSpace(details.Country) ? Customer.ColombiaCountryCode : details.Country.Trim();
+            var (address, wasAdded) = customer.EnsureAddress(
+                details,
+                phone => string.IsNullOrWhiteSpace(phone) ? null : phoneNormalizer.ToE164(phone.Trim(), country),
+                now);
+            outcomes.Add(new EnsuredAddress(address.Id.Value, wasAdded ? EnsuredAddressKind.Added : EnsuredAddressKind.Reused));
+            if (wasAdded)
+            {
+                added.Add(address);
+            }
+        }
+
+        if (added.Count == 0)
+        {
+            return outcomes;
+        }
+
+        foreach (var address in added)
+        {
+            auditPublisher.PublishByIntegration(
+                tenantId, CustomerAuditActions.AddressAdded, address.Id.Value.ToString(), Success, now);
+        }
+
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return outcomes;
+    }
+
+    // «Gana lo que ya tiene»: cada campo en blanco se llena con el de la tienda, y nada que tenga valor se pisa. El documento es un
+    // par (tipo + número): o lo trae completo el cliente o lo trae completo la tienda, nunca uno de cada lado. La ciudad sigue al país
+    // mezclado: la del carril de ese país, la que ya tiene o, si no tiene y es el mismo país, la de la tienda.
+    private static CreateCustomerCommand MergeForStore(Guid tenantId, Customer customer, CompleteCustomerData data)
+    {
+        var hasDocument = customer.IdentificationType is not null && !string.IsNullOrWhiteSpace(customer.IdentificationNumber);
+        var country = Keep(customer.Country, data.Country) ?? data.Country;
+        var sameCountry = string.Equals(country.Trim(), data.Country.Trim(), StringComparison.OrdinalIgnoreCase);
+        var colombian = string.Equals(country.Trim(), Customer.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
+        var cityId = colombian ? customer.CityId ?? (sameCountry ? data.CityId : null) : null;
+        var cityName = colombian
+            ? null
+            : Keep(customer.CityName, sameCountry ? data.CityName : null);
+
+        return new CreateCustomerCommand(
+            tenantId,
+            Keep(customer.Name, data.Name) ?? data.Name,
+            BusinessName: null,
+            hasDocument ? customer.IdentificationType!.Value.ToWireValue() : data.IdentificationType,
+            hasDocument ? customer.IdentificationNumber! : data.IdentificationNumber,
+            Keep(customer.Phone, data.Phone),
+            Keep(customer.Email, data.Email),
+            Keep(customer.Address, data.Address),
+            country,
+            cityId,
+            cityName,
+            data.ClassificationId,
+            customer.WithRetention,
+            customer.VatSurplus);
+    }
+
+    private static string? Keep(string? existing, string? incoming) =>
+        string.IsNullOrWhiteSpace(existing) ? incoming : existing;
 
     public async Task<ExternalCustomerCityOutcome> CorrectCityAsync(
         Guid tenantId,

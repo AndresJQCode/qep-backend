@@ -29,10 +29,11 @@ public sealed class FileOwnerModulesTests
     }
 
     [Fact]
-    public void ProductsAreCatalogAndProofsAreOrdersAndTheRestIsCore()
+    public void ProductsAreCatalogProofsAreOrdersTheBannerIsTheStoreAndTheRestIsCore()
     {
         Assert.Same(TenantModuleKeys.Catalog, FileOwnerModules.ModuleOf(FileOwnerType.Product));
         Assert.Same(TenantModuleKeys.Orders, FileOwnerModules.ModuleOf(FileOwnerType.PaymentProof));
+        Assert.Same(TenantModuleKeys.Store, FileOwnerModules.ModuleOf(FileOwnerType.Store));
         foreach (var core in new[] { FileOwnerType.User, FileOwnerType.Entity, FileOwnerType.System, FileOwnerType.Tenant })
         {
             Assert.Null(FileOwnerModules.ModuleOf(core));
@@ -42,23 +43,24 @@ public sealed class FileOwnerModulesTests
     [Fact]
     public void OwnerTypesDisabledInListsTheOnesWhoseModuleIsOff()
     {
+        // store depende de orders: apagar orders apaga también el banner de la tienda.
         Assert.Equal(
-            [FileOwnerType.PaymentProof],
+            [FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
-                TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))));
+                TenantModuleKeys.All.Except([TenantModuleKeys.Orders]))).Order());
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.Empty).Order());
         Assert.Empty(FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(TenantModuleKeys.All)));
     }
 
-    // Con catalog apagado el listado excluye a los productos, y por la dependencia orders -> catalog
-    // también a los comprobantes: el módulo apagado se propaga.
+    // Con catalog apagado el listado excluye a los productos, y por las dependencias orders -> catalog y store -> orders
+    // también a los comprobantes y al banner de la tienda: el módulo apagado se propaga.
     [Fact]
     public void OwnerTypesDisabledInExcludesProductsWhenCatalogIsOff()
     {
         Assert.Equal(
-            [FileOwnerType.Product, FileOwnerType.PaymentProof],
+            [FileOwnerType.Product, FileOwnerType.PaymentProof, FileOwnerType.Store],
             FileOwnerModules.OwnerTypesDisabledIn(TenantModuleSet.FromStored(
                 TenantModuleKeys.All.Except([TenantModuleKeys.Catalog]))).Order());
     }
@@ -66,6 +68,7 @@ public sealed class FileOwnerModulesTests
     [Theory]
     [InlineData(FileOwnerType.Product, "catalog")]
     [InlineData(FileOwnerType.PaymentProof, "orders")]
+    [InlineData(FileOwnerType.Store, "store")]
     public async Task AFileWhoseModuleIsOffIsForbidden(FileOwnerType ownerType, string module)
     {
         var modules = FixedTenantModules.AllBut(TenantModuleKey.Parse(module));

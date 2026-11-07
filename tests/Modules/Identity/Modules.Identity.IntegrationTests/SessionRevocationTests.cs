@@ -90,7 +90,7 @@ public sealed class SessionRevocationTests
         // Un userId que no es un Guid: el worker falla al leer el payload, en cada intento.
         var poison = await InsertSuspendedEventAsync(
             connection, """{"userId": "not-a-guid"}""", DateTimeOffset.UtcNow.AddHours(-1));
-        await WaitUntilAsync(async () => await AttemptsAsync(connection, poison) == 1);
+        await TickUntilAsync(factory, async () => await AttemptsAsync(connection, poison) == 1);
 
         // La primera espera es corta: la falla más probable es un conflicto pasajero con
         // OrphanUserCleanupWorker sobre las mismas sesiones, y mientras tanto la sesión sigue viva.
@@ -98,7 +98,7 @@ public sealed class SessionRevocationTests
 
         // Una suspensión sana procesada después del primer fallo prueba que corrió otro tick, y en
         // ese tick el mensaje fallido no se volvió a intentar: su espera no venció.
-        await SuspendAMemberAndWaitForItsRevocationAsync(connectionString, connection, ownerClient, tenantId);
+        await SuspendAMemberAndWaitForItsRevocationAsync(factory, connectionString, connection, ownerClient, tenantId);
         Assert.Equal(1, await AttemptsAsync(connection, poison));
 
         var claims = Worker(factory).Claims;
@@ -107,7 +107,7 @@ public sealed class SessionRevocationTests
         {
             var expected = attempt;
             clock.Advance(claims.LeaseFor(attempt - 1) + TimeSpan.FromSeconds(1));
-            await WaitUntilAsync(async () => await AttemptsAsync(connection, poison) == expected);
+            await TickUntilAsync(factory, async () => await AttemptsAsync(connection, poison) == expected);
             Assert.Equal(0, await CountProcessedAsync(connection, poison));
         }
 
@@ -117,7 +117,7 @@ public sealed class SessionRevocationTests
 
         // Antes de que venza, otro tick no lo retoma.
         clock.Advance(longestWait - TimeSpan.FromMinutes(1));
-        await SuspendAMemberAndWaitForItsRevocationAsync(connectionString, connection, ownerClient, tenantId);
+        await SuspendAMemberAndWaitForItsRevocationAsync(factory, connectionString, connection, ownerClient, tenantId);
         Assert.Equal(lastFailedAttempt, await AttemptsAsync(connection, poison));
 
         // Se arregla el payload: el reintento siguiente revoca la sesión y termina el mensaje.
@@ -127,7 +127,7 @@ public sealed class SessionRevocationTests
             ("userId", member.UserId),
             ("id", poison));
         clock.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
-        await WaitUntilAsync(async () => await IsRevokedAsync(connection, sessionId));
+        await TickUntilAsync(factory, async () => await IsRevokedAsync(connection, sessionId));
 
         await WaitUntilAsync(async () => await CountProcessedAsync(connection, poison) == 1);
         Assert.Equal(lastFailedAttempt + 1, await AttemptsAsync(connection, poison));
@@ -242,8 +242,22 @@ public sealed class SessionRevocationTests
     private static SessionRevocationWorker Worker(QepApiFactory factory) =>
         factory.Services.GetServices<IHostedService>().OfType<SessionRevocationWorker>().Single();
 
+    // Corre ticks del worker hasta que la condición se cumpla. Las pruebas que cuentan ticks no pueden
+    // esperar al timer: tarda el PollInterval del worker (15 s desde e7ea2083), lo mismo que PollTimeout.
+    // Un tick del timer a la vez no molesta: el reclamo deja procesar el mensaje a uno solo.
+    private static async Task TickUntilAsync(QepApiFactory factory, Func<Task<bool>> condition)
+    {
+        var worker = Worker(factory);
+        await WaitUntilAsync(async () =>
+        {
+            await worker.TickAsync(TestContext.Current.CancellationToken);
+            return await condition();
+        });
+    }
+
     // Una suspensión sana, de punta a punta, para saber que el worker corrió otro tick.
     private static async Task SuspendAMemberAndWaitForItsRevocationAsync(
+        QepApiFactory factory,
         string connectionString,
         NpgsqlConnection connection,
         HttpClient ownerClient,
@@ -253,7 +267,7 @@ public sealed class SessionRevocationTests
         await ActivateMembershipAsync(connectionString, member.Id);
         var sessionId = await SeedSessionAsync(connectionString, member.UserId);
         Assert.Equal(HttpStatusCode.OK, (await SuspendAsync(ownerClient, tenantId, member.Id)).StatusCode);
-        await WaitUntilAsync(async () => await IsRevokedAsync(connection, sessionId));
+        await TickUntilAsync(factory, async () => await IsRevokedAsync(connection, sessionId));
     }
 
     // Saltea la vuelta invitar-aceptar (que exige un login real de Google), igual que en Tenancy.

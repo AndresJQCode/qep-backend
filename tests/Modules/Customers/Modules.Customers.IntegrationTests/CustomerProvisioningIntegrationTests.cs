@@ -232,4 +232,143 @@ public sealed class CustomerProvisioningIntegrationTests
             + $"AND payload->>'actorId' = '{actor}' AND payload->>'actorType' = 'Human' "
             + "AND payload->>'resourceId' = (SELECT id::text FROM customers.customers WHERE identification_number = '1020304051')"));
     }
+
+    // ---- Tienda pública (Tarea 12): «Tomar» completa y agrega direcciones ------------------------------------------------
+
+    private static Task<ProvisionedCustomer> RegisterAsync(
+        QepApiFactory factory, string name, string documentNumber, string? phone = null) =>
+        InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateFromRegisterAsync(
+                Tenant, Guid.CreateVersion7(), new RegisterCustomerData(name, "CC", documentNumber, phone), "pos",
+                TestContext.Current.CancellationToken));
+
+    [Fact]
+    public async Task CreateCompleteWithoutClassificationHasACucWithoutPrefix()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var data = new CompleteCustomerData(
+            "Laura Pérez", "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", city.CityId, null, null);
+        var actor = Guid.CreateVersion7();
+
+        var created = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken, actor, "store"));
+
+        Assert.True(created.Created);
+        Assert.Equal($"{city.DepartmentDivipolaCode}000001|true",
+            await ScalarAsync(database.GetConnectionString(),
+                $"SELECT cuc || '|' || (classification_id IS NULL) FROM customers.customers WHERE id = '{created.Id}'"));
+        // Con persona detrás, la bitácora la nombra y trae el origen «store».
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.created' "
+            + $"AND payload->>'resourceId' = '{created.Id}' AND payload->>'actorType' = 'Human' AND payload->>'actorId' = '{actor}' "
+            + "AND payload->>'source' = 'store'"));
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreFillsOnlyBlankFields()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var posCustomer = await RegisterAsync(factory, "Ana P.", "1020304050", "310 935 2187");
+        var billing = new CompleteCustomerData(
+            "Ana Pérez", "CC", "9999", "300 000 0000", "ana@tienda.co", "Calle 1 # 2-3", "CO", city.CityId, null, null);
+        var actor = Guid.CreateVersion7();
+
+        var completed = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteFromStoreAsync(Tenant, posCustomer.Id, billing, actor, TestContext.Current.CancellationToken));
+
+        Assert.True(completed.IsComplete);
+        Assert.Equal($"Complete|Ana P.|1020304050|310 935 2187|ana@tienda.co|Calle 1 # 2-3|{city.CityId}|{city.DepartmentDivipolaCode}000001",
+            await ScalarAsync(database.GetConnectionString(),
+                "SELECT completeness || '|' || name || '|' || identification_number || '|' || phone || '|' || email || '|' || address || '|' || "
+                + $"city_id || '|' || cuc FROM customers.customers WHERE id = '{posCustomer.Id}'"));
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            "SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = 'customers.customer.completed' "
+            + $"AND payload->>'resourceId' = '{posCustomer.Id}' AND payload->>'actorId' = '{actor}' AND payload->>'actorType' = 'Human'"));
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreNeverOverwritesAnExistingValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var withPhone = await RegisterAsync(factory, "Ana P.", "1020304050", "+57 311 222 3344");
+        var billing = new CompleteCustomerData(
+            "Otra Ana", "CC", "9999", "300 000 0000", "ana@tienda.co", "Calle 1 # 2-3", "CO", city.CityId, null, null);
+
+        await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteFromStoreAsync(Tenant, withPhone.Id, billing, Guid.CreateVersion7(), TestContext.Current.CancellationToken));
+
+        Assert.Equal("+57 311 222 3344|+573112223344|Ana P.",
+            await ScalarAsync(database.GetConnectionString(),
+                $"SELECT phone || '|' || phone_e164 || '|' || name FROM customers.customers WHERE id = '{withPhone.Id}'"));
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreRejectsMergedAndInactive()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var inactive = await RegisterAsync(factory, "Inactivo", "1");
+        var merged = await RegisterAsync(factory, "Fusionado", "2");
+        var survivor = await RegisterAsync(factory, "Sobreviviente", "3");
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var update = new NpgsqlCommand(
+                "UPDATE customers.customers SET is_active = false WHERE id = @inactive; "
+                + "UPDATE customers.customers SET is_active = false, merged_into_id = @survivor, merged_at = now() WHERE id = @merged",
+                connection);
+            update.Parameters.AddWithValue("inactive", inactive.Id);
+            update.Parameters.AddWithValue("merged", merged.Id);
+            update.Parameters.AddWithValue("survivor", survivor.Id);
+            await update.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var billing = new CompleteCustomerData(
+            "Ana", "CC", "9999", "300 000 0000", "ana@tienda.co", "Calle 1", "CO", city.CityId, null, null);
+        foreach (var id in new[] { inactive.Id, merged.Id, Guid.CreateVersion7() })
+        {
+            var error = await Assert.ThrowsAsync<BuildingBlocks.Application.ResourceNotFoundException>(() =>
+                InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+                    provisioning.CompleteFromStoreAsync(Tenant, id, billing, Guid.CreateVersion7(), TestContext.Current.CancellationToken)));
+            Assert.Equal("customers.customer.not_found", error.Code);
+        }
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreOnACompleteCustomerChangesNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var existing = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        var billing = new CompleteCustomerData(
+            "Otro nombre", "CC", "9999", "300 000 0000", "otro@tienda.co", "Otra calle", "CO", city.CityId, null, null);
+
+        var result = await InScopeAsync<ProvisionedCustomer, ICustomerProvisioning>(factory, provisioning =>
+            provisioning.CompleteFromStoreAsync(Tenant, existing.Id, billing, Guid.CreateVersion7(), TestContext.Current.CancellationToken));
+
+        Assert.True(result.IsComplete);
+        Assert.False(result.Created);
+        Assert.Equal(1, result.Version);
+        Assert.Equal("1", await ScalarAsync(database.GetConnectionString(),
+            $"SELECT version FROM customers.customers WHERE id = '{existing.Id}'"));
+    }
 }

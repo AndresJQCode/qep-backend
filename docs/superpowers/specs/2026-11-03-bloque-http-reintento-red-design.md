@@ -6,7 +6,7 @@
 1. **El timeout no se reintenta, ni en `GET`.** Sigue como hoy: una fila, `outcome = timeout`. Las fallas de producción fueron de 145 y 175 ms,
    no timeouts, y reintentar uno duplica la espera del cliente (~21 s) frente a una API lenta que probablemente vuelva a vencer. Resuelve OD-4.
 2. **Sin ajuste del pool (D-8) en este hotfix.** Se difiere hasta que el `error_code` detallado (D-4) diga la causa real. Sin cambio en
-   Bootstrapper ni en `CompositionRootTests`. Deja OD-1 sin objeto por ahora.
+   Bootstrapper ni en `CompositionRootTests`. Deja OD-1 sin objeto por ahora. **D-8 se aplicó el 2026-11-06** (ver D-8).
 
 Además, OD-2 (5xx) y OD-3 (columna `attempt`) se resuelven como recomendaba el spec: no. Sale como **hotfix** (§7): cambio mínimo, sin
 migración, sin frontend, sin Bootstrapper.
@@ -157,11 +157,12 @@ con «llamar a la API de verdad» se comporta igual que en producción, que es l
 en el simulador sigue en `25 × timeoutSeconds` con timeouts (no se reintentan); sólo una falla de red tardía en cada vuelta lo llevaría a
 `25 × (2 × timeoutSeconds + 1)`. El tope de 25 reentradas (`EngineReentries.Max`) no cambia. Se acepta.
 
-**D-8. DIFERIDA por el owner el 2026-11-03: no entra en este hotfix.** Se retoma cuando el `error_code` detallado (D-4) diga si las fallas son
-de conexión reutilizada (`connection_reset`, `response_ended` en el primer intento con `ok` en el segundo) u otra cosa. Lo que sigue queda
-como la propuesta para ese cambio, sin aplicar.
+**D-8. Diferida el 2026-11-03; aplicada el 2026-11-06** (hotfix `hotfix/bloque-http-pool`, aprobado por el owner). El `error_code` de D-4
+lo justificó: el 2026-11-06, `buscar-conductor` (`GET`, 88 ms) y `crear-legalizacion` (`POST`, 47 ms) fallaron con
+`network:unknown:connection_reset`. Un `POST` con `unknown` no se reintenta (D-2), así que sólo el pool lo cubre. La API del tenant vive en el
+mismo clúster, pero D-H2 obliga a llamarla por su nombre público, así que la conexión pasa por la salida del nodo y el ingress.
 
-*Propuesta (sin aplicar):* pool del cliente del bloque con `PooledConnectionIdleTimeout = 4 s`, `PooledConnectionLifetime = 5 min`. Hoy el handler usa los
+*Lo aplicado:* pool del cliente del bloque con `PooledConnectionIdleTimeout = 4 s`, `PooledConnectionLifetime = 5 min`. Hoy el handler usa los
 defaults de .NET (inactividad de 1 min, vida sin límite), más largos que el keep-alive de muchos servidores (5 s en Node.js por defecto,
 60-75 s en balanceadores y nginx). Con 4 s el cliente suelta la conexión antes que un servidor de 5 s. El costo es un handshake TLS más por
 llamada, que con ~28 llamadas al día por tenant ya se paga casi siempre. La vida de 5 min hace que un cambio de DNS del proveedor se vea sin

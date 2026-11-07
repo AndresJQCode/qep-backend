@@ -141,7 +141,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "suppliers"],
+            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -174,7 +174,7 @@ public sealed class SeedStartupTests
             Guid.CreateVersion7(), TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "quotations", "reporting", "shopify", "suppliers"],
+            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -236,7 +236,7 @@ public sealed class SeedStartupTests
         using var client = factory.CreateClient();
 
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "suppliers"],
+            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -263,7 +263,7 @@ public sealed class SeedStartupTests
         Assert.Equal(ownerUserId, membership.UserId);
         Assert.NotEqual(operatorUserId, membership.UserId);
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "suppliers"],
+            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed));
     }
 
@@ -343,7 +343,7 @@ public sealed class SeedStartupTests
             membership => membership.TenantId == new TenantId(OperatorTenantId),
             TestContext.Current.CancellationToken));
         Assert.Equal(
-            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "suppliers"],
+            ["automations", "billing", "catalog", "companies", "customers", "developer", "loans", "messaging", "orders", "pipeline", "pos", "quotations", "reporting", "shopify", "store", "suppliers"],
             await SeedModuleKeysAsync(factory, expectedSource: TenantModuleSources.Seed, OperatorTenantId));
     }
 
@@ -609,6 +609,10 @@ public sealed class SeedStartupTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+            // tarea 7); valores de prueba, igual que los de R2.
+            builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
             // Fijado, nunca heredado: con "infobip" y sus claves ausentes el validador de
             // Notifications falla al arrancar y todas las pruebas del archivo mueren antes
             // de su aserción.

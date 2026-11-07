@@ -59,10 +59,12 @@ using Modules.Storage.Infrastructure;
 using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
+using Modules.Store.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
 using LoansPermissions = Modules.Loans.Application.LoansPermissions;
+using StorePermissions = Modules.Store.Application.StorePermissions;
 using ServiceContractsPermissions = Modules.ServiceContracts.Application.ServiceContractsPermissions;
 using ModuleKeys = Modules.Tenancy.Domain.TenantModuleKeys;
 
@@ -81,6 +83,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IExecutionContext, HttpExecutionContext>();
         // API externa (spec 2026-10-30 §4.3): los handlers externos leen a quien llama de este puerto, no de IExecutionContext.
         services.AddScoped<IApiCaller, HttpApiCaller>();
+        services.AddScoped<IExternalCallNotes, HttpExternalCallNotes>();
         // Límites de la API externa (spec 2026-10-30 §6.1): todo tiene valor por defecto y no hay
         // configuración nueva en Backend-prod, pero un 0 o un negativo tumba el arranque (ApiAccessOptionsValidator). El limitador por clave es singleton: el estado de las ventanas vive en él.
         services.AddOptions<ApiAccessOptions>()
@@ -210,6 +213,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<CopyPriceScalesCommand, IReadOnlyList<ProductDto>>,
             CopyPriceScalesHandler>();
         services.AddScoped<
+            ICommandHandler<SetProductsStoreVisibilityCommand, ProductStoreVisibilityResult>,
+            SetProductsStoreVisibilityHandler>();
+        services.AddScoped<
             ICommandHandler<DeactivateProductCommand, ProductDto>,
             DeactivateProductHandler>();
         services.AddScoped<
@@ -313,6 +319,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<ListApiKeysQuery, IReadOnlyList<ApiKeyDto>>,
             ListApiKeysHandler>();
         services.AddScoped<
+            IQueryHandler<ListApiKeyRequestsQuery, ApiKeyRequestPage>,
+            ListApiKeyRequestsHandler>();
+        services.AddScoped<
             IQueryHandler<ListApiScopesQuery, ApiScopeCatalogDto>,
             ListApiScopesHandler>();
         services.AddScoped<
@@ -325,6 +334,7 @@ public static class QepServiceCollectionExtensions
         // los módulos que el tenant tiene prendidos. Las conexiones entran por un puerto con adaptador en Bootstrapper.
         services.AddScoped<ApiScopeCatalog>();
         services.AddScoped<IApiKeyConnectionDirectory, ApiKeyConnectionDirectory>();
+        services.AddScoped<IApiMessageStates, ApiMessageStates>();
         services.AddScoped<IApiKeyVerifier, ApiKeyVerifier>();
         services.AddSingleton(new ApiScopeDefinition(
             MessagingScopes.TemplatesSend,
@@ -776,6 +786,9 @@ public static class QepServiceCollectionExtensions
         // Pedidos desde integraciones (spec 2026-10-15 §5.4): el puerto que el adaptador de Shopify
         // consume; ningún consumidor referencia Modules.Quotations.Application.
         services.AddScoped<IExternalOrderWriter, ExternalOrderService>();
+        // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
+        // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
+        services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -902,6 +915,7 @@ public static class QepServiceCollectionExtensions
         // API externa de Messaging (spec 2026-10-30 §5.2): las dos lecturas y el envío de la clave de API.
         services.AddScoped<IQueryHandler<ListExternalConnectionsQuery, IReadOnlyList<ExternalConnectionDto>>, ListExternalConnectionsHandler>();
         services.AddScoped<IQueryHandler<ListExternalTemplatesQuery, IReadOnlyList<ExternalTemplateDto>>, ListExternalTemplatesHandler>();
+        services.AddScoped<IQueryHandler<GetExternalMessageQuery, ExternalMessageDto>, GetExternalMessageHandler>();
         services.AddScoped<ICommandHandler<SendExternalTemplateCommand, ExternalMessageResult>, SendExternalTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.8): búsqueda en el historial.
         services.AddScoped<IQueryHandler<SearchMessagesQuery, SearchPageDto>, SearchMessagesHandler>();
@@ -1054,6 +1068,7 @@ public static class QepServiceCollectionExtensions
         services.AddValidatorsFromAssemblyContaining<CreateApiKeyValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.ServiceContracts.Application.UpsertCustomerProfileValidator>();
         services.AddValidatorsFromAssemblyContaining<Modules.Loans.Application.CreateLoanValidator>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Store.Application.UpdateStoreSettingsValidator>();
         services.AddValidatorsFromAssemblyContaining<CreateQuotationValidator>();
         services.AddValidatorsFromAssemblyContaining<OrdersReportFilterValidator>();
         services.AddValidatorsFromAssemblyContaining<OpenCashSessionValidator>();
@@ -1071,6 +1086,7 @@ public static class QepServiceCollectionExtensions
         services.AddApiAccessInfrastructure(configuration);
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
+        services.AddStoreInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1221,7 +1237,14 @@ public static class QepServiceCollectionExtensions
         // Sin loggers: el de HttpClient registraría la URL con la query del cliente. CompositionRootTests lo amarra.
         services.AddSingleton<IExternalApiUrlPolicy, AutomationExternalApiUrlPolicy>();
         services.AddHttpClient(HttpBlockExecutor.HttpClientName, HttpBlockExecutor.ConfigureClient)
-            .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                // Spec 2026-11-03 D-8: el pool va acá y no en CreateHandler, que también usa el probador de la conexión, una llamada suelta.
+                var handler = ExternalApiUrlPolicy.CreateHandler();
+                handler.PooledConnectionIdleTimeout = HttpBlockExecutor.PooledConnectionIdleTimeout;
+                handler.PooledConnectionLifetime = HttpBlockExecutor.PooledConnectionLifetime;
+                return handler;
+            })
             .RemoveAllLoggers();
         // Spec 2026-10-21 §5.3, D-M5 y D-M14: los puertos del motor sobre la cola, la conversación, la salida del bot y los medios de
         // Mensajería, y el nombre de la empresa por Tenancy.
@@ -1268,6 +1291,10 @@ public static class QepServiceCollectionExtensions
         services.AddSingleton(provider => new Observability.QueueGauges(
             provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), new BuildingBlocks.Infrastructure.SystemClock()));
         services.AddHostedService<Observability.QueueSamplerWorker>();
+
+        // Registro de llamadas a la API externa: el middleware encola y el escritor inserta, para que la base no demore una respuesta.
+        services.AddSingleton<ExternalApiCallLogChannel>();
+        services.AddHostedService<ExternalApiCallLogWriter>();
 
         // Mismo patrón (CAT-05) entre `customers` y `geography`: ninguno de los dos referencia al
         // otro — CustomersLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules lo
@@ -1325,6 +1352,83 @@ public static class QepServiceCollectionExtensions
         // puertos contra Customers, Tenancy y Authorization. Con ruta completa por el mismo choque de nombres.
         services.AddScoped<Modules.Loans.Application.ILoansCustomerLookup, LoansCustomerLookup>();
         services.AddScoped<Modules.Loans.Application.ILoansMemberDirectory, LoansMemberDirectory>();
+
+        // `store` (spec de la tienda en línea, 2026-11-03): clientes, catálogo, archivos, empresas y cotizaciones son de otros módulos y
+        // Store sólo declara puertos; el composition root los cablea. Los manejadores, a mano y con ruta completa, como Loans: uno
+        // olvidado compila, mapea su endpoint y responde 500.
+        services.AddScoped<Modules.Store.Application.IStoreTenantLookup, StoreTenantLookup>();
+        services.AddScoped<Modules.Store.Application.IStoreFileLookup, StoreFileLookup>();
+        services.AddScoped<Modules.Store.Application.IStoreCatalogReader, StoreCatalogReader>();
+        services.AddScoped<Modules.Store.Application.IStoreBillingAccounts, StoreBillingAccounts>();
+        services.AddScoped<Modules.Store.Application.IStoreCountries, StorePhoneNormalizer>();
+        services.AddScoped<Modules.Store.Application.IStorePhoneNormalizer, StorePhoneNormalizer>();
+        services.AddScoped<Modules.Store.Application.StoreSettingsComposer>();
+        services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
+        services.AddScoped<Modules.Store.Application.IStoreCustomerDirectory, StoreCustomerDirectory>();
+        services.AddScoped<Modules.Store.Application.IStoreMemberDirectory, StoreMemberDirectory>();
+        services.AddScoped<Modules.Store.Application.OrderRequestRowComposer>();
+        services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
+        // Quotations → Store: el detalle de un pedido de la tienda muestra su solicitud (teléfono y total que vio el visitante).
+        services.AddScoped<IOrderStoreRequestLookup, OrderStoreRequestLookup>();
+        services.AddScoped<Modules.Store.Application.StorefrontResolver>();
+        services.AddScoped<Modules.Store.Application.PublicCartPricing>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.SubmitOrderRequestCommand, (Modules.Store.Application.PublicOrderRequestReceiptDto Receipt, bool Created)>,
+            Modules.Store.Application.SubmitOrderRequestHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetPublicStoreQuery, Modules.Store.Application.PublicStoreDto>,
+            Modules.Store.Application.GetPublicStoreHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicCategoriesQuery, Modules.Store.Application.PublicCategoriesDto>,
+            Modules.Store.Application.ListPublicCategoriesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicProductsQuery, Modules.Store.Application.PublicProductsPageDto>,
+            Modules.Store.Application.ListPublicProductsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetPublicProductQuery, Modules.Store.Application.PublicProductDto>,
+            Modules.Store.Application.GetPublicProductHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.QuotePublicCartQuery, Modules.Store.Application.PublicCartQuoteDto>,
+            Modules.Store.Application.QuotePublicCartHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicDepartmentsQuery, Modules.Store.Application.PublicGeoListDto>,
+            Modules.Store.Application.ListPublicDepartmentsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListPublicCitiesQuery, Modules.Store.Application.PublicGeoListDto>,
+            Modules.Store.Application.ListPublicCitiesHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListOrderRequestsQuery, Modules.Store.Application.StoreOrderRequestPageDto>,
+            Modules.Store.Application.ListOrderRequestsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetOrderRequestSummaryQuery, Modules.Store.Application.StoreInboxSummaryDto>,
+            Modules.Store.Application.GetOrderRequestSummaryHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetOrderRequestQuery, Modules.Store.Application.StoreOrderRequestDetailDto>,
+            Modules.Store.Application.GetOrderRequestHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetCustomerCandidatesQuery, Modules.Store.Application.StoreCustomerCandidatesDto>,
+            Modules.Store.Application.GetCustomerCandidatesHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.TakeOrderRequestCommand, Modules.Store.Application.StoreTakeResultDto>,
+            Modules.Store.Application.TakeOrderRequestHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.DiscardOrderRequestCommand, Modules.Store.Application.StoreOrderRequestRowDto>,
+            Modules.Store.Application.DiscardOrderRequestHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.GetStoreSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.UpdateStoreSettingsCommand, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.UpdateStoreSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Store.Application.PublishStoreCommand, Modules.Store.Application.StoreSettingsDto>,
+            Modules.Store.Application.PublishStoreHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.PreviewStoreColorsQuery, Modules.Store.Application.StoreColorPreviewDto>,
+            Modules.Store.Application.PreviewStoreColorsHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Store.Application.ListStoreBillingAccountsQuery, Modules.Store.Application.StoreBillingAccountListDto>,
+            Modules.Store.Application.ListStoreBillingAccountsHandler>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1562,6 +1666,9 @@ public static class QepServiceCollectionExtensions
                 // Spec de préstamos (2026-10-31): los préstamos que la empresa otorga los administra quien administra la empresa.
                 LoansPermissions.Read,
                 LoansPermissions.Manage,
+                // Spec de la tienda en línea (owner, 2026-11-03): publicar la tienda y fijar sus cuentas de cobro es de admin y de nadie más.
+                // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
+                StorePermissions.SettingsManage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
                 ApiAccessPermissions.ApiKeyManage
             ]));
@@ -2231,6 +2338,15 @@ public static class QepServiceCollectionExtensions
             "Préstamos",
             "medium",
             RequiredModules: [ModuleKeys.Loans]));
+        // Spec de la tienda en línea (2026-11-03): con [store], ModuleEntitlementMask quita el permiso al apagar el módulo y el editor de
+        // roles no lo ofrece. La bandeja no declara permiso nuevo: usa quotations.order.manage.
+        services.AddSingleton(new PermissionDefinition(
+            StorePermissions.SettingsManage,
+            "Configurar la tienda en línea",
+            "Permite publicar la tienda, cambiar su marca, contacto, monedas con sus cuentas y modo de precios.",
+            "Tienda",
+            "medium",
+            RequiredModules: [ModuleKeys.Store]));
     }
 
     private static void AddAuthentication(
@@ -2623,6 +2739,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 LoansPermissions.Manage,
                 policy => AddPermissionRequirement(policy, LoansPermissions.Manage))
+            // Spec de la tienda en línea: sin esta política, RequireAuthorization no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                StorePermissions.SettingsManage,
+                policy => AddPermissionRequirement(policy, StorePermissions.SettingsManage))
             // Spec 2026-10-30: la otra mitad del permiso de claves de API; sin ella el síntoma es 500, no 403.
             .AddPolicy(
                 ApiAccessPermissions.ApiKeyManage,
