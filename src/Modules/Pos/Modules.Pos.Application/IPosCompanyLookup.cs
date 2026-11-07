@@ -9,4 +9,4 @@ public interface IPosCompanyLookup
     Task<PosCompanyRef?> FindAsync(Guid tenantId, Guid companyId, CancellationToken cancellationToken);
 }
 
-public sealed record PosCompanyRef(Guid Id, string Name, string TaxId, string? Address, string? Phone, bool IsActive);
+public sealed record PosCompanyRef(Guid Id, string Name, string TaxId, string DocumentType, string? Address, string? Phone, bool IsActive);

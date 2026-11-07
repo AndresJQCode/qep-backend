@@ -278,6 +278,41 @@ public sealed class PosSaleApiTests
 
     private static string PosSaleNumberFor(int value) => $"POS-{value:D6}";
 
+    // El ticket es el comprobante entregado: si la empresa cambia de tipo de documento con la caja
+    // abierta, la venta sigue diciendo el de la apertura.
+    [Fact]
+    public async Task TicketKeepsDocumentTypeFrozenAtOpen()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        var session = await world.OpenSessionAsync(world.Admin);
+        var cityId = await EnsureCityIdAsync(world.Tenant.Seeder);
+
+        var update = await world.Tenant.Seeder.PutAsJsonAsync(
+            $"/api/v1/tenants/{world.Tenant.TenantId}/companies/{world.Company.Id}",
+            new
+            {
+                name = world.Company.Name,
+                bankAccounts = new[] { new { bankName = "Bancolombia", accountNumber = "123456789", currency = "COP" } },
+                taxId = "1020304050",
+                country = "CO",
+                documentType = "CC",
+                cityId,
+            },
+            TestContext.Current.CancellationToken);
+        update.EnsureSuccessStatusCode();
+        var sold = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales",
+            PosWorld.SaleBody(Guid.CreateVersion7(), session.Id, world.PlainLine(), PosWorld.CashPayment(20_000m)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, sold.StatusCode);
+        var sale = await sold.Content.ReadFromJsonAsync<PosSaleResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("NIT", sale!.Issuer.DocumentType);
+        Assert.Equal(world.Company.TaxId, sale.Issuer.TaxId);
+    }
+
     [Fact]
     public async Task CloseWithAStaleIfMatchIs412AndWithoutItIs428()
     {

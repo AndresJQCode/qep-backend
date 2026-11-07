@@ -27,7 +27,7 @@ public sealed class PosPersistenceTests
     {
         var tenant = await RegisterTenantAsync(factory);
         var company = await CreateCompanyAsync(tenant.Seeder, tenant.TenantId);
-        return (tenant.TenantId, new PosCompanySnapshot(company.Id, company.Name, company.TaxId, null, null));
+        return (tenant.TenantId, new PosCompanySnapshot(company.Id, company.Name, company.TaxId, "NIT", null, null));
     }
 
     private static CashSession NewSession(Guid tenantId, PosCompanySnapshot company, MemberId cashier) =>
