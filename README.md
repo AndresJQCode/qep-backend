@@ -1039,7 +1039,7 @@ acepta en `Development` y `Testing` (en Staging el arranque falla, para que no c
 | --- | --- | --- |
 | 400 | `store.public.body_invalid` | El cuerpo de `POST /order-requests` no es JSON o llegó cortado. |
 | 401 | `store.public.client_unauthorized` | Falta `X-Qep-Storefront-Key` o no coincide. |
-| 404 | `store.public.not_found` | No hay tienda publicada en ese host. |
+| 404 | `store.public.not_found` | No hay tienda publicada en ese host. En un `GET` sale con `Cache-Control: public, max-age=60` (el max-age del catálogo, sin `stale-while-revalidate`); el resto de los errores no se cachea. |
 | 404 | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica. |
 | 413 | `store.public.body_too_large` | El cuerpo de `POST /order-requests` pasa de 64 KB. |
 | 422 | `validation.failed` | Un campo no cumple su forma; el detalle viaja en `errors`. |

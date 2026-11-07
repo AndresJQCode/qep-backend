@@ -289,6 +289,77 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task TheStoreLevel404IsCacheableForTheCatalogMaxAge()
+    {
+        await using var fixture = await OpenAsync(publish: false);
+
+        // El storefront cachea la tienda inexistente: el backend, dueño del dato, dice cuánto. Mismo max-age que el catálogo y sin
+        // stale-while-revalidate, para que una tienda recién publicada no siga respondiendo 404 cinco minutos más.
+        foreach (var (path, host) in new[]
+                 {
+                     ("/", PublicStoreFixture.Host),
+                     ("/products?currency=COP", PublicStoreFixture.Host),
+                     ("/", "no-existe.lulocrm.com"),
+                 })
+        {
+            var response = await fixture.GetAsync(path, host);
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("store.public.not_found", (string)(await PublicStoreFixture.JsonAsync(response))["code"]!);
+            Assert.Equal("public, max-age=60", response.Headers.CacheControl?.ToString());
+        }
+    }
+
+    [Fact]
+    public async Task TheStoreLevel404OfAPostIsNotCacheable()
+    {
+        await using var fixture = await OpenAsync(publish: false);
+
+        var response = await fixture.QuoteAsync(new { currency = "COP", lines = Array.Empty<object>() });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("store.public.not_found", (string)(await PublicStoreFixture.JsonAsync(response))["code"]!);
+        AssertNotCacheable(response);
+    }
+
+    [Fact]
+    public async Task AMissingStorefrontKeyIsNotCacheable()
+    {
+        await using var fixture = await OpenAsync();
+        using var anonymous = fixture.Settings.Factory.CreateClient();
+
+        var response = await anonymous.GetAsync(PublicStoreFixture.Url("/"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("store.public.client_unauthorized", (string)(await PublicStoreFixture.JsonAsync(response))["code"]!);
+        AssertNotCacheable(response);
+    }
+
+    [Fact]
+    public async Task OtherErrorsOfAServedStoreAreNotCacheable()
+    {
+        await using var fixture = await OpenAsync();
+        var (hidden, _) = await fixture.CreateProductAsync("Oculto", "HID-1", Prices(10_000m), visible: false);
+
+        var productNotFound = await fixture.GetAsync($"/products/{hidden}?currency=COP");
+        var currencyInvalid = await fixture.GetAsync("/products");
+
+        Assert.Equal(HttpStatusCode.NotFound, productNotFound.StatusCode);
+        Assert.Equal("store.public.product_not_found", (string)(await PublicStoreFixture.JsonAsync(productNotFound))["code"]!);
+        AssertNotCacheable(productNotFound);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, currencyInvalid.StatusCode);
+        AssertNotCacheable(currencyInvalid);
+    }
+
+    // Ni public ni un max-age: ningún intermediario ni el storefront pueden guardar la respuesta por su cuenta.
+    private static void AssertNotCacheable(HttpResponseMessage response)
+    {
+        var cacheControl = response.Headers.CacheControl;
+        Assert.False(cacheControl?.Public ?? false, $"Cache-Control: {cacheControl}");
+        Assert.Null(cacheControl?.MaxAge);
+        Assert.Null(cacheControl?.SharedMaxAge);
+    }
+
+    [Fact]
     public async Task TheStoreListsItsCurrenciesAndThePrimary()
     {
         await using var fixture = await OpenAsync(TwoCurrencies);
