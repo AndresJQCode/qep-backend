@@ -10,7 +10,10 @@ public sealed record CreateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -47,7 +50,7 @@ public sealed class CreateCompanyHandler(
         // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
         // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
         // en vez de reventar la FK de base como 500 al hacer SaveChanges.
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+        var city = await geographyLookup.FindCityAsync(command.CityId ?? Guid.Empty, cancellationToken)
             ?? throw new CompaniesDomainException(
                 "companies.company.city_not_found",
                 "The city was not found.");

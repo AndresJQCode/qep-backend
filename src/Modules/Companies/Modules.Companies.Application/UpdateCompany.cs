@@ -11,7 +11,10 @@ public sealed record UpdateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -47,7 +50,7 @@ public sealed class UpdateCompanyHandler(
             cancellationToken)
             ?? throw CompanyNotFound.For(command.CompanyId);
 
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
+        var city = await geographyLookup.FindCityAsync(command.CityId ?? Guid.Empty, cancellationToken)
             ?? throw new CompaniesDomainException(
                 "companies.company.city_not_found",
                 "The city was not found.");
