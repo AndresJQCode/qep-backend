@@ -9,10 +9,14 @@ namespace Modules.Companies.Application;
 /// </summary>
 public static class CompanyLegacyWrite
 {
-    /// <summary>Sin país: Colombia y NIT. Con país, el comando pasa intacto.</summary>
+    /// <summary>
+    /// Sin país: Colombia y NIT. Con país, se recorta y se pasa a mayúsculas aquí, una sola vez:
+    /// validador, handler y dominio comparan después contra el mismo valor ("co" y " CO" son
+    /// Colombia para los tres).
+    /// </summary>
     public static CreateCompanyCommand Resolve(CreateCompanyCommand command) =>
         command.Country is not null
-            ? command
+            ? command with { Country = Normalize(command.Country) }
             : command with
             {
                 Country = Company.ColombiaCountryCode,
@@ -25,10 +29,12 @@ public static class CompanyLegacyWrite
     /// </summary>
     public static UpdateCompanyCommand Resolve(UpdateCompanyCommand command, Company stored) =>
         command.Country is not null
-            ? command
+            ? command with { Country = Normalize(command.Country) }
             : command with
             {
                 Country = stored.Country,
                 DocumentType = command.DocumentType ?? stored.DocumentType.ToWire()
             };
+
+    private static string Normalize(string country) => country.Trim().ToUpperInvariant();
 }

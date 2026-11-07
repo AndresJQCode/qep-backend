@@ -1,8 +1,8 @@
-using Npgsql;
-using System.Text.Json;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Modules.Companies.Application;
+using Npgsql;
 using static Modules.Companies.IntegrationTests.CompaniesApiHarness;
 
 namespace Modules.Companies.IntegrationTests;
@@ -836,6 +836,56 @@ public sealed class CompanyWriteApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains("CityId", await ValidationFieldsAsync(response));
+    }
+
+    // El pais llega en cualquier caja o con espacios; el validador y el dominio lo normalizan, y la
+    // busqueda de ciudad del handler tiene que coincidir con ellos.
+    [Fact]
+    public async Task PostLowerCaseColombiaWithUnknownCityIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "co",
+            documentType = "NIT",
+            cityId = Guid.CreateVersion7()
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "companies.company.city_not_found",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task PostPaddedLowerCaseColombiaResolvesTheCity()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = " co ",
+            documentType = "NIT",
+            cityId
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
+        Assert.NotEqual(JsonValueKind.Null, json.RootElement.GetProperty("city").ValueKind);
+        Assert.NotEqual(JsonValueKind.Null, json.RootElement.GetProperty("department").ValueKind);
     }
 
     private static object SpanishBody() => new
