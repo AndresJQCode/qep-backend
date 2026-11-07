@@ -38,7 +38,10 @@ public sealed class CompanyBankAccountTests
             "Andes Logistica S.A.S.",
             accounts.Length == 0 ? [Account()] : accounts,
             "900.111.222-3",
+            "CO",
+            CompanyDocumentType.Nit,
             CityId,
+            null,
             CompanyContactInfo.Empty,
             Now);
 
@@ -178,7 +181,10 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [],
             "900-1",
+            "CO",
+            CompanyDocumentType.Nit,
             CityId,
+            null,
             CompanyContactInfo.Empty,
             Now));
 
@@ -213,7 +219,10 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [Account(bankName: "Davivienda", accountNumber: "CTA-9", currency: "USD")],
             "900-1",
+            "CO",
+            CompanyDocumentType.Nit,
             CityId,
+            null,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5));
 
@@ -232,7 +241,10 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [],
             "900-1",
+            "CO",
+            CompanyDocumentType.Nit,
             CityId,
+            null,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5)));
 
@@ -252,7 +264,10 @@ public sealed class CompanyBankAccountTests
             "Andes",
             [Account(accountNumber: "CTA-9"), Account(accountNumber: "CTA-9")],
             "900-1",
+            "CO",
+            CompanyDocumentType.Nit,
             CityId,
+            null,
             CompanyContactInfo.Empty,
             Now.AddMinutes(5)));
 

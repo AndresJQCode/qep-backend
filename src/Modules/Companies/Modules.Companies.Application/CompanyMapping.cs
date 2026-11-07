@@ -44,7 +44,7 @@ internal static class CompanyMapping
         ICompanyGeographyLookup geographyLookup,
         CancellationToken cancellationToken)
     {
-        var city = await geographyLookup.FindCityAsync(company.CityId, cancellationToken)
+        var city = await geographyLookup.FindCityAsync(company.CityId!.Value, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
 

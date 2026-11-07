@@ -59,7 +59,10 @@ public sealed class CreateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
+            Company.ColombiaCountryCode,
+            CompanyDocumentType.Nit,
             command.CityId,
+            null,
             new CompanyContactInfo
             {
                 Phone = command.Phone,
