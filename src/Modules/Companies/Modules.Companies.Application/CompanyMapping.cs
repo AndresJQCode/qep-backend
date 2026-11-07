@@ -9,7 +9,7 @@ internal static class CompanyMapping
     /// funcion: cada handler decide como (una consulta puntual en Get/Create/Update, un lote en
     /// List) y esto solo ensambla — mismo criterio que <c>CustomerMapping.ToDto</c>.
     /// </summary>
-    public static CompanyDto ToDto(this Company company, CompanyCityRef city) => new(
+    public static CompanyDto ToDto(this Company company, CompanyCityRef? city) => new(
         company.Id.Value,
         company.Name,
         company.BankAccounts
@@ -19,13 +19,18 @@ internal static class CompanyMapping
                 account.Currency))
             .ToArray(),
         company.TaxId,
+        company.Country,
+        company.DocumentType.ToWire(),
         company.IsActive,
         company.Phone,
         company.Email,
         company.Address,
-        new CompanyCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
-        new CompanyDepartmentDto(
-            city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        city is null ? null : new CompanyCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+        city is null
+            ? null
+            : new CompanyDepartmentDto(
+                city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+        company.CityName,
         company.CreatedAt,
         company.UpdatedAt);
 
@@ -44,7 +49,13 @@ internal static class CompanyMapping
         ICompanyGeographyLookup geographyLookup,
         CancellationToken cancellationToken)
     {
-        var city = await geographyLookup.FindCityAsync(company.CityId!.Value, cancellationToken)
+        // Fuera de Colombia no hay CityId que resolver: la ciudad es texto libre en CityName.
+        if (company.CityId is not { } cityId)
+        {
+            return company.ToDto(null);
+        }
+
+        var city = await geographyLookup.FindCityAsync(cityId, cancellationToken)
             ?? throw new InvalidOperationException(
                 $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
 

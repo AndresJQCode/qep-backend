@@ -1,3 +1,5 @@
+using Npgsql;
+using System.Text.Json;
 using System.Net;
 using System.Net.Http.Json;
 using Modules.Companies.Application;
@@ -620,5 +622,260 @@ public sealed class CompanyWriteApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    // ---- Pais y tipo de documento (spec 2026-11-07, §6) ----
+
+    [Fact]
+    public async Task PostSpanishCompanyWithNif()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, SpanishBody());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("ES", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIF", json.RootElement.GetProperty("documentType").GetString());
+        Assert.Equal("Madrid", json.RootElement.GetProperty("cityName").GetString());
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("city").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("department").ValueKind);
+    }
+
+    [Fact]
+    public async Task PostColombiaWithoutCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            country = "CO",
+            documentType = "NIT"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityId", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task PostSpainWithNit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Iberia S.L.",
+            bankAccounts = new[] { BankAccount("ES-000123") },
+            taxId = "B12345678",
+            country = "ES",
+            documentType = "NIT",
+            cityName = "Madrid"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("DocumentType", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task PostUsWithoutCityName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Acme Inc.",
+            bankAccounts = new[] { BankAccount("US-000123") },
+            taxId = "12-3456789",
+            country = "US",
+            documentType = "TAX_ID"
+        });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityName", await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task LegacyPostWithoutCountryCreatesColombiaNit()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await PostRawAsync(client, new
+        {
+            name = "Andes S.A.S.",
+            bankAccounts = new[] { BankAccount("CTA-000123") },
+            taxId = "900.111.222-3",
+            cityId
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIT", json.RootElement.GetProperty("documentType").GetString());
+    }
+
+    [Fact]
+    public async Task LegacyPutOnColombianCompanyKeepsCountryAndType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateCompanyAsync(client, "Andes S.A.S.", "CTA-000123");
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created.Id}",
+            new
+            {
+                name = "Andes Renombrada S.A.S.",
+                bankAccounts = new[] { BankAccount("CTA-000123") },
+                taxId = "900.111.222-3",
+                cityId
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = await ReadJsonAsync(response);
+        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIT", json.RootElement.GetProperty("documentType").GetString());
+    }
+
+    [Fact]
+    public async Task LegacyPutOnSpanishCompanyKeepsCountryAndFailsOnCityName()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateSpanishAsync(client);
+        var cityId = await EnsureCityIdAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created}",
+            new
+            {
+                name = "Iberia S.L.",
+                bankAccounts = new[] { BankAccount("ES-000123") },
+                taxId = "B12345678",
+                cityId
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityName", await ValidationFieldsAsync(response));
+
+        var stored = await client.GetAsync(
+            $"{CompaniesUrl()}/{created}", TestContext.Current.CancellationToken);
+        using var json = await ReadJsonAsync(stored);
+        Assert.Equal("ES", json.RootElement.GetProperty("country").GetString());
+        Assert.Equal("NIF", json.RootElement.GetProperty("documentType").GetString());
+    }
+
+    [Fact]
+    public async Task PutColombiaToUsClearsCityIdInTheDatabase()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateCompanyAsync(client, "Andes S.A.S.", "CTA-000123");
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created.Id}",
+            new
+            {
+                name = "Andes Inc.",
+                bankAccounts = new[] { BankAccount("CTA-000123") },
+                taxId = "12-3456789",
+                country = "US",
+                documentType = "TAX_ID",
+                cityName = "Miami"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var select = new NpgsqlCommand(
+            "SELECT city_id FROM companies.companies WHERE id = @id", connection);
+        select.Parameters.AddWithValue("id", created.Id);
+        var cityId = await select.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        Assert.True(cityId is null or DBNull);
+    }
+
+    [Fact]
+    public async Task PutUsToColombiaWithoutCityId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await CreateUsAsync(client);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CompaniesUrl()}/{created}",
+            new
+            {
+                name = "Acme Inc.",
+                bankAccounts = new[] { BankAccount("US-000123") },
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT"
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("CityId", await ValidationFieldsAsync(response));
+    }
+
+    private static object SpanishBody() => new
+    {
+        name = "Iberia S.L.",
+        bankAccounts = new[] { BankAccount("ES-000123") },
+        taxId = "B12345678",
+        country = "ES",
+        documentType = "NIF",
+        cityName = "Madrid"
+    };
+
+    private static Task<HttpResponseMessage> PostRawAsync(HttpClient client, object body) =>
+        client.PostAsJsonAsync(CompaniesUrl(), body, TestContext.Current.CancellationToken);
+
+    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response) =>
+        JsonDocument.Parse(await response.Content.ReadAsStringAsync(
+            TestContext.Current.CancellationToken));
+
+    private static async Task<Guid> CreateSpanishAsync(HttpClient client)
+    {
+        var response = await PostRawAsync(client, SpanishBody());
+        response.EnsureSuccessStatusCode();
+        using var json = await ReadJsonAsync(response);
+        return json.RootElement.GetProperty("id").GetGuid();
+    }
+
+    private static async Task<Guid> CreateUsAsync(HttpClient client)
+    {
+        var response = await PostRawAsync(client, new
+        {
+            name = "Acme Inc.",
+            bankAccounts = new[] { BankAccount("US-000123") },
+            taxId = "12-3456789",
+            country = "US",
+            documentType = "TAX_ID",
+            cityName = "Miami"
+        });
+        response.EnsureSuccessStatusCode();
+        using var json = await ReadJsonAsync(response);
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 }

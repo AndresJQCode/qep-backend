@@ -45,15 +45,24 @@ public sealed class CreateCompanyHandler(
         // revision de riesgo de CAT-02.
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
+
+        // El cliente viejo no manda pais: se resuelve a Colombia/NIT antes de validar, para que
+        // las reglas por carril vean siempre un pais efectivo.
+        command = CompanyLegacyWrite.Resolve(command);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
         // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
         // en vez de reventar la FK de base como 500 al hacer SaveChanges.
-        var city = await geographyLookup.FindCityAsync(command.CityId ?? Guid.Empty, cancellationToken)
-            ?? throw new CompaniesDomainException(
-                "companies.company.city_not_found",
-                "The city was not found.");
+        // Fuera de Colombia la ciudad es texto libre: no hay nada que buscar en Geography.
+        CompanyCityRef? city = null;
+        if (command.Country == Company.ColombiaCountryCode)
+        {
+            city = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+                ?? throw new CompaniesDomainException(
+                    "companies.company.city_not_found",
+                    "The city was not found.");
+        }
 
         var now = clock.UtcNow;
         var company = Company.Create(
@@ -62,10 +71,10 @@ public sealed class CreateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
-            Company.ColombiaCountryCode,
-            CompanyDocumentType.Nit,
+            command.Country!,
+            CompanyDocumentTypes.Parse(command.DocumentType!),
             command.CityId,
-            null,
+            command.CityName,
             new CompanyContactInfo
             {
                 Phone = command.Phone,

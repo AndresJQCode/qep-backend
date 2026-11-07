@@ -35,7 +35,10 @@ public sealed class ListCompaniesHandler(
 
         // Una sola consulta en lote para toda la pagina, no una por empresa — mismo criterio
         // que ListCustomersHandler con FindCitiesAsync.
-        var cityIds = companies.Select(company => company.CityId!.Value).Distinct().ToArray();
+        var cityIds = companies
+            .Where(company => company.CityId.HasValue)
+            .Select(company => company.CityId!.Value)
+            .Distinct().ToArray();
         var citiesById = await geographyLookup.FindCitiesAsync(cityIds, cancellationToken);
 
         return companies
@@ -45,10 +48,12 @@ public sealed class ListCompaniesHandler(
 
     // La FK de base garantiza que la ciudad exista: un miss aca es corrupcion de datos, no una
     // entrada de usuario invalida. Mismo criterio que CompanyMapping.ToDtoAsync.
-    private static CompanyCityRef ResolveCity(
+    private static CompanyCityRef? ResolveCity(
         IReadOnlyDictionary<Guid, CompanyCityRef> citiesById, Company company) =>
-        citiesById.TryGetValue(company.CityId!.Value, out var city)
-            ? city
-            : throw new InvalidOperationException(
-                $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
+        company.CityId is not { } cityId
+            ? null
+            : citiesById.TryGetValue(cityId, out var city)
+                ? city
+                : throw new InvalidOperationException(
+                    $"City '{company.CityId}' referenced by company '{company.Id}' was not found.");
 }
