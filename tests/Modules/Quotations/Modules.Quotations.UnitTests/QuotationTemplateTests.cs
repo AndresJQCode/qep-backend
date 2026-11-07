@@ -529,7 +529,7 @@ public sealed partial class QuotationTemplateTests
         Symbol: "$",
         Decimals: 0,
         BillingAccount: new QuotationPdfBillingAccount(
-            "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            "Ferretería Andina S.A.S.", "900.123.456-7", "NIT", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP"),
         PaymentMethod: "Transferencia bancaria a 30 días",
         Items:

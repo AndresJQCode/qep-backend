@@ -25,6 +25,7 @@ internal sealed class QuotationCompanyLookup(ICompanyRepository repository)
                 company.Id.Value,
                 company.Name,
                 company.TaxId,
+                company.DocumentType.ToWire(),
                 company.IsActive,
                 company.Address,
                 company.Phone,

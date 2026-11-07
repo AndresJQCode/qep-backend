@@ -513,7 +513,7 @@ public sealed class OrdersExportProcessorTests
         };
         var companies = new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", DocumentType: "NIT", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
         await NewProcessor(
@@ -2211,7 +2211,7 @@ public sealed class OrdersExportProcessorTests
     private static StubQuotationCompanyLookup CompanyWithTaxId(string taxId) =>
         new(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, DocumentType: "NIT", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.
