@@ -19,7 +19,19 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
     private static void ConfigureCompany(ModelBuilder modelBuilder)
     {
         var company = modelBuilder.Entity<Company>();
-        company.ToTable("companies", "companies");
+        company.ToTable("companies", "companies", table =>
+        {
+            // En Colombia la ciudad sale del catalogo (city_id) y nunca lleva texto libre; fuera
+            // de Colombia es al reves. El subconjunto de tipos por pais NO va aca: es regla de
+            // dominio que crece por pais y una constraint pediria una migracion por cada cambio.
+            table.HasCheckConstraint(
+                "CK_companies_city_lane",
+                "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) OR " +
+                "(country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_companies_document_type",
+                "document_type IN ('NIT','CC','CE','PASAPORTE','NIF','NIE','TAX_ID')");
+        });
         company.HasKey(value => value.Id);
         company.Property(value => value.Id)
             .HasColumnName("id")
@@ -32,6 +44,17 @@ public sealed class CompaniesDbContext(DbContextOptions<CompaniesDbContext> opti
         company.Property(value => value.TaxId)
             .HasColumnName("tax_id")
             .HasMaxLength(Company.TaxIdMaxLength);
+
+        company.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(Company.CountryLength);
+        company.Property(value => value.DocumentType)
+            .HasColumnName("document_type")
+            .HasConversion(type => type.ToWire(), wire => CompanyDocumentTypes.Parse(wire))
+            .HasMaxLength(16);
+        company.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(Company.CityNameMaxLength);
 
         // FK a geography.cities(id) — otro schema, de otro modulo, de otro DbContext.
         // CompaniesDbContext no la modela con HasOne<City>(): EF Core no soporta una relacion
