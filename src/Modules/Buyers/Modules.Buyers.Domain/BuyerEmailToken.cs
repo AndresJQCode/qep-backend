@@ -34,4 +34,7 @@ public sealed class BuyerEmailToken
             CreatedAt = now,
             ExpiresAt = now + (purpose == BuyerEmailTokenPurpose.Verify ? VerifyLifetime : ResetLifetime),
         };
+
+    /// <summary>Lo deja inutilizable sin borrarlo: un token nuevo del mismo propósito invalida los anteriores.</summary>
+    public void Invalidate(DateTimeOffset now) => UsedAt ??= now;
 }

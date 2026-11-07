@@ -440,6 +440,8 @@
           "Modules.Authorization.Infrastructure": "[1.0.0, )",
           "Modules.Automations.Application": "[1.0.0, )",
           "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Application": "[1.0.0, )",

@@ -6,6 +6,17 @@ public sealed class BuyerSession
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromDays(7);
     public static readonly TimeSpan TouchThreshold = TimeSpan.FromMinutes(5);
 
+    /// <summary>Motivos de revocación. La columna <c>revoked_reason</c> es varchar(40): cada uno debe caber.</summary>
+    public static class RevokedReasons
+    {
+        public const string Logout = "logout";
+        public const string PasswordChanged = "password_changed";
+        public const string PasswordReset = "password_reset";
+        public const string AccountDeleted = "account_deleted";
+    }
+
+    public const int MaxRevokedReasonLength = 40;
+
     private const int MaxIpLength = 45;
 
     private BuyerSession()

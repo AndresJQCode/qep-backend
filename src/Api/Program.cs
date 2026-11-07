@@ -54,6 +54,7 @@ using Modules.Suppliers.Api;
 using Modules.Store.Api;
 using Modules.Store.Application;
 using Modules.Store.Infrastructure;
+using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
@@ -389,6 +390,9 @@ await app.Services.InitializeLoansDatabaseAsync(
 // clientes, pedidos y membresías son referencias blandas.
 await app.Services.InitializeStoreDatabaseAsync(
     app.Lifetime.ApplicationStopping);
+
+// Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
+await app.Services.InitializeBuyersDatabaseAsync(app.Lifetime.ApplicationStopping);
 
 // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
 // membresías son referencias blandas.

@@ -1,0 +1,86 @@
+using Modules.Buyers.Domain;
+
+namespace Modules.Buyers.Application;
+
+public interface IBuyerAccountRepository
+{
+    Task<BuyerAccount?> FindByEmailAsync(string normalizedEmail, CancellationToken cancellationToken);
+
+    Task<BuyerAccount?> FindAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(BuyerAccount account);
+
+    void Remove(BuyerAccount account);
+}
+
+public interface IBuyerProfileRepository
+{
+    Task<BuyerProfile?> FindAsync(Guid accountId, CancellationToken cancellationToken);
+
+    void Add(BuyerProfile profile);
+
+    void Remove(BuyerProfile profile);
+}
+
+public interface IBuyerSessionRepository
+{
+    void Add(BuyerSession session);
+
+    Task<BuyerSession?> FindByTokenHashAsync(string hash, CancellationToken cancellationToken);
+
+    /// <summary>Las sesiones de la cuenta que no están revocadas ni vencidas por su vida absoluta.</summary>
+    Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken);
+}
+
+public interface IBuyerEmailTokenRepository
+{
+    void Add(BuyerEmailToken token);
+
+    /// <summary>Marca como usados los tokens sin usar de la cuenta y del propósito: emitir uno nuevo invalida los anteriores.</summary>
+    Task InvalidateUnusedAsync(
+        Guid accountId, BuyerEmailTokenPurpose purpose, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Consumo atómico, de un solo uso: una sola sentencia que se confirma sola (precedente D6 de Identity).
+    /// Devuelve la cuenta del token, o <c>null</c> si no existe, ya se usó o venció.
+    /// </summary>
+    Task<Guid?> TryConsumeAsync(
+        string tokenHash, BuyerEmailTokenPurpose purpose, DateTimeOffset now, CancellationToken cancellationToken);
+}
+
+public interface IBuyerConsentRepository
+{
+    void Add(BuyerConsent consent);
+}
+
+/// <summary>Escribe en el outbox de la plataforma dentro de la unidad de trabajo del llamador.</summary>
+public interface IBuyerOutbox
+{
+    void Add(string eventName, object payload, DateTimeOffset occurredAt);
+}
+
+public interface IBuyersUnitOfWork
+{
+    /// <summary>
+    /// Confirma los cambios. La violación de <c>IX_accounts_email</c> sale como
+    /// <see cref="BuildingBlocks.Application.ResourceConflictException"/> con <see cref="BuyerErrorCodes.EmailTaken"/>.
+    /// </summary>
+    Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    void DiscardPendingChanges();
+}
+
+public enum BuyerPasswordCheck
+{
+    Failed,
+    Success,
+    SuccessRehashNeeded,
+}
+
+public interface IBuyerPasswordHasher
+{
+    string Hash(string password);
+
+    /// <summary>Con <c>null</c> verifica contra un hash ficticio y devuelve <see cref="BuyerPasswordCheck.Failed"/>.</summary>
+    BuyerPasswordCheck Verify(string? hash, string password);
+}

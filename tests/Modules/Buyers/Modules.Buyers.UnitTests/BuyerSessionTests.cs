@@ -10,6 +10,18 @@ public sealed class BuyerSessionTests
         BuyerSession.Issue(Guid.NewGuid(), Guid.NewGuid(), "a.lulocrm.com", "hash", Now, "203.0.113.5");
 
     [Fact]
+    public void EveryRevokedReasonFitsTheColumn()
+    {
+        var reasons = typeof(BuyerSession.RevokedReasons)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Select(field => (string)field.GetRawConstantValue()!)
+            .ToList();
+
+        Assert.NotEmpty(reasons);
+        Assert.All(reasons, reason => Assert.InRange(reason.Length, 1, BuyerSession.MaxRevokedReasonLength));
+    }
+
+    [Fact]
     public void ASessionIsValidOnlyForItsOwnHost()
     {
         var session = NewSession();
