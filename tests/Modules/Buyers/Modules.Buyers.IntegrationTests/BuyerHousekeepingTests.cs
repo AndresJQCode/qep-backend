@@ -84,11 +84,11 @@ public sealed class BuyerHousekeepingTests
             id, accountId, id.ToString("N") + id.ToString("N"), Now.AddDays(-1), expiresAt, (object?)usedAt ?? DBNull.Value);
     }
 
-    private static Task<long> SeedOutboxAsync(
+    private static async Task<Guid> SeedOutboxAsync(
         BuyersApiHarness.BuyersApi api, string eventName, DateTimeOffset occurredAt, DateTimeOffset? processedAt)
     {
         var id = Guid.CreateVersion7();
-        return api.ScalarAsync<long>(
+        await api.ScalarAsync<long>(
             """
             WITH o AS (
                 INSERT INTO platform.outbox_messages (id, event_name, payload, correlation_id, occurred_at, processed_at, attempts)
@@ -96,7 +96,19 @@ public sealed class BuyerHousekeepingTests
             SELECT count(*) FROM o
             """,
             id, eventName, occurredAt, (object?)processedAt ?? DBNull.Value);
+        return id;
     }
+
+    /// <summary>La fila del inbox del worker de alta para ese mensaje; <c>processedAt</c> nulo = reclamada y sin terminar.</summary>
+    private static Task<long> SeedSignupInboxAsync(BuyersApiHarness.BuyersApi api, Guid messageId, DateTimeOffset? processedAt) =>
+        api.ScalarAsync<long>(
+            """
+            WITH i AS (
+                INSERT INTO buyers.inbox_messages (consumer, message_id, claimed_until, attempts, processed_at)
+                VALUES ('buyers.signup-requested', $1, $2, 1, $3) RETURNING 1)
+            SELECT count(*) FROM i
+            """,
+            messageId, Now.AddDays(-40), (object?)processedAt ?? DBNull.Value);
 
     [Fact]
     public async Task AnUnverifiedAccountOlderThanSevenDaysIsPurgedAndItsEmailIsFree()
@@ -220,13 +232,115 @@ public sealed class BuyerHousekeepingTests
         await using var api = await BuyersApiHarness.OpenAsync();
         foreach (var eventName in BuyerEvents)
         {
-            await SeedOutboxAsync(api, eventName, Now.AddHours(-25), processedAt: Now.AddHours(-24));
+            var id = await SeedOutboxAsync(api, eventName, Now.AddHours(-25), processedAt: Now.AddHours(-24));
+            if (eventName == BuyerSignupRequestedMessage.EventName)
+            {
+                await SeedSignupInboxAsync(api, id, processedAt: Now.AddHours(-24));
+            }
         }
 
         var result = await RunAsync(api);
 
         Assert.Equal(5, result.OutboxMessages);
         Assert.Equal(0, await CountAsync(api, "SELECT count(*) FROM platform.outbox_messages"));
+    }
+
+    // T13a: los correos se purgan sólo por edad. processed_at lo pone el despachador de Tenancy, que no es quien los consume.
+    [Fact]
+    public async Task AnEmailRowOlderThanADayIsPurgedEvenIfThePlatformNeverMarkedItProcessed()
+    {
+        await using var api = await BuyersApiHarness.OpenAsync();
+        await SeedOutboxAsync(api, BuyerIntegrationEvents.EmailVerificationRequested, Now.AddHours(-25), processedAt: null);
+        await SeedOutboxAsync(api, BuyerIntegrationEvents.PasswordResetRequested, Now.AddHours(-23), processedAt: null);
+
+        var result = await RunAsync(api);
+
+        Assert.Equal(1, result.OutboxMessages);
+        Assert.Equal(
+            1,
+            await CountAsync(
+                api, "SELECT count(*) FROM platform.outbox_messages WHERE event_name = $1", BuyerIntegrationEvents.PasswordResetRequested));
+    }
+
+    // T13c: el alta lleva el hash de la contraseña, pero sólo se borra cuando el inbox de Buyers dice que ya se procesó: si el
+    // consumidor estuvo caído más de un día, la edad sola perdería el alta.
+    [Fact]
+    public async Task ASignupRowIsPurgedOnlyOnceItsInboxRowIsProcessed()
+    {
+        await using var api = await BuyersApiHarness.OpenAsync();
+        var processed = await SeedOutboxAsync(api, BuyerSignupRequestedMessage.EventName, Now.AddDays(-3), processedAt: Now.AddDays(-3));
+        await SeedSignupInboxAsync(api, processed, processedAt: Now.AddDays(-3));
+        var claimed = await SeedOutboxAsync(api, BuyerSignupRequestedMessage.EventName, Now.AddDays(-3), processedAt: Now.AddDays(-3));
+        await SeedSignupInboxAsync(api, claimed, processedAt: null);
+        var untouched = await SeedOutboxAsync(api, BuyerSignupRequestedMessage.EventName, Now.AddDays(-3), processedAt: null);
+
+        var result = await RunAsync(api);
+
+        Assert.Equal(1, result.OutboxMessages);
+        Assert.Equal(0, await CountAsync(api, "SELECT count(*) FROM platform.outbox_messages WHERE id = $1", processed));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM platform.outbox_messages WHERE id = $1", claimed));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM platform.outbox_messages WHERE id = $1", untouched));
+    }
+
+    // T13b + T13c: un paso que falla (acá, todo DELETE del outbox de plataforma) no saltea los demás, y el inbox no se purga
+    // mientras su fila del outbox exista: si no, el worker de alta la tomaría como nueva.
+    [Fact]
+    public async Task AFailingStepDoesNotSkipTheOthersAndInboxRowsOfALiveOutboxRowStay()
+    {
+        await using var api = await BuyersApiHarness.OpenAsync();
+        var accountId = await SeedAccountAsync(api, "ana@correo.com", Now - BuyerAccount.UnverifiedRetention - TimeSpan.FromDays(1));
+        await SeedTokenAsync(api, accountId, Now.AddSeconds(-1));
+        var live = await SeedOutboxAsync(api, BuyerSignupRequestedMessage.EventName, Now.AddDays(-40), processedAt: Now.AddDays(-40));
+        await SeedSignupInboxAsync(api, live, processedAt: Now.AddDays(-40));
+        var gone = Guid.CreateVersion7();
+        await SeedSignupInboxAsync(api, gone, processedAt: Now.AddDays(-40));
+        await api.ScalarAsync<long>(
+            """
+            WITH s AS (INSERT INTO buyers.processed_signups (order_request_id, processed_at) VALUES ($1, $2) RETURNING 1)
+            SELECT count(*) FROM s
+            """,
+            Guid.CreateVersion7(), Now.AddDays(-40));
+        await api.ScalarAsync<long>(
+            """
+            DO $$ BEGIN
+                CREATE FUNCTION public.refuse_delete() RETURNS trigger LANGUAGE plpgsql AS
+                    'BEGIN RAISE EXCEPTION ''delete refused''; END';
+                CREATE TRIGGER refuse_delete BEFORE DELETE ON platform.outbox_messages
+                    FOR EACH STATEMENT EXECUTE FUNCTION public.refuse_delete();
+            END $$
+            """);
+
+        var result = await RunAsync(api);
+
+        Assert.Equal(2, result.FailedSteps);
+        Assert.Equal(1, result.Accounts);
+        Assert.Equal(1, result.InboxMessages);
+        Assert.Equal(1, result.ProcessedSignups);
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM platform.outbox_messages WHERE id = $1", live));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.inbox_messages WHERE message_id = $1", live));
+        Assert.Equal(0, await CountAsync(api, "SELECT count(*) FROM buyers.inbox_messages WHERE message_id = $1", gone));
+    }
+
+    // M4: reenviar la verificación reinicia los 7 días; si no, el enlace recién enviado moriría con la purga.
+    [Fact]
+    public async Task AResendRestartsTheRetentionOfAnUnverifiedAccount()
+    {
+        await using var api = await BuyersApiHarness.OpenAsync();
+        var registered = await api.PostAsync(
+            "/register",
+            new { email = "ana@correo.com", password = "una-contrasena-larga", acceptsDataPolicy = true, turnstileToken = "token-ok", profile = (object?)null });
+        registered.EnsureSuccessStatusCode();
+        var realNow = DateTimeOffset.UtcNow;
+        await api.ScalarAsync<long>(
+            "WITH u AS (UPDATE buyers.accounts SET updated_at = $1 RETURNING 1) SELECT count(*) FROM u", realNow.AddDays(-6.5));
+
+        var resent = await api.PostAsync("/email/resend", new { email = "ana@correo.com", turnstileToken = "token-ok" });
+        resent.EnsureSuccessStatusCode();
+        var result = await ActivatorUtilities.CreateInstance<BuyerHousekeepingWorker>(api.Factory.Services)
+            .RunOnceAsync(realNow.AddDays(1), Ct);
+
+        Assert.Equal(0, result.Accounts);
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.accounts"));
     }
 
     [Fact]
