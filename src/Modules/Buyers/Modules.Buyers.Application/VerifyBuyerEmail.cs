@@ -103,15 +103,24 @@ public sealed class ResendBuyerVerificationHandler(
             return true;
         }
 
-        var account = await accounts.FindByEmailAsync(email, cancellationToken);
-        if (account is null || account.IsVerified)
+        // Escribe la cuenta (M4): si la purga o un restablecimiento confirmaron en el medio, se relee y sigue la regla de lo que hay
+        // ahora (borrada o verificada = no se reenvía nada), siempre con la misma respuesta neutra.
+        return await BuyerConcurrency.RetryOnceAsync(unitOfWork, async () =>
         {
-            return true;
-        }
+            var account = await accounts.FindByEmailAsync(email, cancellationToken);
+            if (account is null || account.IsVerified)
+            {
+                return true;
+            }
 
-        await tokens.IssueAsync(
-            account, BuyerEmailTokenPurpose.Verify, storefront.Host, storefront.Name, clock.UtcNow, cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        return true;
+            var now = clock.UtcNow;
+            // M4: el reenvío reinicia los 7 días de la cuenta sin verificar; si no, un reenvío cerca del día 7 manda un enlace que
+            // la purga mata. Va en el mismo guardado que el token.
+            account.MarkVerificationResent(now);
+            await tokens.IssueAsync(
+                account, BuyerEmailTokenPurpose.Verify, storefront.Host, storefront.Name, now, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return true;
+        });
     }
 }

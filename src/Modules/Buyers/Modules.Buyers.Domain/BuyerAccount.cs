@@ -37,6 +37,17 @@ public sealed class BuyerAccount
         UpdatedAt = now;
     }
 
+    /// <summary>
+    /// Un reenvío de la verificación cuenta como el último registro: reinicia <see cref="UnverifiedRetention"/>, para que la purga
+    /// no mate el enlace recién enviado. Una cuenta verificada no cambia.
+    /// </summary>
+    public void MarkVerificationResent(DateTimeOffset now)
+    {
+        if (IsVerified) return;
+
+        UpdatedAt = now;
+    }
+
     public void MarkEmailVerified(DateTimeOffset now)
     {
         if (IsVerified) return;

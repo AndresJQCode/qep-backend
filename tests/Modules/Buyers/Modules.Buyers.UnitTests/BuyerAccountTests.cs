@@ -18,6 +18,28 @@ public sealed class BuyerAccountTests
     }
 
     [Fact]
+    public void MarkVerificationResentRestartsTheRetentionOfAnUnverifiedAccount()
+    {
+        var account = NewAccount();
+
+        account.MarkVerificationResent(Now.AddDays(6));
+
+        Assert.Equal(Now.AddDays(6), account.UpdatedAt);
+        Assert.False(account.IsVerified);
+    }
+
+    [Fact]
+    public void MarkVerificationResentDoesNotTouchAVerifiedAccount()
+    {
+        var account = NewAccount();
+        account.MarkEmailVerified(Now);
+
+        account.MarkVerificationResent(Now.AddDays(6));
+
+        Assert.Equal(Now, account.UpdatedAt);
+    }
+
+    [Fact]
     public void ReplacePendingRegistrationThrowsOnAVerifiedAccount()
     {
         var account = NewAccount();
