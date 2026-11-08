@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
@@ -155,6 +156,40 @@ public sealed class BuyerPersistenceTests
             "SELECT count(*) FROM platform.outbox_messages WHERE event_name = $1 AND attempts = 0", "buyers.test-event.v1"));
         var payloads = await api.OutboxPayloadsAsync("buyers.test-event.v1");
         Assert.Equal("x@example.com", payloads.Single()["email"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ListingActiveSessionsUsesTheInjectedClock()
+    {
+        var clock = new MutableClock(Now);
+        await using var api = await BuyersApiHarness.OpenAsync(
+            services => services.Replace(ServiceDescriptor.Singleton<IClock>(clock)));
+        var accountId = await SeedAccountAsync(api, "clock@example.com");
+        await using (var scope = api.Factory.Services.CreateAsyncScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IBuyerSessionRepository>().Add(BuyerSession.Issue(
+                Guid.NewGuid(), accountId, "tienda.lulocrm.com", new string('e', 64), Now, "203.0.113.9"));
+            await scope.ServiceProvider.GetRequiredService<IBuyersUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        async Task<int> CountActiveAsync()
+        {
+            await using var scope = api.Factory.Services.CreateAsyncScope();
+            return (await scope.ServiceProvider.GetRequiredService<IBuyerSessionRepository>()
+                .ListActiveAsync(accountId, Ct)).Count;
+        }
+
+        Assert.Equal(1, await CountActiveAsync());
+
+        // Para el reloj real la sesión sigue vigente (vence en 30 días); para el inyectado ya venció.
+        clock.UtcNow = Now + BuyerSession.AbsoluteLifetime + TimeSpan.FromMinutes(1);
+
+        Assert.Equal(0, await CountActiveAsync());
+    }
+
+    private sealed class MutableClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
     }
 
     private static BuyerProfileData NewProfileData() => new(
