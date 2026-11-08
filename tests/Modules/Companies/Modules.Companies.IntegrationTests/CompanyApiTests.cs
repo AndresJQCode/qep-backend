@@ -114,6 +114,8 @@ public sealed class CompanyApiTests
                     BankAccount("CTA-000456", bankName: "Bancolombia"),
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
