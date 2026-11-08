@@ -120,6 +120,27 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapPost("/password/forgot", ForgotPasswordAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<ForgotBuyerPasswordBody>("application/json")
+            .Produces(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        group.MapPost("/password/reset", ResetPasswordAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<ResetBuyerPasswordBody>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
     }
 
@@ -194,6 +215,41 @@ public static class PublicBuyerEndpoints
 
     private static string? SessionToken(HttpContext httpContext) =>
         httpContext.Request.Headers[BuyerSessionHeader].FirstOrDefault();
+
+    // 202 exista o no la cuenta, esté o no verificada (anti-enumeración). Orden: IP -> host (404) -> cuerpo (422) -> Turnstile.
+    private static async Task<IResult> ForgotPasswordAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var visitorIp = RequireVisitorIp(httpContext);
+        var (body, rejection) = await ReadBodyAsync<ForgotBuyerPasswordBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new ForgotBuyerPasswordCommand(host, visitorIp, body), cancellationToken);
+        return Results.Accepted();
+    }
+
+    // 204 y nada más: restablecer no abre sesión (revoca todas). Sin IP ni Turnstile: el token ya es el secreto.
+    private static async Task<IResult> ResetPasswordAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<ResetBuyerPasswordBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new ResetBuyerPasswordCommand(host, body), cancellationToken);
+        return Results.NoContent();
+    }
 
     // 204 y nada más: verificar no abre sesión (el comprador ingresa después con su contraseña). Sin IP ni Turnstile: el token ya es
     // el secreto y el limitador de credenciales acota los intentos.

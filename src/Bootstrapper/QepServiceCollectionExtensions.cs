@@ -1465,6 +1465,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.ChangeBuyerPasswordCommand, bool>,
             Modules.Buyers.Application.ChangeBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ForgotBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ForgotBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResetBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ResetBuyerPasswordHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
