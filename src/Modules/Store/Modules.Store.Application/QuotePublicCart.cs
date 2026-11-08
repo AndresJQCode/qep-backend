@@ -67,14 +67,16 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
 
     /// <summary>
     /// Lo mismo que <see cref="PriceAsync"/> más el origen del descuento de cada línea (por variante), que la cotización pública no
-    /// expone pero la solicitud congela.
+    /// expone pero la solicitud congela. Con <paramref name="nameUnavailable"/> falso no se lee el nombre de las líneas que quedaron fuera
+    /// (quedan en null): el envío rechaza el carrito si hay alguna, así que no lo usa.
     /// </summary>
     public async Task<(PublicCartQuoteDto Quote, IReadOnlyList<Guid> Unavailable, IReadOnlyDictionary<Guid, string> Origins)> PriceWithOriginsAsync(
         Guid tenantId,
         string currency,
         StorePricingMode mode,
         IReadOnlyList<PublicCartLineRequest> lines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool nameUnavailable = true)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
@@ -93,7 +95,7 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
             .ToList();
 
         // Sólo el nombre de lo que quedó fuera: oculta, inactiva o sin precio en la moneda sigue teniendo nombre; borrada no.
-        var names = unavailable.Count == 0
+        var names = unavailable.Count == 0 || !nameUnavailable
             ? new Dictionary<Guid, string>()
             : await catalog.VariantNamesAsync(tenantId, unavailable, cancellationToken);
         var unavailableLines = unavailable

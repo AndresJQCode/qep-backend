@@ -199,7 +199,7 @@ public sealed class SubmitOrderRequestHandler(
         }
 
         var (quote, unavailable, origins) = await pricing.PriceWithOriginsAsync(
-            store.TenantId, currency, store.PricingMode, body.Lines, cancellationToken);
+            store.TenantId, currency, store.PricingMode, body.Lines, cancellationToken, nameUnavailable: false);
         if (unavailable.Count > 0 || quote.Lines.Count == 0)
         {
             throw new StoreDomainException(StoreErrorCodes.LineUnavailable, "A line of the cart cannot be sold.");
