@@ -50,6 +50,7 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         session.Property(value => value.CompanyId).HasColumnName("company_id");
         session.Property(value => value.CompanyName).HasColumnName("company_name").HasMaxLength(160);
         session.Property(value => value.CompanyTaxId).HasColumnName("company_tax_id").HasMaxLength(32);
+        session.Property(value => value.CompanyDocumentType).HasColumnName("company_document_type").HasMaxLength(16).IsRequired();
         session.Property(value => value.CompanyAddress).HasColumnName("company_address").HasMaxLength(200);
         session.Property(value => value.CompanyPhone).HasColumnName("company_phone").HasMaxLength(32);
         session.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();

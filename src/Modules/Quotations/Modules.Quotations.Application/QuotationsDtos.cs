@@ -629,6 +629,7 @@ public sealed record QuotationBillingResponse(
     Guid CompanyId,
     string? CompanyName,
     string? CompanyTaxId,
+    string? CompanyDocumentType,
     /// <summary>Membrete del PDF, no congelado: ver <see cref="QuotationCompanyRef"/>.</summary>
     string? CompanyAddress,
     string? CompanyPhone,

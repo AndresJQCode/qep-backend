@@ -62,7 +62,7 @@ public sealed class OpenCashSessionHandler(
             command.TenantId,
             cashier,
             name,
-            new PosCompanySnapshot(company.Id, company.Name, company.TaxId, company.Address, company.Phone),
+            new PosCompanySnapshot(company.Id, company.Name, company.TaxId, company.DocumentType, company.Address, company.Phone),
             currency,
             command.OpeningFloat!.Value,
             now);

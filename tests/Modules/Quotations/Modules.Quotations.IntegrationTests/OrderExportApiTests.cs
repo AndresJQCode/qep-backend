@@ -233,11 +233,11 @@ public sealed class OrderExportApiTests
         // que la línea se tomó con 0 %. Número, no texto.
         Assert.Equal("0", first[36]);
         Assert.True(sheet.NumericCells[1][36]);
-        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Desde
-        // el 2026-09-28 sale como lo lee el ERP —sin puntos ni dígito de verificación—, así que
-        // sólo dígitos y número, no texto.
-        Assert.Matches(@"^901\d{6}$", first[37]);
-        Assert.True(sheet.NumericCells[1][37]);
+        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Sale
+        // sin puntos ni espacios, pero conserva el guion y el dígito de verificación (D11), así
+        // que es texto, no número.
+        Assert.Matches(@"^901\d{6}-\d$", first[37]);
+        Assert.False(sheet.NumericCells[1][37]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -706,11 +706,11 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(line.UnitPrice, decimal.Parse(row[20], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][20]);
         Assert.Equal("Nit", sheet.Rows[0][46]);
-        // El NIT guardado ("901.463.203-2") sale como lo lee el ERP: sin puntos ni dígito de
-        // verificación, y número (2026-09-28).
-        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
+        // El NIT guardado ("901.463.203-2") sale sin puntos ni espacios, con el guion y el dígito
+        // de verificación (D11), y por eso como texto.
+        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Replace(".", string.Empty).Replace(" ", string.Empty);
         Assert.Equal(erpTaxId, row[46]);
-        Assert.True(sheet.NumericCells[1][46]);
+        Assert.False(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
         // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; "FV" es fija de
         // texto, y Transportadora (carrier) sale de texto también.

@@ -57,7 +57,7 @@ public sealed class PriceRoundingParityTests
 
         var session = CashSession.Open(
             CashSessionId.New(), TenantId, Cashier, "Cajero",
-            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "Calle 1", "6045551234"),
+            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "NIT", "Calle 1", "6045551234"),
             currency, 0m, Now);
         var sale = PosSale.Create(
             PosSaleId.New(), new string('a', 64), session,

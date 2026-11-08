@@ -513,7 +513,7 @@ public sealed class OrdersExportProcessorTests
         };
         var companies = new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", "901.846.471-5", DocumentType: "NIT", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
         await NewProcessor(
@@ -2066,14 +2066,14 @@ public sealed class OrdersExportProcessorTests
         Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
-    // Ajuste 2026-09-28: el ERP espera el NIT sin puntos, sin espacios y sin dígito de
-    // verificación. Se limpia sólo al exportar; la empresa conserva el NIT como se escribió.
+    // Decisión del dueño (D11): el ERP acepta el guion, así que el documento sale sin puntos ni
+    // espacios pero con el guion y el dígito de verificación. Se limpia sólo al exportar; la
+    // empresa conserva el valor como se escribió. Con guion deja de ser número y sale como texto.
     [Theory]
     [InlineData("901851609-1")]
     [InlineData("901.851.609-1")]
-    [InlineData("901 851 609")]
     [InlineData(" 901.851 609 - 1 ")]
-    public async Task NitEmpresaDropsDotsSpacesAndTheCheckDigit(string taxId)
+    public async Task NitEmpresaDropsDotsAndSpacesAndKeepsTheHyphen(string taxId)
     {
         var writer = new RecordingExportWorkbookWriter();
 
@@ -2083,7 +2083,37 @@ public sealed class OrdersExportProcessorTests
                 companies: CompanyWithTaxId(taxId))
             .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
 
+        Assert.Equal(ExportCell.OfText("901851609-1"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Sin guion el valor sigue siendo sólo dígitos, así que sigue saliendo como número.
+    [Fact]
+    public async Task NitEmpresaWithoutHyphenStaysANumber()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("901 851 609"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
         Assert.Equal(ExportCell.OfNumber(901851609m), Assert.Single(writer.Rows)[NitEmpresaIndex]);
+    }
+
+    // Un documento de otro tipo (NIF, RUT...) con letras y guion también conserva el guion.
+    [Fact]
+    public async Task NitEmpresaKeepsTheHyphenOfAForeignDocument()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+
+        await NewProcessor(
+                new StubOrderListRepository(NewRow("PED-2026-0001", billingAccount: BillingAccountOfCompany())),
+                writer,
+                companies: CompanyWithTaxId("B-12345678"))
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExportCell.OfText("B-12345678"), Assert.Single(writer.Rows)[NitEmpresaIndex]);
     }
 
     // Sin cuenta de facturación, o con una empresa que no resuelve, vacía — como "EMPRESA".
@@ -2211,7 +2241,7 @@ public sealed class OrdersExportProcessorTests
     private static StubQuotationCompanyLookup CompanyWithTaxId(string taxId) =>
         new(new Dictionary<Guid, QuotationCompanyRef>
         {
-            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, IsActive: true, Address: null, Phone: null, BankAccounts: []),
+            [CompanyId] = new(CompanyId, "Raíces Orgánicas", taxId, DocumentType: "NIT", IsActive: true, Address: null, Phone: null, BankAccounts: []),
         });
 
     // Banco va justo después de "Cod. Asesor"; Cuenta, después de Banco.

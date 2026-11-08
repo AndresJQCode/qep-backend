@@ -242,6 +242,7 @@ public sealed class QuotationResponseComposer(
                 account.CompanyId,
                 company?.Name,
                 company?.TaxId,
+                company?.DocumentType,
                 company?.Address,
                 company?.Phone,
                 account.BankName,

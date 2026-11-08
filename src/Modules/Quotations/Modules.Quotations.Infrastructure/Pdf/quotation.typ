@@ -181,7 +181,7 @@
     #if hay-emisor [
       #text(size: 13pt, weight: "bold", tracking: -0.01em)[#data.billingAccount.companyName]
       #if data.billingAccount.companyTaxId != none [
-        \ #text(size: 9pt, fill: apagado)[NIT #data.billingAccount.companyTaxId]
+        \ #text(size: 9pt, fill: apagado)[#data.billingAccount.companyDocumentLabel #data.billingAccount.companyTaxId]
       ]
       #if data.billingAccount.companyAddress != "" [
         \ #text(size: 8.5pt, fill: apagado)[Dirección empresa: #data.billingAccount.companyAddress]

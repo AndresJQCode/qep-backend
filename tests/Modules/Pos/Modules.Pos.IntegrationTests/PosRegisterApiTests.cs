@@ -22,8 +22,10 @@ public sealed class PosRegisterApiTests
         Assert.NotNull(before);
         Assert.Null(before.Session);
         Assert.Equal(world.Company.Id, before.DefaultCompanyId);
+        Assert.Equal("NIT", Assert.Single(before.Companies).DocumentType);
 
         var session = await world.OpenSessionAsync(world.Admin);
+        Assert.Equal("NIT", session.Company.DocumentType);
         Assert.Equal(1, session.Version);
 
         var preview = await world.Admin.PostAsJsonAsync(
@@ -50,6 +52,7 @@ public sealed class PosRegisterApiTests
         Assert.Equal(17_890m, sale.Payments.Single(payment => payment.Method == "Cash").Amount);
         Assert.Equal("Consumidor final", sale.Customer.Name);
         Assert.Equal(world.Company.TaxId, sale.Issuer.TaxId);
+        Assert.Equal("NIT", sale.Issuer.DocumentType);
         Assert.Equal(TimeSpan.FromHours(-5), sale.CreatedAtLocal.Offset);
 
         var card = await world.Admin.PostAsJsonAsync(
