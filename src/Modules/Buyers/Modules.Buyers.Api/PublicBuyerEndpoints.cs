@@ -120,6 +120,17 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapPost("/account/delete", DeleteAccountAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<DeleteBuyerAccountBody>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         group.MapPost("/password/forgot", ForgotPasswordAsync)
             .RequireRateLimiting(credentialsPolicy)
             .Accepts<ForgotBuyerPasswordBody>("application/json")
@@ -175,6 +186,23 @@ public static class PublicBuyerEndpoints
         }
 
         await dispatcher.SendAsync(new ChangeBuyerPasswordCommand(host, SessionToken(httpContext), body), cancellationToken);
+        return Results.NoContent();
+    }
+
+    // 204: borra la cuenta y todo lo que cuelga de ella salvo el consentimiento. La contraseña mala es 422, nunca 401.
+    private static async Task<IResult> DeleteAccountAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<DeleteBuyerAccountBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new DeleteBuyerAccountCommand(host, SessionToken(httpContext), body), cancellationToken);
         return Results.NoContent();
     }
 

@@ -1466,6 +1466,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Buyers.Application.ChangeBuyerPasswordCommand, bool>,
             Modules.Buyers.Application.ChangeBuyerPasswordHandler>();
         services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.DeleteBuyerAccountCommand, bool>,
+            Modules.Buyers.Application.DeleteBuyerAccountHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.ForgotBuyerPasswordCommand, bool>,
             Modules.Buyers.Application.ForgotBuyerPasswordHandler>();
         services.AddScoped<
