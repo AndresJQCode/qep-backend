@@ -1443,6 +1443,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.RegisterBuyerCommand, bool>,
             Modules.Buyers.Application.RegisterBuyerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.VerifyBuyerEmailCommand, bool>,
+            Modules.Buyers.Application.VerifyBuyerEmailHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResendBuyerVerificationCommand, bool>,
+            Modules.Buyers.Application.ResendBuyerVerificationHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al

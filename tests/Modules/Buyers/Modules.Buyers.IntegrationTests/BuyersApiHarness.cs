@@ -113,6 +113,26 @@ internal static class BuyersApiHarness
             return client.SendAsync(request, TestContext.Current.CancellationToken);
         }
 
+        /// <summary>
+        /// Deja una cuenta verificada, por las rutas reales: registra y consume el token que el outbox lleva. Lo reutilizan las
+        /// pruebas que necesitan una cuenta lista para ingresar. Devuelve la contraseña usada.
+        /// </summary>
+        public async Task<string> RegisterVerifiedAsync(
+            string email = "ana@correo.com", string password = "una-contrasena-larga", string host = "acme.lulocrm.com")
+        {
+            var registered = await PostAsync(
+                "/register",
+                new { email, password, acceptsDataPolicy = true, turnstileToken = "token-ok", profile = (object?)null },
+                host);
+            registered.EnsureSuccessStatusCode();
+            var normalized = email.Trim().ToLowerInvariant();
+            var token = (await OutboxPayloadsAsync("buyers.email-verification-requested.v1"))
+                .Last(payload => (string?)payload["email"] == normalized)["token"]!.GetValue<string>();
+            var verified = await PostAsync("/email/verify", new { token }, host);
+            verified.EnsureSuccessStatusCode();
+            return password;
+        }
+
         /// <summary>Un cliente del storefront con una IP de visitante fija, para probar el límite por IP.</summary>
         public HttpClient StorefrontWithIp(string visitorIp) => CreateStorefront(Factory, visitorIp, uniqueIp: false);
 

@@ -55,7 +55,64 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        group.MapPost("/email/verify", VerifyEmailAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<VerifyBuyerEmailBody>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/email/resend", ResendVerificationAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<ResendBuyerVerificationBody>("application/json")
+            .Produces(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
         return endpoints;
+    }
+
+    // 204 y nada más: verificar no abre sesión (el comprador ingresa después con su contraseña). Sin IP ni Turnstile: el token ya es
+    // el secreto y el limitador de credenciales acota los intentos.
+    private static async Task<IResult> VerifyEmailAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<VerifyBuyerEmailBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new VerifyBuyerEmailCommand(host, body), cancellationToken);
+        return Results.NoContent();
+    }
+
+    // 202 exista o no la cuenta, esté o no verificada (anti-enumeración). Orden: IP → host (404) → cuerpo (422) → Turnstile.
+    private static async Task<IResult> ResendVerificationAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var visitorIp = RequireVisitorIp(httpContext);
+        var (body, rejection) = await ReadBodyAsync<ResendBuyerVerificationBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new ResendBuyerVerificationCommand(host, visitorIp, body), cancellationToken);
+        return Results.Accepted();
     }
 
     // 202 exista o no la cuenta (anti-enumeración). Orden de chequeos: IP → host (404) → cuerpo (422) → consentimiento → Turnstile.
