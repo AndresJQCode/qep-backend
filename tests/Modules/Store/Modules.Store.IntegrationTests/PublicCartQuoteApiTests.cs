@@ -110,6 +110,38 @@ public sealed class PublicCartQuoteApiTests
     }
 
     [Fact]
+    public async Task AnUnavailableLineCarriesTheNameOfItsVariant()
+    {
+        await using var fixture = await OpenAsync(TwoCurrencies);
+        var (_, hidden) = await fixture.CreateProductAsync("Oculto", "H-1", Prices(10_000m, 3m), visible: false);
+        var (_, copOnly) = await fixture.CreateProductAsync("Gorra clásica", "G-1", Prices(40_000m));
+
+        var hiddenQuote = await PublicStoreFixture.JsonAsync(await fixture.QuoteAsync(Cart("COP", (hidden, 1))));
+        var currencyQuote = await PublicStoreFixture.JsonAsync(await fixture.QuoteAsync(Cart("EUR", (copOnly, 1))));
+
+        Assert.Equal("Oculto", (string)Assert.Single(hiddenQuote["unavailable"]!.AsArray())!["name"]!);
+        var entry = Assert.Single(currencyQuote["unavailable"]!.AsArray())!;
+        Assert.Equal("Gorra clásica", (string)entry["name"]!);
+        // Sólo variantId, reason y name: ni precio ni existencias.
+        Assert.Equal(["name", "reason", "variantId"], entry.AsObject().Select(pair => pair.Key).Order().ToArray());
+    }
+
+    [Fact]
+    public async Task AnUnavailableLineForAMissingVariantHasANullName()
+    {
+        await using var fixture = await OpenAsync();
+        var missing = Guid.CreateVersion7();
+
+        var quote = await PublicStoreFixture.JsonAsync(await fixture.QuoteAsync(Cart("COP", (missing, 1))));
+
+        var entry = Assert.Single(quote["unavailable"]!.AsArray())!;
+        Assert.Equal(missing, (Guid)entry["variantId"]!);
+        Assert.Equal("NotAvailable", (string)entry["reason"]!);
+        Assert.True(entry.AsObject().ContainsKey("name"));
+        Assert.Null(entry["name"]);
+    }
+
+    [Fact]
     public async Task AQuoteInACurrencyOutsideTheStoreIs422()
     {
         await using var fixture = await OpenAsync();

@@ -92,7 +92,13 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
             .Select(line => line.VariantId)
             .ToList();
 
-        var unavailableLines = unavailable.Select(PublicUnavailableLineDto.Of).ToList();
+        // Sólo el nombre de lo que quedó fuera: oculta, inactiva o sin precio en la moneda sigue teniendo nombre; borrada no.
+        var names = unavailable.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await catalog.VariantNamesAsync(tenantId, unavailable, cancellationToken);
+        var unavailableLines = unavailable
+            .Select(id => PublicUnavailableLineDto.Of(id, names.GetValueOrDefault(id)))
+            .ToList();
         if (available.Count == 0)
         {
             return (new PublicCartQuoteDto(currency, [], unavailableLines, 0m, 0m, 0m, 0m), unavailable, new Dictionary<Guid, string>());
