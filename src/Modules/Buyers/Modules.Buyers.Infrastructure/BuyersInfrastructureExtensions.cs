@@ -35,6 +35,7 @@ public static class BuyersInfrastructureExtensions
 
         // Por tipo, no por fábrica: el interruptor de los harness de prueba reconoce los workers por su ImplementationType.
         services.AddHostedService<BuyerSignupRequestedWorker>();
+        services.AddHostedService<BuyerHousekeepingWorker>();
 
         return services;
     }
