@@ -94,6 +94,46 @@ public sealed class BuyerAccountDeletionApiTests
         Assert.Null(payload["token"]);
     }
 
+    // I1 residual B1: un correo del comprador que sigue en el outbox se entregaría después del de cuenta eliminada y dejaría
+    // una notificación con el correo. Se borra en la misma transacción que la cuenta; los de otra cuenta no se tocan.
+    [Fact]
+    public async Task DeleteDropsTheAccountsPendingBuyerEmailsFromTheOutbox()
+    {
+        var (api, token) = await OpenWithSessionAsync();
+        await using var _ = api;
+        await api.RegisterVerifiedAsync("otra@correo.com");
+        (await api.PostAsync("/password/forgot", new { email = Email, turnstileToken = "token-ok" })).EnsureSuccessStatusCode();
+        (await api.PostAsync("/password/forgot", new { email = "otra@correo.com", turnstileToken = "token-ok" }))
+            .EnsureSuccessStatusCode();
+        foreach (var email in new[] { Email, "otra@correo.com" })
+        {
+            (await api.PostAsync(
+                "/register",
+                new { email, password = Password, acceptsDataPolicy = true, turnstileToken = "token-ok", profile = (object?)null }))
+                .EnsureSuccessStatusCode();
+        }
+
+        string[] pending =
+        [
+            "buyers.email-verification-requested.v1", "buyers.password-reset-requested.v1", "buyers.existing-account-notice.v1",
+        ];
+        foreach (var eventName in pending)
+        {
+            Assert.Contains(await api.OutboxPayloadsAsync(eventName), p => (string?)p["email"] == Email);
+        }
+
+        (await DeleteAsync(api, token)).EnsureSuccessStatusCode();
+
+        foreach (var eventName in pending)
+        {
+            var payloads = await api.OutboxPayloadsAsync(eventName);
+            Assert.DoesNotContain(payloads, p => (string?)p["email"] == Email);
+            Assert.Contains(payloads, p => (string?)p["email"] == "otra@correo.com");
+        }
+
+        Assert.Single(await api.OutboxPayloadsAsync("buyers.account-deleted.v1"));
+    }
+
     [Fact]
     public async Task TheSessionIsInvalidAfterDelete()
     {

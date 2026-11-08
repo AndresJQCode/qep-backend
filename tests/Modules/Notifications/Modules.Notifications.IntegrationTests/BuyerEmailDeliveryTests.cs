@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Buyers.Application;
 using Modules.Notifications.Application;
+using Modules.Notifications.Infrastructure.Messaging;
 using static Modules.Notifications.IntegrationTests.NotificationsDeliveryHarness;
 
 namespace Modules.Notifications.IntegrationTests;
@@ -114,6 +116,47 @@ public sealed class BuyerEmailDeliveryTests
         Assert.Equal(2, await CountBuyerRowsAsync(cs));
         Assert.Equal(1, await CountFailedRowsAsync(cs, BuyerAccountDeletedEmailTemplate.TemplateRef));
     }
+
+    // I1 residual B2: un correo del comprador que seguía en vuelo cuando se borró la cuenta (el de
+    // restablecer, pedido justo antes) no sale, y su fila queda ya anonimizada. Vale si el de cuenta
+    // eliminada ya se entregó y también si todavía espera en el outbox.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ABuyerEmailOfADeletedAccountIsNotSentAndIsRecordedAnonymized(bool deletionDeliveredFirst)
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(cs, channel);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
+        const string email = "ana-late@example.com";
+        var ct = TestContext.Current.CancellationToken;
+
+        var resetId = await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.PasswordResetRequested, Payload(accountId, email, "tok_late"));
+        await InsertOutboxAsync(cs, BuyerIntegrationEvents.AccountDeleted, Payload(accountId, email, null));
+        if (deletionDeliveredFirst)
+        {
+            await NewWorker<BuyerAccountDeletedDeliveryWorker>(factory).DrainAsync(ct);
+        }
+
+        await NewWorker<BuyerPasswordResetDeliveryWorker>(factory).DrainAsync(ct);
+
+        Assert.NotNull((await FindInboxAsync(cs, ResetConsumer, resetId))?.ProcessedAt);
+        Assert.DoesNotContain(channel.Sent, mail => mail.Subject == "Restablece tu contraseña");
+        Assert.Equal(0, await CountRowsMentioningAsync(cs, accountId, email));
+        var reset = Assert.Single(await NotificationsForAsync(cs, Guid.Empty, BuyerPasswordResetEmailTemplate.TemplateRef));
+        Assert.Equal("Failed", reset.Status);
+        Assert.Equal("buyer_account_deleted", reset.FailureReason);
+    }
+
+    private const string ResetConsumer = "notifications.buyer-password-reset-email";
+
+    private static TWorker NewWorker<TWorker>(NotificationsApiFactory factory)
+        where TWorker : OutboxDeliveryWorker =>
+        ActivatorUtilities.CreateInstance<TWorker>(factory.Services);
 
     private static async Task<long> CountFailedRowsAsync(string cs, string templateRef)
     {

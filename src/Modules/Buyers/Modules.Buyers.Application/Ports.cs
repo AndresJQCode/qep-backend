@@ -64,6 +64,12 @@ public interface IBuyerConsentRepository
 public interface IBuyerOutbox
 {
     void Add(string eventName, object payload, DateTimeOffset occurredAt);
+
+    /// <summary>
+    /// Borra con una sola sentencia las filas de la cuenta de los correos que preceden al borrado (verificación, «ya tienes una
+    /// cuenta», restablecer); nunca la de cuenta eliminada. Va en la transacción del borrado de la cuenta.
+    /// </summary>
+    Task RemoveAccountEmailsAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
 public interface IBuyersUnitOfWork

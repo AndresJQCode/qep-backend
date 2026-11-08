@@ -22,7 +22,9 @@ public sealed record DeleteBuyerAccountCommand(string Host, string? Token, Delet
 /// <summary>
 /// Elimina la cuenta de la sesión. La contraseña mala es 422 <c>password_incorrect</c> (D12, nunca 401) y no borra nada. El borrado
 /// arrastra perfil, sesiones y tokens por la cascada; el consentimiento no tiene clave foránea y se conserva. El aviso al outbox
-/// lleva el correo y la tienda (D8) porque cuando Notifications lo envía la cuenta ya no existe, y sale en el mismo guardado.
+/// lleva el correo y la tienda (D8) porque cuando Notifications lo envía la cuenta ya no existe, y sale en el mismo guardado. En esa
+/// misma transacción se borran del outbox los demás correos de la cuenta: uno pendiente saldría después del de cuenta eliminada y
+/// dejaría en Notifications una fila con el correo.
 /// </summary>
 public sealed class DeleteBuyerAccountHandler(
     IBuyerStorefronts storefronts,
@@ -55,7 +57,9 @@ public sealed class DeleteBuyerAccountHandler(
             new BuyerEmailPayload(account.Id, account.Email, storefront.Host, storefront.Name, null),
             clock.UtcNow);
         accounts.Remove(account);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        var accountId = account.Id;
+        await unitOfWork.SaveChangesAsync(
+            token => outbox.RemoveAccountEmailsAsync(accountId, token), cancellationToken);
         return true;
     }
 }

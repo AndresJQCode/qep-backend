@@ -169,6 +169,14 @@ internal sealed class BuyersWorld
     {
         public void Add(string eventName, object payload, DateTimeOffset occurredAt) =>
             world._pendingEvents.Add(new QueuedEvent(eventName, payload, occurredAt));
+
+        public Task RemoveAccountEmailsAsync(Guid accountId, CancellationToken cancellationToken)
+        {
+            world.SavedEvents.RemoveAll(e => e.EventName != BuyerIntegrationEvents.AccountDeleted
+                && e.Payload is BuyerEmailPayload payload
+                && payload.AccountId == accountId);
+            return Task.CompletedTask;
+        }
     }
 
     internal sealed class FakeUnitOfWork(BuyersWorld world) : IBuyersUnitOfWork

@@ -1219,6 +1219,10 @@ Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`).
   eliminada —haya salido el correo o haya fallado, porque ninguno de los dos se reintenta—, toda fila de `notifications.notifications` sin tenant,
   con `recipient_id` de la cuenta y plantilla `buyers.*` (ésta incluida) queda con `recipient_id` vacío (`Guid.Empty`) y `recipient_address` vacío,
   en el mismo guardado que el `processed_at`. Las filas no se borran: estado, plantilla y fechas siguen contando para las estadísticas de envío.
+- **Ningún correo del comprador sale después del borrado.** En la misma transacción que borra la cuenta, Buyers borra de `platform.outbox_messages`
+  los demás correos de esa cuenta (verificación, «ya tienes una cuenta», restablecer; por `payload->>'accountId'`). Y uno que ya estaba en vuelo
+  lo frena Notifications: antes de enviar, si el outbox tiene un `buyers.account-deleted.v1` de la cuenta, no envía y guarda la fila ya
+  anonimizada, `Failed` con `buyer_account_deleted`; si el borrado se confirma mientras sale el correo, la fila se anonimiza al guardarse.
 - `BuyerHousekeepingWorker` corre cada hora y borra en masa:
   - cuentas **sin verificar** cuyo último registro o reenvío de la verificación (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van
     por cascada);
