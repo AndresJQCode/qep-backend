@@ -113,6 +113,22 @@ internal static class BuyersApiHarness
             return client.SendAsync(request, TestContext.Current.CancellationToken);
         }
 
+        /// <summary>Un PUT a <c>/buyer{path}</c> con cuerpo JSON y la sesión opcional, como lo haría el BFF.</summary>
+        public Task<HttpResponseMessage> PutAsync(
+            string path, object body, string? session = null, string host = "acme.lulocrm.com")
+        {
+            var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/public/stores/{host}/buyer{path}")
+            {
+                Content = JsonContent.Create(body),
+            };
+            if (session is not null)
+            {
+                request.Headers.Add("X-Qep-Buyer-Session", session);
+            }
+
+            return Storefront.SendAsync(request, TestContext.Current.CancellationToken);
+        }
+
         /// <summary>Un GET o DELETE a <c>/buyer{path}</c> con la sesión opcional, como lo haría el BFF.</summary>
         public Task<HttpResponseMessage> SendAsync(
             HttpMethod method, string path, string? session = null, string host = "acme.lulocrm.com")

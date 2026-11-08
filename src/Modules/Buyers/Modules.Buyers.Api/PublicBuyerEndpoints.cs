@@ -99,7 +99,62 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapPut("/profile", UpdateProfileAsync)
+            .Accepts<BuyerProfileDto>("application/json")
+            .Produces<BuyerDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/password", ChangePasswordAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<ChangeBuyerPasswordBody>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
+    }
+
+    // Reemplaza el perfil guardado; no valida país ni ciudad contra la tienda (lo hace el pedido).
+    private static async Task<IResult> UpdateProfileAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<BuyerProfileDto>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        return Results.Ok(
+            await dispatcher.SendAsync(new UpdateBuyerProfileCommand(host, SessionToken(httpContext), body), cancellationToken));
+    }
+
+    // 204: la sesión actual sigue valiendo y las demás quedan revocadas. La contraseña actual mala es 422, nunca 401.
+    private static async Task<IResult> ChangePasswordAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<ChangeBuyerPasswordBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        await dispatcher.SendAsync(new ChangeBuyerPasswordCommand(host, SessionToken(httpContext), body), cancellationToken);
+        return Results.NoContent();
     }
 
     // La IP es opcional: sólo se guarda en la sesión. Un 401 de credenciales es siempre el mismo cuerpo.
