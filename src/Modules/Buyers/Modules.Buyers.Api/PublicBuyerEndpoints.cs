@@ -1,9 +1,11 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
 using Modules.Store.Api;
@@ -12,7 +14,8 @@ namespace Modules.Buyers.Api;
 
 /// <summary>
 /// Rutas públicas de compradores, bajo el mismo prefijo y la misma clave del storefront que la tienda pública. Las llama sólo el
-/// BFF del storefront, de servidor a servidor: sin sesión de la consola, sin cookie y sin CSRF.
+/// BFF del storefront, de servidor a servidor: sin sesión de la consola, sin cookie y sin CSRF. El <c>Cache-Control: no-store</c> de
+/// todas sus respuestas lo pone <c>BuyerNoStoreMiddleware</c> (Bootstrapper), antes del limitador.
 /// </summary>
 public static class PublicBuyerEndpoints
 {
@@ -21,6 +24,8 @@ public static class PublicBuyerEndpoints
 
     /// <summary>Tope del cuerpo de cualquier ruta de compradores: un perfil con envío cabe de sobra y el resto es abuso.</summary>
     private const long MaxRequestBodyBytes = 65_536;
+
+    private const int ReadChunkSize = 16 * 1024;
 
     /// <param name="readPolicy">Limitador del grupo (por IP del visitante); las rutas de credenciales lo reemplazan.</param>
     /// <param name="credentialsPolicy">Limitador de las rutas de credenciales: 10 por minuto, por ruta y por IP del visitante.</param>
@@ -31,13 +36,10 @@ public static class PublicBuyerEndpoints
         ArgumentException.ThrowIfNullOrWhiteSpace(readPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(credentialsPolicy);
 
-        // El filtro de no-store va primero (el más externo): así también lo llevan el 401 de la clave y los errores que salen por
-        // excepción. Los 429 del limitador no pasan por acá (el limitador corre antes del endpoint) y salen sin cuerpo.
         var group = endpoints
             .MapGroup("/api/v1/public/stores/{host}/buyer")
             .WithTags("Buyers")
             .AllowAnonymous()
-            .AddEndpointFilter(NoStoreAsync)
             .AddEndpointFilter<StorefrontKeyFilter>()
             .WithMetadata(new RequestSizeLimitAttribute(MaxRequestBodyBytes))
             .RequireRateLimiting(readPolicy);
@@ -46,7 +48,9 @@ public static class PublicBuyerEndpoints
             .RequireRateLimiting(credentialsPolicy)
             .Accepts<RegisterBuyerBody>("application/json")
             .Produces(StatusCodes.Status202Accepted)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
@@ -54,30 +58,20 @@ public static class PublicBuyerEndpoints
         return endpoints;
     }
 
-    // OnStarting y no un set directo: el middleware de excepciones limpia la respuesta (cabeceras incluidas) antes de escribir el
-    // problema, y las rutas que salen por excepción se quedarían sin la cabecera. Los callbacks corren al revés de como se
-    // registran, así que éste (el primero) es el último en tocar la cabecera.
-    private static ValueTask<object?> NoStoreAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
-    {
-        context.HttpContext.Response.OnStarting(
-            static state =>
-            {
-                ((HttpResponse)state).Headers.CacheControl = "no-store";
-                return Task.CompletedTask;
-            },
-            context.HttpContext.Response);
-        return next(context);
-    }
-
     // 202 exista o no la cuenta (anti-enumeración). Orden de chequeos: IP → host (404) → cuerpo (422) → consentimiento → Turnstile.
     private static async Task<IResult> RegisterAsync(
         string host,
-        RegisterBuyerBody body,
         IRequestDispatcher dispatcher,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var visitorIp = RequireVisitorIp(httpContext);
+        var (body, rejection) = await ReadBodyAsync<RegisterBuyerBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
         await dispatcher.SendAsync(new RegisterBuyerCommand(host, visitorIp, body), cancellationToken);
         return Results.Accepted();
     }
@@ -89,4 +83,59 @@ public static class PublicBuyerEndpoints
             ? visitorIp
             : throw new BuyerDomainException(
                 BuyerErrorCodes.VisitorIpRequired, "The storefront must forward the visitor IP for this request.");
+
+    // El tope se aplica leyendo, igual que en el pedido de la tienda: RequestSizeLimitAttribute es sólo metadato que Kestrel convierte
+    // en límite, y un servidor que no lo hace o un cuerpo sin Content-Length lo dejarían pasar. Un JSON ilegible o null es un 400
+    // (el binder de minimal API lo dejaría salir como 500 por el manejador de excepciones).
+    private static async Task<(T? Body, IResult? Rejection)> ReadBodyAsync<T>(
+        HttpContext httpContext, CancellationToken cancellationToken)
+        where T : class
+    {
+        var stream = httpContext.Request.Body;
+        if (httpContext.Request.ContentLength is { } declared && declared > MaxRequestBodyBytes)
+        {
+            return (null, Rejected(StatusCodes.Status413PayloadTooLarge));
+        }
+
+        using var buffer = new MemoryStream();
+        var chunk = new byte[ReadChunkSize];
+        try
+        {
+            int read;
+            while ((read = await stream.ReadAsync(chunk, cancellationToken)) > 0)
+            {
+                if (buffer.Length + read > MaxRequestBodyBytes)
+                {
+                    return (null, Rejected(StatusCodes.Status413PayloadTooLarge));
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+        }
+        catch (BadHttpRequestException exception)
+        {
+            return (null, Rejected(exception.StatusCode));
+        }
+
+        var options = httpContext.RequestServices
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value.SerializerOptions;
+        try
+        {
+            var body = JsonSerializer.Deserialize<T>(buffer.ToArray(), options);
+            return body is null ? (null, Rejected(StatusCodes.Status400BadRequest)) : (body, null);
+        }
+        catch (JsonException)
+        {
+            return (null, Rejected(StatusCodes.Status400BadRequest));
+        }
+    }
+
+    private static IResult Rejected(int status) =>
+        Results.Problem(
+            statusCode: status,
+            title: "The request body is not acceptable.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = status == StatusCodes.Status413PayloadTooLarge ? "store.public.body_too_large" : "store.public.body_invalid",
+            });
 }

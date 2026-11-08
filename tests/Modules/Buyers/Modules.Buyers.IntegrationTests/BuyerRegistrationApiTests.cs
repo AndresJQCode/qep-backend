@@ -257,6 +257,39 @@ public sealed class BuyerRegistrationApiTests
         }
     }
 
+    private static Task<HttpResponseMessage> PostRawAsync(BuyersApi api, string json)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/public/stores/acme.lulocrm.com/buyer/register")
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        };
+        return api.Storefront.SendAsync(request, Ct);
+    }
+
+    [Fact]
+    public async Task AMalformedJsonBodyIs400AndNoStore()
+    {
+        await using var api = await OpenAsync();
+
+        var response = await PostRawAsync(api, "{ \"email\": ");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore, "400 lacks Cache-Control: no-store");
+        Assert.Equal(0, await CountAsync(api, "accounts"));
+    }
+
+    [Fact]
+    public async Task ABodyOver64KbIs413AndNoStore()
+    {
+        await using var api = await OpenAsync();
+
+        var response = await PostRawAsync(api, "{\"email\":\"" + new string('a', 70_000) + "\"}");
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore, "413 lacks Cache-Control: no-store");
+        Assert.Equal(0, await CountAsync(api, "accounts"));
+    }
+
     [Fact]
     public async Task TheEleventhRegisterInAMinuteFromOneVisitorIs429ButAnotherVisitorPasses()
     {
@@ -274,6 +307,7 @@ public sealed class BuyerRegistrationApiTests
         var other = await api.PostAsync("/register", Body(), visitorIp: "198.51.100.78");
 
         Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
+        Assert.True(limited.Headers.CacheControl?.NoStore, "429 lacks Cache-Control: no-store");
         Assert.Equal(HttpStatusCode.Accepted, other.StatusCode);
         Assert.Equal(1, await CountAsync(api, "accounts"));
     }

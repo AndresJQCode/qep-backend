@@ -223,6 +223,9 @@ app.UseMiddleware<ExternalApiCallLoggingMiddleware>();
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.
 app.UseMiddleware<RequestFailureLoggingMiddleware>();
+// Antes del limitador, a propósito: así el 429 (y el 400/413 del cuerpo, el 401 de la clave y lo que sale por excepción) de /buyer/*
+// también llevan Cache-Control: no-store. Ver BuyerNoStoreMiddleware.
+app.UseMiddleware<BuyerNoStoreMiddleware>();
 app.UseRateLimiter();
 // La defensa CSRF protege la sesión autenticada por cookie (ver AddAuthentication);
 // el stub de desarrollo confía en los headers que manda el llamador en vez de en una
