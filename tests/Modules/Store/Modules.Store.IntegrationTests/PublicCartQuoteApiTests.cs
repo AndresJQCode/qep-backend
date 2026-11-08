@@ -142,6 +142,56 @@ public sealed class PublicCartQuoteApiTests
     }
 
     [Fact]
+    public async Task AnUnavailableLineForAVariantOfAnotherTenantHasANullName()
+    {
+        await using var fixture = await OpenAsync();
+        await StoreApiHarness.SeedTenantAsync(fixture.Settings.Factory, StoreApiHarness.OtherTenantId);
+        var other = fixture.Settings.ClientFor(StoreApiHarness.OtherTenantId, "catalog.product.manage", "catalog.product.read");
+        var otherTenant = Guid.Parse(StoreApiHarness.OtherTenantId);
+        var otherProduct = await StoreApiHarness.CreateProductAsync(other, otherTenant, "AJENO-1", "Producto ajeno", Prices(10_000m));
+        var detail = await JsonAsync(await other.GetAsync(
+            $"/api/v1/tenants/{otherTenant}/catalog/products/{otherProduct}", TestContext.Current.CancellationToken));
+        var foreignVariant = (Guid)detail["variants"]![0]!["id"]!;
+
+        var quote = await JsonAsync(await fixture.QuoteAsync(Cart("COP", (foreignVariant, 1))));
+
+        var entry = Assert.Single(quote["unavailable"]!.AsArray())!;
+        Assert.Equal(foreignVariant, (Guid)entry["variantId"]!);
+        Assert.Null(entry["name"]);
+    }
+
+    [Fact]
+    public async Task AnUnavailableLineForAVariantThatWasDeletedHasANullName()
+    {
+        await using var fixture = await OpenAsync();
+        var (product, variant) = await fixture.CreateProductAsync("Efímero", "E-1", Prices(10_000m));
+        await fixture.ExecuteAsync("DELETE FROM catalog.products WHERE id = @id", product);
+
+        var quote = await JsonAsync(await fixture.QuoteAsync(Cart("COP", (variant, 1))));
+
+        var entry = Assert.Single(quote["unavailable"]!.AsArray())!;
+        Assert.Equal(variant, (Guid)entry["variantId"]!);
+        Assert.Null(entry["name"]);
+    }
+
+    [Fact]
+    public async Task AnUnavailableVariantWithOptionValuesUsesTheNameOfAnAvailableLine()
+    {
+        await using var fixture = await OpenAsync(TwoCurrencies);
+        var shirt = await fixture.CreateShirtInTwoSizesAsync(NoDiscountScales());
+
+        // En COP la talla M se vende y da su nombre de línea; en EUR (sin precio) queda fuera y debe llamarse igual.
+        var sold = await JsonAsync(await fixture.QuoteAsync(Cart("COP", (shirt.M, 1))));
+        var skipped = await JsonAsync(await fixture.QuoteAsync(Cart("EUR", (shirt.M, 1))));
+
+        var lineName = (string)Assert.Single(sold["lines"]!.AsArray())!["name"]!;
+        var entry = Assert.Single(skipped["unavailable"]!.AsArray())!;
+        Assert.Contains("M", lineName);
+        Assert.NotEqual("Camiseta polo", lineName);
+        Assert.Equal(lineName, (string)entry["name"]!);
+    }
+
+    [Fact]
     public async Task AQuoteInACurrencyOutsideTheStoreIs422()
     {
         await using var fixture = await OpenAsync();

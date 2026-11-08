@@ -144,7 +144,7 @@ public sealed record PublicCartQuoteDto(
 
 /// <param name="Reason">Hoy siempre <see cref="NotAvailable"/>; es texto para que un motivo nuevo no rompa al storefront.</param>
 /// <param name="Name">El nombre con que la cotización llama a esa variante, para decirle al comprador cuál línea quedó fuera; null sólo si la
-/// variante ya no existe (borrada). No lleva precio ni existencias.</param>
+/// variante ya no existe (borrada) o es de otro tenant. No lleva precio ni existencias.</param>
 public sealed record PublicUnavailableLineDto(Guid VariantId, string Reason, string? Name)
 {
     public const string NotAvailable = "NotAvailable";
