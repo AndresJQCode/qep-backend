@@ -43,17 +43,17 @@ public sealed class UpdateCompanyHandler(
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
 
-        // Cargar la empresa va antes de validar (y no despues, como antes): el cliente viejo no
-        // manda pais, y el pais efectivo es el de la empresa guardada. Sin ella no se sabe que
-        // carril validar. Autorizar sigue primero, asi un llamador ajeno no ve ni un 404.
+        // El pais se normaliza una sola vez, antes de validar. Ver la razon en CreateCompanyHandler.
+        // Validar va antes de cargar la empresa: el pais y el tipo llegan siempre en el cuerpo, asi
+        // que la empresa guardada no hace falta para saber que carril de ciudad validar.
+        command = command with { Country = CompanyWriteRules.NormalizeCountry(command.Country) };
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+
         var company = await repository.FindAsync(
             command.TenantId,
             new Domain.CompanyId(command.CompanyId),
             cancellationToken)
             ?? throw CompanyNotFound.For(command.CompanyId);
-
-        command = CompanyLegacyWrite.Resolve(command, company);
-        await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Fuera de Colombia la ciudad es texto libre: no hay nada que buscar en Geography.
         CompanyCityRef? city = null;

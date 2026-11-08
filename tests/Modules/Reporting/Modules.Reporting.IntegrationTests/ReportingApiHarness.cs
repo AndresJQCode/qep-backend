@@ -648,6 +648,8 @@ internal static class ReportingApiHarness
                     new { bankName, accountNumber, currency },
                 },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "6015550000",
                 email = "facturacion@qep.example.co",

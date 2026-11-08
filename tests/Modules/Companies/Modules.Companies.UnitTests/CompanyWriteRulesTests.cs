@@ -32,7 +32,7 @@ public sealed class CompanyWriteRulesTests
 
     private static bool Fails(CreateCompanyCommand command, string key) =>
         new CreateCompanyValidator()
-            .Validate(CompanyLegacyWrite.Resolve(command))
+            .Validate(command)
             .Errors.Any(error => error.PropertyName == key);
 
     [Theory]
@@ -85,33 +85,26 @@ public sealed class CompanyWriteRulesTests
     public void CountryWithoutDocumentTypeFailsOnDocumentType() =>
         Assert.True(Fails(Command(country: "CO", documentType: null), "DocumentType"));
 
+    // Sin país ni tipo de documento ya no hay a qué resolver: la ventana del frontend viejo se
+    // cerró el 2026-11-08 (decisión del owner) y los dos campos son obligatorios en POST y PUT.
     [Fact]
-    public void LegacyCreateResolvesToColombiaAndNit()
+    public void CreateWithoutCountryFailsOnCountryAndDocumentType()
     {
-        var resolved = CompanyLegacyWrite.Resolve(Command(country: null, documentType: null));
+        var result = new CreateCompanyValidator().Validate(Command(country: null, documentType: null));
 
-        Assert.Equal("CO", resolved.Country);
-        Assert.Equal("NIT", resolved.DocumentType);
-        Assert.True(new CreateCompanyValidator().Validate(resolved).IsValid);
+        Assert.Contains(result.Errors, error => error.PropertyName == "Country");
+        Assert.Contains(result.Errors, error => error.PropertyName == "DocumentType");
     }
 
     [Fact]
-    public void LegacyUpdateUsesStoredSpanishCountry()
+    public void CreateWithBlankCountryFailsOnCountry() =>
+        Assert.True(Fails(Command(country: "  "), "Country"));
+
+    [Fact]
+    public void UpdateWithoutCountryFailsOnCountryAndDocumentType()
     {
-        var stored = Company.Create(
-            CompanyId.New(),
-            Guid.NewGuid(),
-            "Empresa",
-            new List<CompanyBankAccountPayload> { new("Banco", "123", "EUR") }.ToDomain(),
-            "A1234567",
-            "ES",
-            CompanyDocumentType.Nif,
-            null,
-            "Madrid",
-            new CompanyContactInfo(),
-            DateTimeOffset.UtcNow);
         var command = new UpdateCompanyCommand(
-            stored.TenantId,
+            Guid.NewGuid(),
             Guid.NewGuid(),
             "Empresa",
             [new CompanyBankAccountPayload("Banco", "123", "EUR")],
@@ -124,17 +117,15 @@ public sealed class CompanyWriteRulesTests
             null,
             null);
 
-        var resolved = CompanyLegacyWrite.Resolve(command, stored);
-        var result = new UpdateCompanyValidator().Validate(resolved);
+        var result = new UpdateCompanyValidator().Validate(command);
 
-        Assert.Equal("ES", resolved.Country);
-        Assert.Contains(result.Errors, error => error.PropertyName == "CityName");
+        Assert.Contains(result.Errors, error => error.PropertyName == "Country");
+        Assert.Contains(result.Errors, error => error.PropertyName == "DocumentType");
     }
 
     [Fact]
     public void PaddedLowerCaseCountryAcceptsNif() =>
         Assert.True(new CreateCompanyValidator()
-            .Validate(CompanyLegacyWrite.Resolve(
-                Command(country: " es ", documentType: "NIF", withCity: false, cityName: "Madrid")))
+            .Validate(Command(country: " es ", documentType: "NIF", withCity: false, cityName: "Madrid"))
             .IsValid);
 }

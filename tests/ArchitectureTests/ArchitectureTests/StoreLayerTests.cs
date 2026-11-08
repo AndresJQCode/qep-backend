@@ -86,6 +86,26 @@ public sealed class StoreLayerTests
         }
     }
 
+    /// <summary>Los compradores dependen de Store, nunca al revés: ninguna capa de `store` referencia `Modules.Buyers*`.</summary>
+    [Fact]
+    public void NoStoreLayerReferencesBuyers()
+    {
+        Assembly[] layers =
+        [
+            typeof(OnlineStore).Assembly,
+            typeof(StorePermissions).Assembly,
+            typeof(StoreInfrastructureExtensions).Assembly,
+            typeof(StoreEndpoints).Assembly,
+        ];
+
+        foreach (var layer in layers)
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(layer), name =>
+                name is not null &&
+                name.StartsWith("Modules.Buyers", StringComparison.Ordinal));
+        }
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)

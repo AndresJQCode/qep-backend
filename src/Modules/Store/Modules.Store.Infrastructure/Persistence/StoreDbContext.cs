@@ -25,6 +25,9 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
+    // Proyección de escritura de platform.outbox_messages (ExcludeFromMigrations): Tenancy es dueño de la tabla.
+    internal DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
+
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         SyncDerivedColumns();
@@ -44,6 +47,7 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         ConfigureDomain(modelBuilder);
         ConfigureOrderRequest(modelBuilder);
         ConfigureRequestCounter(modelBuilder);
+        ConfigureOutboxProjection(modelBuilder);
     }
 
     // Dos columnas se derivan del agregado y no tienen propiedad en el dominio: se escriben acá, justo antes de guardar, para que
@@ -359,6 +363,21 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         counter.HasKey(value => value.TenantId);
         counter.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
         counter.Property(value => value.NextValue).HasColumnName("next_value").HasColumnType("bigint");
+    }
+
+    // Copia de IdentityDbContext.ConfigureOutboxProjection: se escribe, pero la tabla no se migra desde acá. Las columnas NOT NULL
+    // salen de InitialPlatform.
+    private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)
+    {
+        var outbox = modelBuilder.Entity<OutboxRecord>();
+        outbox.ToTable("outbox_messages", "platform", table => table.ExcludeFromMigrations());
+        outbox.HasKey(value => value.Id);
+        outbox.Property(value => value.Id).HasColumnName("id");
+        outbox.Property(value => value.EventName).HasColumnName("event_name").HasMaxLength(200);
+        outbox.Property(value => value.PayloadJson).HasColumnName("payload").HasColumnType("jsonb");
+        outbox.Property(value => value.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
+        outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
+        outbox.Property(value => value.Attempts).HasColumnName("attempts");
     }
 }
 

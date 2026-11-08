@@ -46,9 +46,9 @@ public sealed class CreateCompanyHandler(
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
 
-        // El cliente viejo no manda pais: se resuelve a Colombia/NIT antes de validar, para que
-        // las reglas por carril vean siempre un pais efectivo.
-        command = CompanyLegacyWrite.Resolve(command);
+        // El pais se normaliza una sola vez, antes de validar: la busqueda de ciudad de abajo
+        // compara contra "CO", y un "co" sin normalizar se la saltaria.
+        command = command with { Country = CompanyWriteRules.NormalizeCountry(command.Country) };
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido

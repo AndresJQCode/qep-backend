@@ -26,4 +26,7 @@ public static class RateLimiterPolicies
 
     /// <summary>Tienda pública, envío de solicitudes: 5 cada 10 minutos por IP del visitante.</summary>
     public const string StorefrontSubmit = "storefront-submit";
+
+    /// <summary>Tienda pública, credenciales de compradores: 10 por minuto, por ruta y por IP del visitante.</summary>
+    public const string StorefrontCredentials = "storefront-credentials";
 }

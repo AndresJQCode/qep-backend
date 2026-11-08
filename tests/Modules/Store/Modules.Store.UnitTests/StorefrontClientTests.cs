@@ -78,6 +78,23 @@ public sealed class StorefrontClientTests
         Assert.Equal("10.0.0.9", StorefrontClient.VisitorIp(Request(visitorIp: "203.0.113.7"), ""));
     }
 
+    [Fact]
+    public void TryGetDeclaredVisitorIpUsesTheConfiguredSecret()
+    {
+        var context = Request(visitorIp: "203.0.113.7");
+        context.RequestServices = new ServiceCollection()
+            .AddSingleton(Options.Create(new StoreOptions { Storefront = new StorefrontOptions { SharedSecret = Secret } }))
+            .BuildServiceProvider();
+
+        Assert.True(StorefrontClient.TryGetDeclaredVisitorIp(context, out var visitorIp));
+        Assert.Equal("203.0.113.7", visitorIp);
+
+        var withoutKey = Request(key: null, visitorIp: "203.0.113.7");
+        withoutKey.RequestServices = context.RequestServices;
+        Assert.False(StorefrontClient.TryGetDeclaredVisitorIp(withoutKey, out var none));
+        Assert.Equal(string.Empty, none);
+    }
+
     [Theory]
     [InlineData("not-an-ip")]
     [InlineData("")]

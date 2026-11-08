@@ -212,6 +212,8 @@ internal static class PosApiHarness
                     new { bankName = "Bancolombia", accountNumber = $"{Random.Shared.Next(100000000, 999999999)}", currency = "COP" },
                 },
                 taxId,
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "6045551234",
                 email = "caja@origen.example.co",

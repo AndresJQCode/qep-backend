@@ -387,6 +387,8 @@ internal static class ShopifyApiHarness
                 name = "Origen Botánico SAS",
                 bankAccounts = new[] { new { bankName = "Bancolombia", accountNumber, currency = "COP" } },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId = await AnyCityIdAsync(client),
                 phone = "6045551234",
                 email = "ventas@origen.example.co",

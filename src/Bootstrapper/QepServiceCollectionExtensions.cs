@@ -60,6 +60,7 @@ using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
+using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
@@ -1087,6 +1088,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
+        services.AddBuyersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1429,6 +1431,53 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.ListStoreBillingAccountsQuery, Modules.Store.Application.StoreBillingAccountListDto>,
             Modules.Store.Application.ListStoreBillingAccountsHandler>();
+
+        // `buyers` (spec 2026-11-07): cuenta de comprador de plataforma. Buyers no referencia Store: el host de la ruta y Turnstile
+        // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
+        // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
+        services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
+        services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
+        services.AddScoped<Modules.Buyers.Application.BuyerSignup>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.RegisterBuyerCommand, bool>,
+            Modules.Buyers.Application.RegisterBuyerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.VerifyBuyerEmailCommand, bool>,
+            Modules.Buyers.Application.VerifyBuyerEmailHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResendBuyerVerificationCommand, bool>,
+            Modules.Buyers.Application.ResendBuyerVerificationHandler>();
+        services.AddScoped<Modules.Buyers.Application.BuyerSessions>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.LoginBuyerCommand, Modules.Buyers.Application.BuyerSessionDto>,
+            Modules.Buyers.Application.LoginBuyerHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerSessionQuery, Modules.Buyers.Application.BuyerDto>,
+            Modules.Buyers.Application.GetBuyerSessionHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.LogoutBuyerCommand, bool>,
+            Modules.Buyers.Application.LogoutBuyerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.UpdateBuyerProfileCommand, Modules.Buyers.Application.BuyerDto>,
+            Modules.Buyers.Application.UpdateBuyerProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ChangeBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ChangeBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.DeleteBuyerAccountCommand, bool>,
+            Modules.Buyers.Application.DeleteBuyerAccountHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ForgotBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ForgotBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResetBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ResetBuyerPasswordHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
+        // Store → Buyers (D7): el pedido hashea la contraseña del alta y actualiza el perfil guardado sin ver Buyers.
+        services.AddScoped<Modules.Buyers.Application.ReplaceBuyerProfileFromOrder>();
+        services.AddScoped<Modules.Store.Application.IStoreBuyerAccounts, StoreBuyerAccounts>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules

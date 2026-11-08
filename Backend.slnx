@@ -173,6 +173,16 @@
     <Project Path="tests/Modules/Store/Modules.Store.UnitTests/Modules.Store.UnitTests.csproj" />
     <Project Path="tests/Modules/Store/Modules.Store.IntegrationTests/Modules.Store.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Buyers/">
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Api/Modules.Buyers.Api.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Application/Modules.Buyers.Application.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Domain/Modules.Buyers.Domain.csproj" />
+    <Project Path="src/Modules/Buyers/Modules.Buyers.Infrastructure/Modules.Buyers.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/Modules/Buyers/">
+    <Project Path="tests/Modules/Buyers/Modules.Buyers.UnitTests/Modules.Buyers.UnitTests.csproj" />
+    <Project Path="tests/Modules/Buyers/Modules.Buyers.IntegrationTests/Modules.Buyers.IntegrationTests.csproj" />
+  </Folder>
   <Folder Name="/src/Modules/ApiAccess/">
     <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Api/Modules.ApiAccess.Api.csproj" />
     <Project Path="src/Modules/ApiAccess/Modules.ApiAccess.Application/Modules.ApiAccess.Application.csproj" />

@@ -24,6 +24,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "310 555 1122",
                 email = "Contacto@Andes.CO",
@@ -66,6 +68,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000456", bankName: "Davivienda", currency: "usd")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -118,7 +122,9 @@ public sealed class CompanyWriteApiTests
                     // dejaria pasar las dos.
                     BankAccount("  CTA-000123  ", bankName: " bancolombia ")
                 },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -145,6 +151,8 @@ public sealed class CompanyWriteApiTests
                 name = "Otra Empresa S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "830.222.333-4",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -173,6 +181,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000123", bankName: "Davivienda")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -200,7 +210,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = Array.Empty<object>(),
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -240,7 +252,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes",
                 bankAccounts = new[] { BankAccount("CTA-1") },
-                taxId = "900-1"
+                taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -291,6 +305,8 @@ public sealed class CompanyWriteApiTests
                 name = "",
                 bankAccounts = new[] { BankAccount("CTA-1") },
                 taxId = "",
+                country = "CO",
+                documentType = "NIT",
                 email = "no-es-un-correo"
             },
             TestContext.Current.CancellationToken);
@@ -328,7 +344,9 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000456", currency: "PESOS"),
                     BankAccount("CTA-000789", bankName: "")
                 },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -355,6 +373,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123", currency: "eur") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -379,7 +399,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123", currency: "MXN") },
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -405,6 +427,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "",
                 email = "",
@@ -445,6 +469,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -483,6 +509,8 @@ public sealed class CompanyWriteApiTests
                     BankAccount("CTA-000789", bankName: "BBVA")
                 },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -498,6 +526,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000456", bankName: "Davivienda") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -532,7 +562,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Andes Logistica S.A.S.",
                 bankAccounts = Array.Empty<object>(),
-                taxId = "900.111.222-3"
+                taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -563,6 +595,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes",
                 bankAccounts = new[] { BankAccount("CTA-1") },
                 taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -588,6 +622,8 @@ public sealed class CompanyWriteApiTests
                 name = "Andes Logistica S.A.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -617,7 +653,9 @@ public sealed class CompanyWriteApiTests
             {
                 name = "Robada",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
-                taxId = "900-1"
+                taxId = "900-1",
+                country = "CO",
+                documentType = "NIT",
             },
             TestContext.Current.CancellationToken);
 
@@ -705,8 +743,11 @@ public sealed class CompanyWriteApiTests
         Assert.Contains("CityName", await ValidationFieldsAsync(response));
     }
 
+    // La ventana del frontend viejo se cerró el 2026-11-08 (decisión del owner): un cuerpo sin
+    // país ni tipo de documento ya no se resuelve a Colombia/NIT ni al país guardado, se rechaza
+    // con el mapa de errores en los dos campos.
     [Fact]
-    public async Task LegacyPostWithoutCountryCreatesColombiaNit()
+    public async Task PostWithoutCountryOrDocumentTypeIsRejected()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -721,64 +762,40 @@ public sealed class CompanyWriteApiTests
             cityId
         });
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        using var json = await ReadJsonAsync(response);
-        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
-        Assert.Equal("NIT", json.RootElement.GetProperty("documentType").GetString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("Country", fields);
+        Assert.Contains("DocumentType", fields);
     }
 
     [Fact]
-    public async Task LegacyPutOnColombianCompanyKeepsCountryAndType()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var client = CreateManager(factory);
-        var created = await CreateCompanyAsync(client, "Andes S.A.S.", "CTA-000123");
-        var cityId = await EnsureCityIdAsync(client);
-
-        var response = await client.PutAsJsonAsync(
-            $"{CompaniesUrl()}/{created.Id}",
-            new
-            {
-                name = "Andes Renombrada S.A.S.",
-                bankAccounts = new[] { BankAccount("CTA-000123") },
-                taxId = "900.111.222-3",
-                cityId
-            },
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        using var json = await ReadJsonAsync(response);
-        Assert.Equal("CO", json.RootElement.GetProperty("country").GetString());
-        Assert.Equal("NIT", json.RootElement.GetProperty("documentType").GetString());
-    }
-
-    [Fact]
-    public async Task LegacyPutOnSpanishCompanyKeepsCountryAndFailsOnCityName()
+    public async Task PutWithoutCountryOrDocumentTypeIsRejectedAndLeavesTheCompanyUnchanged()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);
         var created = await CreateSpanishAsync(client);
-        var cityId = await EnsureCityIdAsync(client);
 
         var response = await client.PutAsJsonAsync(
             $"{CompaniesUrl()}/{created}",
             new
             {
-                name = "Iberia S.L.",
+                name = "Iberia Renombrada S.L.",
                 bankAccounts = new[] { BankAccount("ES-000123") },
                 taxId = "B12345678",
-                cityId
+                cityName = "Madrid"
             },
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Contains("CityName", await ValidationFieldsAsync(response));
+        var fields = await ValidationFieldsAsync(response);
+        Assert.Contains("Country", fields);
+        Assert.Contains("DocumentType", fields);
 
         var stored = await client.GetAsync(
             $"{CompaniesUrl()}/{created}", TestContext.Current.CancellationToken);
         using var json = await ReadJsonAsync(stored);
+        Assert.Equal("Iberia S.L.", json.RootElement.GetProperty("name").GetString());
         Assert.Equal("ES", json.RootElement.GetProperty("country").GetString());
         Assert.Equal("NIF", json.RootElement.GetProperty("documentType").GetString());
     }
