@@ -19,4 +19,18 @@ internal sealed class BuyerSessionRepository(BuyersDbContext dbContext, IClock c
             .Where(session => session.AccountId == accountId && session.RevokedAt == null && session.ExpiresAt > now)
             .ToListAsync(cancellationToken);
     }
+
+    // Masiva y no por entidad: en READ COMMITTED la sentencia ve toda sesión confirmada antes de ella, también la de un login que
+    // confirmó después de que se leyó la cuenta. Las mismas columnas que BuyerSession.Revoke.
+    public Task RevokeActiveAsync(
+        Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken) =>
+        dbContext.Sessions
+            .Where(session => session.AccountId == accountId
+                && session.RevokedAt == null
+                && (keepSessionId == null || session.Id != keepSessionId))
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(session => session.RevokedAt, now)
+                    .SetProperty(session => session.RevokedReason, reason),
+                cancellationToken);
 }

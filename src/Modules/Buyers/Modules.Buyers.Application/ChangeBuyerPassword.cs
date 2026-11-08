@@ -29,6 +29,7 @@ public sealed class ChangeBuyerPasswordHandler(
     IBuyerAccountRepository accounts,
     IBuyerPasswordHasher hasher,
     BuyerSessions sessions,
+    IBuyersUnitOfWork unitOfWork,
     IValidator<ChangeBuyerPasswordBody> validator,
     IClock clock)
     : ICommandHandler<ChangeBuyerPasswordCommand, bool>
@@ -38,6 +39,15 @@ public sealed class ChangeBuyerPasswordHandler(
         ArgumentNullException.ThrowIfNull(command);
 
         var storefront = await storefronts.ResolveAsync(command.Host, cancellationToken);
+        // Si otra escritura de la cuenta (un restablecimiento) confirmó en el medio, se relee todo: la sesión puede haber quedado
+        // revocada (401) y la contraseña actual puede ya no ser la misma (422).
+        return await BuyerConcurrency.RetryOnceAsync(
+            unitOfWork, () => AttemptAsync(command, storefront, cancellationToken));
+    }
+
+    private async Task<bool> AttemptAsync(
+        ChangeBuyerPasswordCommand command, BuyerStorefront storefront, CancellationToken cancellationToken)
+    {
         var session = await sessions.RequireAsync(storefront.Host, command.Token, cancellationToken);
         var account = await accounts.FindAsync(session.AccountId, cancellationToken)
             ?? throw new RequestUnauthorizedException(BuyerErrorCodes.SessionInvalid, "The buyer session is not valid.");

@@ -34,6 +34,7 @@ public sealed class LoginBuyerHandler(
     IBuyerProfileRepository profiles,
     IBuyerPasswordHasher hasher,
     BuyerSessions sessions,
+    IBuyersUnitOfWork unitOfWork,
     IValidator<LoginBuyerBody> validator,
     IClock clock)
     : ICommandHandler<LoginBuyerCommand, BuyerSessionDto>
@@ -45,6 +46,15 @@ public sealed class LoginBuyerHandler(
         var storefront = await storefronts.ResolveAsync(command.Host, cancellationToken);
         await validator.ValidateAndThrowAsync(command.Body, cancellationToken);
 
+        // Sólo el re-hash escribe la cuenta. Si choca (un restablecimiento o un cambio de contraseña confirmó en el medio), la sesión
+        // y el re-hash se descartan juntos y el ingreso se intenta de nuevo contra el hash actual: con la contraseña vieja es 401.
+        return await BuyerConcurrency.RetryOnceAsync(
+            unitOfWork, () => AttemptAsync(command, storefront, cancellationToken));
+    }
+
+    private async Task<BuyerSessionDto> AttemptAsync(
+        LoginBuyerCommand command, BuyerStorefront storefront, CancellationToken cancellationToken)
+    {
         var account = BuyerEmail.TryNormalize(command.Body.Email.Trim(), out var email)
             ? await accounts.FindByEmailAsync(email, cancellationToken)
             : null;

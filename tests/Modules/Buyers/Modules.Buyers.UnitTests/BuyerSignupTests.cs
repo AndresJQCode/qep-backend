@@ -154,10 +154,47 @@ public sealed class BuyerSignupTests
             () => signup.SignUpAsync(Request("hash-1"), TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task AnAccountPurgedBeforeTheSaveIsCreatedAgainOnTheRetry()
+    {
+        var world = new BuyersWorld();
+        var purged = world.AddUnverifiedAccount(Email, "hash-old");
+        world.ConflictOnNextSave = () => world.SavedAccounts.Remove(purged);
+
+        await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, world.SaveCalls);
+        var account = Assert.Single(world.SavedAccounts);
+        Assert.NotEqual(purged.Id, account.Id);
+        Assert.Equal("hash-new", account.PasswordHash);
+    }
+
+    [Fact]
+    public async Task AnAccountVerifiedBeforeTheSaveOnlyGetsTheNoticeOnTheRetry()
+    {
+        var world = new BuyersWorld();
+        var account = world.AddUnverifiedAccount(Email, "hash-old");
+        // Lo que dejó el restablecimiento que confirmó primero (el doble no tiene tracker que revertir el primer intento).
+        world.ConflictOnNextSave = () =>
+        {
+            account.ChangePasswordHash("hash-reset", BuyersWorld.Now);
+            account.MarkEmailVerified(BuyersWorld.Now);
+        };
+
+        await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
+
+        Assert.Equal("hash-reset", account.PasswordHash);
+        var queued = Assert.Single(world.SavedEvents);
+        Assert.Equal(BuyerIntegrationEvents.ExistingAccountNotice, queued.EventName);
+    }
+
     private sealed class AlwaysConflicting : IBuyersUnitOfWork
     {
         public Task SaveChangesAsync(CancellationToken cancellationToken) =>
             throw new ResourceConflictException(BuyerErrorCodes.EmailTaken, "taken");
+
+        public Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken) =>
+            SaveChangesAsync(cancellationToken);
 
         public void DiscardPendingChanges()
         {

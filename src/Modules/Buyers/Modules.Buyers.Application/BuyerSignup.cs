@@ -18,7 +18,7 @@ public sealed record BuyerSignupRequest(
 /// El único algoritmo de alta de cuenta (registro y checkout). Nunca revela si el email existía: los tres caminos terminan igual
 /// para quien llama. Email nuevo crea la cuenta; verificado sólo avisa que ya tiene una; sin verificar reemplaza contraseña y perfil
 /// y reenvía la verificación. Si dos altas del mismo email nuevo chocan en el índice único, la perdedora descarta lo pendiente y
-/// reintenta una vez por el camino de email existente.
+/// reintenta una vez por el camino de email existente; lo mismo si la cuenta leída cambió o se purgó antes del guardado.
 /// </summary>
 public sealed class BuyerSignup(
     IBuyerAccountRepository accounts,
@@ -48,6 +48,13 @@ public sealed class BuyerSignup(
         catch (ResourceConflictException exception) when (exception.Code == BuyerErrorCodes.EmailTaken)
         {
             // El ganador de la carrera ya guardó la cuenta: ahora existe, así que el segundo intento no vuelve a crearla.
+            unitOfWork.DiscardPendingChanges();
+            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            // M2: la cuenta sin verificar cambió (un restablecimiento la verificó) o la purga la borró desde que se leyó. El segundo
+            // intento sigue la regla de lo que hay ahora: verificada avisa, borrada se crea de nuevo. Nunca un 500.
             unitOfWork.DiscardPendingChanges();
             await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }

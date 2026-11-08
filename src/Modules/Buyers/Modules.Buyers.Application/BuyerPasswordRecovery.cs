@@ -88,6 +88,7 @@ public sealed class ResetBuyerPasswordHandler(
     IBuyerAccountRepository accounts,
     IBuyerPasswordHasher hasher,
     BuyerSessions sessions,
+    IBuyersUnitOfWork unitOfWork,
     IValidator<ResetBuyerPasswordBody> validator,
     IClock clock)
     : ICommandHandler<ResetBuyerPasswordCommand, bool>
@@ -101,17 +102,21 @@ public sealed class ResetBuyerPasswordHandler(
 
         var now = clock.UtcNow;
         var accountId = await tokens.TryConsumeAsync(
-            BuyerTokenCodec.Hash(command.Body.Token.Trim()), BuyerEmailTokenPurpose.Reset, now, cancellationToken);
-        var account = accountId is { } id ? await accounts.FindAsync(id, cancellationToken) : null;
-        if (account is null)
-        {
-            throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The password reset link is not valid.");
-        }
+            BuyerTokenCodec.Hash(command.Body.Token.Trim()), BuyerEmailTokenPurpose.Reset, now, cancellationToken)
+            ?? throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The password reset link is not valid.");
+        var hash = hasher.Hash(command.Body.NewPassword);
 
-        account.ChangePasswordHash(hasher.Hash(command.Body.NewPassword), now);
-        account.MarkEmailVerified(now);
-        // RevokeAllAsync guarda: el hash nuevo, la verificación y las revocaciones salen en la misma transacción.
-        await sessions.RevokeAllAsync(account.Id, BuyerSession.RevokedReasons.PasswordReset, cancellationToken);
-        return true;
+        // El token ya se consumió: si otra escritura (un re-registro, un re-hash del login) confirmó en el medio, el
+        // restablecimiento se aplica de nuevo sobre la cuenta releída en vez de perderse.
+        return await BuyerConcurrency.RetryOnceAsync(unitOfWork, async () =>
+        {
+            var account = await accounts.FindAsync(accountId, cancellationToken)
+                ?? throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The password reset link is not valid.");
+            account.ChangePasswordHash(hash, now);
+            account.MarkEmailVerified(now);
+            // RevokeAllAsync guarda: el hash nuevo, la verificación y las revocaciones salen en la misma transacción.
+            await sessions.RevokeAllAsync(account.Id, BuyerSession.RevokedReasons.PasswordReset, cancellationToken);
+            return true;
+        });
     }
 }

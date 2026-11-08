@@ -30,6 +30,13 @@ public interface IBuyerSessionRepository
 
     /// <summary>Las sesiones de la cuenta que no están revocadas ni vencidas por su vida absoluta.</summary>
     Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Revoca con una sola sentencia toda sesión sin revocar de la cuenta salvo <paramref name="keepSessionId"/>. A diferencia de
+    /// revocar una lista leída antes, alcanza también la sesión que un login concurrente confirmó entre la lectura y el guardado.
+    /// </summary>
+    Task RevokeActiveAsync(
+        Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken);
 }
 
 public interface IBuyerEmailTokenRepository
@@ -63,9 +70,17 @@ public interface IBuyersUnitOfWork
 {
     /// <summary>
     /// Confirma los cambios. La violación de <c>IX_accounts_email</c> sale como
-    /// <see cref="BuildingBlocks.Application.ResourceConflictException"/> con <see cref="BuyerErrorCodes.EmailTaken"/>.
+    /// <see cref="BuildingBlocks.Application.ResourceConflictException"/> con <see cref="BuyerErrorCodes.EmailTaken"/>. Una cuenta
+    /// que cambió o desapareció desde que se leyó sale como <see cref="BuildingBlocks.Application.RequestConcurrencyException"/>.
+    /// En los dos casos el tracker queda limpio.
     /// </summary>
     Task SaveChangesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Confirma los cambios y corre <paramref name="afterSave"/> (una sentencia masiva) en la misma transacción. Las mismas
+    /// traducciones que <see cref="SaveChangesAsync(CancellationToken)"/>.
+    /// </summary>
+    Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken);
 
     void DiscardPendingChanges();
 }

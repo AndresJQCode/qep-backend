@@ -56,29 +56,21 @@ public sealed class BuyerSessions(IBuyerSessionRepository sessions, IBuyersUnitO
         await TryResolveAsync(host, rawToken, cancellationToken)
         ?? throw new RequestUnauthorizedException(BuyerErrorCodes.SessionInvalid, "The buyer session is not valid.");
 
-    public async Task RevokeOthersAsync(
-        Guid accountId, Guid keepSessionId, string reason, CancellationToken cancellationToken)
+    /// <summary>Guarda lo pendiente (el hash nuevo) y revoca toda otra sesión de la cuenta, en la misma transacción.</summary>
+    public Task RevokeOthersAsync(
+        Guid accountId, Guid keepSessionId, string reason, CancellationToken cancellationToken) =>
+        SaveAndRevokeAsync(accountId, keepSessionId, reason, cancellationToken);
+
+    /// <summary>Guarda lo pendiente (el hash nuevo) y revoca toda sesión de la cuenta, en la misma transacción.</summary>
+    public Task RevokeAllAsync(Guid accountId, string reason, CancellationToken cancellationToken) =>
+        SaveAndRevokeAsync(accountId, null, reason, cancellationToken);
+
+    // T9: primero el guardado (el UPDATE de la cuenta, con su xmin, la bloquea) y después la revocación masiva, que ve toda sesión
+    // confirmada hasta ese momento. Revocar una lista leída antes dejaba viva la sesión de un login que confirmaba en el medio.
+    private Task SaveAndRevokeAsync(Guid accountId, Guid? keepSessionId, string reason, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-        foreach (var session in await sessions.ListActiveAsync(accountId, cancellationToken))
-        {
-            if (session.Id != keepSessionId)
-            {
-                session.Revoke(now, reason);
-            }
-        }
-
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task RevokeAllAsync(Guid accountId, string reason, CancellationToken cancellationToken)
-    {
-        var now = clock.UtcNow;
-        foreach (var session in await sessions.ListActiveAsync(accountId, cancellationToken))
-        {
-            session.Revoke(now, reason);
-        }
-
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return unitOfWork.SaveChangesAsync(
+            token => sessions.RevokeActiveAsync(accountId, keepSessionId, now, reason, token), cancellationToken);
     }
 }

@@ -13,7 +13,7 @@ public sealed class LoginBuyerHandlerTests
         var hasher = new RehashingHasher();
         var sessions = new BuyerSessions(world.Sessions, world.UnitOfWork, world.Clock);
         var handler = new LoginBuyerHandler(
-            new FakeStorefronts(), world.Accounts, world.Profiles, hasher, sessions, new LoginBuyerBodyValidator(), world.Clock);
+            new FakeStorefronts(), world.Accounts, world.Profiles, hasher, sessions, world.UnitOfWork, new LoginBuyerBodyValidator(), world.Clock);
 
         var result = await handler.HandleAsync(
             new LoginBuyerCommand("acme.lulocrm.com", null, new LoginBuyerBody("ana@correo.com", "una-contrasena-larga")),

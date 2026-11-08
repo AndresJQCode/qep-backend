@@ -40,16 +40,19 @@ public sealed class VerifyBuyerEmailHandler(
 
         var now = clock.UtcNow;
         var accountId = await tokens.TryConsumeAsync(
-            BuyerTokenCodec.Hash(command.Body.Token.Trim()), BuyerEmailTokenPurpose.Verify, now, cancellationToken);
-        var account = accountId is { } id ? await accounts.FindAsync(id, cancellationToken) : null;
-        if (account is null)
-        {
-            throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The verification link is not valid.");
-        }
+            BuyerTokenCodec.Hash(command.Body.Token.Trim()), BuyerEmailTokenPurpose.Verify, now, cancellationToken)
+            ?? throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The verification link is not valid.");
 
-        account.MarkEmailVerified(now);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        return true;
+        // El token ya se consumió: si un re-registro confirmó en el medio, se verifica la cuenta releída. Si la purga la borró,
+        // el segundo intento no la encuentra y es token_invalid.
+        return await BuyerConcurrency.RetryOnceAsync(unitOfWork, async () =>
+        {
+            var account = await accounts.FindAsync(accountId, cancellationToken)
+                ?? throw new BuyerDomainException(BuyerErrorCodes.TokenInvalid, "The verification link is not valid.");
+            account.MarkEmailVerified(now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            return true;
+        });
     }
 }
 

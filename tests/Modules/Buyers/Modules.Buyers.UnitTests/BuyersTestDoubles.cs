@@ -68,6 +68,9 @@ internal sealed class BuyersWorld
     /// <summary>Corre en el próximo guardado y lo hace fallar con el conflicto de email: simula al ganador de la carrera.</summary>
     public Action? WinTheRaceOnNextSave { get; set; }
 
+    /// <summary>Corre en el próximo guardado y lo hace fallar por concurrencia: simula otra escritura (o la purga) de la cuenta.</summary>
+    public Action? ConflictOnNextSave { get; set; }
+
     public BuyerAccount AddVerifiedAccount(string email, string hash)
     {
         var account = BuyerAccount.Register(Guid.NewGuid(), email, hash, Now);
@@ -149,6 +152,17 @@ internal sealed class BuyersWorld
         public Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<BuyerSession>>(
                 world.SavedSessions.Where(s => s.AccountId == accountId && s.RevokedAt is null).ToList());
+
+        public Task RevokeActiveAsync(
+            Guid accountId, Guid? keepSessionId, DateTimeOffset now, string reason, CancellationToken cancellationToken)
+        {
+            foreach (var session in world.SavedSessions.Where(s => s.AccountId == accountId && s.Id != keepSessionId))
+            {
+                session.Revoke(now, reason);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     internal sealed class FakeOutbox(BuyersWorld world) : IBuyerOutbox
@@ -170,6 +184,14 @@ internal sealed class BuyersWorld
                 throw new ResourceConflictException(BuyerErrorCodes.EmailTaken, "Another buyer account already uses that email.");
             }
 
+            if (world.ConflictOnNextSave is { } change)
+            {
+                world.ConflictOnNextSave = null;
+                change();
+                DiscardPendingChanges();
+                throw new RequestConcurrencyException("concurrency.conflict", "The buyer account changed.");
+            }
+
             world.SavedAccounts.AddRange(world._pendingAccounts);
             world.SavedProfiles.AddRange(world._pendingProfiles);
             world.SavedConsents.AddRange(world._pendingConsents);
@@ -178,6 +200,12 @@ internal sealed class BuyersWorld
             world.SavedEvents.AddRange(world._pendingEvents);
             DiscardPendingChanges();
             return Task.CompletedTask;
+        }
+
+        public async Task SaveChangesAsync(Func<CancellationToken, Task> afterSave, CancellationToken cancellationToken)
+        {
+            await SaveChangesAsync(cancellationToken);
+            await afterSave(cancellationToken);
         }
 
         public void DiscardPendingChanges()

@@ -50,6 +50,9 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
         account.Property(value => value.EmailVerifiedAt).HasColumnName("email_verified_at");
         account.Property(value => value.CreatedAt).HasColumnName("created_at");
         account.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // M2: el xmin de PostgreSQL como token de concurrencia (propiedad sombra, sin columna nueva). Dos escrituras sobre la misma
+        // cuenta leída en el mismo estado no se pisan: la segunda sale como RequestConcurrencyException (BuyersUnitOfWork).
+        account.Property<uint>("Version").IsRowVersion();
         account.Ignore(value => value.IsVerified);
     }
 
