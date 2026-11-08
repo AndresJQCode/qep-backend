@@ -360,6 +360,15 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.buyers.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Domain": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )"
+        }
+      },
       "modules.buyers.application": {
         "type": "Project",
         "dependencies": {

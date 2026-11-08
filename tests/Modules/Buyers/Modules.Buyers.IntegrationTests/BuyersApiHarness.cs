@@ -1,8 +1,13 @@
+using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Modules.Buyers.Application;
+using Modules.Buyers.Domain;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -29,8 +34,20 @@ internal static class BuyersApiHarness
             .WithPassword("qep-integration")
             .Build();
         await database.StartAsync(TestContext.Current.CancellationToken);
-        var factory = new QepApiFactory(database.GetConnectionString(), configure, runBackgroundServices);
-        return new BuyersApi(database, factory);
+        var captcha = new FakeBuyerCaptcha();
+        var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            services =>
+            {
+                // Nunca salen a Cloudflare ni resuelven una tienda real; lo que una prueba pida después manda.
+                services.RemoveAll<IBuyerStorefronts>();
+                services.AddSingleton<IBuyerStorefronts>(new FakeBuyerStorefronts());
+                services.RemoveAll<IBuyerCaptcha>();
+                services.AddSingleton<IBuyerCaptcha>(captcha);
+                configure?.Invoke(services);
+            },
+            runBackgroundServices);
+        return new BuyersApi(database, factory, captcha);
     }
 
     /// <summary>Una IP 10.x.y.z distinta en cada llamada.</summary>
@@ -55,15 +72,49 @@ internal static class BuyersApiHarness
         }
     }
 
-    internal sealed class BuyersApi(PostgreSqlContainer database, QepApiFactory factory) : IAsyncDisposable
+    internal sealed class BuyersApi(PostgreSqlContainer database, QepApiFactory factory, FakeBuyerCaptcha captcha)
+        : IAsyncDisposable
     {
+        /// <summary>Pide la IP única de la petición (la del harness); es el valor por defecto de <c>PostAsync</c>.</summary>
+        public const string AutoIp = "auto";
+
         public QepApiFactory Factory { get; } = factory;
 
+        public FakeBuyerCaptcha Captcha { get; } = captcha;
+
         /// <summary>El cliente del storefront: lleva la clave y una IP de visitante distinta en cada petición.</summary>
-        public HttpClient Storefront { get; } = CreateStorefront(factory, fixedIp: null);
+        public HttpClient Storefront { get; } = CreateStorefront(factory, fixedIp: null, uniqueIp: true);
+
+        // Lleva la clave pero nunca una IP: para probar la ruta sin el header del visitante.
+        private HttpClient WithoutVisitorIp { get; } = CreateStorefront(factory, fixedIp: null, uniqueIp: false);
+
+        /// <summary>
+        /// Un POST a <c>/buyer{path}</c> como lo haría el BFF. <paramref name="visitorIp"/>: <see cref="AutoIp"/> = una IP única;
+        /// <c>null</c> = sin el header; cualquier otro valor se manda tal cual (así una prueba fija una IP para el límite).
+        /// </summary>
+        public Task<HttpResponseMessage> PostAsync(
+            string path, object body, string host = "acme.lulocrm.com", string? session = null, string? visitorIp = AutoIp)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/public/stores/{host}/buyer{path}")
+            {
+                Content = JsonContent.Create(body),
+            };
+            if (session is not null)
+            {
+                request.Headers.Add("X-Qep-Buyer-Session", session);
+            }
+
+            if (visitorIp is not null && visitorIp != AutoIp)
+            {
+                request.Headers.Add("X-Qep-Visitor-Ip", visitorIp);
+            }
+
+            var client = visitorIp is null ? WithoutVisitorIp : Storefront;
+            return client.SendAsync(request, TestContext.Current.CancellationToken);
+        }
 
         /// <summary>Un cliente del storefront con una IP de visitante fija, para probar el límite por IP.</summary>
-        public HttpClient StorefrontWithIp(string visitorIp) => CreateStorefront(Factory, visitorIp);
+        public HttpClient StorefrontWithIp(string visitorIp) => CreateStorefront(Factory, visitorIp, uniqueIp: false);
 
         public async Task<IReadOnlyList<JsonNode>> OutboxPayloadsAsync(string eventName)
         {
@@ -106,6 +157,7 @@ internal static class BuyersApiHarness
         public async ValueTask DisposeAsync()
         {
             Storefront.Dispose();
+            WithoutVisitorIp.Dispose();
             await Factory.DisposeAsync();
             await database.DisposeAsync();
         }
@@ -117,9 +169,11 @@ internal static class BuyersApiHarness
             return connection;
         }
 
-        private static HttpClient CreateStorefront(QepApiFactory factory, string? fixedIp)
+        private static HttpClient CreateStorefront(QepApiFactory factory, string? fixedIp, bool uniqueIp)
         {
-            var client = factory.CreateDefaultClient(new UniqueVisitorIpHandler());
+            var client = uniqueIp
+                ? factory.CreateDefaultClient(new UniqueVisitorIpHandler())
+                : factory.CreateDefaultClient();
             client.DefaultRequestHeaders.Add("X-Qep-Storefront-Key", StorefrontKey);
             if (fixedIp is not null)
             {
@@ -181,5 +235,35 @@ internal static class BuyersApiHarness
                 configureServices?.Invoke(services);
             });
         }
+    }
+}
+
+/// <summary>
+/// El puerto de la tienda sin Store de por medio: cualquier host es una tienda llamada "Tienda Demo" (el host sale normalizado),
+/// salvo <c>no-existe.lulocrm.com</c>, que lanza el mismo 404 que el resolvedor real.
+/// </summary>
+internal sealed class FakeBuyerStorefronts : IBuyerStorefronts
+{
+    public const string MissingHost = "no-existe.lulocrm.com";
+
+    public Task<BuyerStorefront> ResolveAsync(string host, CancellationToken cancellationToken) =>
+        string.Equals(host.Trim(), MissingHost, StringComparison.OrdinalIgnoreCase)
+            ? throw new ResourceNotFoundException(BuyerErrorCodes.StoreNotFound, "The store was not found.")
+            : Task.FromResult(new BuyerStorefront(host.Trim().ToLowerInvariant(), "Tienda Demo"));
+}
+
+/// <summary>El desafío controlable por prueba: nunca sale a Cloudflare.</summary>
+internal sealed class FakeBuyerCaptcha : IBuyerCaptcha
+{
+    private int _calls;
+
+    public bool Passes { get; set; } = true;
+
+    public int Calls => _calls;
+
+    public Task<bool> VerifyAsync(string token, string visitorIp, string host, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _calls);
+        return Task.FromResult(Passes);
     }
 }

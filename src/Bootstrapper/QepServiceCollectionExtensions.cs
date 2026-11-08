@@ -1432,6 +1432,19 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Store.Application.ListStoreBillingAccountsQuery, Modules.Store.Application.StoreBillingAccountListDto>,
             Modules.Store.Application.ListStoreBillingAccountsHandler>();
 
+        // `buyers` (spec 2026-11-07): cuenta de comprador de plataforma. Buyers no referencia Store: el host de la ruta y Turnstile
+        // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
+        // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
+        services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
+        services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
+        services.AddScoped<Modules.Buyers.Application.BuyerSignup>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.RegisterBuyerCommand, bool>,
+            Modules.Buyers.Application.RegisterBuyerHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
+
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
         // lo impide a proposito — y el composition root cablea los puertos que declara

@@ -776,6 +776,7 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Automations.Api": "[1.0.0, )",
           "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Buyers.Api": "[1.0.0, )",
           "Modules.Buyers.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Api": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
@@ -1019,6 +1020,15 @@
           "Modules.Automations.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.buyers.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Domain": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )"
         }
       },
       "modules.buyers.application": {

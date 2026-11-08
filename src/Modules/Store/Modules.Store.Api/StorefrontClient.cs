@@ -2,6 +2,9 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Modules.Store.Application;
 
 namespace Modules.Store.Api;
 
@@ -62,6 +65,17 @@ public static class StorefrontClient
 
         visitorIp = address.ToString();
         return true;
+    }
+
+    /// <summary>
+    /// Como <see cref="TryGetVisitorIp"/>, con el secreto de <see cref="StoreOptions"/>: para quien no recibe el secreto por parámetro
+    /// (los módulos que cuelgan de este prefijo, como Buyers).
+    /// </summary>
+    public static bool TryGetDeclaredVisitorIp(HttpContext context, out string visitorIp)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var secret = context.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
+        return TryGetVisitorIp(context, secret, out visitorIp);
     }
 
     /// <summary>

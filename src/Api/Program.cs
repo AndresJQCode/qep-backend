@@ -54,6 +54,7 @@ using Modules.Suppliers.Api;
 using Modules.Store.Api;
 using Modules.Store.Application;
 using Modules.Store.Infrastructure;
+using Modules.Buyers.Api;
 using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
@@ -184,6 +185,19 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
             }));
 
+    // Credenciales de compradores: 10 por minuto por ruta y por IP del visitante. La clave usa el PATRÓN de ruta (no el path) para que
+    // cada ruta lleve su contador y el host de la tienda no abra una partición por tienda.
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontCredentials,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext))}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
     static string? StorefrontSecret(HttpContext httpContext) =>
         httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
 });
@@ -305,6 +319,8 @@ app.MapLoansEndpoints();
 app.MapStoreEndpoints();
 // Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
 app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontSubmit);
+// Cuentas de comprador (spec 2026-11-07): mismo prefijo y misma clave del storefront; las credenciales llevan su propio cupo por ruta.
+app.MapPublicBuyerEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontCredentials);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al

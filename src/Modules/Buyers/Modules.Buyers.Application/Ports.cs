@@ -84,3 +84,18 @@ public interface IBuyerPasswordHasher
     /// <summary>Con <c>null</c> verifica contra un hash ficticio y devuelve <see cref="BuyerPasswordCheck.Failed"/>.</summary>
     BuyerPasswordCheck Verify(string? hash, string password);
 }
+
+/// <summary>La tienda que atiende el host de la ruta: <paramref name="Host"/> normalizado y el nombre que ve el comprador.</summary>
+public sealed record BuyerStorefront(string Host, string Name);
+
+/// <summary>Resuelve el host de la ruta con las reglas de Store. Un host que no es de una tienda publicada lanza el 404 tal cual.</summary>
+public interface IBuyerStorefronts
+{
+    Task<BuyerStorefront> ResolveAsync(string host, CancellationToken cancellationToken);
+}
+
+/// <summary>El desafío anti-bot. <c>false</c> = no se pasó; un proveedor caído lanza el 503 <c>store.captcha.unavailable</c> tal cual.</summary>
+public interface IBuyerCaptcha
+{
+    Task<bool> VerifyAsync(string token, string visitorIp, string host, CancellationToken cancellationToken);
+}
