@@ -150,7 +150,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
             return;
         }
 
-        var profile = new BuyerProfileDto(message.Billing, message.Shipping, message.Shipping is null).WithNormalizedCodes();
+        var profile = new BuyerProfileDto(message.Billing, message.Shipping, message.Shipping is null);
         var request = new BuyerSignupRequest(
             message.StoreHost, message.StoreName, message.VisitorIp, message.Email, message.PasswordHash, profile);
         try

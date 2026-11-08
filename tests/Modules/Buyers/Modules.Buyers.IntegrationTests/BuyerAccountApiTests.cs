@@ -81,6 +81,62 @@ public sealed class BuyerAccountApiTests
         Assert.Equal("Ana Otra", (string?)read["profile"]!["billing"]!["name"]);
     }
 
+    // M1: los códigos se normalizan en BuyerProfileWriter, el único punto por el que pasa todo perfil guardado.
+    [Fact]
+    public async Task RegisterAndUpdateProfileStoreTheCodesNormalized()
+    {
+        await using var api = await OpenAsync();
+        var lowercase = new
+        {
+            billing = new
+            {
+                name = "Ana Pérez",
+                identificationType = " cc ",
+                identificationNumber = "1020304050",
+                phone = "3001234567",
+                email = "facturas@empresa.com",
+                address = "Cra 1 # 2-3",
+                country = "co",
+                departmentId = Guid.NewGuid(),
+                cityId = Guid.NewGuid(),
+                cityName = (string?)null,
+            },
+            shipping = new
+            {
+                recipientName = "Luis",
+                phone = "3009876543",
+                address = "Calle Mayor 1",
+                country = " es ",
+                departmentId = (Guid?)null,
+                cityId = (Guid?)null,
+                cityName = "Madrid",
+            },
+            shippingSameAsBilling = false,
+        };
+
+        var registered = await api.PostAsync(
+            "/register",
+            new { email = Email, password = OldPassword, acceptsDataPolicy = true, turnstileToken = "token-ok", profile = lowercase });
+        Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
+        await AssertStoredCodesAsync(api, "CC", "CO", "ES");
+
+        var verifyToken = (await api.OutboxPayloadsAsync("buyers.email-verification-requested.v1"))[^1]["token"]!.GetValue<string>();
+        (await api.PostAsync("/email/verify", new { token = verifyToken })).EnsureSuccessStatusCode();
+        var token = await LoginTokenAsync(api);
+        (await api.PutAsync("/profile", Profile(), token)).EnsureSuccessStatusCode();
+        await AssertStoredCodesAsync(api, "CC", "CO", null);
+
+        (await api.PutAsync("/profile", lowercase, token)).EnsureSuccessStatusCode();
+        await AssertStoredCodesAsync(api, "CC", "CO", "ES");
+    }
+
+    private static async Task AssertStoredCodesAsync(BuyersApi api, string type, string country, string? shippingCountry)
+    {
+        Assert.Equal(type, await api.ScalarAsync<string>("SELECT data->'billing'->>'identificationType' FROM buyers.profiles"));
+        Assert.Equal(country, await api.ScalarAsync<string>("SELECT data->'billing'->>'country' FROM buyers.profiles"));
+        Assert.Equal(shippingCountry, await api.ScalarAsync<string?>("SELECT data->'shipping'->>'country' FROM buyers.profiles"));
+    }
+
     [Fact]
     public async Task UpdateProfileDoesNotChangeTheLoginEmail()
     {

@@ -50,7 +50,7 @@ public static class BuyerProfileMapping
 
     /// <summary>
     /// Los códigos del perfil como los guarda la consola (tipo de documento y país en mayúsculas, sin espacios). El pedido los acepta
-    /// sin mirar mayúsculas, así que un perfil que sale del pedido pasa por aquí antes de guardarse.
+    /// sin mirar mayúsculas y el perfil también, así que <c>BuyerProfileWriter</c> pasa todo perfil por aquí antes de guardarlo.
     /// </summary>
     public static BuyerProfileDto WithNormalizedCodes(this BuyerProfileDto dto)
     {

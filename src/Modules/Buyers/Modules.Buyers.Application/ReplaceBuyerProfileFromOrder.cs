@@ -33,7 +33,7 @@ public sealed class ReplaceBuyerProfileFromOrder(
             return false;
         }
 
-        await writer.UpsertAsync(account.Id, profile.WithNormalizedCodes(), clock.UtcNow, cancellationToken);
+        await writer.UpsertAsync(account.Id, profile, clock.UtcNow, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
     }

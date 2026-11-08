@@ -12,7 +12,8 @@ public sealed class BuyerProfileWriter(IBuyerProfileRepository profiles)
     {
         ArgumentNullException.ThrowIfNull(profile);
 
-        var data = profile.ToData();
+        // El único punto por el que pasa todo perfil guardado (registro, PUT /profile, pedido): los códigos se normalizan acá.
+        var data = profile.WithNormalizedCodes().ToData();
         var existing = await profiles.FindAsync(accountId, cancellationToken);
         if (existing is null)
         {
