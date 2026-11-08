@@ -1215,6 +1215,10 @@ Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`).
 
 - **El consentimiento no se borra nunca.** `buyers.consents` guarda email, IP, host, versión y URL de la política (`BuyerDataPolicy.Version`) de cada aceptación, y
   sobrevive a la cuenta: no tiene clave foránea y la purga no lo toca. Borrar la cuenta lo conserva.
+- **Las notificaciones del comprador se anonimizan al borrar la cuenta.** Cuando `BuyerAccountDeletedDeliveryWorker` cierra el mensaje de cuenta
+  eliminada —haya salido el correo o haya fallado, porque ninguno de los dos se reintenta—, toda fila de `notifications.notifications` sin tenant,
+  con `recipient_id` de la cuenta y plantilla `buyers.*` (ésta incluida) queda con `recipient_id` vacío (`Guid.Empty`) y `recipient_address` vacío,
+  en el mismo guardado que el `processed_at`. Las filas no se borran: estado, plantilla y fechas siguen contando para las estadísticas de envío.
 - `BuyerHousekeepingWorker` corre cada hora y borra en masa:
   - cuentas **sin verificar** cuyo último registro o reenvío de la verificación (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van
     por cascada);

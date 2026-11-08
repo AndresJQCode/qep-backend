@@ -84,6 +84,48 @@ public sealed class BuyerEmailDeliveryTests
         Assert.Equal(2, await CountBuyerRowsAsync(cs));
     }
 
+    // I1 residual A: un envío fallido cierra el mensaje (processed_at, sin reintento) igual que uno
+    // exitoso, así que la anonimización tampoco puede depender de que el correo haya salido.
+    [Fact]
+    public async Task AFailedDeletionMailStillAnonymizesEveryBuyerNotification()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel
+        {
+            OnSend = call => call == 2
+                ? Task.FromException(new InvalidOperationException("provider rejected the message"))
+                : Task.CompletedTask,
+        };
+        using var factory = new NotificationsApiFactory(cs, channel, runDeliveryWorkers: true);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
+        const string email = "ana-failed-deletion@example.com";
+
+        await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.EmailVerificationRequested, Payload(accountId, email, "tok_1"));
+        Assert.NotNull(await WaitForNotificationAsync(cs, accountId, BuyerVerificationEmailTemplate.TemplateRef));
+        var deletedId = await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.AccountDeleted, Payload(accountId, email, null));
+
+        Assert.True(await WaitForProcessedAsync(cs, DeletedConsumer, deletedId));
+        Assert.Single(channel.Sent);
+        Assert.Equal(0, await CountRowsMentioningAsync(cs, accountId, email));
+        Assert.Equal(2, await CountBuyerRowsAsync(cs));
+        Assert.Equal(1, await CountFailedRowsAsync(cs, BuyerAccountDeletedEmailTemplate.TemplateRef));
+    }
+
+    private static async Task<long> CountFailedRowsAsync(string cs, string templateRef)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(cs);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "SELECT count(*) FROM notifications.notifications WHERE template_ref = @ref AND status = 'Failed'",
+            connection);
+        command.Parameters.AddWithValue("ref", templateRef);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
     private const string DeletedConsumer = "notifications.buyer-account-deleted-email";
 
     private static async Task<bool> WaitForProcessedAsync(string cs, string consumer, Guid messageId)
@@ -152,9 +194,10 @@ public sealed class BuyerEmailDeliveryTests
         _ = factory.Services;
         var accountId = Guid.CreateVersion7();
 
-        await InsertOutboxAsync(cs, BuyerIntegrationEvents.AccountDeleted, Payload(accountId, string.Empty, null));
+        // No el de cuenta eliminada: ése anonimiza su propia fila al cerrar, así que no se encontraría por la cuenta.
+        await InsertOutboxAsync(cs, BuyerIntegrationEvents.ExistingAccountNotice, Payload(accountId, string.Empty, null));
 
-        var row = await WaitForNotificationAsync(cs, accountId, BuyerAccountDeletedEmailTemplate.TemplateRef);
+        var row = await WaitForNotificationAsync(cs, accountId, BuyerExistingAccountEmailTemplate.TemplateRef);
         Assert.Equal("Failed", row!.Status);
         Assert.Equal("recipient_email_unavailable", row.FailureReason);
         Assert.Empty(channel.Sent);

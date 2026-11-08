@@ -26,15 +26,18 @@ internal sealed class BuyerAccountDeletedDeliveryWorker(
         BuyerAccountDeletedEmailTemplate.Render(payload.Email, payload.StoreName);
 
     /// <summary>
-    /// Con el correo de cuenta eliminada ya enviado, el correo y la cuenta salen de toda notificación del
-    /// comprador, ésta incluida (spec, decisión 9: sólo se conserva el registro de la autorización). Las
-    /// filas no se borran, para no perder las estadísticas de envío. Va en el mismo SaveChanges que la
-    /// notificación y el processed_at. Si el envío falló, no se anonimiza: la fila es la evidencia del fallo.
+    /// Al cerrar el mensaje de cuenta eliminada, el correo y la cuenta salen de toda notificación del
+    /// comprador, ésta incluida (spec, decisión 9: sólo se conserva el registro de la autorización). Pasa
+    /// tanto si el envío salió como si falló: los dos cierran el mensaje (processed_at, sin reintento), así
+    /// que no habrá otra oportunidad. La fila fallida conserva el estado y la razón, que es la evidencia del
+    /// fallo. Las filas no se borran, para no perder las estadísticas de envío. Va en el mismo SaveChanges
+    /// que la notificación y el processed_at. Sin cuenta (intentos agotados: el payload no se lee) no hay a
+    /// quién anonimizar.
     /// </summary>
     protected override async Task BeforeSaveAsync(
         NotificationsDbContext dbContext, Notification notification, CancellationToken cancellationToken)
     {
-        if (notification.Status != NotificationStatus.Sent || notification.RecipientId == Guid.Empty)
+        if (notification.RecipientId == Guid.Empty)
         {
             return;
         }
