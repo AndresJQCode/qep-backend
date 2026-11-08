@@ -40,6 +40,13 @@ public interface IStoreCatalogReader
     /// </summary>
     Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El nombre visible de cada una de esas variantes, sin importar si la tienda todavía la vende (oculta, inactiva o sin precio en la
+    /// moneda). Es lo único que se lee de ellas: sirve para decirle al comprador cuál línea quedó fuera. Un id borrado o ajeno no aparece.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, string>> VariantNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken);
 }
 
 /// <param name="HasVariants">Más de una variante vendible en la moneda: desde la tarjeta no se puede elegir por el visitante.</param>

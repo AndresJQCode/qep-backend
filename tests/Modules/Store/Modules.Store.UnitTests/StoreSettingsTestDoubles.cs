@@ -146,6 +146,10 @@ internal sealed class FakeCatalog : IStoreCatalogReader
     public Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<Guid, string>> VariantNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }
 
 internal sealed class FakeBillingAccounts : IStoreBillingAccounts
