@@ -17,7 +17,7 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -33,13 +33,30 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("address");
 
-                    b.Property<Guid>("CityId")
+                    b.Property<Guid?>("CityId")
                         .HasColumnType("uuid")
                         .HasColumnName("city_id");
+
+                    b.Property<string>("CityName")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("city_name");
+
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("DocumentType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("document_type");
 
                     b.Property<string>("Email")
                         .HasMaxLength(254)
@@ -94,7 +111,12 @@ namespace Modules.Companies.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_companies_tenant");
 
-                    b.ToTable("companies", "companies");
+                    b.ToTable("companies", "companies", t =>
+                        {
+                            t.HasCheckConstraint("CK_companies_city_lane", "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_companies_document_type", "document_type IN ('NIT','CC','CE','PASAPORTE','NIF','NIE','TAX_ID')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Companies.Infrastructure.Persistence.CompaniesOutboxMessage", b =>

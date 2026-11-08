@@ -23,12 +23,15 @@ public sealed record CompanyDto(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     bool IsActive,
     string? Phone,
     string? Email,
     string? Address,
-    CompanyCityDto City,
-    CompanyDepartmentDto Department,
+    CompanyCityDto? City,
+    CompanyDepartmentDto? Department,
+    string? CityName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -37,12 +40,15 @@ public sealed record CompanyResponse(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     bool IsActive,
     string? Phone,
     string? Email,
     string? Address,
-    CompanyCityDto City,
-    CompanyDepartmentDto Department,
+    CompanyCityDto? City,
+    CompanyDepartmentDto? Department,
+    string? CityName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -59,6 +65,11 @@ public sealed record CompanyResponse(
 /// que el consumidor la descarte. El detalle completo lo trae <c>GET /{companyId}</c>, que es la
 /// pantalla donde la moneda si se lee.
 ///
+/// <c>City</c> es una sola columna para los dos carriles: el nombre de DIVIPOLA en Colombia y
+/// el texto libre fuera de ella, asi la grilla no ramifica (BFF). <c>Country</c> y
+/// <c>DocumentType</c> viajan para que la grilla rotule el documento (NIT, NIF, TAX_ID...) sin
+/// pedir el detalle.
+///
 /// <c>AccountNumbers</c> repite los numeros de <c>BankAccounts</c> a proposito: es el contrato
 /// anterior, y quitarlo en el mismo cambio obliga a desplegar frontend y backend a la vez. Se va
 /// cuando ningun consumidor desplegado lo lea.
@@ -69,6 +80,8 @@ public sealed record CompanyListItemResponse(
     IReadOnlyList<string> AccountNumbers,
     IReadOnlyList<CompanyListBankAccount> BankAccounts,
     string TaxId,
+    string Country,
+    string DocumentType,
     string? Phone,
     string City,
     bool IsActive);
@@ -90,13 +103,17 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 // el recurso entero. BankAccounts sigue la misma regla y de forma mas visible: la lista que llega
 // es la lista que queda, asi que quitar una cuenta es mandar el PUT sin ella.
 //
-// CityId, en cambio, no se puede limpiar — es obligatorio, mismo criterio que en Customer:
-// una empresa siempre tiene una ciudad.
+// Country y DocumentType son opcionales en el cuerpo por el cliente viejo (ventana temporal,
+// ver CompanyLegacyWrite). La ciudad depende del carril: en Colombia es CityId (obligatorio) y
+// fuera de ella es CityName (texto libre, obligatorio); mandar el otro campo se rechaza.
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address);
@@ -105,7 +122,10 @@ public sealed record UpdateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address);

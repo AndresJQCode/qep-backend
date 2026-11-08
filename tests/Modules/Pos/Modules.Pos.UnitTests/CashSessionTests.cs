@@ -7,6 +7,16 @@ namespace Modules.Pos.UnitTests;
 public sealed class CashSessionTests
 {
     [Fact]
+    public void OpenFreezesTheCompanyDocumentTypeOfTheSnapshot()
+    {
+        var session = CashSession.Open(
+            CashSessionId.New(), TenantId, Cashier, "Laura Gómez", Company with { DocumentType = "NIF" },
+            "COP", 100_000m, Now);
+
+        Assert.Equal("NIF", session.CompanyDocumentType);
+    }
+
+    [Fact]
     public void OpenStartsAtVersionOneWithTheCompanySnapshotAndNoSales()
     {
         var session = OpenSession(100_000m);
@@ -19,6 +29,7 @@ public sealed class CashSessionTests
         Assert.Equal(Company.CompanyId, session.CompanyId);
         Assert.Equal("Origen Botánico SAS", session.CompanyName);
         Assert.Equal("900123456-1", session.CompanyTaxId);
+        Assert.Equal("NIT", session.CompanyDocumentType);
         Assert.Equal("Cra 50 # 10-20, Rionegro", session.CompanyAddress);
         Assert.Equal("6045551234", session.CompanyPhone);
         Assert.Equal(100_000m, session.OpeningFloat);

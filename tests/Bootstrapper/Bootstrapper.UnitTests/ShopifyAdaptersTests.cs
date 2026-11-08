@@ -796,7 +796,8 @@ public sealed class ShopifyAdaptersTests
         var company = Company.Create(
             CompanyId.New(), TenantId, "Verde S.A.S.",
             [new CompanyBankAccount { BankName = "Bancolombia", AccountNumber = "CTA-1", Currency = "USD" }],
-            "900.111.222-3", Guid.CreateVersion7(), CompanyContactInfo.Empty, Now);
+            "900.111.222-3", Company.ColombiaCountryCode, CompanyDocumentType.Nit, Guid.CreateVersion7(), null,
+            CompanyContactInfo.Empty, Now);
         var accounts = new ShopifyBillingAccounts(new FakeCompanyRepository(company));
 
         Assert.Equal(

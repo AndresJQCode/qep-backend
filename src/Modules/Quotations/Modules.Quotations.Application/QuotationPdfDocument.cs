@@ -125,6 +125,8 @@ public sealed record QuotationPdfParty(
 public sealed record QuotationPdfBillingAccount(
     string CompanyName,
     string? CompanyTaxId,
+    /// <summary>Rótulo que antecede al documento de la empresa («NIT», «NIF»…).</summary>
+    string CompanyDocumentLabel,
     /// <summary>Dirección y teléfono del membrete, vacíos si la empresa no los cargó — el
     /// documento no inventa un renglón que no tiene qué decir.</summary>
     string CompanyAddress,

@@ -207,7 +207,7 @@ public sealed class OrderPdfDocumentMapperTests
             "Calle 100 #15-20", Guid.CreateVersion7(), "Bogotá", Guid.CreateVersion7(), "Cundinamarca", null, false, false,
             true, DateTimeOffset.UtcNow, []);
         var billing = new QuotationBillingResponse(
-            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "NIT", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP");
         // 12 x 35.900 = 430.800; 15% = 64.620; línea = 366.180 con IVA adentro.
         var item = new QuotationItemResponse(

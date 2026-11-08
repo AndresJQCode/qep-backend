@@ -14,6 +14,7 @@ public sealed class CashSession
         CashierName = string.Empty;
         CompanyName = string.Empty;
         CompanyTaxId = string.Empty;
+        CompanyDocumentType = string.Empty;
     }
 
     public CashSessionId Id { get; private set; }
@@ -30,6 +31,8 @@ public sealed class CashSession
     public string CompanyName { get; private set; }
 
     public string CompanyTaxId { get; private set; }
+
+    public string CompanyDocumentType { get; private set; }
 
     public string? CompanyAddress { get; private set; }
 
@@ -105,6 +108,7 @@ public sealed class CashSession
             CompanyId = company.CompanyId,
             CompanyName = company.Name,
             CompanyTaxId = company.TaxId,
+            CompanyDocumentType = company.DocumentType,
             CompanyAddress = company.Address,
             CompanyPhone = company.Phone,
             // Already a catalogue code: OpenCashSessionHandler runs Currencies.Normalize.

@@ -545,7 +545,7 @@ internal sealed class PosTestBed
 
     public PosCompanyRef AddCompany(string name = "Origen Botánico SAS", bool active = true, Guid? tenantId = null)
     {
-        var company = new PosCompanyRef(Guid.CreateVersion7(), name, "900123456-1", "Cra 50 # 10-20", "6045551234", active);
+        var company = new PosCompanyRef(Guid.CreateVersion7(), name, "900123456-1", "NIT", "Cra 50 # 10-20", "6045551234", active);
         Companies.Companies.Add((tenantId ?? PosFixtures.TenantId, company));
         return company;
     }

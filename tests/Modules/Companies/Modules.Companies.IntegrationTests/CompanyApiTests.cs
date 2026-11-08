@@ -273,4 +273,69 @@ public sealed class CompanyApiTests
         Assert.NotNull(body);
         return body;
     }
+
+    [Fact]
+    public async Task ListMixesColombianAndForeignCities()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var colombian = await CreateCompanyAsync(client, "Andes S.A.S.", "CTA-000123");
+        var spanish = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Iberia S.L.",
+                bankAccounts = new[] { BankAccount("ES-000123") },
+                taxId = "B12345678",
+                country = "ES",
+                documentType = "NIF",
+                cityName = "Madrid"
+            },
+            TestContext.Current.CancellationToken);
+        spanish.EnsureSuccessStatusCode();
+
+        var body = await ListAsync(client, string.Empty);
+
+        var co = Assert.Single(body.Items, item => item.Name == "Andes S.A.S.");
+        var es = Assert.Single(body.Items, item => item.Name == "Iberia S.L.");
+        Assert.Equal(colombian.City!.Name, co.City);
+        Assert.Equal("CO", co.Country);
+        Assert.Equal("NIT", co.DocumentType);
+        Assert.Equal("Madrid", es.City);
+        Assert.Equal("ES", es.Country);
+        Assert.Equal("NIF", es.DocumentType);
+    }
+
+    [Fact]
+    public async Task ForeignCompanyDetailDoesNotFail()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var created = await client.PostAsJsonAsync(
+            CompaniesUrl(),
+            new
+            {
+                name = "Acme Inc.",
+                bankAccounts = new[] { BankAccount("US-000123") },
+                taxId = "12-3456789",
+                country = "US",
+                documentType = "TAX_ID",
+                cityName = "Miami"
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var company = await created.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+
+        var response = await client.GetAsync(
+            $"{CompaniesUrl()}/{company!.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var detail = await response.Content.ReadFromJsonAsync<CompanyResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal("Miami", detail!.CityName);
+        Assert.Null(detail.City);
+    }
 }

@@ -535,7 +535,8 @@ public sealed class OrdersExportProcessor(
             : string.Empty;
     }
 
-    // El NIT como lo importa el ERP: sin dígito de verificación, puntos ni espacios.
+    // El documento como lo importa el ERP: sin puntos ni espacios; el guion y el dígito de
+    // verificación se conservan (decisión del dueño, D11). No depende del tipo de documento.
     private static string ErpTaxId(string? taxId)
     {
         if (string.IsNullOrEmpty(taxId))
@@ -543,9 +544,7 @@ public sealed class OrdersExportProcessor(
             return string.Empty;
         }
 
-        var hyphen = taxId.IndexOf('-', StringComparison.Ordinal);
-        var withoutCheckDigit = hyphen < 0 ? taxId : taxId[..hyphen];
-        return string.Concat(withoutCheckDigit.Where(character => character != '.' && !char.IsWhiteSpace(character)));
+        return string.Concat(taxId.Where(character => character != '.' && !char.IsWhiteSpace(character)));
     }
 
     private static ExportCell AdvisorCodeCell(

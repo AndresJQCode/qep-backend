@@ -121,10 +121,10 @@ public sealed class CustomerMergeAcrossModulesApiTests
                 billing_account_currency, source)
             VALUES (@order, @tenant, 'PED-' || @suffix, 'Pending', 'PaymentPending', now(), @advisor, now(), now(), 1, @customer,
                 @advisor, 'COP', @advisor, 'Banco', '123', 'COP', 'Manual');
-            INSERT INTO pos.cash_sessions (id, tenant_id, cashier_id, cashier_name, company_id, company_name, company_tax_id, status,
+            INSERT INTO pos.cash_sessions (id, tenant_id, cashier_id, cashier_name, company_id, company_name, company_tax_id, company_document_type, status,
                 opening_float, opened_at, sales_count, voided_count, sales_total, cash_total, card_total, transfer_total, version,
                 created_at, updated_at)
-            VALUES (@session, @tenant, @advisor, 'Caja', @advisor, 'Empresa', '900', 'Closed', 0, now(), 0, 0, 0, 0, 0, 0, 1, now(), now());
+            VALUES (@session, @tenant, @advisor, 'Caja', @advisor, 'Empresa', '900', 'NIT', 'Closed', 0, now(), 0, 0, 0, 0, 0, 0, 1, now(), now());
             INSERT INTO pos.sales (id, request_fingerprint, tenant_id, cash_session_id, cashier_id, sale_number, customer_id,
                 customer_name, customer_identification_number, subtotal, tax_amount, discount_amount, total, change_amount, status,
                 created_at)

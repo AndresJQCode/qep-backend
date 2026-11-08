@@ -30,7 +30,7 @@ public sealed class GetRegisterContextHandler(
         return new RegisterContextResponse(
             new PosCashierResponse(cashier.Value, name),
             session is null ? null : PosSessionMapping.ToOpenResponse(session, calendar),
-            active.Select(company => new PosCompanyOption(company.Id, company.Name, company.TaxId)).ToArray(),
+            active.Select(company => new PosCompanyOption(company.Id, company.Name, company.TaxId, company.DocumentType)).ToArray(),
             active.Count == 1 ? active[0].Id : null,
             defaultCurrency);
     }
