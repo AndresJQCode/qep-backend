@@ -103,9 +103,10 @@ public sealed record CompaniesResponse(IReadOnlyCollection<CompanyListItemRespon
 // el recurso entero. BankAccounts sigue la misma regla y de forma mas visible: la lista que llega
 // es la lista que queda, asi que quitar una cuenta es mandar el PUT sin ella.
 //
-// Country y DocumentType son opcionales en el cuerpo por el cliente viejo (ventana temporal,
-// ver CompanyLegacyWrite). La ciudad depende del carril: en Colombia es CityId (obligatorio) y
-// fuera de ella es CityName (texto libre, obligatorio); mandar el otro campo se rechaza.
+// Country y DocumentType son obligatorios. Siguen siendo string? en el cuerpo a proposito: un
+// campo ausente tiene que llegar al validador como null y salir como 422 con el mapa errors
+// (Country, DocumentType), no morir antes en el binding. La ciudad depende del carril: en
+// Colombia es CityId (obligatorio) y fuera de ella es CityName (texto libre, obligatorio).
 public sealed record CreateCompanyRequest(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,

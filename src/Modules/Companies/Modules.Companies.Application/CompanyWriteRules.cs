@@ -65,19 +65,21 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
 
         // Dos RuleFor por campo: el When() gobierna toda la cadena que lo precede, y un NotEmpty()
         // delante quedaría apagado justo cuando el valor viene vacío.
-        // Ausente se admite aquí: durante la ventana del frontend viejo CompanyLegacyWrite lo
-        // resuelve antes de validar, así que el validador nunca lo ve ausente.
+        // País y tipo de documento son obligatorios en POST y PUT: la ventana que resolvía un
+        // cuerpo sin país (Colombia/NIT o el país guardado) se cerró el 2026-11-08, por decisión
+        // del owner, al desplegar backend y frontend juntos.
+        RuleFor(command => command.Country)
+            .NotEmpty();
         RuleFor(command => command.Country)
             .Must(country => IsValidCountry(country!))
             .WithMessage(
                 $"The country must be an ISO-3166-1 alpha-2 code ({Company.CountryLength} letters).")
-            .When(command => command.Country is not null);
+            .When(command => !string.IsNullOrWhiteSpace(command.Country));
 
-        // El tipo de documento es obligatorio en cuanto hay país, y tiene que estar permitido
-        // para ese país (misma tabla que el dominio, no una lista repetida aquí).
+        // El tipo de documento tiene que estar permitido para el país (misma tabla que el
+        // dominio, no una lista repetida aquí).
         RuleFor(command => command.DocumentType)
-            .NotEmpty()
-            .When(command => command.Country is not null);
+            .NotEmpty();
         RuleFor(command => command.DocumentType)
             .Must(type => CompanyDocumentTypes.TryParse(type, out _))
             .WithMessage("The document type is not recognized.")
@@ -88,20 +90,21 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
                 && CompanyDocumentTypes.AllowedFor(EffectiveCountry(command)).Contains(parsed))
             .WithMessage("The document type is not allowed for the country.")
             .When(command =>
-                CompanyDocumentTypes.TryParse(command.DocumentType, out _) && IsValidCountry(command));
+                CompanyDocumentTypes.TryParse(command.DocumentType, out _) && HasValidCountry(command));
 
         // El país decide cuál de los dos carriles de ciudad se exige, y el error tiene que caer en
-        // el campo que el formulario tiene en pantalla (combobox o texto). Que la fila exista y
-        // sea del tenant lo resuelve el handler contra ICompanyGeographyLookup. Guid.Empty cuenta
-        // como ausente: NotEmpty() en un Guid? sólo rechaza null.
+        // el campo que el formulario tiene en pantalla (combobox o texto). Sin un país válido no
+        // hay carril que exigir: el error ya cae en Country. Que la fila exista y sea del tenant
+        // lo resuelve el handler contra ICompanyGeographyLookup. Guid.Empty cuenta como ausente:
+        // NotEmpty() en un Guid? sólo rechaza null.
         RuleFor(command => command.CityId)
             .Must(cityId => cityId is { } value && value != Guid.Empty)
             .WithMessage("The city is required.")
-            .When(IsColombian);
+            .When(command => HasValidCountry(command) && IsColombian(command));
         RuleFor(command => command.CityName)
             .NotEmpty()
             .WithMessage("The city is required.")
-            .When(command => !IsColombian(command));
+            .When(command => HasValidCountry(command) && !IsColombian(command));
         RuleFor(command => command.CityName)
             .MaximumLength(Company.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
@@ -162,18 +165,24 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
             .When(command => command.BankAccounts is not null);
     }
 
-    // País efectivo: recortado y en mayúsculas; ausente cuenta como Colombia para decidir cuál
-    // ciudad exigir (tras CompanyLegacyWrite.Resolve nunca llega ausente).
+    /// <summary>
+    /// El país recortado y en mayúsculas. Los handlers lo aplican al comando antes de validar, así
+    /// validador, handler y dominio comparan contra el mismo valor: "co" y " CO" son Colombia para
+    /// los tres, y la búsqueda de ciudad del handler no se salta por la caja.
+    /// </summary>
+    internal static string? NormalizeCountry(string? country) =>
+        country?.Trim().ToUpperInvariant();
+
+    // Recortado y en mayúsculas también aquí: el validador no depende de que el llamador haya
+    // normalizado.
     private static string EffectiveCountry(ICompanyWriteCommand command) =>
-        string.IsNullOrWhiteSpace(command.Country)
-            ? Company.ColombiaCountryCode
-            : command.Country.Trim().ToUpperInvariant();
+        NormalizeCountry(command.Country) ?? string.Empty;
 
     private static bool IsColombian(ICompanyWriteCommand command) =>
         EffectiveCountry(command) == Company.ColombiaCountryCode;
 
-    private static bool IsValidCountry(ICompanyWriteCommand command) =>
-        command.Country is null || IsValidCountry(command.Country);
+    private static bool HasValidCountry(ICompanyWriteCommand command) =>
+        command.Country is not null && IsValidCountry(command.Country);
 
     // Se recorta antes de medir, igual que el dominio: " es " llega bien formado.
     private static bool IsValidCountry(string country) =>

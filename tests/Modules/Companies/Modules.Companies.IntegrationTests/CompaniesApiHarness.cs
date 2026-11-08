@@ -140,6 +140,8 @@ internal static class CompaniesApiHarness
                 name,
                 bankAccounts = new[] { BankAccount(accountNumber) },
                 taxId,
+                country = "CO",
+                documentType = "NIT",
                 phone,
                 email,
                 address,
