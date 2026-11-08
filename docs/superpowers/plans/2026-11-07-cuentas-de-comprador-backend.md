@@ -86,6 +86,7 @@ Lo llama **sólo el BFF**, de servidor a servidor. Todas las rutas cuelgan de `/
 
 - `X-Qep-Storefront-Key` obligatorio → sin ella `401 store.public.client_unauthorized`.
 - `X-Qep-Visitor-Ip` con la IP del visitante (confiable sólo con la clave). Obligatorio donde la tabla dice "IP: sí" → sin él `422 store.public.visitor_ip_required`.
+- **El BFF DEBE mandar `X-Qep-Visitor-Ip` en toda ruta `/buyer`,** también donde la tabla no lo exige: es la partición del límite por IP (sin él, el límite cae a la IP del socket, la misma para todos detrás del BFF).
 - `{host}` que no es una tienda publicada y activa → `404 store.public.not_found` (mismo cuerpo que hoy).
 - Errores como `application/problem+json` con `code` y `traceId`; los `422 validation.failed` llevan `errors` (claves PascalCase de FluentValidation, p. ej. `Password`, `Profile.Billing.Email`).
 - `429` sin cuerpo al pasar el límite. "Credenciales" = 10 por minuto, por ruta y por IP del visitante; "lectura" = el límite de lecturas de hoy (300/min).
@@ -145,7 +146,7 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
 ```
 
 - `createAccount`: contraseña 10–128 → si no, `422 validation.failed` con `errors["CreateAccount.Password"]`; `acceptsDataPolicy` distinto de `true` → `422 validation.failed` con `errors["CreateAccount.AcceptsDataPolicy"]`. Se valida con el resto del cuerpo, **antes** de aceptar el pedido. Email de login = `billing.email`; perfil = `billing`, `shipping`, `shippingSameAsBilling = (shipping == null)`.
-- `updateProfile: true` exige el header `X-Qep-Buyer-Session` (el BFF nunca lo manda sin sesión). Con `createAccount` a la vez → `422 validation.failed` en `CreateAccount`.
+- `updateProfile: true` usa el header `X-Qep-Buyer-Session` (el BFF lo manda con la sesión). Si falta o no sirve → el pedido sigue siendo `201` con `buyerSessionRejected: true`; no es un error. Con `createAccount` a la vez → `422 validation.failed` en `CreateAccount`.
 - Recibo `201`: suma **`"buyerSessionRejected": bool`** → `true` sólo si se pidió `updateProfile` y la sesión no sirve (ausente, vencida, de otro host, de cuenta borrada). El pedido se acepta igual. El BFF borra la cookie en ese caso.
 
 ```jsonc

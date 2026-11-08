@@ -1085,6 +1085,9 @@ Todas las rutas cuelgan de `/api/v1/public/stores/{host}/buyer` y heredan lo de 
 
 - `X-Qep-Storefront-Key` obligatorio: sin ella `401 store.public.client_unauthorized`.
 - `X-Qep-Visitor-Ip` con la IP del visitante (confiable sólo con la clave). Obligatorio donde la tabla dice «IP: sí»: sin él `422 store.public.visitor_ip_required`.
+- **El BFF DEBE mandar `X-Qep-Visitor-Ip` en toda ruta `/buyer`,** también donde la tabla no lo exige: es la partición del límite por IP.
+  Sin él, el límite cae a la IP del socket (`StorefrontClient.VisitorIp`), que detrás del BFF es la misma para todos los visitantes:
+  uno solo agotaría el cupo de todos.
 - `{host}` que no es una tienda publicada y activa: `404 store.public.not_found`.
 - Errores como `application/problem+json` con `code` y `traceId`; los `422 validation.failed` llevan `errors` (claves PascalCase de FluentValidation,
   p. ej. `Password`, `Profile.Billing.Email`).
@@ -1158,7 +1161,8 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
 - `createAccount`: contraseña 10–128, si no `422 validation.failed` con `errors["CreateAccount.Password"]`; `acceptsDataPolicy` distinto de `true`,
   `422 validation.failed` con `errors["CreateAccount.AcceptsDataPolicy"]`. Se valida con el resto del cuerpo, **antes** de aceptar el pedido. Email de login =
   `billing.email`; perfil = `billing`, `shipping`, `shippingSameAsBilling = (shipping == null)`.
-- `updateProfile: true` exige el header `X-Qep-Buyer-Session` (el BFF nunca lo manda sin sesión). Con `createAccount` a la vez, `422 validation.failed` en `CreateAccount`.
+- `updateProfile: true` usa el header `X-Qep-Buyer-Session` (el BFF lo manda con la sesión). Si falta o no sirve, el pedido se acepta igual
+  (`201`) y el recibo lleva `buyerSessionRejected: true`: no es un error. Con `createAccount` a la vez, `422 validation.failed` en `CreateAccount`.
 - Recibo `201`: suma **`"buyerSessionRejected": bool`**, `true` sólo si se pidió `updateProfile` y la sesión no sirve (ausente, vencida, de otro host, de cuenta borrada).
   El pedido se acepta igual y el BFF borra la cookie.
 
@@ -1212,11 +1216,14 @@ Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`).
 - **El consentimiento no se borra nunca.** `buyers.consents` guarda email, IP, host, versión y URL de la política (`BuyerDataPolicy.Version`) de cada aceptación, y
   sobrevive a la cuenta: no tiene clave foránea y la purga no lo toca. Borrar la cuenta lo conserva.
 - `BuyerHousekeepingWorker` corre cada hora y borra en masa:
-  - cuentas **sin verificar** cuyo último registro (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van por cascada);
+  - cuentas **sin verificar** cuyo último registro o reenvío de la verificación (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van
+    por cascada);
   - sesiones revocadas, vencidas o sin uso en 7 días, y tokens usados o vencidos;
-  - de `platform.outbox_messages`, las filas de los 5 eventos de la tabla anterior con `processed_at` no nulo y `occurred_at` de hace más de **24 h**: llevan el
-    hash de la contraseña o tokens en claro, y nada más las borraría;
-  - `buyers.inbox_messages` procesados y `buyers.processed_signups` con más de **30 días**.
+  - de `platform.outbox_messages` (llevan el hash de la contraseña o tokens en claro, y nada más las borraría): los 4 correos del comprador con
+    `occurred_at` de hace más de **24 h**, sólo por edad; el alta (`store.buyer-signup-requested.v1`) sólo cuando `buyers.inbox_messages` tiene la fila
+    procesada del consumidor `buyers.signup-requested` para ese mensaje;
+  - `buyers.inbox_messages` procesados con más de **30 días** cuyo mensaje ya no está en el outbox, y `buyers.processed_signups` con más de 30 días.
+  - Cada paso corre aislado: uno que falla se registra con el tipo de la excepción y los demás siguen.
 - Workers: `BuyerSignupRequestedWorker` (poll de 15 s) y `BuyerHousekeepingWorker` en Buyers; en Notifications, un entregador por cada correo del comprador.
 
 ### Pendientes del owner
