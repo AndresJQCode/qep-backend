@@ -194,8 +194,7 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
   aplica también al tipo de documento; si se importa `billing_address`.
 - Cuentas de comprador: los datos legales de la política de datos, el plazo de
   conservación del consentimiento (`buyers.consents` hoy no se purga nunca), y la dirección y el nombre del remitente de
-  los correos del comprador (hoy sale sólo `Notifications:Infobip:SenderEmail`, sin nombre visible). `BuyerDataPolicy.Version`
-  (`2026-11-07`) es provisional hasta entonces.
+  los correos del comprador (hoy sale sólo `Notifications:Infobip:SenderEmail`, sin nombre visible). `BuyerDataPolicy.Version` ya es `1.0.0`.
 
 ## Hotfixes y decisiones que no se ven en el código
 
@@ -258,6 +257,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-08 — Mergeado a `develop` (`c64af4be`, sin push) **la versión de la política de datos del comprador**: `BuyerDataPolicy.Version` pasa de `2026-11-07` a `1.0.0`,
+  la que el owner publicó en la tienda (`fix/buyer-policy-version`, `00d4e39b`). Los consentimientos nuevos la registran; los viejos conservan la anterior. Sin migración.
 - 2026-11-08 — Mergeado a `develop` (`f943c836`, sin push) **cuentas de comprador**, módulo `Buyers` (`feature/cuentas-de-comprador` hasta `ee07e906`).
   Registro, verificación, sesión por host, perfil, contraseña, recuperación y borrado; alta desde el checkout por outbox; housekeeping. Tres migraciones en
   `buyers`, ninguna en Store. Merge sin conflictos.
