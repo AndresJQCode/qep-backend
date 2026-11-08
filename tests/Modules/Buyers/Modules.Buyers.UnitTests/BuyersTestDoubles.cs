@@ -24,6 +24,7 @@ internal sealed class BuyersWorld
     private readonly List<BuyerProfile> _pendingProfiles = [];
     private readonly List<BuyerConsent> _pendingConsents = [];
     private readonly List<BuyerEmailToken> _pendingTokens = [];
+    private readonly List<BuyerSession> _pendingSessions = [];
     private readonly List<QueuedEvent> _pendingEvents = [];
 
     public BuyersWorld()
@@ -34,6 +35,7 @@ internal sealed class BuyersWorld
         Profiles = new FakeProfiles(this);
         Consents = new FakeConsents(this);
         Tokens = new FakeTokens(this);
+        Sessions = new FakeSessions(this);
         Outbox = new FakeOutbox(this);
         UnitOfWork = new FakeUnitOfWork(this);
         ProfileWriter = new BuyerProfileWriter(Profiles);
@@ -47,6 +49,7 @@ internal sealed class BuyersWorld
     public FakeProfiles Profiles { get; }
     public FakeConsents Consents { get; }
     public FakeTokens Tokens { get; }
+    public FakeSessions Sessions { get; }
     public FakeOutbox Outbox { get; }
     public FakeUnitOfWork UnitOfWork { get; }
     public BuyerProfileWriter ProfileWriter { get; }
@@ -57,6 +60,7 @@ internal sealed class BuyersWorld
     public List<BuyerProfile> SavedProfiles { get; } = [];
     public List<BuyerConsent> SavedConsents { get; } = [];
     public List<BuyerEmailToken> SavedTokens { get; } = [];
+    public List<BuyerSession> SavedSessions { get; } = [];
     public List<QueuedEvent> SavedEvents { get; } = [];
 
     public int SaveCalls { get; private set; }
@@ -129,6 +133,24 @@ internal sealed class BuyersWorld
             throw new NotSupportedException();
     }
 
+    internal sealed class FakeSessions(BuyersWorld world) : IBuyerSessionRepository
+    {
+        /// <summary>Cuántas veces se consultó por hash: un token inservible no debe llegar aquí.</summary>
+        public int FindCalls { get; private set; }
+
+        public void Add(BuyerSession session) => world._pendingSessions.Add(session);
+
+        public Task<BuyerSession?> FindByTokenHashAsync(string hash, CancellationToken cancellationToken)
+        {
+            FindCalls++;
+            return Task.FromResult(world.SavedSessions.SingleOrDefault(s => s.TokenHash == hash));
+        }
+
+        public Task<IReadOnlyList<BuyerSession>> ListActiveAsync(Guid accountId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<BuyerSession>>(
+                world.SavedSessions.Where(s => s.AccountId == accountId && s.RevokedAt is null).ToList());
+    }
+
     internal sealed class FakeOutbox(BuyersWorld world) : IBuyerOutbox
     {
         public void Add(string eventName, object payload, DateTimeOffset occurredAt) =>
@@ -152,6 +174,7 @@ internal sealed class BuyersWorld
             world.SavedProfiles.AddRange(world._pendingProfiles);
             world.SavedConsents.AddRange(world._pendingConsents);
             world.SavedTokens.AddRange(world._pendingTokens);
+            world.SavedSessions.AddRange(world._pendingSessions);
             world.SavedEvents.AddRange(world._pendingEvents);
             DiscardPendingChanges();
             return Task.CompletedTask;
@@ -163,6 +186,7 @@ internal sealed class BuyersWorld
             world._pendingProfiles.Clear();
             world._pendingConsents.Clear();
             world._pendingTokens.Clear();
+            world._pendingSessions.Clear();
             world._pendingEvents.Clear();
         }
     }
@@ -181,6 +205,15 @@ internal sealed class CountingHasher : IBuyerPasswordHasher
 
     public BuyerPasswordCheck Verify(string? hash, string password) =>
         hash == $"hash::{password}" ? BuyerPasswordCheck.Success : BuyerPasswordCheck.Failed;
+}
+
+/// <summary>Un hasher que dice que todo hash correcto está desactualizado.</summary>
+internal sealed class RehashingHasher : IBuyerPasswordHasher
+{
+    public string Hash(string password) => $"new-hash::{password}";
+
+    public BuyerPasswordCheck Verify(string? hash, string password) =>
+        hash == $"old-hash::{password}" ? BuyerPasswordCheck.SuccessRehashNeeded : BuyerPasswordCheck.Failed;
 }
 
 internal sealed class FakeStorefronts : IBuyerStorefronts

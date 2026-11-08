@@ -76,8 +76,69 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+        group.MapPost("/session", LoginAsync)
+            .RequireRateLimiting(credentialsPolicy)
+            .Accepts<LoginBuyerBody>("application/json")
+            .Produces<BuyerSessionDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapGet("/session", GetSessionAsync)
+            .Produces<BuyerDto>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapDelete("/session", LogoutAsync)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
     }
+
+    // La IP es opcional: sólo se guarda en la sesión. Un 401 de credenciales es siempre el mismo cuerpo.
+    private static async Task<IResult> LoginAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var (body, rejection) = await ReadBodyAsync<LoginBuyerBody>(httpContext, cancellationToken);
+        if (body is null)
+        {
+            return rejection!;
+        }
+
+        var visitorIp = StorefrontClient.TryGetDeclaredVisitorIp(httpContext, out var declared) ? declared : null;
+        return Results.Ok(await dispatcher.SendAsync(new LoginBuyerCommand(host, visitorIp, body), cancellationToken));
+    }
+
+    private static async Task<IResult> GetSessionAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetBuyerSessionQuery(host, SessionToken(httpContext)), cancellationToken));
+
+    // 204 siempre: sin una sesión válida en ese host no hace nada.
+    private static async Task<IResult> LogoutAsync(
+        string host,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(new LogoutBuyerCommand(host, SessionToken(httpContext)), cancellationToken);
+        return Results.NoContent();
+    }
+
+    private static string? SessionToken(HttpContext httpContext) =>
+        httpContext.Request.Headers[BuyerSessionHeader].FirstOrDefault();
 
     // 204 y nada más: verificar no abre sesión (el comprador ingresa después con su contraseña). Sin IP ni Turnstile: el token ya es
     // el secreto y el limitador de credenciales acota los intentos.
