@@ -25,8 +25,8 @@ public static class BuyerExistingAccountEmailTemplate
             "<p>Hola,</p>" +
             $"<p>Alguien intentó crear una cuenta en {htmlStore} con este correo, pero ya tienes una.</p>" +
             "<p>La próxima vez inicia sesión con tu correo y tu contraseña.</p>" +
-            $"<p><a href=\"{loginUrl}\">Iniciar sesión</a></p>" +
-            $"<p>Si olvidaste tu contraseña, <a href=\"{forgotUrl}\">puedes restablecerla aquí</a>.</p>" +
+            $"<p><a href=\"{WebUtility.HtmlEncode(loginUrl)}\">Iniciar sesión</a></p>" +
+            $"<p>Si olvidaste tu contraseña, <a href=\"{WebUtility.HtmlEncode(forgotUrl)}\">puedes restablecerla aquí</a>.</p>" +
             "<p>Si no fuiste tú, puedes ignorar este mensaje.</p>";
 
         return new EmailMessage(recipientAddress, subject, htmlBody, textBody);

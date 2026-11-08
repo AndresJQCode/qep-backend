@@ -23,7 +23,7 @@ public static class BuyerPasswordResetEmailTemplate
         var htmlBody =
             "<p>Hola,</p>" +
             $"<p>Pediste restablecer la contraseña de tu cuenta para comprar en {htmlStore}. Hazlo con este enlace:</p>" +
-            $"<p><a href=\"{resetUrl}\">Restablecer mi contraseña</a></p>" +
+            $"<p><a href=\"{WebUtility.HtmlEncode(resetUrl)}\">Restablecer mi contraseña</a></p>" +
             "<p>El enlace vence en 1 hora.</p>" +
             "<p>Si no lo pediste, puedes ignorar este mensaje.</p>";
 

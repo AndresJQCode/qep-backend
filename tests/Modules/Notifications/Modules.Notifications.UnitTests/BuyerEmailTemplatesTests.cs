@@ -99,4 +99,13 @@ public sealed class BuyerEmailTemplatesTests
             "https://acme.lulocrm.com/cuenta/restablecer?token=a%2Bb%2Fc%3D",
             BuyerAccountLinks.Reset("acme.lulocrm.com", "a+b/c="));
     }
+
+    [Fact]
+    public void TheLinkIsAttributeEncodedInTheHref()
+    {
+        var message = BuyerVerificationEmailTemplate.Render("ana@example.com", "Acme", "https://a.com/x?a=1&b=2");
+
+        Assert.Contains("href=\"https://a.com/x?a=1&amp;b=2\"", message.HtmlBody);
+        Assert.Contains("https://a.com/x?a=1&b=2", message.TextBody);
+    }
 }

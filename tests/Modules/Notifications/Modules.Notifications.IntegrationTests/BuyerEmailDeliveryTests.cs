@@ -86,6 +86,49 @@ public sealed class BuyerEmailDeliveryTests
         Assert.Empty(channel.Sent);
     }
 
+    [Theory]
+    [InlineData("acme\".lulocrm.com")]
+    [InlineData("acme lulocrm.com")]
+    [InlineData("")]
+    public async Task AnInvalidStoreHostIsRecordedAsFailedWithoutSending(string host)
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(cs, channel, runDeliveryWorkers: true);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
+
+        await InsertOutboxAsync(
+            cs,
+            BuyerIntegrationEvents.EmailVerificationRequested,
+            Payload(accountId, "ana@example.com", "tok_1", host));
+
+        var row = await WaitForNotificationAsync(cs, accountId, BuyerVerificationEmailTemplate.TemplateRef);
+        Assert.Equal("Failed", row!.Status);
+        Assert.Equal("store_host_invalid", row.FailureReason);
+        Assert.Empty(channel.Sent);
+    }
+
+    [Fact]
+    public async Task AResetWithoutTokenIsRecordedAsFailed()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(cs, channel, runDeliveryWorkers: true);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
+
+        await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.PasswordResetRequested, Payload(accountId, "ana@example.com", null));
+
+        var row = await WaitForNotificationAsync(cs, accountId, BuyerPasswordResetEmailTemplate.TemplateRef);
+        Assert.Equal("Failed", row!.Status);
+        Assert.Equal("email_token_unavailable", row.FailureReason);
+        Assert.Empty(channel.Sent);
+    }
+
     private static async Task<EmailMessage> DeliverAsync(string eventName, string templateRef, string? token)
     {
         await using var database = await StartDatabaseAsync();
@@ -106,7 +149,7 @@ public sealed class BuyerEmailDeliveryTests
         return mail;
     }
 
-    private static string Payload(Guid accountId, string email, string? token) =>
+    private static string Payload(Guid accountId, string email, string? token, string host = Host) =>
         JsonSerializer.Serialize(
-            new BuyerEmailPayload(accountId, email, Host, "Acme", token), JsonSerializerOptions.Web);
+            new BuyerEmailPayload(accountId, email, host, "Acme", token), JsonSerializerOptions.Web);
 }

@@ -23,7 +23,7 @@ public static class BuyerVerificationEmailTemplate
         var htmlBody =
             "<p>Hola,</p>" +
             $"<p>Para terminar de crear tu cuenta en {htmlStore}, confirma tu correo con este enlace:</p>" +
-            $"<p><a href=\"{verifyUrl}\">Confirmar mi correo</a></p>" +
+            $"<p><a href=\"{WebUtility.HtmlEncode(verifyUrl)}\">Confirmar mi correo</a></p>" +
             "<p>El enlace vence en 24 horas.</p>" +
             "<p>Si no creaste una cuenta, puedes ignorar este mensaje.</p>";
 
