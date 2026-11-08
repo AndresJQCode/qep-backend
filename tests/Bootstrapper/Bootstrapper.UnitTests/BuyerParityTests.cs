@@ -1,7 +1,12 @@
 ﻿using FluentValidation.Results;
+using Modules.Buyers.Api;
 using Modules.Buyers.Application;
+using Modules.Buyers.Domain;
+using Modules.Buyers.Infrastructure.Signup;
 using Modules.Identity.Application;
+using Modules.Store.Api;
 using Modules.Store.Application;
+using Modules.Store.Domain;
 
 namespace Bootstrapper.UnitTests;
 
@@ -19,6 +24,95 @@ public sealed class BuyerParityTests
     {
         Assert.Equal(PasswordRules.MinLength, BuyerPasswordRules.MinLength);
         Assert.Equal(PasswordRules.MaxLength, BuyerPasswordRules.MaxLength);
+    }
+
+    [Fact]
+    public void TheSignupEventContractMatches()
+    {
+        Assert.Equal(StoreIntegrationEvents.BuyerSignupRequested, BuyerSignupRequestedMessage.EventName);
+
+        var billing = new PublicBillingInput("Ana", "CC", "123", "3001234567", "ana@correo.com", "Calle 1", "CO", Department, City, null);
+        var shipping = new PublicShippingInput("Luis", "3009876543", "Carrera 4", "ES", null, null, "Madrid");
+        var payload = new StoreBuyerSignupRequestedPayload(
+            Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "acme.lulocrm.com", "Café <Origen>",
+            "203.0.113.9", "ana@correo.com", "AQAAAAIAAYagAAAAE-hash", billing, shipping);
+
+        var message = BuyerSignupRequestedMessage.Parse(System.Text.Json.JsonSerializer.Serialize(payload, System.Text.Json.JsonSerializerOptions.Web));
+
+        Assert.Equal(payload.OrderRequestId, message.OrderRequestId);
+        Assert.Equal(payload.TenantId, message.TenantId);
+        Assert.Equal(payload.ClientRequestId, message.ClientRequestId);
+        Assert.Equal(payload.StoreHost, message.StoreHost);
+        Assert.Equal(payload.StoreName, message.StoreName);
+        Assert.Equal(payload.VisitorIp, message.VisitorIp);
+        Assert.Equal(payload.Email, message.Email);
+        Assert.Equal(payload.PasswordHash, message.PasswordHash);
+        Assert.Equal(
+            new BuyerBillingDto(billing.Name, billing.IdentificationType, billing.IdentificationNumber, billing.Phone, billing.Email,
+                billing.Address, billing.Country, billing.DepartmentId, billing.CityId, billing.CityName),
+            message.Billing);
+        Assert.Equal(
+            new BuyerShippingDto(shipping.RecipientName, shipping.Phone, shipping.Address, shipping.Country, shipping.DepartmentId,
+                shipping.CityId, shipping.CityName),
+            message.Shipping);
+
+        // Un campo nuevo de un lado que el otro no lee rompería el contrato en silencio: los nombres tienen que ser los mismos.
+        Assert.Equal(PropertyNames(typeof(StoreBuyerSignupRequestedPayload)), PropertyNames(typeof(BuyerSignupRequestedMessage)));
+        Assert.Equal(PropertyNames(typeof(PublicBillingInput)), PropertyNames(typeof(BuyerBillingDto)));
+        Assert.Equal(PropertyNames(typeof(PublicShippingInput)), PropertyNames(typeof(BuyerShippingDto)));
+    }
+
+    private static string[] PropertyNames(Type type) =>
+        type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(property => property.Name != "EqualityContract")
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+    [Fact]
+    public void StoreCreateAccountLimitsMatchBuyers()
+    {
+        Assert.Equal(BuyerPasswordRules.MinLength, PublicOrderRequestBodyValidator.BuyerPasswordMinLength);
+        Assert.Equal(BuyerPasswordRules.MaxLength, PublicOrderRequestBodyValidator.BuyerPasswordMaxLength);
+    }
+
+    [Fact]
+    public void TheBuyerSessionHeaderMatches() =>
+        Assert.Equal(PublicBuyerEndpoints.BuyerSessionHeader, StorefrontClient.BuyerSessionHeader);
+
+    [Fact]
+    public void TheProfileLimitsMatchTheStoreConstants()
+    {
+        Assert.Equal(StoreRequestBilling.NameMaxLength, BuyerProfileValidator.NameMaxLength);
+        Assert.Equal(StoreRequestBilling.IdentificationNumberMaxLength, BuyerProfileValidator.IdentificationNumberMaxLength);
+        Assert.Equal(StoreRequestBilling.EmailMaxLength, BuyerProfileValidator.EmailMaxLength);
+        Assert.Equal(StoreRequestShipping.RecipientNameMaxLength, BuyerProfileValidator.RecipientNameMaxLength);
+        Assert.Equal(StorePlace.NameMaxLength, BuyerProfileValidator.CityNameMaxLength);
+        Assert.Equal(PublicOrderRequestBodyValidator.PhoneMaxLength, BuyerProfileValidator.PhoneMaxLength);
+        Assert.Equal(PublicOrderRequestBodyValidator.AddressMaxLength, BuyerProfileValidator.AddressMaxLength);
+    }
+
+    public static TheoryData<string?> Emails => new()
+    {
+        "ana@correo.com",
+        "  Ana.Perez@Correo.COM ",
+        "sin-arroba",
+        "",
+        "   ",
+        null!,
+        new string('a', 245) + "@correo.co",
+        new string('a', 244) + "@correo.co",
+    };
+
+    [Theory]
+    [MemberData(nameof(Emails))]
+    public void TheCheckoutEmailNormalizationMatchesBuyers(string? raw)
+    {
+        var buyers = BuyerEmail.TryNormalize(raw, out var expected);
+        var store = StoreBuyerSignup.TryNormalizeEmail(raw, out var actual);
+
+        Assert.Equal(buyers, store);
+        Assert.Equal(expected, actual);
     }
 
     private static BuyerBillingDto Co() =>

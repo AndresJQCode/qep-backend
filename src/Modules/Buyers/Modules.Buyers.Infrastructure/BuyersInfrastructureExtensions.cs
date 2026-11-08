@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Buyers.Application;
 using Modules.Buyers.Infrastructure.Persistence;
+using Modules.Buyers.Infrastructure.Signup;
 
 namespace Modules.Buyers.Infrastructure;
 
@@ -31,6 +32,9 @@ public static class BuyersInfrastructureExtensions
         services.AddScoped<IBuyerOutbox, BuyerOutboxWriter>();
         services.AddScoped<IBuyersUnitOfWork, BuyersUnitOfWork>();
         services.AddSingleton<IBuyerPasswordHasher, AspNetCoreBuyerPasswordHasher>();
+
+        // Por tipo, no por fábrica: el interruptor de los harness de prueba reconoce los workers por su ImplementationType.
+        services.AddHostedService<BuyerSignupRequestedWorker>();
 
         return services;
     }

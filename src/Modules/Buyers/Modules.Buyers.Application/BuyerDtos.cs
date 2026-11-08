@@ -48,6 +48,24 @@ public static class BuyerProfileMapping
             dto.ShippingSameAsBilling);
     }
 
+    /// <summary>
+    /// Los códigos del perfil como los guarda la consola (tipo de documento y país en mayúsculas, sin espacios). El pedido los acepta
+    /// sin mirar mayúsculas, así que un perfil que sale del pedido pasa por aquí antes de guardarse.
+    /// </summary>
+    public static BuyerProfileDto WithNormalizedCodes(this BuyerProfileDto dto)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+        return dto with
+        {
+            Billing = dto.Billing with
+            {
+                IdentificationType = dto.Billing.IdentificationType.Trim().ToUpperInvariant(),
+                Country = dto.Billing.Country.Trim().ToUpperInvariant(),
+            },
+            Shipping = dto.Shipping is null ? null : dto.Shipping with { Country = dto.Shipping.Country.Trim().ToUpperInvariant() },
+        };
+    }
+
     public static BuyerProfileDto ToDto(this BuyerProfileData data)
     {
         ArgumentNullException.ThrowIfNull(data);

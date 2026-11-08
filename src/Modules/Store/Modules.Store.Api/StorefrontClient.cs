@@ -18,6 +18,12 @@ public static class StorefrontClient
     public const string KeyHeader = "X-Qep-Storefront-Key";
     public const string VisitorIpHeader = "X-Qep-Visitor-Ip";
 
+    /// <summary>
+    /// El token de la sesión de comprador que reenvía el BFF. Copia de <c>PublicBuyerEndpoints.BuyerSessionHeader</c> (Store no ve
+    /// Buyers); <c>BuyerParityTests</c> (Bootstrapper.UnitTests) los ata.
+    /// </summary>
+    public const string BuyerSessionHeader = "X-Qep-Buyer-Session";
+
     /// <summary>Donde el filtro deja la IP del visitante para que el handler del envío la use como IP del consentimiento.</summary>
     public const string VisitorIpItem = "store.visitor_ip";
 

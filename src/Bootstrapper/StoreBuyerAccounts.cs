@@ -1,0 +1,31 @@
+using Modules.Buyers.Application;
+using Modules.Store.Application;
+
+namespace Bootstrapper;
+
+/// <summary>Buyers → Store: lo que el pedido necesita de las cuentas de comprador (D7), sin que Store vea Buyers.</summary>
+internal sealed class StoreBuyerAccounts(IBuyerPasswordHasher hasher, ReplaceBuyerProfileFromOrder profiles) : IStoreBuyerAccounts
+{
+    public string HashPassword(string password) => hasher.Hash(password);
+
+    public Task<bool> ReplaceProfileAsync(
+        string host,
+        string? sessionToken,
+        PublicBillingInput billing,
+        PublicShippingInput? shipping,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(billing);
+        var profile = new BuyerProfileDto(
+            new BuyerBillingDto(
+                billing.Name, billing.IdentificationType, billing.IdentificationNumber, billing.Phone, billing.Email,
+                billing.Address, billing.Country, billing.DepartmentId, billing.CityId, billing.CityName),
+            shipping is null
+                ? null
+                : new BuyerShippingDto(
+                    shipping.RecipientName, shipping.Phone, shipping.Address, shipping.Country, shipping.DepartmentId,
+                    shipping.CityId, shipping.CityName),
+            ShippingSameAsBilling: shipping is null);
+        return profiles.ReplaceAsync(host, sessionToken, profile, cancellationToken);
+    }
+}

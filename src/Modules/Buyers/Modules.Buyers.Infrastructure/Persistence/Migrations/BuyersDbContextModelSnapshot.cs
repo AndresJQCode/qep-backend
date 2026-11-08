@@ -237,6 +237,52 @@ namespace Modules.Buyers.Infrastructure.Persistence.Migrations
                     b.ToTable("sessions", "buyers");
                 });
 
+            modelBuilder.Entity("Modules.Buyers.Infrastructure.Persistence.BuyerInboxMessage", b =>
+                {
+                    b.Property<string>("Consumer")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("consumer");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ClaimedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("claimed_until");
+
+                    b.Property<DateTimeOffset?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("Consumer", "MessageId");
+
+                    b.ToTable("inbox_messages", "buyers");
+                });
+
+            modelBuilder.Entity("Modules.Buyers.Infrastructure.Persistence.BuyerProcessedSignup", b =>
+                {
+                    b.Property<Guid>("OrderRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_request_id");
+
+                    b.Property<DateTimeOffset>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.HasKey("OrderRequestId")
+                        .HasName("PK_processed_signups");
+
+                    b.ToTable("processed_signups", "buyers");
+                });
+
             modelBuilder.Entity("Modules.Buyers.Infrastructure.Persistence.OutboxRecord", b =>
                 {
                     b.Property<Guid>("Id")

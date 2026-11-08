@@ -18,5 +18,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Modules.Buyers.IntegrationTests" />
     <InternalsVisibleTo Include="Modules.Buyers.UnitTests" />
+    <!-- PublicOrderBuyerAccountApiTests drena BuyerSignupRequestedWorker (internal) a mano. -->
+    <InternalsVisibleTo Include="Modules.Store.IntegrationTests" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using Modules.Store.Domain;
 
 namespace Modules.Store.Application;
@@ -26,7 +27,13 @@ public sealed record PublicShippingInput(
     Guid? CityId,
     string? CityName);
 
+/// <summary>Crear la cuenta de comprador desde el pedido: el email de ingreso es el de facturación y el perfil, los bloques del pedido.</summary>
+/// <param name="AcceptsDataPolicy">Explícito (D5): sin un <c>true</c> no hay prueba de que se aceptó la política de la cuenta.</param>
+public sealed record PublicBuyerSignupInput(string Password, bool AcceptsDataPolicy);
+
 /// <summary>El cuerpo de <c>POST /order-requests</c>. La moneda no se valida acá: una moneda ausente es un código de la tienda y no <c>validation.failed</c>.</summary>
+/// <param name="CreateAccount">Opcional; <c>null</c> = no crear cuenta.</param>
+/// <param name="UpdateProfile">Reemplaza el perfil guardado del comprador de la sesión con los bloques del pedido, después del commit.</param>
 public sealed record PublicOrderRequestBody(
     Guid ClientRequestId,
     string TurnstileToken,
@@ -35,13 +42,19 @@ public sealed record PublicOrderRequestBody(
     PublicShippingInput? Shipping,
     string? Note,
     bool AcceptsDataPolicy,
-    IReadOnlyList<PublicCartLineRequest> Lines);
+    IReadOnlyList<PublicCartLineRequest> Lines,
+    PublicBuyerSignupInput? CreateAccount = null,
+    bool UpdateProfile = false);
 
 /// <param name="Number">El consecutivo con formato de pantalla: <c>T-0001</c>.</param>
-public sealed record PublicOrderRequestReceiptDto(Guid Id, string Number, decimal Total, string Currency);
+/// <param name="BuyerSessionRejected"><c>true</c> sólo si se pidió <c>updateProfile</c> y la sesión no sirve: el BFF borra la cookie.</param>
+public sealed record PublicOrderRequestReceiptDto(
+    Guid Id, string Number, decimal Total, string Currency, bool BuyerSessionRejected = false);
 
 /// <param name="VisitorIp">La IP que declaró el storefront con su clave; es la del consentimiento, nunca la del par directo.</param>
-public sealed record SubmitOrderRequestCommand(string Host, string VisitorIp, PublicOrderRequestBody Body)
+/// <param name="BuyerSessionToken">El token crudo del header de sesión de comprador; sólo se usa con <c>updateProfile</c>.</param>
+public sealed record SubmitOrderRequestCommand(
+    string Host, string VisitorIp, PublicOrderRequestBody Body, string? BuyerSessionToken = null)
     : ICommand<(PublicOrderRequestReceiptDto Receipt, bool Created)>;
 
 /// <summary>
@@ -57,6 +70,11 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
     public const int PhoneMaxLength = 32;
 
     public const int AddressMaxLength = 200;
+
+    // Copia de BuyerPasswordRules (Store no ve Buyers); BuyerParityTests (Bootstrapper.UnitTests) las ata.
+    public const int BuyerPasswordMinLength = 10;
+
+    public const int BuyerPasswordMaxLength = 128;
 
     private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
 
@@ -79,6 +97,14 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
             .WithMessage("Cada línea necesita su variante.")
             .Must(line => line is { Quantity: >= 1 and <= QuotePublicCartValidator.MaxQuantity })
             .WithMessage($"La cantidad va de 1 a {QuotePublicCartValidator.MaxQuantity}.");
+
+        // La contraseña se juzga con el resto del cuerpo, antes de aceptar el pedido: es un error del formulario que se corrige.
+        RuleFor(body => body.CreateAccount!).SetValidator(new CreateAccountValidator()).When(body => body.CreateAccount is not null);
+        // D6: con sesión no hay cuenta que crear.
+        RuleFor(body => body.CreateAccount)
+            .Null()
+            .When(body => body.UpdateProfile)
+            .WithMessage("No se crea una cuenta con una sesión iniciada.");
     }
 
     private static bool CountryShape(string? code) => code is null || StoreCountry.IsShapeValid(code.Trim());
@@ -115,6 +141,20 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
         }
     }
 
+    private sealed class CreateAccountValidator : AbstractValidator<PublicBuyerSignupInput>
+    {
+        public CreateAccountValidator()
+        {
+            // Una sola regla, como BuyerPasswordRules: vacía, corta y larga dan un único error.
+            RuleFor(input => input.Password)
+                .Must(password => password is { Length: >= BuyerPasswordMinLength and <= BuyerPasswordMaxLength })
+                .WithMessage($"La contraseña debe tener entre {BuyerPasswordMinLength} y {BuyerPasswordMaxLength} caracteres.");
+            RuleFor(input => input.AcceptsDataPolicy)
+                .Equal(true)
+                .WithMessage("Para crear la cuenta hay que aceptar la política de datos.");
+        }
+    }
+
     private sealed class ShippingValidator : AbstractValidator<PublicShippingInput>
     {
         public ShippingValidator()
@@ -134,7 +174,7 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
     }
 }
 
-public sealed class SubmitOrderRequestHandler(
+public sealed partial class SubmitOrderRequestHandler(
     StorefrontResolver resolver,
     IStoreOrderRequestRepository requests,
     IStoreRequestNumberGenerator numbers,
@@ -146,7 +186,10 @@ public sealed class SubmitOrderRequestHandler(
     IStoreAuditPublisher auditPublisher,
     IClock clock,
     StoreOptions options,
-    IValidator<PublicOrderRequestBody> validator)
+    IValidator<PublicOrderRequestBody> validator,
+    IStoreBuyerAccounts buyers,
+    IStoreOutbox outbox,
+    ILogger<SubmitOrderRequestHandler> logger)
     : ICommandHandler<SubmitOrderRequestCommand, (PublicOrderRequestReceiptDto Receipt, bool Created)>
 {
     private static readonly TimeSpan CapWindow = TimeSpan.FromHours(24);
@@ -159,7 +202,7 @@ public sealed class SubmitOrderRequestHandler(
 
         // El orden evita que un rechazo escriba algo o gaste un número: lo barato y local primero, Cloudflare sólo con el formulario
         // válido, y todo antes de abrir la transacción.
-        var (store, _) = await resolver.ResolveAsync(command.Host, cancellationToken);
+        var (store, tenant) = await resolver.ResolveAsync(command.Host, cancellationToken);
         await validator.ValidateAndThrowAsync(body, cancellationToken);
         var currency = StorefrontResolver.RequireCurrency(store, body.Currency);
         if (!body.AcceptsDataPolicy)
@@ -167,7 +210,8 @@ public sealed class SubmitOrderRequestHandler(
             throw new StoreDomainException(StoreErrorCodes.ConsentRequired, "The data policy must be accepted.");
         }
 
-        // Un reintento del mismo visitante devuelve el primer recibo, en su propia moneda aunque éste nombre otra.
+        // Un reintento del mismo visitante devuelve el primer recibo, en su propia moneda aunque éste nombre otra, sin alta de cuenta
+        // ni perfil (buyerSessionRejected queda en false).
         var existing = await requests.FindByClientRequestIdAsync(store.TenantId, body.ClientRequestId, cancellationToken);
         if (existing is not null)
         {
@@ -205,6 +249,10 @@ public sealed class SubmitOrderRequestHandler(
             throw new StoreDomainException(StoreErrorCodes.LineUnavailable, "A line of the cart cannot be sold.");
         }
 
+        // El único costo de la cuenta en el request: el hash, antes de abrir la transacción, para que la contraseña en claro nunca se
+        // persista (D7). Lo que falle acá sólo se registra y el pedido sigue sin alta.
+        var signup = PrepareSignup(body, hostname, store.Name ?? tenant.DisplayName, command.VisitorIp);
+
         var billing = new StoreRequestBilling(
             body.Billing.Name,
             body.Billing.IdentificationType,
@@ -232,20 +280,32 @@ public sealed class SubmitOrderRequestHandler(
         // La política se congela tal como está al enviar; una tienda sin política deja las dos en null.
         var consent = new StoreConsent(now, command.VisitorIp, store.DataPolicyUrl, store.DataPolicySetAt);
 
+        StoreOrderRequest created;
         try
         {
-            var created = await SaveAsync(store, body, billing, shipping, currency, lines, quote, consent, now, cancellationToken);
-            return (Receipt(created), true);
+            created = await SaveAsync(
+                store, body, billing, shipping, currency, lines, quote, consent, signup, now, cancellationToken);
         }
         catch (ResourceConflictException conflict) when (conflict.Code == StoreErrorCodes.DuplicateClientRequest)
         {
-            // Dos envíos simultáneos con el mismo id: el que perdió suelta lo suyo (la transacción ya se revirtió, con su número) y
-            // devuelve el recibo del que ganó.
+            // Dos envíos simultáneos con el mismo id: el que perdió suelta lo suyo (la transacción ya se revirtió, con su número y su
+            // mensaje de alta) y devuelve el recibo del que ganó, sin tocar el perfil: lo hace sólo quien guardó la solicitud.
             unitOfWork.DiscardPendingChanges();
             var winner = await requests.FindByClientRequestIdAsync(store.TenantId, body.ClientRequestId, cancellationToken)
                 ?? throw new InvalidOperationException("A duplicate client request was reported but no request was found.", conflict);
             return (Receipt(winner), false);
         }
+
+        var receipt = Receipt(created);
+        if (body.UpdateProfile)
+        {
+            receipt = receipt with
+            {
+                BuyerSessionRejected = await ProfileUpdateRejectedAsync(hostname, command.BuyerSessionToken, body, created.Id),
+            };
+        }
+
+        return (receipt, true);
     }
 
     // La transacción vive en su propio método: al propagarse la excepción se libera (y revierte) antes de releer al ganador, porque en
@@ -259,6 +319,7 @@ public sealed class SubmitOrderRequestHandler(
         IReadOnlyList<StoreOrderRequestLineInput> lines,
         PublicCartQuoteDto quote,
         StoreConsent consent,
+        PendingSignup? signup,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -288,10 +349,92 @@ public sealed class SubmitOrderRequestHandler(
             StoreAuditActions.Resources.OrderRequest,
             request.Id.ToString(),
             now);
+        // El alta viaja en la misma transacción que la solicitud: el perdedor de la carrera por clientRequestId la revierte con lo suyo.
+        if (signup is not null)
+        {
+            outbox.Add(
+                StoreIntegrationEvents.BuyerSignupRequested,
+                new StoreBuyerSignupRequestedPayload(
+                    request.Id,
+                    store.TenantId,
+                    body.ClientRequestId,
+                    signup.StoreHost,
+                    signup.StoreName,
+                    signup.VisitorIp,
+                    signup.Email,
+                    signup.PasswordHash,
+                    body.Billing,
+                    body.Shipping),
+                now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return request;
     }
+
+    private PendingSignup? PrepareSignup(PublicOrderRequestBody body, string storeHost, string storeName, string visitorIp)
+    {
+        if (body.CreateAccount is null)
+        {
+            return null;
+        }
+
+        // La misma normalización que la cuenta (BuyerEmail): un email que no la pasa no da de alta nada, y el pedido sigue.
+        if (!StoreBuyerSignup.TryNormalizeEmail(body.Billing.Email, out var email))
+        {
+            LogSignupSkippedInvalidEmail(logger);
+            return null;
+        }
+
+        try
+        {
+            return new PendingSignup(storeHost, storeName, visitorIp, email, buyers.HashPassword(body.CreateAccount.Password));
+        }
+        catch (Exception exception)
+        {
+            LogSignupHashFailed(logger, exception.GetType().Name);
+            return null;
+        }
+    }
+
+    // Después del commit: el pedido ya está aceptado y nada de esto lo cambia. Sólo una sesión que no sirve marca el recibo; un error
+    // se registra (sin email ni token) y el recibo queda intacto.
+    private async Task<bool> ProfileUpdateRejectedAsync(
+        string storeHost, string? sessionToken, PublicOrderRequestBody body, Guid requestId)
+    {
+        try
+        {
+            // Sin el token del request: el pedido ya commiteó y un corte del visitante no debe dejar el perfil a medias.
+            if (await buyers.ReplaceProfileAsync(storeHost, sessionToken, body.Billing, body.Shipping, CancellationToken.None))
+            {
+                return false;
+            }
+
+            LogProfileSessionRejected(logger, requestId);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            LogProfileUpdateFailed(logger, requestId, exception.GetType().Name);
+            return false;
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Order request {RequestId} asked to update the buyer profile with a session that is not valid on its store; it was ignored.")]
+    private static partial void LogProfileSessionRejected(ILogger logger, Guid requestId);
+
+    [LoggerMessage(Level = LogLevel.Error,
+        Message = "Updating the buyer profile after order request {RequestId} failed with {ExceptionType}; the order stands.")]
+    private static partial void LogProfileUpdateFailed(ILogger logger, Guid requestId, string exceptionType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Checkout buyer signup skipped: the billing email does not normalize.")]
+    private static partial void LogSignupSkippedInvalidEmail(ILogger logger);
+
+    // Sólo el tipo de la excepción: el mensaje de un hasher ajeno no se loguea por si arrastra la entrada.
+    [LoggerMessage(Level = LogLevel.Error, Message = "Checkout buyer signup skipped: hashing the password failed with {ExceptionType}.")]
+    private static partial void LogSignupHashFailed(ILogger logger, string exceptionType);
 
     private async Task<StorePlace> BuildPlaceAsync(
         OnlineStore store, string country, Guid? departmentId, Guid? cityId, string? cityName, CancellationToken cancellationToken)
@@ -332,4 +475,7 @@ public sealed class SubmitOrderRequestHandler(
 
     private static PublicOrderRequestReceiptDto Receipt(StoreOrderRequest request) =>
         new(request.Id, request.DisplayNumber, request.Total, request.Currency);
+
+    // Lo que el alta necesita, calculado antes de la transacción. Nunca la contraseña en claro.
+    private sealed record PendingSignup(string StoreHost, string StoreName, string VisitorIp, string Email, string PasswordHash);
 }

@@ -1475,6 +1475,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<Modules.Buyers.Application.ResetBuyerPasswordCommand, bool>,
             Modules.Buyers.Application.ResetBuyerPasswordHandler>();
         services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
+        // Store → Buyers (D7): el pedido hashea la contraseña del alta y actualiza el perfil guardado sin ver Buyers.
+        services.AddScoped<Modules.Buyers.Application.ReplaceBuyerProfileFromOrder>();
+        services.AddScoped<Modules.Store.Application.IStoreBuyerAccounts, StoreBuyerAccounts>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules

@@ -8,6 +8,8 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
 {
     public const string Schema = "buyers";
 
+    internal const string ProcessedSignupsKey = "PK_processed_signups";
+
     public DbSet<BuyerAccount> Accounts => Set<BuyerAccount>();
 
     public DbSet<BuyerProfile> Profiles => Set<BuyerProfile>();
@@ -20,6 +22,10 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
 
     internal DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
 
+    internal DbSet<BuyerInboxMessage> Inbox => Set<BuyerInboxMessage>();
+
+    internal DbSet<BuyerProcessedSignup> ProcessedSignups => Set<BuyerProcessedSignup>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureAccount(modelBuilder);
@@ -28,6 +34,8 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
         ConfigureEmailToken(modelBuilder);
         ConfigureConsent(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
+        ConfigureInbox(modelBuilder);
+        ConfigureProcessedSignup(modelBuilder);
     }
 
     private static void ConfigureAccount(ModelBuilder modelBuilder)
@@ -132,6 +140,28 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
         consent.Property(value => value.PolicyUrl).HasColumnName("policy_url").HasMaxLength(300);
         consent.Property(value => value.PolicyVersion).HasColumnName("policy_version").HasMaxLength(32);
         consent.HasIndex(value => value.AccountId).HasDatabaseName("IX_consents_account_id");
+    }
+
+    private static void ConfigureInbox(ModelBuilder modelBuilder)
+    {
+        var inbox = modelBuilder.Entity<BuyerInboxMessage>();
+        inbox.ToTable("inbox_messages", Schema);
+        inbox.HasKey(value => new { value.Consumer, value.MessageId });
+        // Los nombres van a mano porque BuyersInboxClaims los escribe en SQL crudo.
+        inbox.Property(value => value.Consumer).HasColumnName("consumer").HasMaxLength(100);
+        inbox.Property(value => value.MessageId).HasColumnName("message_id");
+        inbox.Property(value => value.ClaimedUntil).HasColumnName("claimed_until");
+        inbox.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(1);
+        inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
+    }
+
+    private static void ConfigureProcessedSignup(ModelBuilder modelBuilder)
+    {
+        var processed = modelBuilder.Entity<BuyerProcessedSignup>();
+        processed.ToTable("processed_signups", Schema);
+        processed.HasKey(value => value.OrderRequestId).HasName(ProcessedSignupsKey);
+        processed.Property(value => value.OrderRequestId).HasColumnName("order_request_id").ValueGeneratedNever();
+        processed.Property(value => value.ProcessedAt).HasColumnName("processed_at");
     }
 
     private static void ConfigureOutboxProjection(ModelBuilder modelBuilder)

@@ -29,7 +29,11 @@ public sealed class BuyerSignup(
     IBuyersUnitOfWork unitOfWork,
     IClock clock)
 {
-    public async Task SignUpAsync(BuyerSignupRequest request, CancellationToken cancellationToken)
+    /// <param name="beforeSave">
+    /// Corre justo antes de cada guardado, en el mismo <c>SaveChanges</c> que el efecto: el worker del checkout agrega ahí su marca de
+    /// procesado y el cierre del inbox. Corre de nuevo en el reintento de la carrera, porque el descarte también se lleva lo suyo.
+    /// </param>
+    public async Task SignUpAsync(BuyerSignupRequest request, CancellationToken cancellationToken, Action? beforeSave = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!BuyerEmail.TryNormalize(request.Email, out var email))
@@ -39,17 +43,18 @@ public sealed class BuyerSignup(
 
         try
         {
-            await SignUpOnceAsync(request, email, cancellationToken);
+            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }
         catch (ResourceConflictException exception) when (exception.Code == BuyerErrorCodes.EmailTaken)
         {
             // El ganador de la carrera ya guardó la cuenta: ahora existe, así que el segundo intento no vuelve a crearla.
             unitOfWork.DiscardPendingChanges();
-            await SignUpOnceAsync(request, email, cancellationToken);
+            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }
     }
 
-    private async Task SignUpOnceAsync(BuyerSignupRequest request, string email, CancellationToken cancellationToken)
+    private async Task SignUpOnceAsync(
+        BuyerSignupRequest request, string email, Action? beforeSave, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
         var account = await accounts.FindByEmailAsync(email, cancellationToken);
@@ -68,6 +73,7 @@ public sealed class BuyerSignup(
                 BuyerIntegrationEvents.ExistingAccountNotice,
                 new BuyerEmailPayload(account.Id, account.Email, request.Host, request.StoreName, null),
                 now);
+            beforeSave?.Invoke();
             await unitOfWork.SaveChangesAsync(cancellationToken);
             return;
         }
@@ -86,6 +92,7 @@ public sealed class BuyerSignup(
 
         consents.Add(BuyerConsent.Record(Guid.CreateVersion7(), account.Id, email, request.VisitorIp, request.Host, now));
         await tokens.IssueAsync(account, BuyerEmailTokenPurpose.Verify, request.Host, request.StoreName, now, cancellationToken);
+        beforeSave?.Invoke();
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
