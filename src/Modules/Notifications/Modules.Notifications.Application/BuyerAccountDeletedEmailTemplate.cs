@@ -7,6 +7,10 @@ public static class BuyerAccountDeletedEmailTemplate
 {
     public const string TemplateRef = "buyers.account-deleted.v1";
 
+    /// <summary>El prefijo que comparten las plantillas de correo del comprador. Con él se encuentran las
+    /// notificaciones que se anonimizan cuando la cuenta se elimina.</summary>
+    public const string BuyerTemplateRefPrefix = "buyers.";
+
     public static EmailMessage Render(string recipientAddress, string storeName)
     {
         const string subject = "Eliminamos tu cuenta";

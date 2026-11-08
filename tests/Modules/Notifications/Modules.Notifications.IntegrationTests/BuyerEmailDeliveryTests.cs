@@ -43,10 +43,84 @@ public sealed class BuyerEmailDeliveryTests
     [Fact]
     public async Task AnAccountDeletedEventSendsTheConfirmation()
     {
-        var mail = await DeliverAsync(
-            BuyerIntegrationEvents.AccountDeleted, BuyerAccountDeletedEmailTemplate.TemplateRef, null);
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(cs, channel, runDeliveryWorkers: true);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
 
+        var messageId = await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.AccountDeleted, Payload(accountId, "ana@example.com", null));
+
+        Assert.True(await WaitForProcessedAsync(cs, DeletedConsumer, messageId));
+        var mail = Assert.Single(channel.Sent);
+        Assert.Equal("ana@example.com", mail.ToAddress);
         Assert.Equal("Eliminamos tu cuenta", mail.Subject);
+    }
+
+    // I1: la decisión 9 del spec sólo conserva el registro de la autorización. Una vez enviado el
+    // correo de cuenta eliminada, ninguna notificación del comprador guarda su correo ni su cuenta.
+    [Fact]
+    public async Task AfterTheDeletionMailIsSentNoBuyerNotificationKeepsTheEmailOrTheAccount()
+    {
+        await using var database = await StartDatabaseAsync();
+        var cs = database.GetConnectionString();
+        var channel = new RecordingEmailChannel();
+        using var factory = new NotificationsApiFactory(cs, channel, runDeliveryWorkers: true);
+        _ = factory.Services;
+        var accountId = Guid.CreateVersion7();
+        const string email = "ana-deleted@example.com";
+
+        await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.EmailVerificationRequested, Payload(accountId, email, "tok_1"));
+        Assert.NotNull(await WaitForNotificationAsync(cs, accountId, BuyerVerificationEmailTemplate.TemplateRef));
+        var deletedId = await InsertOutboxAsync(
+            cs, BuyerIntegrationEvents.AccountDeleted, Payload(accountId, email, null));
+
+        Assert.True(await WaitForProcessedAsync(cs, DeletedConsumer, deletedId));
+        Assert.Equal(2, channel.Sent.Count);
+        Assert.Equal(0, await CountRowsMentioningAsync(cs, accountId, email));
+        Assert.Equal(2, await CountBuyerRowsAsync(cs));
+    }
+
+    private const string DeletedConsumer = "notifications.buyer-account-deleted-email";
+
+    private static async Task<bool> WaitForProcessedAsync(string cs, string consumer, Guid messageId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if ((await FindInboxAsync(cs, consumer, messageId))?.ProcessedAt is not null)
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        }
+
+        return false;
+    }
+
+    private static async Task<long> CountRowsMentioningAsync(string cs, Guid accountId, string email)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(cs);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "SELECT count(*) FROM notifications.notifications WHERE recipient_id = @id OR recipient_address = @email",
+            connection);
+        command.Parameters.AddWithValue("id", accountId);
+        command.Parameters.AddWithValue("email", email);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
+    private static async Task<long> CountBuyerRowsAsync(string cs)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(cs);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "SELECT count(*) FROM notifications.notifications WHERE template_ref LIKE 'buyers.%'", connection);
+        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
     [Fact]

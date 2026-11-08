@@ -244,8 +244,17 @@ internal abstract partial class OutboxDeliveryWorker(
             CancellationToken.None);
         entry.ProcessedAt = context.Clock.UtcNow;
         dbContext.Notifications.Add(notification);
+        await BeforeSaveAsync(dbContext, notification, CancellationToken.None);
         await dbContext.SaveChangesAsync(CancellationToken.None);
     }
+
+    /// <summary>
+    /// Último paso antes del guardado de la notificación y el processed_at: lo que se cambie acá en el
+    /// change tracker entra en el mismo SaveChanges. Por defecto no hace nada.
+    /// </summary>
+    protected virtual Task BeforeSaveAsync(
+        NotificationsDbContext dbContext, Notification notification, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
 
 /// <summary>Lo que un worker concreto necesita para armar y mandar su correo, resuelto en el scope del
