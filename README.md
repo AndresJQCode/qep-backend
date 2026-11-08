@@ -1064,6 +1064,166 @@ detalle del pedido suma `storeRequest` al final y las direcciones y partes de af
 Orden: (1) backend con sus migraciones y los dos secretos (en Production deben estar **antes** de desplegar: sin ellos la API entera no arranca); (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
 antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
 
+## Cuentas de comprador
+
+El módulo `Buyers` (spec `docs/superpowers/specs/2026-11-07-cuentas-de-comprador-design.md`, plan `docs/superpowers/plans/2026-11-07-cuentas-de-comprador-backend.md`)
+da cuenta al **comprador de la tienda pública**: se registra con email y contraseña, guarda su perfil de facturación y envío, y lo reutiliza en el
+checkout. No es un usuario de la consola: no tiene `Identity`, ni tenant, ni permisos, y ninguna capa de Buyers referencia `Modules.Identity*`.
+La cuenta es de la plataforma (el email es único en todo `buyers.accounts`), pero **la sesión es de un host**: un token emitido en la tienda A no sirve
+en la B.
+
+- **Quién lo llama:** sólo el BFF del storefront, de servidor a servidor. El backend no escribe cookies ni lee la del navegador.
+- **Esquema `buyers`:** `accounts`, `profiles`, `sessions`, `email_tokens`, `consents`, `inbox_messages` y `processed_signups`. Los perfiles, las
+  sesiones y los tokens cuelgan de la cuenta por cascada. `consents` **no** tiene clave foránea y nunca se borra (ver «Datos que se conservan y se purgan»).
+- **Sesión:** el token opaco viaja en el header **`X-Qep-Buyer-Session`**; en base sólo está su hash. Vence a los 30 días absolutos o tras 7 sin uso.
+- **Tokens de correo:** verificación 24 h, restablecer contraseña 1 h; de un solo uso.
+- **Sin auditoría** en `audit.entries`: la tabla es por tenant y el comprador no pertenece a ninguno.
+
+### Contrato HTTP para el storefront
+
+Todas las rutas cuelgan de `/api/v1/public/stores/{host}/buyer` y heredan lo de la tienda pública:
+
+- `X-Qep-Storefront-Key` obligatorio: sin ella `401 store.public.client_unauthorized`.
+- `X-Qep-Visitor-Ip` con la IP del visitante (confiable sólo con la clave). Obligatorio donde la tabla dice «IP: sí»: sin él `422 store.public.visitor_ip_required`.
+- `{host}` que no es una tienda publicada y activa: `404 store.public.not_found`.
+- Errores como `application/problem+json` con `code` y `traceId`; los `422 validation.failed` llevan `errors` (claves PascalCase de FluentValidation,
+  p. ej. `Password`, `Profile.Billing.Email`).
+- Toda ruta que lee cuerpo lo lee a mano con tope de **64 KB**: pasado el tope `413 store.public.body_too_large`; JSON ilegible o `null`,
+  `400 store.public.body_invalid`.
+- `429` sin cuerpo al pasar el límite. «Credenciales» = 10 por minuto, por ruta y por IP del visitante (política `StorefrontCredentials`);
+  «lectura» = el límite de lecturas de la tienda pública (300/min).
+- **Toda respuesta de `/buyer/*` lleva `Cache-Control: no-store`**, también el `429`, el `400`/`413` y el `401` de la clave. Lo pone
+  `BuyerNoStoreMiddleware` (Bootstrapper), registrado en `Program.cs` **antes** de `UseRateLimiter`.
+- **Sesión:** header `X-Qep-Buyer-Session: <token>`. Ausente, vacío, desconocido, vencido, revocado, de una cuenta borrada o emitido en otro host:
+  `401 store.buyer.session_invalid`. **Ese código, y sólo ese, es la señal para que el BFF borre la cookie.**
+
+#### Tipos compartidos
+
+```jsonc
+// BuyerProfile: mismos campos y reglas que billing/shipping de POST /order-requests (PublicBillingInput / PublicShippingInput).
+{
+  "billing": {
+    "name": "Ana Pérez", "identificationType": "CC", "identificationNumber": "1020304050",
+    "phone": "3001234567", "email": "ana@correo.com", "address": "Cra 1 # 2-3",
+    "country": "CO", "departmentId": "<guid>", "cityId": "<guid>", "cityName": null
+  },
+  "shipping": null,                 // o { "recipientName", "phone", "address", "country", "departmentId", "cityId", "cityName" }
+  "shippingSameAsBilling": true     // true ⇔ shipping es null (si no, 422 en Shipping)
+}
+// Buyer
+{ "email": "ana@correo.com", "profile": BuyerProfile | null }   // email = el de login, no el de facturación
+```
+
+El perfil **no** valida contra la tienda (país vendido, ciudad del departamento): eso lo sigue haciendo el pedido.
+
+#### Rutas
+
+| # | Método y ruta | Cuerpo | Éxito | Errores | Límite | IP | Turnstile | Sesión |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `POST /buyer/register` | `{ "email", "password", "acceptsDataPolicy": true, "turnstileToken", "profile": BuyerProfile \| null }` | `202` sin cuerpo | 422 `validation.failed` (`Email`, `Password`, `TurnstileToken`, `Profile.*`), 422 `store.buyer.consent_required`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 2 | `POST /buyer/email/verify` | `{ "token" }` | `204` | 422 `validation.failed` (`Token`), 422 `store.buyer.token_invalid` (inexistente, vencido o usado: no se distingue) | credenciales | no | no | no |
+| 3 | `POST /buyer/email/resend` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 4 | `POST /buyer/session` (login) | `{ "email", "password" }` | `200` `{ "sessionToken": "<43 chars base64url>", "expiresAt": "2026-12-07T15:04:05+00:00", "buyer": Buyer }` | 422 `validation.failed` (sólo vacíos), 401 `store.buyer.credentials_invalid` (email inexistente o contraseña mala, mismo cuerpo), 403 `store.buyer.email_not_verified` (contraseña correcta, sin verificar) | credenciales | opcional | no | no |
+| 5 | `GET /buyer/session` | — | `200` `Buyer` | 401 `store.buyer.session_invalid` | lectura | no | no | sí |
+| 6 | `DELETE /buyer/session` (logout) | — | `204` siempre (idempotente; sin sesión válida en ese host no hace nada) | — | lectura | no | no | opcional |
+| 7 | `PUT /buyer/profile` | `BuyerProfile` | `200` `Buyer` | 401 `store.buyer.session_invalid`, 422 `validation.failed` | lectura | no | no | sí |
+| 8 | `POST /buyer/password` (cambiar) | `{ "currentPassword", "newPassword" }` | `204`; revoca las **demás** sesiones, la actual sigue | 401 `store.buyer.session_invalid`, 422 `validation.failed` (`NewPassword`), 422 `store.buyer.password_incorrect` (`errors.CurrentPassword`) | credenciales | no | no | sí |
+| 9 | `POST /buyer/password/forgot` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
+| 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
+
+Notas:
+
+- Orden de chequeos (1, 3, 9): IP, host (404), cuerpo (422), consentimiento (sólo 1), Turnstile, efecto. Un rechazo no escribe nada.
+- Contraseña actual mala en cambiar contraseña o eliminar cuenta es `422 store.buyer.password_incorrect`, **no** 401: un 401 con sesión válida haría que el BFF
+  borre la cookie.
+- `expiresAt` es el vencimiento **absoluto**; la sesión además vence tras 7 días sin uso, así que la cookie puede durar más que la sesión: el BFF lo resuelve con el 401.
+- 1, 3 y 9 responden `202` exista o no la cuenta (anti-enumeración). 1 con email ya **verificado** envía «ya tienes una cuenta» y no toca nada; con email **sin verificar**
+  reemplaza contraseña y perfil, invalida verificaciones previas y reenvía la verificación.
+- Login de cuenta sin verificar con contraseña correcta es `403` y **no** reenvía solo: el storefront ofrece reenviar (ruta 3, con Turnstile).
+- El email se normaliza (trim y minúsculas) en toda entrada: registro, login, reenviar, olvidé y checkout caen en la misma cuenta.
+
+#### Cambios en `POST /order-requests`
+
+Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
+
+```jsonc
+{
+  "...": "campos de hoy",
+  "createAccount": { "password": "…", "acceptsDataPolicy": true },   // opcional; null o ausente = no crear
+  "updateProfile": false                                              // opcional; default false
+}
+```
+
+- `createAccount`: contraseña 10–128, si no `422 validation.failed` con `errors["CreateAccount.Password"]`; `acceptsDataPolicy` distinto de `true`,
+  `422 validation.failed` con `errors["CreateAccount.AcceptsDataPolicy"]`. Se valida con el resto del cuerpo, **antes** de aceptar el pedido. Email de login =
+  `billing.email`; perfil = `billing`, `shipping`, `shippingSameAsBilling = (shipping == null)`.
+- `updateProfile: true` exige el header `X-Qep-Buyer-Session` (el BFF nunca lo manda sin sesión). Con `createAccount` a la vez, `422 validation.failed` en `CreateAccount`.
+- Recibo `201`: suma **`"buyerSessionRejected": bool`**, `true` sólo si se pidió `updateProfile` y la sesión no sirve (ausente, vencida, de otro host, de cuenta borrada).
+  El pedido se acepta igual y el BFF borra la cookie.
+
+```jsonc
+{ "id": "<guid>", "number": "T-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
+```
+
+- Reintento con el mismo `clientRequestId`: el primer recibo, `buyerSessionRejected: false`, sin crear cuenta ni tocar el perfil.
+- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea con la solicitud), así que puede tardar unos segundos en existir después del `201`.
+  Sus errores (email existente, fallo al guardar) nunca cambian la respuesta.
+
+#### Correos
+
+Los envía Notifications; los enlaces apuntan al host de la tienda:
+
+| Evento | Enlace |
+| --- | --- |
+| Verificación (registro, reenvío, checkout con email nuevo o sin verificar) | `https://{host}/cuenta/verificar?token=<token>` |
+| «Ya tienes una cuenta» | `https://{host}/cuenta/ingresar` y `https://{host}/cuenta/olvide` |
+| Restablecer contraseña | `https://{host}/cuenta/restablecer?token=<token>` |
+| Cuenta eliminada | sin enlace |
+
+### Eventos de outbox
+
+Todos viven en `platform.outbox_messages`.
+
+| Evento | Lo escribe | Lo consume | Lleva |
+| --- | --- | --- | --- |
+| `store.buyer-signup-requested.v1` | Store, en la **misma transacción** que la solicitud del pedido (`createAccount`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
+| `buyers.email-verification-requested.v1` | Buyers | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro |
+| `buyers.existing-account-notice.v1` | Buyers | `BuyerExistingAccountDeliveryWorker` | sin token |
+| `buyers.password-reset-requested.v1` | Buyers | `BuyerPasswordResetDeliveryWorker` | token de restablecer en claro |
+| `buyers.account-deleted.v1` | Buyers | `BuyerAccountDeletedDeliveryWorker` | sin token |
+
+Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`). Los cuatro correos comparten `BuyerEmailPayload`
+(`AccountId`, `Email`, `StoreHost`, `StoreName`, `Token`).
+
+### Cómo se conecta con Store
+
+- **Alta desde el checkout.** Store hashea la contraseña al validar el pedido (`IStoreBuyerAccounts.HashPassword`, adaptador `StoreBuyerAccounts` en Bootstrapper) y
+  escribe el evento de alta con sólo el `passwordHash`. Si el hash falla, el pedido se acepta sin alta. El alta la procesa `BuyerSignupRequestedWorker`; si el email ya
+  tiene cuenta, el pedido no se entera.
+- **`updateProfile`.** Store llama `IStoreBuyerAccounts.ReplaceProfileAsync`; el adaptador llama a `ReplaceBuyerProfileFromOrder`, que resuelve la sesión por host y
+  reemplaza el perfil. Devuelve si la sesión sirvió; si no, el recibo lleva `buyerSessionRejected: true`.
+- **Dependencias entre módulos.** Store no referencia Buyers (el adaptador vive en Bootstrapper) y `Notifications.Infrastructure` referencia
+  `Buyers.Application` para leer `BuyerIntegrationEvents` y `BuyerEmailPayload`. Las reglas viven en `BuyersLayerTests` y `StoreLayerTests`, en
+  `tests/ArchitectureTests/ArchitectureTests`.
+
+### Datos que se conservan y se purgan
+
+- **El consentimiento no se borra nunca.** `buyers.consents` guarda email, IP, host, versión y URL de la política (`BuyerDataPolicy.Version`) de cada aceptación, y
+  sobrevive a la cuenta: no tiene clave foránea y la purga no lo toca. Borrar la cuenta lo conserva.
+- `BuyerHousekeepingWorker` corre cada hora y borra en masa:
+  - cuentas **sin verificar** cuyo último registro (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van por cascada);
+  - sesiones revocadas, vencidas o sin uso en 7 días, y tokens usados o vencidos;
+  - de `platform.outbox_messages`, las filas de los 5 eventos de la tabla anterior con `processed_at` no nulo y `occurred_at` de hace más de **24 h**: llevan el
+    hash de la contraseña o tokens en claro, y nada más las borraría;
+  - `buyers.inbox_messages` procesados y `buyers.processed_signups` con más de **30 días**.
+- Workers: `BuyerSignupRequestedWorker` (poll de 15 s) y `BuyerHousekeepingWorker` en Buyers; en Notifications, un entregador por cada correo del comprador.
+
+### Pendientes del owner
+
+Datos legales y plazo de conservación de la política; el nombre del remitente (hoy se usa sólo `Notifications:Infobip:SenderEmail`); y confirmar
+`BuyerDataPolicy.Version` (`2026-11-07`, provisional).
+
 ## API implementada
 
 Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
