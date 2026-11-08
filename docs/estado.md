@@ -83,6 +83,7 @@ plan 3, ya mergeado en `develop` del frontend (`a2d28c17`).
 
 | Spec | Estado | Notas |
 | --- | --- | --- |
+| 2026-11-07 tienda pública: nombre de las líneas no disponibles en la cotización del carrito | Construido y mergeado (2026-11-07, merge `e24ecfb1`, sin push; `8537b7b3..ac74aeb3`) | `POST /api/v1/public/stores/{host}/cart/quote`: cada entrada de `unavailable` lleva ahora `name` (el nombre visible de la variante, aunque esté oculta, inactiva o sin precio en la moneda; `null` si fue borrada o es de otro tenant). Sin precio ni existencias. El envío del pedido no lee los nombres. Sin migración; el campo es aditivo, se puede desplegar en cualquier orden. Prueba de integración nueva en `PublicCartQuoteApiTests` (incluye el aislamiento por tenant). La corrida de las suites no se repitió en `develop`; quedó la de la rama |
 | 2026-11-05 tienda pública: `variantId` en el listado | Construido y mergeado (2026-11-06, merge `d9611601`, sin push; commit `290f8186`) | `GET /api/v1/public/stores/{host}/products` devuelve `variantId` por ítem: el ID de la única variante vendible si `hasVariants` es `false`, `null` si no. Sin migración ni consulta nueva. Lo consume el botón «Agregar al carrito» de la grilla de `qep-storefront` (ya en su `develop`), que sin el campo muestra «Ver producto»; se puede desplegar en cualquier orden. Pruebas: Store integración 180/180, unitarias de los 24 módulos y Bootstrapper en verde, ArchitectureTests 172/172; la integración de los demás módulos no se corrió (no usan los tipos tocados) |
 | 2026-10-26 cuándo toma el bot la conversación | Aprobado 2026-11-03 (`27c8ae99`). Parte en horario construida (`0c50700a`); **cobertura fuera de horario pendiente**, sin plan ni código | Pausado por el owner para trabajar en otro feature. Siguiente paso: plan de implementación. Falta D-15 (slice aparte), D-5..D-11, D-14, D-16..D-16c, el CHECK y el frontend; el mapa de qué cambia y dónde está en §9 del spec. Cambiar `BotAttendance.HumanTookOver` arrastra «Iniciar» y «Continuar asistente» |
 | 2026-10-29 cobros recurrentes (contratos de servicio) | Por verificar (backend sin compilar tras el renombre y el historial de precios; merges backend `0165a99`, `cbaf506`, frontend `517bf22`, `893a795`) | Renombre a `ServiceContracts` y historial de precios del owner, 2026-10-30; el spec lleva la nota del renombre en §1 |
@@ -242,6 +243,8 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-07 — Mergeado a `develop` (`e24ecfb1`, sin push) **el nombre de las líneas no disponibles en la cotización del carrito** (`8537b7b3..ac74aeb3`).
+  Cada entrada de `unavailable` en `POST …/cart/quote` lleva `name`; el envío del pedido no lo lee. Sin migración.
 - 2026-11-06 — Mergeado a `develop` (`eff2302f`, sin push) el hotfix **pool del bloque HTTP del chatbot** (`e9906e52`, D-8 del spec
   `2026-11-03-bloque-http-reintento-red-design.md`). Ese día `buscar-conductor` (`GET`) y `crear-legalizacion` (`POST`) fallaron con
   `network:unknown:connection_reset` en menos de 90 ms, y el `POST` no se reintenta. El cliente `automations.external-api` suelta las conexiones
