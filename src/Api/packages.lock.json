@@ -687,6 +687,7 @@
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Notifications.Application": "[1.0.0, )",
           "Modules.Notifications.Domain": "[1.0.0, )",

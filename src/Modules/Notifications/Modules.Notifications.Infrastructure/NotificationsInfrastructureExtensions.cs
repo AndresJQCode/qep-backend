@@ -49,6 +49,11 @@ public static class NotificationsInfrastructureExtensions
         services.AddHostedService<EmailVerificationDeliveryWorker>();
         services.AddHostedService<PasswordResetDeliveryWorker>();
         services.AddHostedService<ExistingAccountDeliveryWorker>();
+        // Correos de la cuenta de comprador: el destinatario viene en el payload del evento.
+        services.AddHostedService<BuyerVerificationDeliveryWorker>();
+        services.AddHostedService<BuyerExistingAccountDeliveryWorker>();
+        services.AddHostedService<BuyerPasswordResetDeliveryWorker>();
+        services.AddHostedService<BuyerAccountDeletedDeliveryWorker>();
         services.AddHostedService<CustomerExportDeliveryWorker>();
         services.AddHostedService<ProductExportDeliveryWorker>();
         services.AddHostedService<SupplierExportDeliveryWorker>();
