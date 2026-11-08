@@ -283,7 +283,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veintiún módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Los veintidós módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
@@ -741,6 +741,21 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
   `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
   Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+- **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
+  Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
+  y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
+- **El payload de `store.buyer-signup-requested.v1` es un contrato entre Store y Buyers, leído por nombre.** Store lo escribe como `StoreBuyerSignupRequestedPayload` y Buyers
+  lo lee como `BuyerSignupRequestedMessage` (record propio, camelCase), sin referencia entre los módulos; lo amarra `BuyerParityTests.TheSignupEventContractMatches`. Renombrar un
+  campo en un lado compila y deja las altas procesadas sin efecto. El payload **nunca** lleva la contraseña en claro, sólo `passwordHash`; por eso el housekeeping de Buyers
+  borra a las 24 h esas filas del outbox de plataforma.
+- **`buyers.consents` es prueba legal: sin clave foránea a propósito, nunca se borra, y el `Down` de `InitialBuyers` no se corre** (borraría los consentimientos de todos los
+  compradores). Ni borrar la cuenta ni `BuyerHousekeepingWorker` lo tocan; cualquier purga nueva de Buyers tiene que dejarlo fuera.
+- **Todo `/api/v1/public/stores/{host}/buyer/*` responde `Cache-Control: no-store`, y lo pone `BuyerNoStoreMiddleware` antes de `UseRateLimiter`.** Un endpoint nuevo del
+  comprador no necesita hacer nada, pero mover el middleware después del limitador deja los `429` cacheables. Las rutas de Buyers leen el cuerpo a mano con tope de 64 KB
+  (`ReadBodyAsync`): no uses el binder de minimal API ahí.
+- **El header de sesión del comprador está declarado dos veces.** `PublicBuyerEndpoints.BuyerSessionHeader` (Buyers) y `StorefrontClient.BuyerSessionHeader` (Store, que no
+  ve a Buyers); `BuyerParityTests.TheBuyerSessionHeaderMatches` los ata. El BFF sólo borra la cookie con el código `store.buyer.session_invalid`: no devuelvas un 401 con
+  sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
 
 ## Verificación
 

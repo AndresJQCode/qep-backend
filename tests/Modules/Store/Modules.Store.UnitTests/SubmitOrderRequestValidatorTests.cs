@@ -102,4 +102,38 @@ public sealed class SubmitOrderRequestValidatorTests
     [Fact]
     public void AMissingTokenIsInvalid() =>
         Assert.Contains("TurnstileToken", Errors(Body() with { TurnstileToken = "" }));
+
+    [Fact]
+    public void ACreateAccountWithAShortPasswordFailsOnCreateAccountPassword()
+    {
+        Assert.Contains("CreateAccount.Password", Errors(Body() with { CreateAccount = new PublicBuyerSignupInput("corta-123", true) }));
+        Assert.Contains("CreateAccount.Password", Errors(Body() with { CreateAccount = new PublicBuyerSignupInput(new string('a', 129), true) }));
+        Assert.Contains("CreateAccount.Password", Errors(Body() with { CreateAccount = new PublicBuyerSignupInput(null!, true) }));
+    }
+
+    [Fact]
+    public void ACreateAccountPasswordAtTheLimitsIsValid()
+    {
+        Assert.Empty(Errors(Body() with { CreateAccount = new PublicBuyerSignupInput(new string('a', 10), true) }));
+        Assert.Empty(Errors(Body() with { CreateAccount = new PublicBuyerSignupInput(new string('a', 128), true) }));
+    }
+
+    [Fact]
+    public void ACreateAccountWithoutPolicyAcceptanceFails() =>
+        Assert.Contains(
+            "CreateAccount.AcceptsDataPolicy",
+            Errors(Body() with { CreateAccount = new PublicBuyerSignupInput("una-contrasena-larga", false) }));
+
+    [Fact]
+    public void CreateAccountTogetherWithUpdateProfileFails() =>
+        Assert.Contains(
+            "CreateAccount",
+            Errors(Body() with { CreateAccount = new PublicBuyerSignupInput("una-contrasena-larga", true), UpdateProfile = true }));
+
+    [Fact]
+    public void NoBuyerFieldsStillPasses()
+    {
+        Assert.Empty(Errors(Body()));
+        Assert.Empty(Errors(Body() with { UpdateProfile = true }));
+    }
 }

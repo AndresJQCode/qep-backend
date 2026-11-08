@@ -74,6 +74,17 @@ public sealed class Notification
         FailureReason = null;
     }
 
+    /// <summary>
+    /// Borra a quién se mandó: el correo queda vacío y el destinatario en <see cref="Guid.Empty"/>, los
+    /// mismos valores que deja un mensaje envenenado (las columnas no admiten nulos). La fila sigue
+    /// contando para las estadísticas de envío.
+    /// </summary>
+    public void AnonymizeRecipient()
+    {
+        RecipientId = Guid.Empty;
+        RecipientAddress = string.Empty;
+    }
+
     public void MarkFailed(string reason, DateTimeOffset occurredAt)
     {
         Status = NotificationStatus.Failed;

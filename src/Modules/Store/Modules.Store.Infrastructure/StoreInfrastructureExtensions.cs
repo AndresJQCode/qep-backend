@@ -33,6 +33,7 @@ public static class StoreInfrastructureExtensions
         services.AddScoped<IStoreRequestNumberGenerator, StoreRequestNumberGenerator>();
         services.AddScoped<IStoreUnitOfWork, StoreUnitOfWork>();
         services.AddScoped<IStoreAuditPublisher, StoreAuditPublisher>();
+        services.AddScoped<IStoreOutbox, StoreOutboxWriter>();
 
         // Secretos y topes de la tienda: validados al arrancar (los secretos son obligatorios sólo en Production).
         services.AddOptions<StoreOptions>().Bind(configuration.GetSection(StoreOptions.SectionName)).ValidateOnStart();

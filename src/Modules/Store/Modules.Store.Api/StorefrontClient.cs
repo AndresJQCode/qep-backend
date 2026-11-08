@@ -2,6 +2,9 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Modules.Store.Application;
 
 namespace Modules.Store.Api;
 
@@ -14,6 +17,12 @@ public static class StorefrontClient
 {
     public const string KeyHeader = "X-Qep-Storefront-Key";
     public const string VisitorIpHeader = "X-Qep-Visitor-Ip";
+
+    /// <summary>
+    /// El token de la sesión de comprador que reenvía el BFF. Copia de <c>PublicBuyerEndpoints.BuyerSessionHeader</c> (Store no ve
+    /// Buyers); <c>BuyerParityTests</c> (Bootstrapper.UnitTests) los ata.
+    /// </summary>
+    public const string BuyerSessionHeader = "X-Qep-Buyer-Session";
 
     /// <summary>Donde el filtro deja la IP del visitante para que el handler del envío la use como IP del consentimiento.</summary>
     public const string VisitorIpItem = "store.visitor_ip";
@@ -62,6 +71,17 @@ public static class StorefrontClient
 
         visitorIp = address.ToString();
         return true;
+    }
+
+    /// <summary>
+    /// Como <see cref="TryGetVisitorIp"/>, con el secreto de <see cref="StoreOptions"/>: para quien no recibe el secreto por parámetro
+    /// (los módulos que cuelgan de este prefijo, como Buyers).
+    /// </summary>
+    public static bool TryGetDeclaredVisitorIp(HttpContext context, out string visitorIp)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var secret = context.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
+        return TryGetVisitorIp(context, secret, out visitorIp);
     }
 
     /// <summary>

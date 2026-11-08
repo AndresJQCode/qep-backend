@@ -124,8 +124,10 @@ public static class PublicStoreEndpoints
                 StoreErrorCodes.PublicVisitorIpRequired, "The storefront must forward the visitor IP to submit an order request.");
         }
 
+        // Sólo cuenta con updateProfile; el handler nunca lo loguea.
+        var buyerSession = httpContext.Request.Headers[StorefrontClient.BuyerSessionHeader].FirstOrDefault();
         var (receipt, _) = await dispatcher.SendAsync(
-            new SubmitOrderRequestCommand(host, visitorIp, NormalizeLines(body)), cancellationToken);
+            new SubmitOrderRequestCommand(host, visitorIp, NormalizeLines(body), buyerSession), cancellationToken);
         httpContext.Response.Headers.CacheControl = "no-store";
         return Results.Json(receipt, statusCode: StatusCodes.Status201Created);
     }
