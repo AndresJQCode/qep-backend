@@ -1236,8 +1236,8 @@ Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`).
 
 ### Pendientes del owner
 
-Datos legales y plazo de conservación de la política; el nombre del remitente (hoy se usa sólo `Notifications:Infobip:SenderEmail`); y confirmar
-`BuyerDataPolicy.Version` (`2026-11-07`, provisional).
+Datos legales y plazo de conservación de la política; y el nombre del remitente (hoy se usa sólo `Notifications:Infobip:SenderEmail`).
+`BuyerDataPolicy.Version` es `1.0.0`, la versión que el owner publicó el 2026-11-08 en la página de la tienda.
 
 ## API implementada
 
