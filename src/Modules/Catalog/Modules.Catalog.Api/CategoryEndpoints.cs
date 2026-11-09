@@ -100,7 +100,7 @@ public static class CategoryEndpoints
     {
         var category = await dispatcher.SendAsync(
             new UpdateCategoryCommand(
-                tenantId, categoryId, request.Name, request.ParentId, RequireVersion(httpContext)),
+                tenantId, categoryId, request.Name, request.ParentId, CatalogIfMatch.RequireVersion(httpContext, "category")),
             cancellationToken);
 
         return Results.Ok(ToResponse(category));
@@ -114,7 +114,7 @@ public static class CategoryEndpoints
         CancellationToken cancellationToken)
     {
         await dispatcher.SendAsync(
-            new DeleteCategoryCommand(tenantId, categoryId, RequireVersion(httpContext)),
+            new DeleteCategoryCommand(tenantId, categoryId, CatalogIfMatch.RequireVersion(httpContext, "category")),
             cancellationToken);
 
         return Results.NoContent();
@@ -131,37 +131,6 @@ public static class CategoryEndpoints
             cancellationToken);
 
         return Results.Ok(new CategoriesResponse(categories.Select(ToResponse).ToArray()));
-    }
-
-    /// <summary>
-    /// La versión de <c>If-Match</c>; sin ella, 428 <c>precondition.if_match_required</c>. Copia literal de
-    /// <c>Modules.Tenancy.Api/IfMatchHeader.cs</c> y de las privadas de Customers, Shopify e Integrations:
-    /// Catalog.Api no referencia esos módulos. Si cambias cómo se lee el header, cambia todas.
-    /// </summary>
-    private static long RequireVersion(HttpContext httpContext) =>
-        TryParseVersion(httpContext.Request.Headers.IfMatch, out var version)
-            ? version
-            : throw new PreconditionRequiredException(
-                "precondition.if_match_required",
-                "A valid If-Match header containing the loaded category version is required.");
-
-    // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
-    private static bool TryParseVersion(string? etag, out long version)
-    {
-        version = 0;
-        if (string.IsNullOrWhiteSpace(etag))
-        {
-            return false;
-        }
-
-        var normalized = etag.Trim();
-        if (normalized.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized[2..].Trim();
-        }
-
-        normalized = normalized.Trim('"');
-        return long.TryParse(normalized, out version) && version > 0;
     }
 
     private static CategoryResponse ToResponse(CategoryDto category) => new(

@@ -211,6 +211,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateProductCommand, ProductDto>,
             UpdateProductHandler>();
         services.AddScoped<
+            ICommandHandler<DeleteProductCommand, ProductDeletedResult>,
+            DeleteProductHandler>();
+        services.AddScoped<
             ICommandHandler<CopyPriceScalesCommand, IReadOnlyList<ProductDto>>,
             CopyPriceScalesHandler>();
         services.AddScoped<
