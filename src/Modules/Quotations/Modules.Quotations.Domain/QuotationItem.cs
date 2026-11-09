@@ -59,7 +59,8 @@ public sealed class QuotationItem
     /// El código de la variante congelado cuando la cotización salió del borrador (owner,
     /// 2026-09-26). Null mientras es borrador —ahí se lee en vivo del catálogo, para que los
     /// cambios del producto se vean— y en las líneas enviadas antes de que la columna existiera,
-    /// que se siguen leyendo en vivo: no hay backfill, porque este módulo no lee las tablas de
+    /// que se siguen leyendo en vivo hasta que su producto se borra: ahí las recibe de golpe
+    /// (<c>IDeletedVariantLineStore</c>, spec 2026-11-08), porque este módulo no lee las tablas de
     /// Catalog. Quien lo muestra decide con <c>QuotationItemProductLabel</c>.
     /// </summary>
     public string? ProductCode { get; private set; }
