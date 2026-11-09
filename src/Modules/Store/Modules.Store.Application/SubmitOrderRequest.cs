@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Microsoft.Extensions.Logging;
@@ -76,8 +77,6 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
 
     public const int BuyerPasswordMaxLength = 128;
 
-    private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
-
     public PublicOrderRequestBodyValidator()
     {
         RuleFor(body => body.ClientRequestId).NotEqual(Guid.Empty);
@@ -124,8 +123,13 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
             RuleFor(b => b.Name).NotEmpty().MaximumLength(StoreRequestBilling.NameMaxLength);
             RuleFor(b => b.IdentificationType)
                 .NotEmpty()
-                .Must(type => type is null || IdentificationTypes.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase))
+                .Must(type => type is null || DocumentTypesByCountry.IsKnown(type))
                 .WithMessage("El tipo de documento no es válido.");
+            // Cadena aparte para no callar la regla del código conocido; sólo corre con país de forma válida.
+            RuleFor(b => b.IdentificationType)
+                .Must((b, type) => DocumentTypesByCountry.IsAllowed(type, b.Country!))
+                .WithMessage("El tipo de documento no es válido para el país.")
+                .When(b => DocumentTypesByCountry.IsKnown(b.IdentificationType) && !string.IsNullOrWhiteSpace(b.Country) && CountryShape(b.Country));
             RuleFor(b => b.IdentificationNumber).NotEmpty().MaximumLength(StoreRequestBilling.IdentificationNumberMaxLength);
             RuleFor(b => b.Phone).NotEmpty().MaximumLength(PhoneMaxLength);
             RuleFor(b => b.Email).NotEmpty().MaximumLength(StoreRequestBilling.EmailMaxLength).EmailAddress();
