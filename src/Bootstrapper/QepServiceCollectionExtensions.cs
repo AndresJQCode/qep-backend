@@ -1198,6 +1198,10 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Borrado de producto (spec 2026-11-08): congelar y quitar las líneas de Quotations y las de las solicitudes
+        // nuevas de la tienda, que Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que
+        // todo comparta la transacción del DELETE.
+        services.AddScoped<IProductDeletionCleanup, CatalogProductDeletionCleanup>();
         // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.
