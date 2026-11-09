@@ -221,7 +221,7 @@ public sealed record QuotationPartyRequest(
     Guid? CityId,
     /// <summary>"Natural" o "Juridica" (spec 2026-10-26). Sólo en facturación; en la entrega se ignora.</summary>
     string? PersonType = null,
-    /// <summary>"NIT", "CC", "CE" o "PASAPORTE": el tipo de <c>IdentificationNumber</c>. En facturación con
+    /// <summary>Uno de los siete códigos (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID; qué país acepta cuáles lo dice <c>DocumentTypesByCountry</c>): el tipo de <c>IdentificationNumber</c>. En facturación con
     /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
     string? IdentificationType = null,
     /// <summary>ISO alfa-2. Ausente (o <c>CO</c>) es Colombia y la ciudad va por <c>DepartmentId</c>/<c>CityId</c>;

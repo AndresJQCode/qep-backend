@@ -50,6 +50,24 @@ public sealed class OrderStoreFactoryTests
             "T-0001", "store-request:abc");
 
     [Fact]
+    public void AStoreOrderKeepsAForeignTaxId()
+    {
+        var billing = Billing() with
+        {
+            IdentificationType = PartyIdentificationType.TaxId,
+            Country = "US",
+            CityName = "Miami",
+            DepartmentId = null,
+            CityId = null,
+        };
+
+        var order = NewStoreOrder(Parties() with { Billing = billing });
+
+        var party = Assert.Single(order.Parties, p => p.Role == QuotationPartyRole.Billing);
+        Assert.Equal((PartyIdentificationType.TaxId, "US"), (party.IdentificationType, party.Country));
+    }
+
+    [Fact]
     public void CreateFromStoreSetsSourceReferenceAndKey()
     {
         var order = NewStoreOrder(Parties());

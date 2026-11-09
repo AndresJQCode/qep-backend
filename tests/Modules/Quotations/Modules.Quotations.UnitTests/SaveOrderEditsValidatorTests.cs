@@ -63,6 +63,27 @@ public sealed class SaveOrderEditsValidatorTests
         AssertFailsOn(result, "Billing.Party.IdentificationType");
     }
 
+    private static QuotationPartyRequest Party(string type, string? country, string? cityName = null) =>
+        new("Otra S.L.", "12345678Z", null, null, null, null, null, IdentificationType: type, Country: country, CityName: cityName);
+
+    [Theory]
+    [InlineData("NIF", "ES", "Madrid")] [InlineData("NIE", "ES", "Madrid")] [InlineData("TAX_ID", "US", "Miami")] [InlineData("CC", null, null)]
+    public void AnAllowedBillingPairIsAccepted(string type, string? country, string? cityName)
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party(type, country, cityName))));
+
+        Assert.DoesNotContain(result.Errors, error => error.PropertyName == "Billing.Party.IdentificationType");
+    }
+
+    [Fact]
+    public void AnUnknownBillingTypeNamesTheNewCodes()
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party("XX", null))));
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationType");
+        Assert.Contains("NIF", error.ErrorMessage);
+    }
+
     [Fact]
     public void AnAbsentBillingIsValid() =>
         Assert.True(_save.Validate(Command(billing: null)).IsValid);

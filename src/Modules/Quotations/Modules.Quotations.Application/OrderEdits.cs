@@ -165,7 +165,7 @@ public abstract class OrderEditsValidator<TEdits> : AbstractValidator<TEdits>
         RuleFor(edits => edits.Billing!.Party!.IdentificationType)
             .Must(type => PartyFiscalTypesParser.SupportedIdentificationTypes
                 .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
-            .WithMessage("The identification type must be one of NIT, CC, CE or PASAPORTE.")
+            .WithMessage($"The identification type must be one of {string.Join(", ", PartyFiscalTypesParser.SupportedIdentificationTypes)}.")
             .When(edits => !string.IsNullOrWhiteSpace(edits.Billing?.Party?.IdentificationType));
 
         RuleFor(edits => edits.Billing!.Party!.PersonType)

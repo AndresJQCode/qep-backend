@@ -73,6 +73,33 @@ public sealed class CreateQuotationValidatorTests
         Assert.Contains(result.Errors, error => error.PropertyName == "Parties.Billing.IdentificationNumber");
     }
 
+    private static QuotationPartyRequest Party(string type, string? country, string? cityName = null) =>
+        new("Otra S.L.", "12345678Z", null, null, null, null, null, IdentificationType: type, Country: country, CityName: cityName);
+
+    [Theory]
+    [InlineData("NIF", "ES", "Madrid")] [InlineData("NIE", "ES", "Madrid")] [InlineData("TAX_ID", "US", "Miami")] [InlineData("CC", null, null)]
+    public async Task AnAllowedBillingPairIsAccepted(string type, string? country, string? cityName)
+    {
+        var parties = new QuotationPartiesRequest(Party(type, country, cityName), null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(result.Errors, error => error.PropertyName == "Parties.Billing.IdentificationType");
+    }
+
+    [Fact]
+    public async Task AnUnknownBillingTypeNamesTheNewCodes()
+    {
+        var parties = new QuotationPartiesRequest(Party("XX", null), null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationType");
+        Assert.Contains("NIF", error.ErrorMessage);
+    }
+
     private static CreateQuotationCommand Command(params QuotationItemAddition[] items) =>
         new(TenantId, ClientId, ValidUntil: null, PaymentMethod: null, Notes: null, Parties: null,
             BillingAccount: null, Items: items);

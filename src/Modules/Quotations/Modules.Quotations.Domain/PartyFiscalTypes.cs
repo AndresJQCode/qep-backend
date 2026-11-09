@@ -12,15 +12,20 @@ public enum PartyPersonType
 }
 
 /// <summary>
-/// Tipo de documento de la parte de facturación: NIT, CC, CE o PASAPORTE. Duplica el
-/// <c>IdentificationType</c> de Customers por la misma razón que <see cref="PartyPersonType"/>.
+/// Tipo de documento de la parte de facturación: los siete códigos del producto (NIT, CC, CE, PASAPORTE,
+/// NIF, NIE, TAX_ID). Qué país acepta cuáles lo decide <c>DocumentTypesByCountry</c> (BuildingBlocks.Domain),
+/// no este enum. Duplica el <c>IdentificationType</c> de Customers por la misma razón que
+/// <see cref="PartyPersonType"/>.
 /// </summary>
 public enum PartyIdentificationType
 {
     Nit,
     Cc,
     Ce,
-    Pasaporte
+    Pasaporte,
+    Nif,
+    Nie,
+    TaxId
 }
 
 /// <summary>
@@ -42,7 +47,10 @@ public static class PartyFiscalTypesParser
             ["NIT"] = PartyIdentificationType.Nit,
             ["CC"] = PartyIdentificationType.Cc,
             ["CE"] = PartyIdentificationType.Ce,
-            ["PASAPORTE"] = PartyIdentificationType.Pasaporte
+            ["PASAPORTE"] = PartyIdentificationType.Pasaporte,
+            ["NIF"] = PartyIdentificationType.Nif,
+            ["NIE"] = PartyIdentificationType.Nie,
+            ["TAX_ID"] = PartyIdentificationType.TaxId
         };
 
     public static string ToWireValue(this PartyPersonType type) => type switch
@@ -60,6 +68,9 @@ public static class PartyFiscalTypesParser
         PartyIdentificationType.Cc => "CC",
         PartyIdentificationType.Ce => "CE",
         PartyIdentificationType.Pasaporte => "PASAPORTE",
+        PartyIdentificationType.Nif => "NIF",
+        PartyIdentificationType.Nie => "NIE",
+        PartyIdentificationType.TaxId => "TAX_ID",
         _ => throw new QuotationsDomainException(
             "quotations.party.identification_type_invalid",
             "The identification type is not one of the supported values.")
@@ -92,7 +103,7 @@ public static class PartyFiscalTypesParser
             ? type
             : throw new QuotationsDomainException(
                 "quotations.party.identification_type_invalid",
-                "The identification type must be one of NIT, CC, CE or PASAPORTE.");
+                $"The identification type must be one of {string.Join(", ", SupportedIdentificationTypes)}.");
     }
 
     public static IReadOnlyCollection<string> SupportedPersonTypes => PersonTypes.Keys;
