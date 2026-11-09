@@ -23,8 +23,6 @@ public sealed class BuyerProfileValidator : AbstractValidator<BuyerProfileDto>
 
     private const string Colombia = "CO";
 
-    private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
-
     public BuyerProfileValidator()
     {
         RuleFor(profile => profile.Billing).NotNull();

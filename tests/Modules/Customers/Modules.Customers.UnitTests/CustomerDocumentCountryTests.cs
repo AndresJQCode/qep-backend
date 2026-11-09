@@ -27,9 +27,12 @@ public sealed class CustomerDocumentCountryTests
         var incomplete = Customer.CreateIncomplete(
             CustomerId.New(), TenantId, "Alguien", "+34600111222", "ES", "bsuid-1", Now, new FakeNormalizer());
 
-        Assert.Throws<CustomersDomainException>(() => incomplete.Complete(
+        var error = Assert.Throws<CustomersDomainException>(() => incomplete.Complete(
             "CLI08000001", "Laura", null, null, Identification(IdentificationType.Cc, "1020304050"),
             null, Spanish(), Commercial(), Now.AddHours(1)));
+
+        Assert.Equal(NotAllowed, error.Code);
+        Assert.Equal(["IdentificationType"], error.FieldErrors.Keys);
 
         Assert.False(incomplete.IsComplete);
         Assert.Null(incomplete.IdentificationType);
@@ -41,9 +44,12 @@ public sealed class CustomerDocumentCountryTests
         var customer = Create(IdentificationType.Cc, null);
         var version = customer.Version;
 
-        Assert.Throws<CustomersDomainException>(() => customer.Update(
+        var error = Assert.Throws<CustomersDomainException>(() => customer.Update(
             "Otro nombre", null, Identification(IdentificationType.Cc, "1020304050"), null,
             Spanish(), Commercial(), "CLI", Now.AddHours(1)));
+
+        Assert.Equal(NotAllowed, error.Code);
+        Assert.Equal(["IdentificationType"], error.FieldErrors.Keys);
 
         Assert.Equal("Verde Esencial", customer.Name);
         Assert.Equal("CO", customer.Country);
