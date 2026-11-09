@@ -1859,9 +1859,13 @@ variante por defecto), y siguen otra regla (owner, 2026-09-26):
 - El nombre visible se guarda hasta 200 caracteres: uno más largo (producto de 200 más los valores de
   opción) se recorta a 200 con «…» al congelarse (`SnapshotText.Fit`); el borrador, que lee en vivo, lo
   muestra entero. El POS guarda el suyo con la misma regla.
-- Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo; no hay
-  backfill, porque Quotations no lee las tablas de Catalog. Se congelan solas si la cotización se
-  reenvía o se convierte.
+- Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo. No hay
+  backfill masivo, porque Quotations no lee las tablas de Catalog: la foto se completa **al borrar el
+  producto** (`DELETE /catalog/products/{productId}`), que congela código y nombre de las líneas que
+  todavía no la tienen (cotizaciones que no son borrador y pedidos) en la misma transacción del borrado.
+  Las demás se congelan solas si la cotización se reenvía o se convierte. En un borrador la línea del
+  producto borrado desaparece y la cotización se recotiza; en una solicitud `New` de la tienda también
+  desaparece, con sus totales intactos.
 - Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
   Excel). Ninguna transición devuelve una cotización a borrador.
 
@@ -2558,6 +2562,16 @@ reemplaza sus orígenes por los dominios reales del frontend. Las credenciales y
 el bucket se configuran bajo `Storage:R2`; nunca se entregan al cliente.
 Para AWS CLI se incluye la variante envuelta en `CORSRules` en
 [`ops/r2-cors.aws.json`](ops/r2-cors.aws.json).
+
+**Fotos de producto liberadas.** Borrar un producto, o quitar una foto de su galería con el `PUT`,
+escribe `catalog.product.images-released.v1` (`{ tenantId, fileIds }`, sólo si la lista no está vacía) en el
+outbox, en la misma transacción. `ProductImageReleaseWorker` (Storage) lo consume con el inbox
+`storage.inbox_messages` y, por cada archivo, consulta las `IFileReferenceProbe`: si otra galería (sonda de
+Catalog) u otro dueño lo sigue referenciando, lo salta. Sólo purga archivos `Product` sin referencias, y
+siempre borra primero los objetos (clave del archivo, copia pública y cada variante) y después marca
+el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_image_released`. Para
+la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
+`PublishedAt`; es a propósito.
 
 ### Reportes exportados (`exports/`)
 
