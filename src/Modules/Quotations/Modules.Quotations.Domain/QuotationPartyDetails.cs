@@ -78,6 +78,7 @@ public sealed record QuotationPartyDetails
         var country = NormalizeCountry(Country);
         var normalized = this with { Country = country };
         normalized.EnsureLane(fieldPrefix);
+        normalized.EnsureDocumentTypeAllowed(fieldPrefix);
         return normalized.NormalizedFields(country);
     }
 
@@ -98,6 +99,23 @@ public sealed record QuotationPartyDetails
             throw LaneInvalid(
                 $"{fieldPrefix}.CityId",
                 "A party outside Colombia takes its city as text, not from the department and city ids.");
+        }
+    }
+
+    // Sólo se comprueba al escribir (Normalized), nunca al cargar de la base: una fila guardada antes de la regla
+    // se lee igual y recién falla cuando alguien la guarda de nuevo.
+    private void EnsureDocumentTypeAllowed(string fieldPrefix)
+    {
+        if (IdentificationType is { } type && !type.IsAllowedFor(Country))
+        {
+            const string message = "The identification type is not allowed for the country.";
+            throw new QuotationsDomainException(
+                "quotations.party.document_type_not_allowed",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [$"{fieldPrefix}.IdentificationType"] = [message]
+                });
         }
     }
 

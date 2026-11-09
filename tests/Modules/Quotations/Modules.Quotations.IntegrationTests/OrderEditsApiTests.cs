@@ -685,7 +685,7 @@ public sealed class OrderEditsApiTests
         var foreign = new OrderBillingEditRequest(
             new QuotationPartyRequest(
                 "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
-                PersonType: "Natural", IdentificationType: "CE", Country: "ES", CityName: "Madrid"),
+                PersonType: "Natural", IdentificationType: "NIE", Country: "ES", CityName: "Madrid"),
             BillingWithRetention: false,
             BillingVatSurplus: false);
 
@@ -698,6 +698,29 @@ public sealed class OrderEditsApiTests
         Assert.Equal(("ES", "Madrid", null, null), (party.Country, party.CityName, party.DepartmentId, party.CityId));
         var fetched = await GetDetailAsync(client, tenantId, order.Id);
         Assert.Equal("ES", Assert.Single(fetched.Order.Parties, candidate => candidate.Role == "Billing").Country);
+    }
+
+    [Fact]
+    public async Task AnOrderBillingPartyWithACcAbroadIsA422OnItsType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
+        var abroad = new OrderBillingEditRequest(
+            new QuotationPartyRequest(
+                "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
+                PersonType: "Natural", IdentificationType: "CC", Country: "ES", CityName: "Madrid"),
+            BillingWithRetention: false,
+            BillingVatSurplus: false);
+
+        var response = await PutEditsAsync(
+            client, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 1m)], null, null, Billing: abroad));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains("Billing.Party.IdentificationType", (await ReadProblemAsync(response)).Errors!.Keys);
     }
 
     // Cubre IX_order_parties_order_role: la segunda edición modifica la fila, no la borra y la vuelve a crear.
@@ -932,5 +955,5 @@ public sealed class OrderEditsApiTests
         return problem;
     }
 
-    private sealed record ProblemPayload(string Code);
+    private sealed record ProblemPayload(string Code, Dictionary<string, string[]>? Errors = null);
 }

@@ -88,6 +88,42 @@ public sealed class CreateQuotationValidatorTests
         Assert.DoesNotContain(result.Errors, error => error.PropertyName == "Parties.Billing.IdentificationType");
     }
 
+    [Theory]
+    [InlineData("CC", "ES", "Madrid")] [InlineData("NIF", null, null)] [InlineData("TAX_ID", "CO", null)]
+    public async Task ABillingTypeItsCountryDoesNotAllowIsAFieldError(string type, string? country, string? cityName)
+    {
+        var parties = new QuotationPartiesRequest(Party(type, country, cityName), null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationType");
+        Assert.Equal("The identification type is not allowed for the country.", error.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task AMalformedCountryLeavesTheTypeAlone()
+    {
+        var parties = new QuotationPartiesRequest(Party("NIF", "ESP", "Madrid"), null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationType");
+    }
+
+    [Fact]
+    public async Task AnUnknownTypeIsOnlyTheKnownCodeError()
+    {
+        var parties = new QuotationPartiesRequest(Party("XX", "ES", "Madrid"), null);
+
+        var result = await new CreateQuotationValidator().ValidateAsync(
+            Command() with { Parties = parties }, TestContext.Current.CancellationToken);
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Parties.Billing.IdentificationType");
+        Assert.DoesNotContain("not allowed for the country", error.ErrorMessage);
+    }
+
     [Fact]
     public async Task AnUnknownBillingTypeNamesTheNewCodes()
     {

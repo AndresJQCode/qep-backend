@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Quotations.Domain;
 
 /// <summary>
@@ -75,6 +77,13 @@ public static class PartyFiscalTypesParser
             "quotations.party.identification_type_invalid",
             "The identification type is not one of the supported values.")
     };
+
+    /// <summary>Si el país de la parte acepta el tipo (<c>DocumentTypesByCountry</c>). Un país en blanco es
+    /// Colombia, igual que en <see cref="QuotationPartyDetails.IsColombian"/>.</summary>
+    public static bool IsAllowedFor(this PartyIdentificationType type, string? country) =>
+        DocumentTypesByCountry.IsAllowed(
+            type.ToWireValue(),
+            string.IsNullOrWhiteSpace(country) ? QuotationPartyDetails.ColombiaCountryCode : country);
 
     /// <summary>Blanco es "sin elegir" (<c>null</c>); un valor que no se reconoce falla, no cae en
     /// un default.</summary>

@@ -124,6 +124,14 @@ internal sealed class QuotationPartiesRequestValidator : AbstractValidator<Quota
             .WithMessage($"The identification type must be one of {string.Join(", ", PartyFiscalTypesParser.SupportedIdentificationTypes)}.")
             .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.IdentificationType));
 
+        // Aparte de la regla anterior para que un país mal escrito se informe sólo en el país y un código
+        // desconocido sólo como código desconocido: esta corre cuando el código es conocido y el país tiene forma de ISO.
+        RuleFor(parties => parties.Billing!.IdentificationType)
+            .Must((parties, type) => PartyFiscalTypesParser.ParseIdentificationType(type)!.Value
+                .IsAllowedFor(parties.Billing!.Country))
+            .WithMessage("The identification type is not allowed for the country.")
+            .When(parties => PartyDocumentRules.IsKnownTypeWithAValidCountry(parties.Billing?.IdentificationType, parties.Billing?.Country));
+
         RuleFor(parties => parties.Billing!.PersonType)
             .Must(type => PartyFiscalTypesParser.SupportedPersonTypes
                 .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
