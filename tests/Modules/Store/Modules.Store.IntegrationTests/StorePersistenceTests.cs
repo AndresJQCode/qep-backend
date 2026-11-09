@@ -70,8 +70,8 @@ public sealed class StorePersistenceTests
     private static StorePlace Colombia() =>
         new("CO", Guid.NewGuid(), "Antioquia", Guid.NewGuid(), "Medellín");
 
-    private static StoreRequestBilling Billing(StorePlace? place = null) =>
-        new("Ana Pérez", "CC", "123456", "300 123 4567", "+573001234567", "ana@test.co", "Calle 1 # 2-3", place ?? Colombia());
+    private static StoreRequestBilling Billing(StorePlace? place = null, string identificationType = "CC") =>
+        new("Ana Pérez", identificationType, "123456", "300 123 4567", "+573001234567", "ana@test.co", "Calle 1 # 2-3", place ?? Colombia());
 
     private static StoreRequestShipping Shipping() =>
         new("Luis Gómez", "300 765 4321", "+573007654321", "Carrera 9 # 8-7", Colombia());
@@ -466,6 +466,21 @@ public sealed class StorePersistenceTests
     }
 
     [Fact]
+    public async Task ATaxIdRoundTripsThroughTheBillingColumn()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var request = NewRequest(Tenant, number: 1, billing: Billing(new StorePlace("US", null, null, null, "Miami"), "TAX_ID"));
+        await SaveRequestAsync(factory, request);
+
+        var found = await ReloadRequestAsync(factory, Tenant, request.Id);
+
+        Assert.Equal("TAX_ID", found.Billing.IdentificationType);
+    }
+
+    [Fact]
     public async Task AForeignBillingRoundTripsWithItsCityText()
     {
         var (database, factory) = await OpenAsync();
@@ -473,7 +488,7 @@ public sealed class StorePersistenceTests
         using var __ = factory;
 
         var foreign = new StorePlace("ES", null, null, null, "Madrid");
-        var request = NewRequest(Tenant, number: 1, billing: Billing(foreign));
+        var request = NewRequest(Tenant, number: 1, billing: Billing(foreign, "NIF"));
         await SaveRequestAsync(factory, request);
 
         var found = await ReloadRequestAsync(factory, Tenant, request.Id);
