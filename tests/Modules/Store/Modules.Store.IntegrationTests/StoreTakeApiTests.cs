@@ -16,6 +16,8 @@ public sealed class StoreTakeApiTests
 {
     private static readonly string[] ColombiaAndSpain = ["CO", "ES"];
 
+    private static readonly string[] ColombiaSpainAndUnitedStates = ["CO", "ES", "US"];
+
     private static readonly object NewCustomerBody = new { newCustomer = new { classificationId = (Guid?)null } };
 
     private static object ExistingBody(Guid customerId) => new { customerId };
@@ -657,5 +659,136 @@ public sealed class StoreTakeApiTests
         Assert.False(state.IsBeingTaken(rig.Clock.UtcNow));
         Assert.Equal(0, await rig.CountAsync("quotations.orders"));
         Assert.Equal(customersBefore, await rig.CountAsync("customers.customers"));
+    }
+
+    // ---- Documentos por país: NIF, NIE y TAX_ID de punta a punta ----------------------------------------------------------
+
+    private static Task<Guid> SubmitSpanishAsync(
+        StoreInboxRig rig, string type = "NIF", string number = "12345678Z", string address = "Calle Mayor 1") =>
+        rig.SubmitAsync(billing =>
+        {
+            billing["identificationType"] = type;
+            billing["identificationNumber"] = number;
+            billing["country"] = "ES";
+            billing["departmentId"] = null;
+            billing["cityId"] = null;
+            billing["cityName"] = "Madrid";
+            billing["phone"] = "+34600111222";
+            billing["address"] = address;
+        });
+
+    private static Task<string?> BillingPartyAsync(StoreInboxRig rig, Guid orderId) =>
+        rig.TextAsync(
+            "SELECT identification_type || '|' || country FROM quotations.order_parties WHERE order_id = @id AND role = 'Billing'",
+            ("id", orderId));
+
+    [Theory]
+    [InlineData("ES", "NIF", "Nif", "12345678Z", "Madrid", "+34600111222")]
+    [InlineData("ES", "NIE", "Nie", "X1234567L", "Madrid", "+34600111222")]
+    [InlineData("US", "TAX_ID", "TaxId", "12-3456789", "Miami", "+13055550100")]
+    public async Task TakingANewCustomerWithAForeignDocumentKeepsItEverywhere(
+        string country, string wire, string member, string number, string city, string phone)
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaSpainAndUnitedStates);
+        var request = await rig.SubmitAsync(billing =>
+        {
+            billing["identificationType"] = wire;
+            billing["identificationNumber"] = number;
+            billing["country"] = country;
+            billing["departmentId"] = null;
+            billing["cityId"] = null;
+            billing["cityName"] = city;
+            billing["phone"] = phone;
+            billing["address"] = "Calle Mayor 1";
+        });
+
+        var taken = await rig.TakeOkAsync(request, NewCustomerBody);
+
+        var customer = await rig.CustomerAsync((Guid)taken["customerId"]!);
+        Assert.Equal((member, country, number), (customer.IdentificationType, customer.Country, customer.IdentificationNumber));
+        var orderId = (Guid)taken["orderId"]!;
+        Assert.Equal($"{member}|{country}", await BillingPartyAsync(rig, orderId));
+        Assert.Equal(wire, (string)Party(await rig.OrderAsync(orderId), "Billing")["identificationType"]!);
+        Assert.Equal(StoreOrderRequestStatus.Converted, (await rig.StateAsync(request)).Status);
+    }
+
+    [Fact]
+    public async Task TakingAnIncompleteCustomerWithoutDocumentGivesItTheNifAndSpain()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.SeedIncompleteAsync("Pedro WhatsApp", phone: "+57 310 111 2233", phoneE164: "+573101112233", country: "CO");
+        var request = await SubmitSpanishAsync(rig);
+
+        var taken = await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        var customer = await rig.CustomerAsync(customerId);
+        Assert.Equal(("Complete", "Nif", "ES", "12345678Z"), (customer.Completeness, customer.IdentificationType, customer.Country, customer.IdentificationNumber));
+        Assert.Equal("Nif|ES", await BillingPartyAsync(rig, (Guid)taken["orderId"]!));
+    }
+
+    [Theory]
+    [InlineData("PASAPORTE", "X1234567")]
+    [InlineData("NIF", "12345678Z")]
+    public async Task AnIncompleteCustomerWithAnAddressAndCountryCoTakesTheSpanishRequestAddressAndCountry(string type, string number)
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.SeedIncompleteAsync(
+            "Pedro WhatsApp", phone: "+57 310 111 2233", phoneE164: "+573101112233", address: "Carrera 7 # 8-9", country: "CO");
+        var request = await SubmitSpanishAsync(rig, type, number, "Calle Mayor 1");
+
+        await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        var customer = await rig.CustomerAsync(customerId);
+        Assert.Equal(("Calle Mayor 1", "ES"), (customer.Address, customer.Country));
+    }
+
+    [Fact]
+    public async Task TakingACompleteColombianCustomerForASpanishRequestLeavesItAlone()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.CreateCompleteCustomerAsync("Laura", "1020304050", "3105550001");
+        var before = await rig.CustomerAsync(customerId);
+        var request = await SubmitSpanishAsync(rig);
+
+        var taken = await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        var after = await rig.CustomerAsync(customerId);
+        Assert.Equal(("Cc", "CO", "1020304050"), (after.IdentificationType, after.Country, after.IdentificationNumber));
+        Assert.Equal(
+            (before.Name, before.Phone, before.Email, before.Address, before.CityId, before.Completeness),
+            (after.Name, after.Phone, after.Email, after.Address, after.CityId, after.Completeness));
+        // La versión sube sólo por la entrada que «Tomar» agrega a la libreta (AddAddress toca al cliente), no por la ficha.
+        Assert.Contains(await rig.AddressesAsync(customerId), book => book.Country == "ES" && book.Address == "Calle Mayor 1");
+        Assert.Equal("Nif|ES", await BillingPartyAsync(rig, (Guid)taken["orderId"]!));
+    }
+
+    [Fact]
+    public async Task TakingTheCustomerThatAlreadyHasTheNifCreatesNoSecondCustomer()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.CreateCompleteCustomerAsync(
+            "Laura", "12345678Z", "+34600111222", identificationType: "NIF", country: "ES", cityName: "Madrid");
+        var request = await SubmitSpanishAsync(rig);
+
+        var taken = await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        Assert.Equal(1, await rig.CountAsync("customers.customers"));
+        Assert.False((bool)taken["customerCreated"]!);
+        Assert.Equal(customerId, (Guid)taken["customerId"]!);
+        Assert.Equal("Nif|ES", await BillingPartyAsync(rig, (Guid)taken["orderId"]!));
+    }
+
+    [Fact]
+    public async Task TheCandidatesOfANifRequestIncludeTheCustomerWithThatDocument()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.CreateCompleteCustomerAsync(
+            "Laura", "12345678Z", "+34600111222", identificationType: "NIF", country: "ES", cityName: "Madrid");
+        var request = await SubmitSpanishAsync(rig);
+
+        var candidates = await rig.GetJsonAsync($"/{request}/customer-candidates");
+
+        var candidate = candidates["candidates"]!.AsArray().Single(item => (Guid)item!["id"]! == customerId);
+        Assert.Contains("Document", candidate!["matchedBy"]!.AsArray().Select(value => (string)value!));
     }
 }

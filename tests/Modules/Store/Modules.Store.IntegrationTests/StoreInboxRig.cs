@@ -258,7 +258,10 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string email = "cliente@test.co",
         string address = "Avenida 5 # 6-7",
         bool withRetention = false,
-        bool vatSurplus = false)
+        bool vatSurplus = false,
+        string identificationType = "CC",
+        string country = "CO",
+        string? cityName = null)
     {
         var response = await Inbox.PostAsJsonAsync(
             $"/api/v1/tenants/{StoreApiHarness.TenantId}/customers",
@@ -266,14 +269,14 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             {
                 name,
                 businessName = (string?)null,
-                identificationType = "CC",
+                identificationType,
                 identificationNumber = documentNumber,
                 phone,
                 email,
                 address,
-                country = "CO",
-                cityId = City,
-                cityName = (string?)null,
+                country,
+                cityId = country == "CO" ? City : (Guid?)null,
+                cityName,
                 classificationId = (Guid?)null,
                 withRetention,
                 vatSurplus,
@@ -412,6 +415,18 @@ internal sealed class StoreInboxRig : IAsyncDisposable
 
     public Task DeactivateVariantAsync() =>
         ExecuteAsync("UPDATE catalog.product_variants SET is_active = false WHERE id = @variant", ("variant", Variant));
+
+    public async Task<string?> TextAsync(string sql, params (string Name, object? Value)[] parameters)
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
 
     public async Task<long> CountAsync(string table)
     {
