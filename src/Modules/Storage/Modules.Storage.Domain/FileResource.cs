@@ -273,9 +273,12 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
-    // Spec 2026-11-08, «Liberación de imágenes»: la imagen de un producto eliminado se purga. La llama
-    // ProductImageReleaseProcessor después de borrar los objetos de R2. PublicStorageKey se conserva
-    // como registro de dónde estuvo: un recurso Purged no se descarga ni se vuelve a adjuntar.
+    // Spec 2026-11-08, «Liberación de imágenes»: se purga la imagen que ninguna galería referencia,
+    // sea de un producto eliminado o de una foto que el PUT quitó de la galería. La llama
+    // ProductImageReleaseProcessor en memoria, antes de borrar los objetos de R2; el estado se guarda
+    // sólo si esos borrados salen bien. La copia pública la retira FilePublication.UnpublishAsync, que
+    // también limpia PublicStorageKey: un recurso Purged no conserva URL pública, no se descarga ni se
+    // vuelve a adjuntar.
     public void PurgeReleasedProductImage(DateTimeOffset occurredAt)
     {
         RequireProductImage();
