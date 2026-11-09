@@ -220,6 +220,25 @@ public sealed class StoreTakeApiTests
     }
 
     [Fact]
+    public async Task AnIncompleteCustomerWithoutDocumentTakesTheRequestCountryWithItsDocument()
+    {
+        await using var rig = await StoreInboxRig.OpenAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var customerId = await rig.SeedIncompleteAsync("Pedro WhatsApp", phone: "+57 310 111 2233", phoneE164: "+573101112233", country: "CO");
+        var request = await rig.SubmitAsync(billing =>
+        {
+            billing["identificationType"] = "PASAPORTE"; billing["identificationNumber"] = "X1234567";
+            billing["country"] = "ES"; billing["departmentId"] = null; billing["cityId"] = null; billing["cityName"] = "Madrid";
+            billing["phone"] = "+34600111222"; billing["address"] = "Calle Mayor 1";
+        });
+
+        await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        var customer = await rig.CustomerAsync(customerId);
+        Assert.Equal(("Complete", "Pasaporte", "ES", "Madrid"), (customer.Completeness, customer.IdentificationType, customer.Country, customer.CityName));
+        Assert.Equal("+573101112233", customer.Phone);
+    }
+
+    [Fact]
     public async Task AddressesAreAddedAfterCompletion()
     {
         await using var rig = await StoreInboxRig.OpenAsync();

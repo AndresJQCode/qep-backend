@@ -291,14 +291,15 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string? phoneE164 = null,
         string? documentNumber = null,
         string? email = null,
-        string? address = null)
+        string? address = null,
+        string? country = null)
     {
         var id = Guid.CreateVersion7();
         await ExecuteAsync(
             """
             INSERT INTO customers.customers (id, tenant_id, name, is_active, phone, phone_e164, email, address, identification_type, identification_number,
-                                             completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, 'Incomplete', @wa, false, false, 1, now(), now())
+                                             country, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, @country, 'Incomplete', @wa, false, false, 1, now(), now())
             """,
             ("id", id),
             ("tenant", StoreSettingsFixture.Tenant),
@@ -309,6 +310,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             ("address", address),
             ("idType", documentNumber is null ? null : "Cc"),
             ("idNumber", documentNumber),
+            ("country", country),
             ("wa", $"CO.{id:N}"));
         return id;
     }
