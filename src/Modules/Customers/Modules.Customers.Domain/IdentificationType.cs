@@ -1,7 +1,8 @@
 namespace Modules.Customers.Domain;
 
 /// <summary>
-/// Los tipos de documento que el producto acepta.
+/// Los siete códigos de documento que el producto conoce. Qué país acepta cuáles lo decide
+/// <c>DocumentTypesByCountry</c> (BuildingBlocks.Domain), no este enum.
 ///
 /// Enum cerrado y no texto libre porque el formulario ya los ofrece como lista cerrada
 /// (<c>IDENTIFICATION_TYPES</c> en <c>customer-form.schema.ts</c>) y porque la identificacion es
@@ -9,14 +10,17 @@ namespace Modules.Customers.Domain;
 /// y el indice unico deja pasar el duplicado que existe para frenar.
 ///
 /// Los nombres viajan al contrato HTTP como las cadenas que el frontend ya manda —NIT, CC, CE,
-/// PASAPORTE—; la traduccion vive en <see cref="IdentificationTypeParser"/>.
+/// PASAPORTE, NIF, NIE, TAX_ID—; la traduccion vive en <see cref="IdentificationTypeParser"/>.
 /// </summary>
 public enum IdentificationType
 {
     Nit,
     Cc,
     Ce,
-    Pasaporte
+    Pasaporte,
+    Nif,
+    Nie,
+    TaxId
 }
 
 public static class IdentificationTypeParser
@@ -27,7 +31,10 @@ public static class IdentificationTypeParser
             ["NIT"] = IdentificationType.Nit,
             ["CC"] = IdentificationType.Cc,
             ["CE"] = IdentificationType.Ce,
-            ["PASAPORTE"] = IdentificationType.Pasaporte
+            ["PASAPORTE"] = IdentificationType.Pasaporte,
+            ["NIF"] = IdentificationType.Nif,
+            ["NIE"] = IdentificationType.Nie,
+            ["TAX_ID"] = IdentificationType.TaxId
         };
 
     /// <summary>La cadena que viaja en el JSON, en mayusculas como la manda el formulario.</summary>
@@ -37,6 +44,9 @@ public static class IdentificationTypeParser
         IdentificationType.Cc => "CC",
         IdentificationType.Ce => "CE",
         IdentificationType.Pasaporte => "PASAPORTE",
+        IdentificationType.Nif => "NIF",
+        IdentificationType.Nie => "NIE",
+        IdentificationType.TaxId => "TAX_ID",
         _ => throw new CustomersDomainException(
             "customers.customer.identification_type_invalid",
             "The identification type is not one of the supported values.")
@@ -56,7 +66,7 @@ public static class IdentificationTypeParser
 
         throw new CustomersDomainException(
             "customers.customer.identification_type_invalid",
-            "The identification type must be one of NIT, CC, CE or PASAPORTE.");
+            $"The identification type must be one of {string.Join(", ", SupportedWireValues)}.");
     }
 
     public static IReadOnlyCollection<string> SupportedWireValues => ByWireValue.Keys;

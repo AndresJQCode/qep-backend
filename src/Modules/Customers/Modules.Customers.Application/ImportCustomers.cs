@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
@@ -34,6 +35,12 @@ public sealed record ImportCustomersCommand(
 public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
 {
     private static readonly string[] SiNoValues = ["SI", "NO"];
+
+    /// <summary>
+    /// La importación es colombiana: ofrece y acepta sólo los códigos de <c>CO</c>, aunque Customers ya conozca
+    /// los siete. Un NIF o un NIE se da de alta a mano, donde se ve el país.
+    /// </summary>
+    public static IReadOnlyList<string> IdentificationTypes => DocumentTypesByCountry.AllowedFor("CO");
 
     public ExcelCustomerRowRules()
     {
@@ -74,7 +81,7 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
             .WithErrorCode("customers.import.row.identification_type_invalid")
             .WithMessage(
                 $"The identification type must be one of " +
-                $"{Join(IdentificationTypeParser.SupportedWireValues)}.")
+                $"{Join(IdentificationTypes)}.")
             .When(row => !string.IsNullOrWhiteSpace(row.IdentificationType));
 
         RuleFor(row => row.IdentificationNumber)
@@ -147,18 +154,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithMessage("The 'Excedente Iva' column must be 'Si', 'No' or empty.");
     }
 
-    private static bool IsSupportedIdentificationType(string? value)
-    {
-        try
-        {
-            IdentificationTypeParser.Parse(value);
-            return true;
-        }
-        catch (CustomersDomainException)
-        {
-            return false;
-        }
-    }
+    private static bool IsSupportedIdentificationType(string? value) =>
+        value is not null && IdentificationTypes.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase);
 
     private static bool BeSiOrNoOrEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) || SiNoValues.Contains(value.Trim().ToUpperInvariant());

@@ -36,6 +36,19 @@ public sealed class CustomerProvisioningTests
         new("Laura Pérez", "CC", "1020304050", "310 935 2187", email, "Calle 10 # 45-12", "CO", CityId, null, Classification.Id.Value);
 
     [Fact]
+    public async Task CreateCompleteCreatesASpanishCustomerWithANif()
+    {
+        var bed = NewBed();
+        var data = Buyer() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z", Country = "ES", CityId = null, CityName = "Madrid" };
+
+        await bed.Provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        Assert.Equal(IdentificationType.Nif, customer.IdentificationType);
+        Assert.Equal("ES", customer.Country);
+    }
+
+    [Fact]
     public async Task CreateCompleteIssuesCucAfterClassificationAndCity()
     {
         var bed = NewBed();

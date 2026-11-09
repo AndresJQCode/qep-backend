@@ -210,10 +210,10 @@ internal sealed class FakeCustomerRepository(params Customer[] customers) : ICus
     }
 
     public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<Customer>>([]);
 
-public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
 
 public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
     {
