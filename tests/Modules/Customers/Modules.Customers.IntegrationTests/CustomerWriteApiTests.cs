@@ -897,6 +897,83 @@ public sealed class CustomerWriteApiTests
         Assert.Null(customer.Department);
     }
 
+    [Fact]
+    public async Task ASpanishNifRoundTripsThroughPostGetAndPut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var body = NewForeignCustomerBody(classification.Id, identificationNumber: "12345678Z");
+
+        var created = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var customer = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        var read = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+        Assert.Equal("NIF", read?.IdentificationType);
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}", body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var saved = await updated.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("NIF", saved?.IdentificationType);
+    }
+
+    [Fact]
+    public async Task AColombianTypeForASpanishCustomerIsA422OnIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["IdentificationType"], await ValidationFieldsAsync(response));
+        Assert.Equal("validation.failed", await ProblemCodeAsync(response));
+    }
+
+    // Una fila guardada antes de la regla se sigue leyendo, y la regla sólo le exige corregirse al guardar.
+    [Fact]
+    public async Task ANonConformingStoredCustomerStillReadsAndIsFixedOnItsNextSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        await ForceIdentificationAsync(connectionString, customer.Id, "ES", "Madrid", "Cc");
+
+        var read = await client.GetAsync($"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var stored = await read.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("CC", stored?.IdentificationType);
+
+        var rejected = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Equal(["IdentificationType"], await ValidationFieldsAsync(rejected));
+
+        var fixedUp = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}", NewForeignCustomerBody(classification.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, fixedUp.StatusCode);
+    }
+
     /// <summary>
     /// El CUC es <c>{prefijo}{depto}{consecutivo}</c> y un cliente de afuera no tiene departamento
     /// DIVIPOLA. Van <c>00</c> en ese lugar y **no** se omiten: los ultimos ocho caracteres son la

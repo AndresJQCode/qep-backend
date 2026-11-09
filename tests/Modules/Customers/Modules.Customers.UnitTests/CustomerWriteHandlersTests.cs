@@ -285,7 +285,7 @@ public sealed class CustomerWriteHandlersTests
     public async Task AForeignCustomerOfAColombianTenantSavesWithoutPersonType()
     {
         var customers = new FakeCustomerRepository();
-        var command = CreateCommand() with { Country = "ES", CityId = null, CityName = "Madrid" };
+        var command = CreateCommand() with { IdentificationType = "NIF", Country = "ES", CityId = null, CityName = "Madrid" };
 
         await SaveIgnoringTheResponseAsync(() =>
             NewCreate(customers, new UnitOfWork(), OnSave()).HandleAsync(command, TestContext.Current.CancellationToken));

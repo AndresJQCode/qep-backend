@@ -15,8 +15,6 @@ namespace Modules.Quotations.IntegrationTests;
 /// </summary>
 public sealed class QuotationVariantLinesApiTests
 {
-    private static readonly string[] Sizes = ["M", "L"];
-
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
 
     // Dos tallas del mismo producto son dos líneas, cada una con su código, su nombre visible y su
@@ -214,77 +212,14 @@ public sealed class QuotationVariantLinesApiTests
     }
 
     // ---- Siembra por la API de Catalog ----
-
-    private sealed record Shirt(Guid ProductId, Guid M, Guid L, Guid OptionId, Guid ValueM, Guid ValueL);
-
-    private sealed record OptionValueDto(Guid Id, string Name);
-
-    private sealed record OptionDto(Guid Id, IReadOnlyList<OptionValueDto> Values);
-
-    private sealed record VariantDto(Guid Id, string Code, string Name);
-
-    private sealed record ProductDto(Guid Id, long Version, IReadOnlyList<VariantDto> Variants);
-
-    private static object[] NoDiscountScales() =>
-    [
-        new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 }
-    ];
+    // La camiseta en dos tallas (CreateShirtInTwoSizesAsync) vive en QuotationsApiHarness: la usa también
+    // ProductDeletionCleanupTests.
 
     private static object[] DozenScales(int multiple, bool allowGrouping) =>
     [
         new { fromUnit = 1, toUnit = 11, discount = 0m, restriction = "multiple", multiple = 1 },
         new { fromUnit = 12, toUnit = 999, discount = 10m, restriction = "multiple", multiple, allowGrouping }
     ];
-
-    private static object Pricing(decimal cop, object[] scales) => new
-    {
-        prices = new Dictionary<string, decimal> { ["COP"] = cop },
-        scales,
-        packagingUnits = Array.Empty<int>()
-    };
-
-    /// <summary>«Camiseta» con la opción «Talla» M y L: CAM-M a 30.000 y CAM-L a 32.000 COP, con las
-    /// mismas escalas salvo que <paramref name="scalesL"/> le dé a L las suyas.</summary>
-    private static async Task<Shirt> CreateShirtInTwoSizesAsync(
-        HttpClient client, Guid tenantId, object[]? scales = null, object[]? scalesL = null)
-    {
-        scales ??= NoDiscountScales();
-        scalesL ??= scales;
-        var optionResponse = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/options",
-            new { name = "Talla", values = Sizes },
-            TestContext.Current.CancellationToken);
-        Assert.True(optionResponse.IsSuccessStatusCode, await optionResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        var option = await optionResponse.Content.ReadFromJsonAsync<OptionDto>(TestContext.Current.CancellationToken);
-        Assert.NotNull(option);
-        var valueM = option.Values.Single(value => value.Name == "M").Id;
-        var valueL = option.Values.Single(value => value.Name == "L").Id;
-
-        var productResponse = await client.PostAsJsonAsync(
-            $"/api/v1/tenants/{tenantId}/catalog/products",
-            new
-            {
-                name = "Camiseta",
-                optionIds = new[] { option.Id },
-                variants = new object[]
-                {
-                    new { code = "CAM-M", optionValueIds = new[] { valueM }, pricing = Pricing(30_000m, scales) },
-                    new { code = "CAM-L", optionValueIds = new[] { valueL }, pricing = Pricing(32_000m, scalesL) },
-                }
-            },
-            TestContext.Current.CancellationToken);
-        Assert.True(productResponse.IsSuccessStatusCode, await productResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        var product = await productResponse.Content.ReadFromJsonAsync<ProductDto>(TestContext.Current.CancellationToken);
-        Assert.NotNull(product);
-
-        return new Shirt(
-            product.Id,
-            product.Variants.Single(variant => variant.Code == "CAM-M").Id,
-            product.Variants.Single(variant => variant.Code == "CAM-L").Id,
-            option.Id,
-            valueM,
-            valueL);
-    }
 
     /// <summary>Renombra el producto por el PUT de Catalog, con las mismas variantes, códigos y precios:
     /// lo único que cambia es el nombre, y con él el nombre visible de cada variante.</summary>

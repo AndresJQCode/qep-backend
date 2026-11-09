@@ -63,6 +63,59 @@ public sealed class SaveOrderEditsValidatorTests
         AssertFailsOn(result, "Billing.Party.IdentificationType");
     }
 
+    private static QuotationPartyRequest Party(string type, string? country, string? cityName = null) =>
+        new("Otra S.L.", "12345678Z", null, null, null, null, null, IdentificationType: type, Country: country, CityName: cityName);
+
+    [Theory]
+    [InlineData("NIF", "ES", "Madrid")]
+    [InlineData("NIE", "ES", "Madrid")]
+    [InlineData("TAX_ID", "US", "Miami")]
+    [InlineData("CC", null, null)]
+    public void AnAllowedBillingPairIsAccepted(string type, string? country, string? cityName)
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party(type, country, cityName))));
+
+        Assert.DoesNotContain(result.Errors, error => error.PropertyName == "Billing.Party.IdentificationType");
+    }
+
+    [Theory]
+    [InlineData("CC", "ES", "Madrid")]
+    [InlineData("NIF", null, null)]
+    [InlineData("TAX_ID", "CO", null)]
+    public void ABillingTypeItsCountryDoesNotAllowIsAFieldError(string type, string? country, string? cityName)
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party(type, country, cityName))));
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationType");
+        Assert.Equal("The identification type is not allowed for the country.", error.ErrorMessage);
+    }
+
+    [Fact]
+    public void AMalformedCountryLeavesTheTypeAlone()
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party("NIF", "ESP", "Madrid"))));
+
+        Assert.DoesNotContain(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationType");
+    }
+
+    [Fact]
+    public void AnUnknownTypeIsOnlyTheKnownCodeError()
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party("XX", "ES", "Madrid"))));
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationType");
+        Assert.DoesNotContain("not allowed for the country", error.ErrorMessage);
+    }
+
+    [Fact]
+    public void AnUnknownBillingTypeNamesTheNewCodes()
+    {
+        var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party("XX", null))));
+
+        var error = Assert.Single(result.Errors, e => e.PropertyName == "Billing.Party.IdentificationType");
+        Assert.Contains("NIF", error.ErrorMessage);
+    }
+
     [Fact]
     public void AnAbsentBillingIsValid() =>
         Assert.True(_save.Validate(Command(billing: null)).IsValid);

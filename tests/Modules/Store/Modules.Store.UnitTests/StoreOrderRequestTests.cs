@@ -65,6 +65,17 @@ public sealed class StoreOrderRequestTests
             CodeOf(() => _ = new StoreRequestBilling("Ana", "CC", "1", "300", "+57300", "a@b.co", "", Colombia())));
     }
 
+    private static StorePlace Spain() => new("ES", null, null, null, "Madrid");
+
+    [Fact]
+    public void ABillingDocumentMustBeAllowedForItsCountry()
+    {
+        Assert.Equal(
+            StoreErrorCodes.DocumentTypeNotAllowed,
+            CodeOf(() => _ = new StoreRequestBilling("Ana", "CC", "1", "612345678", "+34612345678", "a@b.es", "Calle Mayor 1", Spain())));
+        Assert.Equal("NIF", new StoreRequestBilling("Ana", " nif ", "1", "612345678", "+34612345678", "a@b.es", "Calle Mayor 1", Spain()).IdentificationType);
+    }
+
     [Fact]
     public void ABillingBlockIsTrimmed()
     {

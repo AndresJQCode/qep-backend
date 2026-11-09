@@ -30,6 +30,49 @@ public sealed class SubmitOrderRequestValidatorTests
     private static List<string> Errors(PublicOrderRequestBody body) =>
         new PublicOrderRequestBodyValidator().Validate(body).Errors.Select(error => error.PropertyName).ToList();
 
+    // Colombia keeps its ids; any other country writes its city.
+    private static PublicBillingInput Abroad(string type, string country) =>
+        country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase)
+            ? Billing() with { IdentificationType = type, Country = country }
+            : Billing() with { IdentificationType = type, Country = country, DepartmentId = null, CityId = null, CityName = "Madrid" };
+
+    [Theory]
+    [InlineData("NIF", "ES")]
+    [InlineData("NIE", "ES")]
+    [InlineData("TAX_ID", "US")]
+    [InlineData(" nif ", " es ")]
+    public void AnAllowedForeignPairIsValid(string type, string country) => Assert.Empty(Errors(Body(Abroad(type, country))));
+
+    [Fact]
+    public void AColombianCcIsValid() => Assert.Empty(Errors(Body()));
+
+    [Theory]
+    [InlineData("CC", "ES")]
+    [InlineData("NIT", "US")]
+    [InlineData("TAX_ID", "CO")]
+    public void ATypeTheBillingCountryDoesNotAllowFailsOnTheTypeOnly(string type, string country) =>
+        Assert.Equal(["Billing.IdentificationType"], Errors(Body(Abroad(type, country))));
+
+    [Fact]
+    public void ANifInColombiaFailsWithTheCountryMessage()
+    {
+        var result = new PublicOrderRequestBodyValidator().Validate(Body(Billing() with { IdentificationType = "NIF" }));
+        Assert.Equal("El tipo de documento no es válido para el país.", Assert.Single(result.Errors).ErrorMessage);
+    }
+
+    [Fact]
+    public void AMalformedCountryIsReportedOnTheCountryAlone()
+    {
+        var errors = Errors(Body(Abroad("NIF", "COL")));
+        Assert.Contains("Billing.Country", errors);
+        Assert.DoesNotContain("Billing.IdentificationType", errors);
+    }
+
+    [Fact]
+    public void AnUnknownTypeKeepsItsMessage() =>
+        Assert.Equal("El tipo de documento no es válido.",
+            Assert.Single(new PublicOrderRequestBodyValidator().Validate(Body(Billing() with { IdentificationType = "XX" })).Errors).ErrorMessage);
+
     [Fact]
     public void AFullBodyIsValid() => Assert.Empty(Errors(Body(shipping: Shipping())));
 
@@ -66,11 +109,11 @@ public sealed class SubmitOrderRequestValidatorTests
 
     [Fact]
     public void AForeignBlockNeedsACityName() =>
-        Assert.Contains("Billing.CityName", Errors(Body(Billing() with { Country = "ES", DepartmentId = null, CityId = null, CityName = null })));
+        Assert.Contains("Billing.CityName", Errors(Body(Billing() with { IdentificationType = "NIF", Country = "ES", DepartmentId = null, CityId = null, CityName = null })));
 
     [Fact]
     public void AForeignBlockWithACityNameIsValid() =>
-        Assert.Empty(Errors(Body(Billing() with { Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" })));
+        Assert.Empty(Errors(Body(Billing() with { IdentificationType = "NIF", Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" })));
 
     [Fact]
     public void AColombianBlockWithHalfTheIdsIsInvalid() =>
@@ -79,7 +122,7 @@ public sealed class SubmitOrderRequestValidatorTests
     [Fact]
     public void AForeignBlockWithIdsIsLeftToTheHandler() =>
         // Ids para otro país no son un error de forma: son city_invalid en el manejador.
-        Assert.Empty(Errors(Body(Billing() with { Country = "ES", CityName = null })));
+        Assert.Empty(Errors(Body(Billing() with { IdentificationType = "NIF", Country = "ES", CityName = null })));
 
     [Fact]
     public void ACountryThatIsNotTwoLettersIsInvalid() =>

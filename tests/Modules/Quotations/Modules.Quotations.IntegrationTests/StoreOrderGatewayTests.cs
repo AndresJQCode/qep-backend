@@ -196,6 +196,92 @@ public sealed class StoreOrderGatewayTests
     }
 
     [Fact]
+    public async Task AForeignTaxIdBillingPartyRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var billing = ForeignParty() with
+        {
+            Country = "US",
+            CityName = "Miami",
+            IdentificationType = "TAX_ID",
+            IdentificationNumber = "12-3456789",
+        };
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            TestContext.Current.CancellationToken));
+
+        var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        Assert.Equal(
+            (PartyIdentificationType.TaxId, "US", "12-3456789"),
+            (order.Billing!.IdentificationType, order.Billing.Country, order.Billing.IdentificationNumber));
+    }
+
+    [Fact]
+    public async Task AColombianTypeAbroadIsRejectedAndCreatesNoOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var billing = ForeignParty() with { IdentificationType = "CC", IdentificationNumber = "1020304050" };
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            TestContext.Current.CancellationToken)));
+
+        Assert.Equal("quotations.party.document_type_not_allowed", error.Code);
+        Assert.Equal(0, await OrderRowsAsync(database.GetConnectionString(), tenantId));
+    }
+
+    // Spec 2026-11-08: la regla corre al escribir, no al cargar. Una fila guardada antes de ella (acá, un CC con
+    // país ES puesto a mano en la base) se lee igual y sólo falla cuando alguien guarda la parte de nuevo.
+    [Fact]
+    public async Task ANonConformingStoredBillingPartyStillReadsAndOnlyFailsWhenSaved()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var billing = ForeignParty() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z" };
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            TestContext.Current.CancellationToken));
+        await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = new NpgsqlCommand(
+                "UPDATE quotations.order_parties SET identification_type = 'Cc' WHERE order_id = @order AND role = 'Billing'",
+                connection);
+            command.Parameters.AddWithValue("order", result.OrderId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        var detail = await client.GetAsync($"{OrdersUrl(tenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(PartyIdentificationType.Cc, order.Billing!.IdentificationType);
+        Assert.Equal(System.Net.HttpStatusCode.OK, detail.StatusCode);
+        var error = Assert.Throws<QuotationsDomainException>(() => order.Billing.Apply(order.Billing.ToDetails()));
+        Assert.Equal("quotations.party.document_type_not_allowed", error.Code);
+    }
+
+    [Fact]
     public async Task CreateIsIdempotentByRequest()
     {
         await using var database = await StartDatabaseAsync();

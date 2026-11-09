@@ -10,6 +10,7 @@ using Modules.Storage.Infrastructure.Imaging;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
+using Modules.Storage.Infrastructure.ProductImages;
 using Modules.Storage.Infrastructure.Scanning;
 
 namespace Modules.Storage.Infrastructure;
@@ -70,6 +71,9 @@ public static class StorageInfrastructureExtensions
         // después del movimiento.
         services.AddScoped<IPaymentProofDetachProcessor, PaymentProofDetachProcessor>();
         services.AddHostedService<PaymentProofMoveWorker>();
+        // Spec 2026-11-08: purga las fotos de producto que Catalog soltó (las quitó un PUT o las arrastró un borrado).
+        services.AddScoped<IProductImageReleaseProcessor, ProductImageReleaseProcessor>();
+        services.AddHostedService<ProductImageReleaseWorker>();
         // Spec 2026-09-16, D12: la reconciliación de payment-proofs/, en modo solo-registrar hasta
         // que alguien apague Storage:PaymentProofOrphanCleanup:DryRun.
         services.AddScoped<IPaymentProofOrphanCleanupProcessor, PaymentProofOrphanCleanupProcessor>();

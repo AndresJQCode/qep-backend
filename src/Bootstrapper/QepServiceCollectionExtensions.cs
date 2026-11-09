@@ -211,6 +211,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<UpdateProductCommand, ProductDto>,
             UpdateProductHandler>();
         services.AddScoped<
+            ICommandHandler<DeleteProductCommand, ProductDeletedResult>,
+            DeleteProductHandler>();
+        services.AddScoped<
             ICommandHandler<CopyPriceScalesCommand, IReadOnlyList<ProductDto>>,
             CopyPriceScalesHandler>();
         services.AddScoped<
@@ -790,6 +793,9 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
+        // Bootstrapper dentro de la transacción de Catalog; nadie más referencia Modules.Quotations.Application.
+        services.AddScoped<IQuotationVariantDeletion, QuotationVariantDeletion>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -1195,6 +1201,10 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Borrado de producto (spec 2026-11-08): congelar y quitar las líneas de Quotations y las de las solicitudes
+        // nuevas de la tienda, que Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que
+        // todo comparta la transacción del DELETE.
+        services.AddScoped<IProductDeletionCleanup, CatalogProductDeletionCleanup>();
         // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.

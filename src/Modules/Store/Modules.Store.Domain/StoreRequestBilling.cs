@@ -1,16 +1,16 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Store.Domain;
 
 /// <summary>El bloque de facturación del pedido, completo y congelado tal como lo escribió el visitante.</summary>
 public sealed record StoreRequestBilling
 {
-    // Los mismos cuatro tipos del cliente (IdentificationType) y de las partes del pedido.
+    // La tienda, el cliente y la parte del pedido comparten los siete códigos y la misma tabla por país (DocumentTypesByCountry).
     public const int NameMaxLength = 150;
 
     public const int IdentificationNumberMaxLength = 32;
 
     public const int EmailMaxLength = 254;
-
-    private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
 
     // EF Core materializa por acá: no puede enlazar el lugar (otro tipo mapeado) a un parámetro del constructor validador, y los datos
     // que lee ya pasaron por él al guardarse.
@@ -36,10 +36,17 @@ public sealed record StoreRequestBilling
         string address,
         StorePlace place)
     {
+        ArgumentNullException.ThrowIfNull(place);
+
         var type = StoreText.Required(identificationType, 16, "El tipo de documento").ToUpperInvariant();
-        if (!IdentificationTypes.Contains(type, StringComparer.Ordinal))
+        if (!DocumentTypesByCountry.IsKnown(type))
         {
             throw new StoreDomainException(StoreErrorCodes.ValidationFailed, "El tipo de documento no es válido.");
+        }
+
+        if (!DocumentTypesByCountry.IsAllowed(type, place.Country))
+        {
+            throw new StoreDomainException(StoreErrorCodes.DocumentTypeNotAllowed, "El tipo de documento no es válido para el país.");
         }
 
         Name = StoreText.Required(name, NameMaxLength, "El nombre");
@@ -49,7 +56,7 @@ public sealed record StoreRequestBilling
         PhoneE164 = StoreText.Required(phoneE164, 20, "El teléfono normalizado");
         Email = StoreText.Required(email, EmailMaxLength, "El correo");
         Address = StoreText.Required(address, 200, "La dirección");
-        Place = place ?? throw new ArgumentNullException(nameof(place));
+        Place = place;
     }
 
     public string Name { get; }

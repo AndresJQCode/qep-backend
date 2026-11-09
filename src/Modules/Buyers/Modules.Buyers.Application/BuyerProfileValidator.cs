@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 
 namespace Modules.Buyers.Application;
@@ -11,7 +12,7 @@ namespace Modules.Buyers.Application;
 /// </summary>
 public sealed class BuyerProfileValidator : AbstractValidator<BuyerProfileDto>
 {
-    // Copiados de StoreRequestBilling, StoreRequestShipping, StorePlace y PublicOrderRequestBodyValidator.
+    // Copiados de StoreRequestBilling, StoreRequestShipping, StorePlace y PublicOrderRequestBodyValidator. Los tipos de documento por país salen del catálogo compartido (DocumentTypesByCountry), no de una copia.
     public const int NameMaxLength = 150;
     public const int IdentificationNumberMaxLength = 32;
     public const int EmailMaxLength = 254;
@@ -21,8 +22,6 @@ public sealed class BuyerProfileValidator : AbstractValidator<BuyerProfileDto>
     public const int AddressMaxLength = 200;
 
     private const string Colombia = "CO";
-
-    private static readonly string[] IdentificationTypes = ["NIT", "CC", "CE", "PASAPORTE"];
 
     public BuyerProfileValidator()
     {
@@ -58,8 +57,13 @@ public sealed class BuyerProfileValidator : AbstractValidator<BuyerProfileDto>
             RuleFor(b => b.Name).NotEmpty().MaximumLength(NameMaxLength);
             RuleFor(b => b.IdentificationType)
                 .NotEmpty()
-                .Must(type => type is null || IdentificationTypes.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase))
+                .Must(type => type is null || DocumentTypesByCountry.IsKnown(type))
                 .WithMessage("El tipo de documento no es válido.");
+            // Cadena aparte para no callar la regla del código conocido; sólo corre con país de forma válida.
+            RuleFor(b => b.IdentificationType)
+                .Must((b, type) => DocumentTypesByCountry.IsAllowed(type, b.Country!))
+                .WithMessage("El tipo de documento no es válido para el país.")
+                .When(b => DocumentTypesByCountry.IsKnown(b.IdentificationType) && !string.IsNullOrWhiteSpace(b.Country) && CountryShape(b.Country));
             RuleFor(b => b.IdentificationNumber).NotEmpty().MaximumLength(IdentificationNumberMaxLength);
             RuleFor(b => b.Phone).NotEmpty().MaximumLength(PhoneMaxLength);
             RuleFor(b => b.Email).NotEmpty().MaximumLength(EmailMaxLength).EmailAddress();

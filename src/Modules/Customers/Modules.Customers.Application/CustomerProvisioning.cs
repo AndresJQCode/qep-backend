@@ -123,9 +123,11 @@ public interface ICustomerProvisioning
 
     /// <summary>
     /// Tienda pública, «Tomar»: completa al cliente incompleto que la persona eligió, <b>llenando sólo lo que está en blanco</b>.
-    /// Gana lo que el cliente ya tiene: nombre, documento (tipo y número como par), teléfono, correo, dirección y país. La ciudad
-    /// sigue al país ya mezclado: con país propio sólo se usa la de <paramref name="data"/> si es el mismo país; si no, queda la
-    /// que tiene y, de estar vacía, las reglas fallan con <c>validation.failed</c>. Después, los mismos pasos que
+    /// Gana lo que el cliente ya tiene: nombre, teléfono, correo y dirección. El documento (tipo y número como par) y el país viajan
+    /// juntos: los del cliente si tiene documento; si no, los de <paramref name="data"/>, aunque el cliente tuviera otro país. Cuando
+    /// así se le cambia el país, la dirección es la de <paramref name="data"/> y el teléfono queda en su E.164, calculado con el país
+    /// viejo. La ciudad sigue al país ya mezclado: con país propio sólo se usa la de <paramref name="data"/> si es el mismo país; si
+    /// no, queda la que tiene y, de estar vacía, las reglas fallan con <c>validation.failed</c>. Después, los mismos pasos que
     /// <see cref="CompleteExternalSaleAsync"/>: reglas del <c>POST</c>, clasificación y ciudad antes del CUC, <c>Customer.Complete</c>
     /// y auditoría <see cref="CustomerAuditActions.Completed"/> con <paramref name="actorUserId"/>. Uno que ya es completo vuelve
     /// sin tocarse (la versión no sube).
@@ -372,12 +374,22 @@ public sealed class CustomerProvisioning(
     }
 
     // «Gana lo que ya tiene»: cada campo en blanco se llena con el de la tienda, y nada que tenga valor se pisa. El documento es un
-    // par (tipo + número): o lo trae completo el cliente o lo trae completo la tienda, nunca uno de cada lado. La ciudad sigue al país
-    // mezclado: la del carril de ese país, la que ya tiene o, si no tiene y es el mismo país, la de la tienda.
+    // par (tipo + número) y viaja con su país: o los trae el cliente (si tiene documento) o los trae la tienda, nunca uno de cada lado,
+    // porque el tipo sólo vale para su país. Si así cambia el país que tenía el cliente, la dirección es la de la tienda (una calle no
+    // queda bajo otro país) y el teléfono va en su E.164, que se calculó con el país viejo: Complete lo vuelve a normalizar con el
+    // nuevo y un número nacional dejaría de encontrarse. La ciudad sigue al país mezclado: la del carril de ese país, la que ya tiene
+    // o, si no tiene y es el mismo país, la de la tienda.
     private static CreateCustomerCommand MergeForStore(Guid tenantId, Customer customer, CompleteCustomerData data)
     {
         var hasDocument = customer.IdentificationType is not null && !string.IsNullOrWhiteSpace(customer.IdentificationNumber);
-        var country = Keep(customer.Country, data.Country) ?? data.Country;
+        var country = hasDocument ? Keep(customer.Country, data.Country) ?? data.Country : data.Country;
+        var countryReplaced = !hasDocument &&
+                              !string.IsNullOrWhiteSpace(customer.Country) &&
+                              !string.Equals(customer.Country.Trim(), data.Country.Trim(), StringComparison.OrdinalIgnoreCase);
+        var phone = countryReplaced && !string.IsNullOrWhiteSpace(customer.Phone) && customer.PhoneE164 is not null
+            ? customer.PhoneE164
+            : Keep(customer.Phone, data.Phone);
+        var address = countryReplaced ? data.Address : Keep(customer.Address, data.Address);
         var sameCountry = string.Equals(country.Trim(), data.Country.Trim(), StringComparison.OrdinalIgnoreCase);
         var colombian = string.Equals(country.Trim(), Customer.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
         var cityId = colombian ? customer.CityId ?? (sameCountry ? data.CityId : null) : null;
@@ -391,9 +403,9 @@ public sealed class CustomerProvisioning(
             BusinessName: null,
             hasDocument ? customer.IdentificationType!.Value.ToWireValue() : data.IdentificationType,
             hasDocument ? customer.IdentificationNumber! : data.IdentificationNumber,
-            Keep(customer.Phone, data.Phone),
+            phone,
             Keep(customer.Email, data.Email),
-            Keep(customer.Address, data.Address),
+            address,
             country,
             cityId,
             cityName,

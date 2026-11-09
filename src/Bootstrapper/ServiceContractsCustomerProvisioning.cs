@@ -1,7 +1,8 @@
-using Modules.ServiceContracts.Application;
+using BuildingBlocks.Domain.Identification;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper;
 
@@ -67,8 +68,8 @@ internal sealed class ServiceContractsCustomerProvisioning(
     }
 }
 
-/// <summary>Los tipos de documento de Customers, para las reglas y la plantilla de la importación de ServiceContracts.</summary>
+/// <summary>Los tipos de documento de la importación de ServiceContracts: la importación es colombiana, así que son los de <c>CO</c>, no los siete de Customers.</summary>
 internal sealed class ServiceContractsIdentificationTypes : IServiceContractsIdentificationTypes
 {
-    public IReadOnlyCollection<string> SupportedWireValues => IdentificationTypeParser.SupportedWireValues;
+    public IReadOnlyCollection<string> SupportedWireValues => DocumentTypesByCountry.AllowedFor("CO");
 }

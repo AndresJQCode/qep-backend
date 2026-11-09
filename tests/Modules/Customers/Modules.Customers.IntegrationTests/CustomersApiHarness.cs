@@ -369,7 +369,7 @@ internal static class CustomersApiHarness
         string country = "ES",
         string? cityName = "Madrid",
         string name = "Verde Esencial S.L.",
-        string identificationType = "NIT",
+        string identificationType = "NIF",
         string identificationNumber = "B-12345678",
         string address = "Calle Gran Via 28",
         string phone = "+34 910 000 000",
@@ -412,6 +412,26 @@ internal static class CustomersApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         return customer;
+    }
+
+    /// <summary>Deja un cliente guardado con un país y un tipo de documento que la regla de hoy no admitiría (filas anteriores a
+    /// la regla), saltándose la API que ya no las deja crear.</summary>
+    public static async Task ForceIdentificationAsync(
+        string connectionString, Guid customerId, string country, string? cityName, string identificationType)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE customers.customers
+            SET country = @country, city_id = NULL, city_name = @cityName, identification_type = @type
+            WHERE id = @id
+            """;
+        command.Parameters.AddWithValue("country", country);
+        command.Parameters.AddWithValue("cityName", (object?)cityName ?? DBNull.Value);
+        command.Parameters.AddWithValue("type", identificationType);
+        command.Parameters.AddWithValue("id", customerId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
     }
 
     /// <summary>Deja una fila como la deja la fusion: apunta al que queda, con la fecha, inactiva y con la version subida.
@@ -491,6 +511,14 @@ internal static class CustomersApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         return customer;
+    }
+
+    /// <summary>El <c>code</c> del problem+json de una respuesta de error.</summary>
+    public static async Task<string?> ProblemCodeAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.TryGetProperty("code", out var code) ? code.GetString() : null;
     }
 
     /// <summary>

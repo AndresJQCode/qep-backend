@@ -66,7 +66,9 @@ public sealed class Customer
         IPhoneNumberNormalizer? phoneNormalizer)
     {
         // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
-        EnsurePersonTypeMatches(personType, identification.Type, contact.Normalized().Country);
+        var country = contact.Normalized().Country;
+        EnsureDocumentAllowedForCountry(identification.Type, country);
+        EnsurePersonTypeMatches(personType, identification.Type, country);
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -397,6 +399,7 @@ public sealed class Customer
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
         var normalizedName = NormalizeName(name);
         var normalizedIdentification = identification.Normalized();
+        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, ColombiaCountryCode);
         var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
         if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
         {
@@ -457,6 +460,7 @@ public sealed class Customer
         var normalizedIdentification = identification.Normalized();
         var normalizedContact = contact.Normalized();
         var location = EnsureValidLocation(normalizedContact);
+        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, normalizedContact.Country);
         EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
         _ = EnsureValidClassificationId(commercial.ClassificationId);
 
@@ -885,6 +889,7 @@ public sealed class Customer
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
+        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, normalizedContact.Country);
         EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
@@ -1227,6 +1232,28 @@ public sealed class Customer
                 "customers.customer.city_name_required",
                 "The customer city is required for a customer outside Colombia.")
             : (country, null, normalized.CityName);
+    }
+
+    /// <summary>
+    /// El tipo de documento tiene que estar en la lista del país del cliente
+    /// (<see cref="IdentificationTypeParser.IsAllowedFor"/>). Va **antes** de
+    /// <see cref="EnsurePersonTypeMatches"/>: una jurídica colombiana con NIF es un problema de país
+    /// antes que un problema de NIT. Sólo en escrituras: nunca en el constructor de EF, para que un
+    /// cliente guardado con un par que ya no cumple se siga leyendo. Marca <c>IdentificationType</c>,
+    /// el campo que la persona corrige en el formulario.
+    /// </summary>
+    private static void EnsureDocumentAllowedForCountry(IdentificationType type, string country)
+    {
+        if (type.IsAllowedFor(country))
+        {
+            return;
+        }
+
+        const string message = "The identification type is not allowed for the country.";
+        throw new CustomersDomainException(
+            CustomersErrorCodes.DocumentTypeNotAllowed,
+            message,
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["IdentificationType"] = [message] });
     }
 
     /// <summary>

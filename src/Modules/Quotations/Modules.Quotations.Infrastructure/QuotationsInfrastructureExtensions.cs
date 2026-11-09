@@ -33,6 +33,8 @@ public static class QuotationsInfrastructureExtensions
 
         services.AddScoped<IQuotationRepository, QuotationRepository>();
         services.AddScoped<IQuotationsUnitOfWork, QuotationsUnitOfWork>();
+        // Spec 2026-11-08: el SQL del borrado de producto sobre las líneas de cotizaciones y pedidos.
+        services.AddScoped<IDeletedVariantLineStore, DeletedVariantLineStore>();
         // Escribe fuera de la transaccion del request, con un DbContext propio que arma con
         // los DbContextOptions que registro AddDbContext. Ver IQuotationSendFailureLog.
         services.AddScoped<IQuotationSendFailureLog, QuotationSendFailureLog>();

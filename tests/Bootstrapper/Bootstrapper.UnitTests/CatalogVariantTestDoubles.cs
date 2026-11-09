@@ -111,6 +111,8 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
 
     public void Add(Product product) => throw new NotSupportedException();
 
+    public void Remove(Product product) => throw new NotSupportedException();
+
     public void AddPriceChanges(IReadOnlyList<ProductPriceChange> changes) => throw new NotSupportedException();
 
     public Task<bool> AnyWithTaxRateAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>

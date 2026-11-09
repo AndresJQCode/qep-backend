@@ -209,6 +209,13 @@ public interface IProductRepository
     void Add(Product product);
 
     /// <summary>
+    /// Marca el producto para borrar, con lo que cuelga de él (variantes, precios, escalas, opciones, galería e histórico
+    /// de precios, todo en cascada). **No guarda**, como <see cref="Add"/>: el borrado sale en el
+    /// <c>SaveChangesAsync</c> de <see cref="ICatalogUnitOfWork"/>, dentro de la transacción del <c>DELETE</c>.
+    /// </summary>
+    void Remove(Product product);
+
+    /// <summary>
     /// Suma las filas del histórico de precios al cambio en curso. **No guarda**: como
     /// <see cref="Add"/>, deja la escritura para el <c>SaveChangesAsync</c> de
     /// <see cref="ICatalogUnitOfWork"/>, que es lo que las mantiene en la misma transacción que

@@ -115,10 +115,17 @@ public sealed class PublicOrderBuyerAccountApiTests
         }
     }
 
-    private static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null)
+    private static async Task<Rig> OpenRigAsync(Action<IServiceCollection>? configure = null, string[]? salesCountries = null)
     {
         var fixture = await OpenAsync(
-            (_, body) => body["name"] = StoreName,
+            (_, body) =>
+            {
+                body["name"] = StoreName;
+                if (salesCountries is not null)
+                {
+                    body["salesCountries"] = salesCountries;
+                }
+            },
             configureServices: services =>
             {
                 services.RemoveAll<ICaptchaVerifier>();
@@ -318,6 +325,19 @@ public sealed class PublicOrderBuyerAccountApiTests
     }
 
     [Fact]
+    public async Task CreateAccountStoresASpanishNieProfile()
+    {
+        await using var rig = await OpenRigAsync(salesCountries: ["CO", "ES"]);
+
+        await CreatedAsync(await SubmitAsync(rig, WithSpanishNie(rig, WithAccount(rig)), visitorIp: "203.0.113.42"));
+        await rig.DrainBuyerSignupsAsync();
+
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM buyers.accounts WHERE email = 'ana@test.co' AND email_verified_at IS NULL"));
+        Assert.Equal("NIE", await rig.ScalarTextAsync("SELECT data->'billing'->>'identificationType' FROM buyers.profiles"));
+        Assert.Equal("ES", await rig.ScalarTextAsync("SELECT data->'billing'->>'country' FROM buyers.profiles"));
+    }
+
+    [Fact]
     public async Task TheReceiptIsTheSameWhetherTheEmailHasAnAccountOrNot()
     {
         await using var rig = await OpenRigAsync();
@@ -437,6 +457,20 @@ public sealed class PublicOrderBuyerAccountApiTests
         return json;
     }
 
+    /// <summary>Cambia la facturación del cuerpo a España con NIE; el envío (si hay) sigue en Colombia.</summary>
+    private static Dictionary<string, object?> WithSpanishNie(Rig rig, Dictionary<string, object?> body)
+    {
+        var billing = (Dictionary<string, object?>)body["billing"]!;
+        billing["identificationType"] = "NIE";
+        billing["identificationNumber"] = "X1234567L";
+        billing["country"] = "ES";
+        billing["phone"] = "612345678";
+        billing["departmentId"] = null;
+        billing["cityId"] = null;
+        billing["cityName"] = "Madrid";
+        return body;
+    }
+
     private static Dictionary<string, object?> UpdatingProfile(Rig rig) => Body(rig, body =>
     {
         var billing = Billing(rig, email: "facturas@empresa.co");
@@ -476,6 +510,21 @@ public sealed class PublicOrderBuyerAccountApiTests
         Assert.Equal("Luis Gómez", (string)profile["shipping"]!["recipientName"]!);
         Assert.False((bool)profile["shippingSameAsBilling"]!);
         Assert.Empty(await rig.SignupPayloadsAsync());
+    }
+
+    [Fact]
+    public async Task UpdateProfileReplacesItWithASpanishNie()
+    {
+        await using var rig = await OpenRigAsync(salesCountries: ["CO", "ES"]);
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        var session = await LoginAsync(rig);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, WithSpanishNie(rig, UpdatingProfile(rig)), session: session));
+
+        Assert.False((bool)receipt["buyerSessionRejected"]!);
+        var profile = (await BuyerAsync(rig, session))["profile"]!;
+        Assert.Equal("NIE", (string)profile["billing"]!["identificationType"]!);
+        Assert.Equal("ES", (string)profile["billing"]!["country"]!);
     }
 
     [Fact]

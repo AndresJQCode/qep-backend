@@ -57,8 +57,16 @@ public sealed class CustomerMergePlan
         _instagramFrom = survivor.InstagramUserId is null ? merged.FirstOrDefault(c => c.InstagramUserId is not null) : null;
         if (!survivor.IsComplete)
         {
-            _identificationFrom = survivor.Identification is null ? merged.FirstOrDefault(c => c.Identification is not null) : null;
-            _countryFrom = survivor.Country is null ? merged.FirstOrDefault(c => c.Country is not null) : null;
+            // Un documento nunca cae bajo un país que no lo permite: el que queda sólo toma el documento de un fusionado
+            // cuyo tipo vale para el país del que queda o, si no tiene, para el del propio fusionado. Sin ningún país no
+            // hay contra qué validar y se salta (ninguna fábrica pública produce ese caso).
+            _identificationFrom = survivor.Identification is null
+                ? merged.FirstOrDefault(c => c.Identification is { } id && (survivor.Country ?? c.Country) is { } country && id.Type.IsAllowedFor(country))
+                : null;
+            // El país viaja con el documento: si el que queda no tiene país, toma el del fusionado del documento.
+            _countryFrom = survivor.Country is null
+                ? _identificationFrom ?? merged.FirstOrDefault(c => c.Country is not null)
+                : null;
             _addressFrom = survivor.Address is null ? merged.FirstOrDefault(c => c.Address is not null) : null;
         }
 

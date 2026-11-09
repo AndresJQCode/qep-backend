@@ -121,6 +121,7 @@ public sealed class CustomerTests
         string? cityName = "Madrid") =>
         Create(
             cuc: cuc,
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
             contact: ForeignContact(country, cityName),
             seedAddressBook: false);
 
@@ -539,6 +540,7 @@ public sealed class CustomerTests
     public void AForeignCustomerDropsAStrayCityId()
     {
         var customer = Create(
+            identification: Identification(IdentificationType.Pasaporte, "X1234567"),
             contact: ForeignContact() with { CityId = CityId },
             seedAddressBook: false);
 
@@ -584,7 +586,7 @@ public sealed class CustomerTests
         customer.Update(
             "Verde Esencial",
             businessName: null,
-            Identification(),
+            Identification(IdentificationType.Pasaporte, "X1234567"),
             null,
             ForeignContact(),
             Commercial(),

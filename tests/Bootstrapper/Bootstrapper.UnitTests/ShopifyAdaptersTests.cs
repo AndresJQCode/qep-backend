@@ -555,6 +555,21 @@ public sealed class ShopifyAdaptersTests
     }
 
     [Fact]
+    public async Task CustomerDirectoryTreatsADocumentNotAllowedForTheCountryAsNotCompletable()
+    {
+        var provisioning = new FakeCustomerProvisioning
+        {
+            OnComplete = () => throw new CustomersDomainException("customers.customer.document_type_not_allowed", "No.")
+        };
+        var directory = new ShopifyCustomerDirectory(new FakeCustomerRepository(), new FakeCustomerMergeStore(), provisioning, new PassThroughPhones());
+
+        var error = await Assert.ThrowsAsync<ShopifyCustomerNotCompletableException>(
+            () => directory.CreateCompleteAsync(TenantId, CompleteCustomer(), Ct));
+
+        Assert.Equal("customers.customer.document_type_not_allowed", error.Reason);
+    }
+
+    [Fact]
     public async Task CustomerDirectoryCreateCompleteThatCannotCompleteThrowsItsOwnException()
     {
         var provisioning = new FakeCustomerProvisioning

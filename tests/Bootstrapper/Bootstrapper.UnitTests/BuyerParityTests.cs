@@ -1,4 +1,4 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using Modules.Buyers.Api;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
@@ -121,9 +121,14 @@ public sealed class BuyerParityTests
     public static TheoryData<string, BuyerBillingDto, bool> BillingCases => new()
     {
         { "valid CO", Co(), true },
-        { "valid ES with city name", Co() with { Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" }, true },
+        { "valid ES with city name", Co() with { IdentificationType = "PASAPORTE", Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" }, true },
+        { "valid ES with NIF", Co() with { IdentificationType = "NIF", Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" }, true },
+        { "valid US with TAX_ID", Co() with { IdentificationType = "TAX_ID", Country = "US", DepartmentId = null, CityId = null, CityName = "Miami" }, true },
+        { "ES with CC", Co() with { Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" }, false },
+        { "CO with NIF", Co() with { IdentificationType = "NIF" }, false },
+        { "lowercase nif with es", Co() with { IdentificationType = " nif ", Country = "es", DepartmentId = null, CityId = null, CityName = "Madrid" }, true },
         { "lowercase codes", Co() with { IdentificationType = " cc ", Country = "co" }, true },
-        { "no city", Co() with { Country = "ES", DepartmentId = null, CityId = null, CityName = null }, false },
+        { "no city", Co() with { IdentificationType = "PASAPORTE", Country = "ES", DepartmentId = null, CityId = null, CityName = null }, false },
         { "type XX", Co() with { IdentificationType = "XX" }, false },
         { "CO without department", Co() with { DepartmentId = null }, false },
         { "name of 201", Co() with { Name = new string('a', 201) }, false },

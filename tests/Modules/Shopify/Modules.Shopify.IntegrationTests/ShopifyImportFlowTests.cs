@@ -70,6 +70,37 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal("""{"code": "customer_incomplete", "detail": null}""", await flow.MirrorAsync(5550000000011, "warnings -> 0"));
     }
 
+    // §6.4.5: el documento del pedido es colombiano (CC) pero la dirección de envío está en otro país. El tipo no está
+    // permitido para ese país, así que el cliente no alcanza para completo: queda incompleto y el pedido se importa.
+    [Fact]
+    public async Task ImportWithAColombianDocumentShippingAbroadCreatesAnIncompleteCustomer()
+    {
+        await using var flow = await Flow.StartAsync();
+
+        await flow.DeliverAsync("orders/create", "wh-1", Fixture("taxes-included", order =>
+        {
+            var address = order["shipping_address"]!;
+            address["country_code"] = "US";
+            address["country"] = "United States";
+            address["city"] = "Miami";
+            address["province"] = null;
+            address["province_code"] = null;
+        }));
+
+        Assert.Equal("Imported", await flow.MirrorAsync(5550000000001, "import_state"));
+        Assert.Equal(
+            "Incomplete",
+            await flow.ScalarAsync(
+                """
+                SELECT c.completeness
+                FROM shopify.orders m JOIN customers.customers c ON c.id = m.qep_customer_id AND c.tenant_id = m.tenant_id
+                WHERE m.shopify_order_id = 5550000000001
+                """));
+        Assert.Contains(
+            "customer_incomplete",
+            await flow.MirrorAsync(5550000000001, "SELECT string_agg(w ->> 'code', ',') FROM jsonb_array_elements(warnings) w"));
+    }
+
     // §6.2.1 paso 2: el comprador de un segundo pedido es el mismo cliente si lo delata el id de cliente de Shopify ya visto en el
     // espejo, el teléfono o el correo, cada uno sin los anteriores. Ninguno de los tres pedidos trae documento.
     [Fact]

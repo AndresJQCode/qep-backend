@@ -10,6 +10,7 @@ public static class BuyerErrorCodes
     public const string PasswordIncorrect = "store.buyer.password_incorrect";
     public const string ConsentRequired = "store.buyer.consent_required";
     public const string CaptchaInvalid = "store.buyer.captcha_invalid";
+    public const string DocumentTypeNotAllowed = "store.buyer.document_type_not_allowed";
 
     /// <summary>Interno: nunca llega al cliente, para no revelar qué correos existen.</summary>
     public const string EmailTaken = "store.buyer.email_taken";

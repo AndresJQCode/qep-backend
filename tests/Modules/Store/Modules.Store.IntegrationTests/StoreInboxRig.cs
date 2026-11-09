@@ -54,6 +54,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         MutableTenantClock clock,
         HttpClient inbox,
         Guid callerMembershipId,
+        Guid otherVariant,
         (Guid Variant, Guid Department, string DepartmentName, Guid City, string CityName) place)
     {
         Fixture = fixture;
@@ -61,6 +62,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         Clock = clock;
         Inbox = inbox;
         CallerMembershipId = callerMembershipId;
+        OtherVariant = otherVariant;
         Variant = place.Variant;
         Department = place.Department;
         DepartmentName = place.DepartmentName;
@@ -80,6 +82,9 @@ internal sealed class StoreInboxRig : IAsyncDisposable
     public Guid CallerMembershipId { get; }
 
     public Guid Variant { get; }
+
+    /// <summary>Una segunda variante, de otro producto, para las solicitudes de más de una línea.</summary>
+    public Guid OtherVariant { get; }
 
     public Guid Department { get; }
 
@@ -110,6 +115,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
                 services.AddSingleton<ITenantClock>(clock);
             });
         var (_, variant) = await fixture.CreateProductAsync("Camiseta", "CAM-S", Prices(10_000m, eurPrice ? 4m : null));
+        var (_, otherVariant) = await fixture.CreateProductAsync("Gorra", "GOR-U", Prices(6_000m, eurPrice ? 2m : null));
 
         var departments = await fixture.GetJsonAsync("/geography/departments");
         foreach (var department in departments["items"]!.AsArray())
@@ -124,7 +130,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             var membership = await SeedCallerMembershipAsync(fixture.Settings.Factory, "Quien atiende");
             var inbox = CreateClient(fixture.Settings.Factory, SubjectId, StoreApiHarness.TenantId, Permissions);
             return new StoreInboxRig(
-                fixture, captcha, clock, inbox, membership,
+                fixture, captcha, clock, inbox, membership, otherVariant,
                 (variant, departmentId, (string)department["name"]!, (Guid)first["id"]!, (string)first["name"]!));
         }
 
@@ -170,13 +176,15 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         return shipping;
     }
 
-    /// <summary>Envía una solicitud por la ruta pública y devuelve su id. Falla la prueba si el envío no es 201.</summary>
+    /// <summary>Envía una solicitud por la ruta pública y devuelve su id. Falla la prueba si el envío no es 201. Sin
+    /// <paramref name="lines"/> lleva una sola línea: <see cref="Variant"/> por <paramref name="quantity"/>.</summary>
     public async Task<Guid> SubmitAsync(
         Action<Dictionary<string, object?>>? billing = null,
         Action<Dictionary<string, object?>>? shipping = null,
         string currency = "COP",
         string? note = "Entregar en portería",
-        int quantity = 2)
+        int quantity = 2,
+        IReadOnlyList<(Guid VariantId, int Quantity)>? lines = null)
     {
         var body = new Dictionary<string, object?>
         {
@@ -187,7 +195,9 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             ["shipping"] = shipping is null ? null : ShippingBlock(shipping),
             ["note"] = note,
             ["acceptsDataPolicy"] = true,
-            ["lines"] = new[] { new { variantId = Variant, quantity } },
+            ["lines"] = (lines ?? [(Variant, quantity)])
+                .Select(line => new { variantId = line.VariantId, quantity = line.Quantity })
+                .ToArray(),
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, Url("/order-requests")) { Content = JsonContent.Create(body) };
         request.Headers.Add("X-Qep-Visitor-Ip", $"203.0.113.{(Interlocked.Increment(ref _ipCounter) % 250) + 1}");
@@ -258,7 +268,10 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string email = "cliente@test.co",
         string address = "Avenida 5 # 6-7",
         bool withRetention = false,
-        bool vatSurplus = false)
+        bool vatSurplus = false,
+        string identificationType = "CC",
+        string country = "CO",
+        string? cityName = null)
     {
         var response = await Inbox.PostAsJsonAsync(
             $"/api/v1/tenants/{StoreApiHarness.TenantId}/customers",
@@ -266,14 +279,14 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             {
                 name,
                 businessName = (string?)null,
-                identificationType = "CC",
+                identificationType,
                 identificationNumber = documentNumber,
                 phone,
                 email,
                 address,
-                country = "CO",
-                cityId = City,
-                cityName = (string?)null,
+                country,
+                cityId = country == "CO" ? City : (Guid?)null,
+                cityName,
                 classificationId = (Guid?)null,
                 withRetention,
                 vatSurplus,
@@ -291,14 +304,15 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string? phoneE164 = null,
         string? documentNumber = null,
         string? email = null,
-        string? address = null)
+        string? address = null,
+        string? country = null)
     {
         var id = Guid.CreateVersion7();
         await ExecuteAsync(
             """
             INSERT INTO customers.customers (id, tenant_id, name, is_active, phone, phone_e164, email, address, identification_type, identification_number,
-                                             completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, 'Incomplete', @wa, false, false, 1, now(), now())
+                                             country, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, @country, 'Incomplete', @wa, false, false, 1, now(), now())
             """,
             ("id", id),
             ("tenant", StoreSettingsFixture.Tenant),
@@ -309,6 +323,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             ("address", address),
             ("idType", documentNumber is null ? null : "Cc"),
             ("idNumber", documentNumber),
+            ("country", country),
             ("wa", $"CO.{id:N}"));
         return id;
     }
@@ -410,6 +425,18 @@ internal sealed class StoreInboxRig : IAsyncDisposable
 
     public Task DeactivateVariantAsync() =>
         ExecuteAsync("UPDATE catalog.product_variants SET is_active = false WHERE id = @variant", ("variant", Variant));
+
+    public async Task<string?> TextAsync(string sql, params (string Name, object? Value)[] parameters)
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
 
     public async Task<long> CountAsync(string table)
     {
