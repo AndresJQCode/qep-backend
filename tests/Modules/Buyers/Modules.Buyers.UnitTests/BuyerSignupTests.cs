@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
 
@@ -13,6 +14,10 @@ public sealed class BuyerSignupTests
         new BuyerBillingDto(name, "CC", "1020304050", "3001234567", Email, "Cra 1 # 2-3", "CO", Guid.NewGuid(), Guid.NewGuid(), null),
         null,
         true);
+
+    // Mantiene el tipo CC, que España no admite.
+    private static BuyerProfileDto Spanish(BuyerProfileDto p) =>
+        p with { Billing = p.Billing with { Country = "ES", DepartmentId = null, CityId = null, CityName = "Madrid" } };
 
     private static BuyerSignupRequest Request(string hash, BuyerProfileDto? profile = null, string email = Email) =>
         new(Host, "Tienda Demo", "203.0.113.10", email, hash, profile);
@@ -98,6 +103,38 @@ public sealed class BuyerSignupTests
     }
 
     [Fact]
+    public async Task ASignupWithAProfileTheCountryDoesNotAllowCreatesTheAccountWithoutProfile()
+    {
+        var world = new BuyersWorld();
+
+        await world.Signup.SignUpAsync(Request("hash-1", Spanish(Profile("Ana"))), TestContext.Current.CancellationToken);
+
+        Assert.Single(world.SavedAccounts);
+        Assert.Empty(world.SavedProfiles);
+        Assert.Single(world.SavedTokens);
+    }
+
+    [Fact]
+    public async Task AnUnverifiedEmailWithADisallowedProfileStillReRegistersAndClearsTheOldProfile()
+    {
+        var world = new BuyersWorld();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await world.Signup.SignUpAsync(Request("hash-1", Profile("Primero")), cancellationToken);
+        var firstToken = Assert.Single(world.SavedTokens);
+
+        await world.Signup.SignUpAsync(Request("hash-2", Spanish(Profile("Segundo"))), cancellationToken);
+
+        var account = Assert.Single(world.SavedAccounts);
+        Assert.Equal("hash-2", account.PasswordHash);
+        Assert.Empty(world.SavedProfiles);
+        Assert.NotNull(firstToken.UsedAt);
+        Assert.Equal(2, world.SavedTokens.Count);
+        Assert.Null(world.SavedTokens[1].UsedAt);
+        Assert.Equal(2, world.SavedConsents.Count);
+        Assert.Equal(2, world.EventsNamed(BuyerIntegrationEvents.EmailVerificationRequested).Count);
+    }
+
+    [Fact]
     public async Task AnUnverifiedEmailWithoutAProfileDeletesTheOldProfile()
     {
         var world = new BuyersWorld();
@@ -148,7 +185,8 @@ public sealed class BuyerSignupTests
         var world = new BuyersWorld();
         world.WinTheRaceOnNextSave = () => { };
         var signup = new BuyerSignup(
-            world.Accounts, world.Consents, world.ProfileWriter, world.TokenIssuer, world.Outbox, new AlwaysConflicting(), world.Clock);
+            world.Accounts, world.Consents, world.ProfileWriter, world.TokenIssuer, world.Outbox, new AlwaysConflicting(), world.Clock,
+            NullLogger<BuyerSignup>.Instance);
 
         await Assert.ThrowsAsync<ResourceConflictException>(
             () => signup.SignUpAsync(Request("hash-1"), TestContext.Current.CancellationToken));

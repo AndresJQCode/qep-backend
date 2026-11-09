@@ -17,20 +17,21 @@ public sealed class BuyerAccountApiTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static object Profile(string name = "Ana Pérez", string email = "facturas@empresa.com") => new
+    private static object Profile(
+        string name = "Ana Pérez", string email = "facturas@empresa.com", string identificationType = "CC", string country = "CO") => new
     {
         billing = new
         {
             name,
-            identificationType = "CC",
+            identificationType,
             identificationNumber = "1020304050",
             phone = "3001234567",
             email,
             address = "Cra 1 # 2-3",
-            country = "CO",
-            departmentId = Guid.NewGuid(),
-            cityId = Guid.NewGuid(),
-            cityName = (string?)null,
+            country,
+            departmentId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
+            cityId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
+            cityName = country == "CO" ? null : "Madrid",
         },
         shipping = (object?)null,
         shippingSameAsBilling = true,
@@ -166,6 +167,51 @@ public sealed class BuyerAccountApiTests
         Assert.Equal("validation.failed", (string?)body["code"]);
         Assert.NotNull(body["errors"]!["Billing.Name"]);
         Assert.Equal(0, await api.ScalarAsync<long>("SELECT count(*) FROM buyers.profiles"));
+    }
+
+    [Fact]
+    public async Task UpdateProfileStoresASpanishNif()
+    {
+        var (api, token) = await OpenWithSessionAsync();
+        await using var _ = api;
+
+        var response = await api.PutAsync("/profile", Profile(identificationType: "NIF", country: "ES"), token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("NIF", await api.ScalarAsync<string>("SELECT data->'billing'->>'identificationType' FROM buyers.profiles"));
+    }
+
+    [Fact]
+    public async Task UpdateProfileWithAColombianTypeForSpainIs422()
+    {
+        var (api, token) = await OpenWithSessionAsync();
+        await using var _ = api;
+
+        var response = await api.PutAsync("/profile", Profile(identificationType: "CC", country: "ES"), token);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var body = await JsonAsync(response);
+        Assert.Equal("validation.failed", (string?)body["code"]);
+        Assert.NotNull(body["errors"]!["Billing.IdentificationType"]);
+        Assert.Equal(0, await api.ScalarAsync<long>("SELECT count(*) FROM buyers.profiles"));
+    }
+
+    [Fact]
+    public async Task ALegacyProfileStillReads()
+    {
+        var (api, token) = await OpenWithSessionAsync();
+        await using var _ = api;
+        (await api.PutAsync("/profile", Profile(), token)).EnsureSuccessStatusCode();
+        // Un perfil guardado antes de la regla por país: España con un tipo colombiano.
+        await api.ScalarAsync<int>(
+            "UPDATE buyers.profiles SET data = jsonb_set(jsonb_set(data, '{billing,country}', '\"ES\"'), '{billing,identificationType}', '\"CC\"') RETURNING 1");
+
+        var response = await api.SendAsync(HttpMethod.Get, "/session", token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var billing = (await JsonAsync(response))["profile"]!["billing"]!;
+        Assert.Equal("CC", (string?)billing["identificationType"]);
+        Assert.Equal("ES", (string?)billing["country"]);
     }
 
     [Fact]
