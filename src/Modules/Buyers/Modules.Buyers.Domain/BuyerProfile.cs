@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Buyers.Domain;
 
 public sealed record BuyerBillingData(
@@ -36,12 +38,35 @@ public sealed class BuyerProfile
     public BuyerProfileData Data { get; private set; } = null!;
     public DateTimeOffset UpdatedAt { get; private set; }
 
-    public static BuyerProfile Create(Guid accountId, BuyerProfileData data, DateTimeOffset now) =>
-        new() { AccountId = accountId, Data = data, UpdatedAt = now };
+    /// <summary>
+    /// Si el tipo de documento del perfil es válido para su país de facturación. Sólo lo exigen <see cref="Create"/> y
+    /// <see cref="Replace"/>: el record <see cref="BuyerBillingData"/> no lo comprueba, para que un jsonb viejo siga leyéndose.
+    /// </summary>
+    public static bool AcceptsDocument(BuyerBillingData billing)
+    {
+        ArgumentNullException.ThrowIfNull(billing);
+        return DocumentTypesByCountry.IsAllowed(billing.IdentificationType, billing.Country);
+    }
+
+    public static BuyerProfile Create(Guid accountId, BuyerProfileData data, DateTimeOffset now)
+    {
+        EnsureDocumentAllowed(data);
+        return new() { AccountId = accountId, Data = data, UpdatedAt = now };
+    }
 
     public void Replace(BuyerProfileData data, DateTimeOffset now)
     {
+        EnsureDocumentAllowed(data);
         Data = data;
         UpdatedAt = now;
+    }
+
+    private static void EnsureDocumentAllowed(BuyerProfileData data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        if (!AcceptsDocument(data.Billing))
+        {
+            throw new BuyerDomainException(BuyerErrorCodes.DocumentTypeNotAllowed, "El tipo de documento no es válido para el país.");
+        }
     }
 }

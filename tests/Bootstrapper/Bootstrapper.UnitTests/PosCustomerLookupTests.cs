@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Pos.Application;
@@ -95,12 +96,16 @@ public sealed class PosCustomerLookupTests
     }
 
     // Pos.Application no ve Customers y por eso copia la lista de tipos; esta prueba es lo que impide que las dos diverjan.
+    // La alta rápida es sólo colombiana: sigue en los cuatro códigos de CO aunque Customers ya conozca siete.
     [Fact]
     public void TheIdentificationTypesMatchTheCustomersModule()
     {
         Assert.True(
             PosCustomerRules.IdentificationTypes.ToHashSet(StringComparer.OrdinalIgnoreCase)
-                .SetEquals(IdentificationTypeParser.SupportedWireValues));
+                .SetEquals(DocumentTypesByCountry.AllowedFor("CO")));
+        Assert.All(
+            PosCustomerRules.IdentificationTypes,
+            type => Assert.Contains(type, IdentificationTypeParser.SupportedWireValues, StringComparer.OrdinalIgnoreCase));
     }
 
     // Pos copia los anchos de nombre, documento y teléfono; si Customers los cambia, el alta rápida debe seguirlos.
@@ -148,12 +153,12 @@ public sealed class PosCustomerLookupTests
         public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<ProvisionedCustomer> CreateIncompleteAsync(
-            Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ProvisionedCustomer> CreateIncompleteAsync(
+                Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
+                throw new NotSupportedException();
 
         public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
             Guid tenantId,
@@ -230,11 +235,11 @@ public sealed class PosCustomerLookupTests
         public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+                throw new NotSupportedException();
 
-public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+                    throw new NotSupportedException();
 
         public Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

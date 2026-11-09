@@ -249,4 +249,18 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.department_required");
         Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
     }
+
+    [Theory]
+    [InlineData("NIF")]
+    [InlineData("NIE")]
+    [InlineData("TAX_ID")]
+    public void ACodeOutsideColombiaFailsWithTheInvalidCode(string code)
+    {
+        var result = validator.Validate(ValidRow(identificationType: code));
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_type_invalid");
+    }
+
+    [Fact]
+    public void TheImportOffersOnlyTheColombianCodes() =>
+        Assert.Equal(["NIT", "CC", "CE", "PASAPORTE"], ExcelCustomerRowRules.IdentificationTypes);
 }

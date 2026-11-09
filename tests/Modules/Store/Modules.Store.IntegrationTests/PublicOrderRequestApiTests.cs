@@ -464,7 +464,7 @@ public sealed class PublicOrderRequestApiTests
         await using var rig = await OpenRigAsync();
 
         var response = await SubmitAsync(
-            rig, Body(rig, body => body["billing"] = Billing(rig, b => { b["country"] = "ES"; b["departmentId"] = null; b["cityId"] = null; b["cityName"] = "Madrid"; })));
+            rig, Body(rig, body => body["billing"] = Billing(rig, b => { b["identificationType"] = "PASAPORTE"; b["country"] = "ES"; b["departmentId"] = null; b["cityId"] = null; b["cityName"] = "Madrid"; })));
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.country_not_sold");
         Assert.Equal(0, rig.Captcha.Calls);
@@ -517,7 +517,7 @@ public sealed class PublicOrderRequestApiTests
         await using var rig = await OpenRigAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
 
         var response = await SubmitAsync(
-            rig, Body(rig, body => body["billing"] = Billing(rig, b => { b["country"] = "ES"; b["phone"] = "612345678"; })));
+            rig, Body(rig, body => body["billing"] = Billing(rig, b => { b["identificationType"] = "PASAPORTE"; b["country"] = "ES"; b["phone"] = "612345678"; })));
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.city_invalid");
         Assert.Equal(0, rig.Captcha.Calls);
@@ -528,7 +528,7 @@ public sealed class PublicOrderRequestApiTests
     {
         await using var rig = await OpenRigAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
         var body = Body(rig, b => b["billing"] = Billing(
-            rig, billing => { billing["country"] = "ES"; billing["departmentId"] = null; billing["cityId"] = null; billing["cityName"] = "Madrid"; billing["phone"] = "612345678"; }));
+            rig, billing => { billing["identificationType"] = "PASAPORTE"; billing["country"] = "ES"; billing["departmentId"] = null; billing["cityId"] = null; billing["cityName"] = "Madrid"; billing["phone"] = "612345678"; }));
 
         var response = await SubmitAsync(rig, body);
 
@@ -538,6 +538,37 @@ public sealed class PublicOrderRequestApiTests
         Assert.Null(saved.Billing.Place.CityId);
         Assert.Null(saved.Billing.Place.DepartmentId);
         Assert.Equal("+34612345678", saved.Billing.PhoneE164);
+    }
+
+    [Fact]
+    public async Task ASpanishNifIsAccepted()
+    {
+        await using var rig = await OpenRigAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+        var body = Body(rig, b => b["billing"] = Billing(
+            rig, billing => { billing["identificationType"] = "NIF"; billing["country"] = "ES"; billing["departmentId"] = null; billing["cityId"] = null; billing["cityName"] = "Madrid"; billing["phone"] = "612345678"; }));
+
+        var response = await SubmitAsync(rig, body);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("NIF", (await LoadAsync(rig, (Guid)body["clientRequestId"]!)).Billing.IdentificationType);
+    }
+
+    [Fact]
+    public async Task AColombianTypeForSpainIs422AndWritesNothing()
+    {
+        await using var rig = await OpenRigAsync((_, body) => body["salesCountries"] = ColombiaAndSpain);
+
+        var response = await SubmitAsync(
+            rig, Body(rig, body => body["billing"] = Billing(
+                rig, billing => { billing["identificationType"] = "CC"; billing["country"] = "ES"; billing["departmentId"] = null; billing["cityId"] = null; billing["cityName"] = "Madrid"; billing["phone"] = "612345678"; })));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var json = await PublicStoreFixture.JsonAsync(response);
+        Assert.Equal("validation.failed", (string)json["code"]!);
+        Assert.NotNull(json["errors"]!["Billing.IdentificationType"]);
+        Assert.Equal(0, rig.Captcha.Calls);
+        Assert.Equal(0, await RequestsAsync(rig));
+        await AssertNextNumberIsFirstAsync(rig);
     }
 
     [Fact]

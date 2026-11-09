@@ -258,7 +258,10 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string email = "cliente@test.co",
         string address = "Avenida 5 # 6-7",
         bool withRetention = false,
-        bool vatSurplus = false)
+        bool vatSurplus = false,
+        string identificationType = "CC",
+        string country = "CO",
+        string? cityName = null)
     {
         var response = await Inbox.PostAsJsonAsync(
             $"/api/v1/tenants/{StoreApiHarness.TenantId}/customers",
@@ -266,14 +269,14 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             {
                 name,
                 businessName = (string?)null,
-                identificationType = "CC",
+                identificationType,
                 identificationNumber = documentNumber,
                 phone,
                 email,
                 address,
-                country = "CO",
-                cityId = City,
-                cityName = (string?)null,
+                country,
+                cityId = country == "CO" ? City : (Guid?)null,
+                cityName,
                 classificationId = (Guid?)null,
                 withRetention,
                 vatSurplus,
@@ -291,14 +294,15 @@ internal sealed class StoreInboxRig : IAsyncDisposable
         string? phoneE164 = null,
         string? documentNumber = null,
         string? email = null,
-        string? address = null)
+        string? address = null,
+        string? country = null)
     {
         var id = Guid.CreateVersion7();
         await ExecuteAsync(
             """
             INSERT INTO customers.customers (id, tenant_id, name, is_active, phone, phone_e164, email, address, identification_type, identification_number,
-                                             completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, 'Incomplete', @wa, false, false, 1, now(), now())
+                                             country, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenant, @name, true, @phone, @phoneE164, @email, @address, @idType, @idNumber, @country, 'Incomplete', @wa, false, false, 1, now(), now())
             """,
             ("id", id),
             ("tenant", StoreSettingsFixture.Tenant),
@@ -309,6 +313,7 @@ internal sealed class StoreInboxRig : IAsyncDisposable
             ("address", address),
             ("idType", documentNumber is null ? null : "Cc"),
             ("idNumber", documentNumber),
+            ("country", country),
             ("wa", $"CO.{id:N}"));
         return id;
     }
@@ -410,6 +415,18 @@ internal sealed class StoreInboxRig : IAsyncDisposable
 
     public Task DeactivateVariantAsync() =>
         ExecuteAsync("UPDATE catalog.product_variants SET is_active = false WHERE id = @variant", ("variant", Variant));
+
+    public async Task<string?> TextAsync(string sql, params (string Name, object? Value)[] parameters)
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        return await command.ExecuteScalarAsync(TestContext.Current.CancellationToken) as string;
+    }
 
     public async Task<long> CountAsync(string table)
     {

@@ -744,6 +744,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
   Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
   y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
+  La regla del tipo de documento ya no es una copia: Store y Buyers leen la misma `DocumentTypesByCountry` (`BuildingBlocks.Domain`), y los casos de paridad cubren la regla por país.
+- **La tabla de tipos de documento por país vive una sola vez, en `DocumentTypesByCountry` (`BuildingBlocks.Domain`, carpeta `Identification`).** Companies conserva su tabla tipada
+  propia, atada por `DocumentTypesByCountryTests`; Customers (`IdentificationTypeParser`) y Quotations (`PartyFiscalTypesParser`) las atan sus pruebas de paridad. Customers y las
+  partes de facturación comparan el tipo con **su propio** país en cada escritura (una fila guardada que no cumple se lee, pero no se puede volver a guardar igual); un país vacío
+  en una parte es `CO`.
+- **`PosCustomerLookupTests.TheIdentificationTypesMatchTheCustomersModule` compara Pos con `AllowedFor("CO")`, igual que la importación de clientes por Excel y la de contratos de
+  servicio.** Ensanchar Customers no ensancha a ninguno de ellos; si el owner lo quiere, es una decisión aparte.
+- **`MergeForStore` toma el país de la solicitud junto con su documento cuando el cliente no tiene documento** (la dirección sale de la solicitud y el teléfono conserva su E.164
+  anterior cuando se reemplaza el país); `CustomerMergePlan` rellena documento y país como un par.
 - **El payload de `store.buyer-signup-requested.v1` es un contrato entre Store y Buyers, leído por nombre.** Store lo escribe como `StoreBuyerSignupRequestedPayload` y Buyers
   lo lee como `BuyerSignupRequestedMessage` (record propio, camelCase), sin referencia entre los módulos; lo amarra `BuyerParityTests.TheSignupEventContractMatches`. Renombrar un
   campo en un lado compila y deja las altas procesadas sin efecto. El payload **nunca** lleva la contraseña en claro, sólo `passwordHash`; por eso el housekeeping de Buyers

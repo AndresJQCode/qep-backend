@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging.Abstractions;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
 
@@ -40,7 +41,7 @@ internal sealed class BuyersWorld
         UnitOfWork = new FakeUnitOfWork(this);
         ProfileWriter = new BuyerProfileWriter(Profiles);
         TokenIssuer = new BuyerEmailTokenIssuer(Tokens, Outbox);
-        Signup = new BuyerSignup(Accounts, Consents, ProfileWriter, TokenIssuer, Outbox, UnitOfWork, Clock);
+        Signup = new BuyerSignup(Accounts, Consents, ProfileWriter, TokenIssuer, Outbox, UnitOfWork, Clock, NullLogger<BuyerSignup>.Instance);
     }
 
     public FakeClock Clock { get; }

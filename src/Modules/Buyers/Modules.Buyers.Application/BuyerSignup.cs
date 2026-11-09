@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using Microsoft.Extensions.Logging;
 using Modules.Buyers.Domain;
 
 namespace Modules.Buyers.Application;
@@ -20,14 +21,15 @@ public sealed record BuyerSignupRequest(
 /// y reenvía la verificación. Si dos altas del mismo email nuevo chocan en el índice único, la perdedora descarta lo pendiente y
 /// reintenta una vez por el camino de email existente; lo mismo si la cuenta leída cambió o se purgó antes del guardado.
 /// </summary>
-public sealed class BuyerSignup(
+public sealed partial class BuyerSignup(
     IBuyerAccountRepository accounts,
     IBuyerConsentRepository consents,
     BuyerProfileWriter profiles,
     BuyerEmailTokenIssuer tokens,
     IBuyerOutbox outbox,
     IBuyersUnitOfWork unitOfWork,
-    IClock clock)
+    IClock clock,
+    ILogger<BuyerSignup> logger)
 {
     /// <param name="beforeSave">
     /// Corre justo antes de cada guardado, en el mismo <c>SaveChanges</c> que el efecto: el worker del checkout agrega ahí su marca de
@@ -61,8 +63,9 @@ public sealed class BuyerSignup(
     }
 
     private async Task SignUpOnceAsync(
-        BuyerSignupRequest request, string email, Action? beforeSave, CancellationToken cancellationToken)
+        BuyerSignupRequest original, string email, Action? beforeSave, CancellationToken cancellationToken)
     {
+        var request = DropProfileTheCountryDoesNotAllow(original);
         var now = clock.UtcNow;
         var account = await accounts.FindByEmailAsync(email, cancellationToken);
         if (account is null)
@@ -102,4 +105,29 @@ public sealed class BuyerSignup(
         beforeSave?.Invoke();
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Un perfil con un tipo de documento que su país no admite no tumba el alta: se trata como si no viniera (en una cuenta sin
+    /// verificar eso borra el perfil anterior, igual que un <c>null</c>). El aviso lleva sólo tipo y país, nunca datos personales.
+    /// </summary>
+    private BuyerSignupRequest DropProfileTheCountryDoesNotAllow(BuyerSignupRequest request)
+    {
+        if (request.Profile is null)
+        {
+            return request;
+        }
+
+        var billing = request.Profile.WithNormalizedCodes().ToData().Billing;
+        if (BuyerProfile.AcceptsDocument(billing))
+        {
+            return request;
+        }
+
+        LogProfileDropped(logger, billing.IdentificationType, billing.Country);
+        return request with { Profile = null };
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "The signup profile was dropped: document type {IdentificationType} is not allowed for country {Country}.")]
+    private static partial void LogProfileDropped(ILogger logger, string identificationType, string country);
 }

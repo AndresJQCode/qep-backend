@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Customers.Infrastructure.Phones;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
 namespace Modules.Customers.UnitTests;
@@ -14,7 +15,7 @@ public sealed class CustomerProvisioningTests
     private sealed record Bed(
         CustomerProvisioning Provisioning, FakeCustomerRepository Customers, RecordingAudit Audit, List<string> Calls);
 
-    private static Bed NewBed(Customer? existing = null, Exception? saveFailure = null)
+    private static Bed NewBed(Customer? existing = null, Exception? saveFailure = null, IPhoneNumberNormalizer? phones = null)
     {
         var calls = new List<string>();
         var customers = new FakeCustomerRepository { Existing = existing };
@@ -28,12 +29,38 @@ public sealed class CustomerProvisioningTests
             new Cucs(calls),
             new FixedClock(),
             new CreateCustomerValidator(),
-            new PlusNormalizer());
+            phones ?? new PlusNormalizer());
         return new Bed(provisioning, customers, audit, calls);
     }
 
     private static CompleteCustomerData Buyer(string? email = "Laura@Verde.co") =>
         new("Laura Pérez", "CC", "1020304050", "310 935 2187", email, "Calle 10 # 45-12", "CO", CityId, null, Classification.Id.Value);
+
+    [Fact]
+    public async Task CreateCompleteCreatesASpanishCustomerWithANif()
+    {
+        var bed = NewBed();
+        var data = Buyer() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z", Country = "ES", CityId = null, CityName = "Madrid" };
+
+        await bed.Provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        Assert.Equal(IdentificationType.Nif, customer.IdentificationType);
+        Assert.Equal("ES", customer.Country);
+    }
+
+    [Fact]
+    public async Task CreateCompleteRejectsAColombianTypeAbroad()
+    {
+        var bed = NewBed();
+        var data = Buyer() with { Country = "US", CityId = null, CityName = "Miami" };
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.Provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "IdentificationType");
+        Assert.Empty(bed.Customers.Added);
+    }
 
     [Fact]
     public async Task CreateCompleteIssuesCucAfterClassificationAndCity()
@@ -708,5 +735,57 @@ public sealed class CustomerProvisioningTests
         Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotEligible, null, ExternalCustomerCityReasons.CityChanged), outcome);
         Assert.Equal(ValleCityId, customer.CityId);
         AssertUntouched(customer, 1, updatedAt, bed);
+    }
+
+    private static CompleteCustomerData SpanishBuyer() =>
+        Buyer() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z", Country = "ES", CityId = null, CityName = "Madrid", Phone = "+34 612 34 56 78", Address = "Calle Mayor 1" };
+
+    [Fact]
+    public async Task CompleteFromStoreWithoutDocumentTakesTheRequestDocumentAndCountry()
+    {
+        var phones = new LibPhoneNumberNormalizer();
+        var customer = Customer.CreateIncomplete(CustomerId.New(), Tenant, "Pedro", "+573101112233", "CO", "CO.1", Now, phones);
+        var bed = NewBed(customer, phones: phones);
+
+        await bed.Provisioning.CompleteFromStoreAsync(Tenant, customer.Id.Value, SpanishBuyer(), Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.True(customer.IsComplete);
+        Assert.Equal((IdentificationType.Nif, "12345678Z", "ES", "Madrid"), (customer.IdentificationType, customer.IdentificationNumber, customer.Country, customer.CityName));
+        Assert.Equal("Calle Mayor 1", customer.Address);
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreAbroadKeepsANationalPhoneAsItsE164()
+    {
+        var phones = new LibPhoneNumberNormalizer();
+        var customer = Customer.CreateIncompleteFromExternalSale(CustomerId.New(), Tenant, "Laura", "3001234567", null, "CO", Now, phones);
+        var bed = NewBed(customer, phones: phones);
+
+        await bed.Provisioning.CompleteFromStoreAsync(Tenant, customer.Id.Value, SpanishBuyer(), Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(("+573001234567", "+573001234567"), (customer.Phone, customer.PhoneE164));
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreWithoutCountryKeepsTheRawPhone()
+    {
+        var phones = new LibPhoneNumberNormalizer();
+        var customer = Customer.CreateIncompleteFromExternalSale(CustomerId.New(), Tenant, "Laura", "612345678", null, null, Now, phones);
+        var bed = NewBed(customer, phones: phones);
+
+        await bed.Provisioning.CompleteFromStoreAsync(Tenant, customer.Id.Value, SpanishBuyer(), Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(("612345678", "ES", IdentificationType.Nif), (customer.Phone, customer.Country, customer.IdentificationType));
+    }
+
+    [Fact]
+    public async Task CompleteFromStoreWithItsOwnDocumentKeepsItsDocumentAndCountry()
+    {
+        var customer = Customer.CreateFromRegister(CustomerId.New(), Tenant, "Laura", new CustomerIdentification { Type = IdentificationType.Cc, Number = "1020304050" }, "3001234567", Now, new PlusNormalizer());
+        var bed = NewBed(customer);
+
+        await bed.Provisioning.CompleteFromStoreAsync(Tenant, customer.Id.Value, Buyer() with { IdentificationNumber = "999" }, Guid.CreateVersion7(), TestContext.Current.CancellationToken);
+
+        Assert.Equal((IdentificationType.Cc, "1020304050", "CO"), (customer.IdentificationType, customer.IdentificationNumber, customer.Country));
     }
 }

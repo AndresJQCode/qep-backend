@@ -19,6 +19,39 @@ public sealed class OrderPartyTests
         OrderParty.Create(OrderId, role, details);
 
     [Fact]
+    public void ABillingPartyWithATypeItsCountryDoesNotAllowIsRejected()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Party(
+            Contact() with { Country = "ES", CityName = "Madrid", IdentificationType = PartyIdentificationType.Cc, IdentificationNumber = "1" },
+            QuotationPartyRole.Billing));
+
+        Assert.Equal("quotations.party.document_type_not_allowed", error.Code);
+        Assert.Contains("Parties.Billing.IdentificationType", error.FieldErrors.Keys);
+    }
+
+    [Fact]
+    public void ABlankCountryIsColombiaForTheDocument()
+    {
+        var error = Assert.Throws<QuotationsDomainException>(() => Party(
+            Contact() with { IdentificationType = PartyIdentificationType.Nif, IdentificationNumber = "1" },
+            QuotationPartyRole.Billing));
+
+        Assert.Equal("quotations.party.document_type_not_allowed", error.Code);
+    }
+
+    [Fact]
+    public void AShippingPartyIsNeverCheckedBecauseItHasNoDocument() =>
+        Assert.Null(Party(Contact() with { Country = "ES", CityName = "Madrid", IdentificationType = PartyIdentificationType.Cc }).IdentificationType);
+
+    [Fact]
+    public void ABillingPartyKeepsASpanishNif() =>
+        Assert.Equal(
+            PartyIdentificationType.Nif,
+            Party(
+                Contact() with { Country = "ES", CityName = "Madrid", IdentificationType = PartyIdentificationType.Nif, IdentificationNumber = "1" },
+                QuotationPartyRole.Billing).IdentificationType);
+
+    [Fact]
     public void AColombianPartyIsCompleteOnlyWithItsIds()
     {
         var withoutIds = Party(Contact());

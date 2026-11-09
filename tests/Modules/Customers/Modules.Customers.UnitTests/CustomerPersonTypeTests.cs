@@ -1,4 +1,5 @@
 using Modules.Customers.Domain;
+using static Modules.Customers.UnitTests.CustomerDomainFixtures;
 
 namespace Modules.Customers.UnitTests;
 
@@ -7,46 +8,6 @@ namespace Modules.Customers.UnitTests;
 /// </summary>
 public sealed class CustomerPersonTypeTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
-    private static readonly Guid TenantId = Guid.Parse("01900000-0000-7000-8000-000000000001");
-    private static readonly Guid CityId = Guid.Parse("01900000-0000-7000-8000-000000000010");
-
-    private static readonly ClientClassificationId ClassificationId =
-        new(Guid.Parse("01900000-0000-7000-8000-000000000020"));
-
-    private static CustomerIdentification Identification(IdentificationType type, string number = "900123456") =>
-        new() { Type = type, Number = number };
-
-    private static CustomerContactInfo Colombian() =>
-        new()
-        {
-            Phone = "310 935 2187",
-            Email = "compras@verde.co",
-            Address = "Calle 10 # 45-12",
-            Country = "CO",
-            CityId = CityId
-        };
-
-    private static CustomerContactInfo Spanish() =>
-        new()
-        {
-            Phone = "+34 910 000 000",
-            Email = "compras@verde.es",
-            Address = "Calle Gran Via 28",
-            Country = "ES",
-            CityName = "Madrid"
-        };
-
-    private static CustomerCommercialInfo Commercial() => new() { ClassificationId = ClassificationId };
-
-    private static Customer Create(
-        IdentificationType document,
-        PersonType? personType,
-        CustomerContactInfo? contact = null) =>
-        Customer.Create(
-            CustomerId.New(), TenantId, "CLI08000142", "Verde Esencial", null, null,
-            Identification(document), personType, contact ?? Colombian(), Commercial(), Now);
-
     private static CustomersDomainException Fails(Action action) =>
         Assert.Throws<CustomersDomainException>(action);
 
@@ -82,9 +43,9 @@ public sealed class CustomerPersonTypeTests
     }
 
     [Fact]
-    public void AForeignJuridicaCustomerMayKeepACc()
+    public void AForeignJuridicaCustomerMayKeepANif()
     {
-        var customer = Create(IdentificationType.Cc, PersonType.Juridica, Spanish());
+        var customer = Create(IdentificationType.Nif, PersonType.Juridica, Spanish());
 
         Assert.Equal(PersonType.Juridica, customer.PersonType);
     }
@@ -159,14 +120,5 @@ public sealed class CustomerPersonTypeTests
     {
         Assert.Equal("Natural", PersonType.Natural.ToWireValue());
         Assert.Equal("Juridica", PersonType.Juridica.ToWireValue());
-    }
-
-    private sealed class FakeNormalizer : IPhoneNumberNormalizer
-    {
-        public string? ToE164(string? phone, string country) => phone is null ? null : "+57" + phone;
-
-        public bool IsKnownRegion(string regionCode) => regionCode == "CO";
-
-        public string? RegionOf(string? e164) => null;
     }
 }

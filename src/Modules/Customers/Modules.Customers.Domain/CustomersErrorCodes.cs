@@ -17,6 +17,9 @@ public static class CustomersErrorCodes
     /// <summary>Spec 2026-10-26: una jurídica colombiana se identifica con NIT.</summary>
     public const string PersonTypeRequiresNit = "customers.customer.person_type_requires_nit";
 
+    /// <summary>El tipo de documento no está en la lista del país del cliente.</summary>
+    public const string DocumentTypeNotAllowed = "customers.customer.document_type_not_allowed";
+
     /// <summary>Spec 2026-10-26: el tenant exige el tipo de persona y el cliente no lo trae.</summary>
     public const string PersonTypeRequired = "customers.customer.person_type_required";
 }
