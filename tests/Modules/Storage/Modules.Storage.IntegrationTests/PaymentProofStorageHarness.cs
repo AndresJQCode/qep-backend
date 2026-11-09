@@ -611,6 +611,8 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     /// en el movimiento (revisión final, I1); null si ninguna.</summary>
     public string? FailingExistsKey { get; set; }
 
+    public IReadOnlyCollection<string> Keys => _objects.Keys.ToArray();
+
     public bool IsConfigured => true;
 
     public void Put(string key, DateTimeOffset lastModified) => _objects[key] = lastModified;

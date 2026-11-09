@@ -1,10 +1,6 @@
 using System.Net;
 using BuildingBlocks.Application;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Modules.Storage.Application;
-using Modules.Storage.Domain;
-using Modules.Storage.Infrastructure.Persistence;
 using Modules.Storage.Infrastructure.ProductImages;
 using static Modules.Storage.IntegrationTests.PaymentProofStorageHarness;
 
@@ -62,17 +58,19 @@ public sealed class ProductImageReleaseTests
         var published = await ReadFileAsync(database.GetConnectionString(), image.FileId);
         var publicKey = Assert.IsType<string>(published.PublicStorageKey);
         var variantKeys = await VariantKeysAsync(database.GetConnectionString(), image.FileId);
-        var publicVariantKeys = await PublicVariantKeysAsync(factory, image.FileId, publicKey);
-        Assert.NotEmpty(publicVariantKeys);
-        Assert.True(factory.PublicObjectStorage.Exists(publicKey));
-        Assert.All(publicVariantKeys, key => Assert.True(factory.PublicObjectStorage.Exists(key)));
+        // Las copias públicas son todo lo que hay en el bucket público: el original y una por variante.
+        var publicKeys = factory.PublicObjectStorage.Keys.ToArray();
+        Assert.Contains(publicKey, publicKeys);
+        Assert.Equal(variantKeys.Count + 1, publicKeys.Length);
         await AddImagesReleasedEventAsync(factory, TenantId, image.FileId);
 
         Assert.Equal(1, await RunImageReleaseAsync(factory));
 
-        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), image.FileId)).Status);
-        Assert.False(factory.PublicObjectStorage.Exists(publicKey));
-        Assert.All(publicVariantKeys, key => Assert.False(factory.PublicObjectStorage.Exists(key)));
+        var purged = await ReadFileAsync(database.GetConnectionString(), image.FileId);
+        Assert.Equal("Purged", purged.Status);
+        Assert.Empty(factory.PublicObjectStorage.Keys);
+        // Sin URL pública que ya no sirve: la fila queda sin clave pública.
+        Assert.Null(purged.PublicStorageKey);
         Assert.All(variantKeys, key => Assert.False(factory.ObjectStorage.Exists(key)));
     }
 
@@ -231,22 +229,46 @@ public sealed class ProductImageReleaseTests
         Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), image.FileId)).Status);
     }
 
+    // Un mensaje con dos fotos: cada una se guarda antes de pasar a la siguiente, así que si el borrado de la
+    // segunda falla la primera queda Purged y el reintento no la toca otra vez.
+    [Fact]
+    public async Task APartialFailureKeepsTheFirstFilePurgedAndTheRetrySkipsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new StorageApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory);
+        var first = await ProductImageAsync(client, factory);
+        var second = await ProductImageAsync(client, factory);
+        var firstKey = await FinalKeyAsync(database.GetConnectionString(), first.FileId);
+        var secondKey = await FinalKeyAsync(database.GetConnectionString(), second.FileId);
+        var messageId = await AddImagesReleasedEventAsync(factory, TenantId, first.FileId, second.FileId);
+        factory.ObjectStorage.FailingDeleteKey = secondKey;
+
+        Assert.Equal(0, await RunImageReleaseAsync(factory));
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), first.FileId)).Status);
+        Assert.False(factory.ObjectStorage.Exists(firstKey));
+        Assert.Equal("Available", (await ReadFileAsync(database.GetConnectionString(), second.FileId)).Status);
+        Assert.True(factory.ObjectStorage.Exists(secondKey));
+        Assert.False(await IsProcessedByImageReleaseAsync(factory, messageId));
+        Assert.Single(await AuditEventsAsync(factory), entry => entry.Action == "storage.file.purged");
+
+        factory.ObjectStorage.FailingDeleteKey = null;
+
+        Assert.Equal(1, await RunImageReleaseAsync(factory));
+
+        Assert.Equal("Purged", (await ReadFileAsync(database.GetConnectionString(), second.FileId)).Status);
+        Assert.False(factory.ObjectStorage.Exists(secondKey));
+        Assert.True(await IsProcessedByImageReleaseAsync(factory, messageId));
+        var audits = (await AuditEventsAsync(factory)).Where(entry => entry.Action == "storage.file.purged").ToArray();
+        Assert.Equal(2, audits.Length);
+        Assert.Single(audits, entry => entry.ResourceId == first.FileId.ToString());
+    }
+
     // Al completar la subida el original se promueve: la clave final de la base, no la de staging, es la del objeto.
     private static async Task<string> FinalKeyAsync(string connectionString, Guid fileId) =>
         (await ReadFileAsync(connectionString, fileId)).StorageKey;
 
     private static async Task<UploadedFile> ProductImageAsync(HttpClient client, StorageApiFactory factory) =>
         await CreateAvailableAsync(client, factory, "Product", "foto.png", "image/png", await PngAsync(1600, 1200));
-
-    private static async Task<IReadOnlyList<string>> PublicVariantKeysAsync(
-        StorageApiFactory factory, Guid fileId, string publicKey)
-    {
-        await using var scope = factory.Services.CreateAsyncScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
-        var id = new FileResourceId(fileId);
-        var resource = await dbContext.FileResources
-            .Include(file => file.Variants)
-            .FirstAsync(file => file.Id == id, TestContext.Current.CancellationToken);
-        return resource.Variants.Select(variant => StorageKey.PublicVariantFor(publicKey, variant)).ToArray();
-    }
 }

@@ -35,7 +35,7 @@ internal interface IProductImageReleaseProcessor
 internal sealed partial class ProductImageReleaseProcessor(
     StorageDbContext dbContext,
     IObjectStorage objectStorage,
-    IPublicObjectStorage publicObjectStorage,
+    FilePublication filePublication,
     IEnumerable<IFileReferenceProbe> probes,
     IStorageAuditPublisher auditPublisher,
     IClock clock,
@@ -212,16 +212,11 @@ internal sealed partial class ProductImageReleaseProcessor(
             await objectStorage.DeleteAsync(variant.StorageKey, cancellationToken);
         }
 
-        // Publicada: la copia pública del original y la de cada variante también salen.
-        if (resource.PublicStorageKey is { } publicKey)
-        {
-            await publicObjectStorage.DeleteAsync(publicKey, cancellationToken);
-            foreach (var variant in resource.Variants)
-            {
-                await publicObjectStorage.DeleteAsync(
-                    StorageKey.PublicVariantFor(publicKey, variant), cancellationToken);
-            }
-        }
+        // Publicada: las copias públicas (original y variantes) las retira FilePublication, el único dueño del
+        // esquema de claves públicas. Deja la fila sin PublicStorageKey, a diferencia de la purga de
+        // comprobantes: así una foto purgada no conserva una URL pública que ya no sirve. Unpublish no tiene
+        // precondiciones, y como la purga del dominio ya corrió arriba, ningún borrado ocurre si ésta se rechaza.
+        await filePublication.UnpublishAsync(resource, cancellationToken);
 
         auditPublisher.PublishSystem(
             resource.TenantId,

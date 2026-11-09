@@ -1,12 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <!-- StorageKey es internal: la purga de fotos de producto (Infrastructure) calcula con ella las claves
-         públicas de las variantes, y su prueba de integración las verifica con la misma función. -->
-    <InternalsVisibleTo Include="Modules.Storage.Infrastructure" />
-    <InternalsVisibleTo Include="Modules.Storage.IntegrationTests" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Modules.Storage.Domain\Modules.Storage.Domain.csproj" />
     <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
