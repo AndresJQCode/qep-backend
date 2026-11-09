@@ -38,6 +38,10 @@ public static class CatalogInfrastructureExtensions
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, ProductPriceChangeUserReferenceProbe>();
+        // Storage la consulta antes de purgar una foto liberada. También la ven
+        // StagingCleanupProcessor, PaymentProofDetachProcessor y PaymentProofGuard, y para ellos
+        // sólo puede retener, nunca borrar (spec, «Restricciones»).
+        services.AddScoped<IFileReferenceProbe, ProductGalleryFileReferenceProbe>();
 
         return services;
     }

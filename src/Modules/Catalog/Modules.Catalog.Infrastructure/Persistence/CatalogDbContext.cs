@@ -178,6 +178,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         // en el lugar y dos filas intercambian posición en el mismo guardado. La unicidad la
         // garantiza el agregado (catalog.product.gallery_duplicate) bajo la Version del producto.
         image.HasIndex("ProductId").HasDatabaseName("IX_product_gallery_images_product");
+        // Para ProductGalleryFileReferenceProbe: saber si algún producto todavía tiene el archivo.
+        image.HasIndex(value => value.FileId).HasDatabaseName("IX_product_gallery_images_file");
     }
 
     private static void ConfigureProductVariant(ModelBuilder modelBuilder)
