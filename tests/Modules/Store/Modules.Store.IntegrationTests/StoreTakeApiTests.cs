@@ -287,6 +287,7 @@ public sealed class StoreTakeApiTests
             (_, body) => body["salesCountries"] = ColombiaAndSpain);
         var request = await rig.SubmitAsync(billing =>
         {
+            billing["identificationType"] = "PASAPORTE";
             billing["country"] = "ES";
             billing["departmentId"] = null;
             billing["cityId"] = null;

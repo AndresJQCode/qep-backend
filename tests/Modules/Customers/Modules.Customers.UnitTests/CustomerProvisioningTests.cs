@@ -49,6 +49,19 @@ public sealed class CustomerProvisioningTests
     }
 
     [Fact]
+    public async Task CreateCompleteRejectsAColombianTypeAbroad()
+    {
+        var bed = NewBed();
+        var data = Buyer() with { Country = "US", CityId = null, CityName = "Miami" };
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.Provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "IdentificationType");
+        Assert.Empty(bed.Customers.Added);
+    }
+
+    [Fact]
     public async Task CreateCompleteIssuesCucAfterClassificationAndCity()
     {
         var bed = NewBed();

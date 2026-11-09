@@ -15,9 +15,14 @@ public sealed class StoreCustomerDirectoryDocumentTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static Customer Spaniard() =>
-        Customer.CreateFromRegister(
-            CustomerId.New(), TenantId, "Lucía Gómez", new CustomerIdentification { Type = IdentificationType.Nif, Number = "12345678Z" },
-            null, Now, new PassThroughPhones());
+        Customer.Create(
+            CustomerId.New(), TenantId, "CLI00000142", "Lucía Gómez", null, null,
+            new CustomerIdentification { Type = IdentificationType.Nif, Number = "12345678Z" }, null,
+            new CustomerContactInfo
+            {
+                Phone = "+34 600 111 222", Address = "Calle Gran Via 28", Country = "ES", CityName = "Madrid"
+            },
+            new CustomerCommercialInfo(), Now);
 
     [Fact]
     public async Task ACandidateWithANifIsFoundByItsDocument()

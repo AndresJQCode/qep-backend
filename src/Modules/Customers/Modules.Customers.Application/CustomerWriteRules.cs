@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Customers.Domain;
 
@@ -90,6 +91,16 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .WithMessage(command =>
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
             .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+
+        // Regla aparte de la anterior, y no un Must más en la misma cadena: así un código desconocido
+        // sólo reporta la lista y un país mal formado sólo reporta el país. Corre cuando el código es
+        // conocido y el país tiene forma de ISO-3166-1 alpha-2.
+        RuleFor(command => command.IdentificationType)
+            .Must((command, type) => DocumentTypesByCountry.IsAllowed(type, command.Country))
+            .WithMessage("The identification type is not allowed for the country.")
+            .When(command => DocumentTypesByCountry.IsKnown(command.IdentificationType)
+                && command.Country is { Length: CustomerContactInfo.CountryLength } country
+                && country.All(char.IsAsciiLetter));
 
         // Spec 2026-10-26: el tipo de persona es opcional, pero uno que no se reconoce se rechaza aca para que el 422
         // lleve el mapa errors con la clave PersonType. Se comprueba contra la misma tabla que el dominio

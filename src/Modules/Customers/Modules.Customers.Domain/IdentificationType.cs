@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Identification;
+
 namespace Modules.Customers.Domain;
 
 /// <summary>
@@ -68,6 +70,10 @@ public static class IdentificationTypeParser
             "customers.customer.identification_type_invalid",
             $"The identification type must be one of {string.Join(", ", SupportedWireValues)}.");
     }
+
+    /// <summary>Si el país (ISO-3166-1 alpha-2) acepta este tipo según el catálogo compartido.</summary>
+    public static bool IsAllowedFor(this IdentificationType type, string country) =>
+        DocumentTypesByCountry.IsAllowed(type.ToWireValue(), country);
 
     public static IReadOnlyCollection<string> SupportedWireValues => ByWireValue.Keys;
 }
