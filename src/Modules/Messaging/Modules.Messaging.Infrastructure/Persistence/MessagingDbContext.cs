@@ -119,6 +119,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <c>billing_exists</c>.</summary>
     public const string MessageTemplateBillingIndex = "UX_message_templates_billing";
 
+    /// <summary>Spec 2026-11-09 D1: una fila <c>Order</c> por conexión.</summary>
+    public const string MessageTemplateOrderIndex = "UX_message_templates_order";
+
     /// <summary>El PK de <c>template_mirror_syncs</c> (el nombre por defecto de EF, el de la migración <c>AddMessageTemplates</c>): dos
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
@@ -612,7 +615,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     {
         var template = modelBuilder.Entity<MessageTemplate>();
         template.ToTable("message_templates", Schema, table =>
-            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue')"));
+            table.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order')"));
         template.HasKey(value => value.Id);
         template.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
         template.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -633,6 +636,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.MetaTemplateId }, MessageTemplateMetaIdIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Name, value.Language }, MessageTemplateNameLanguageIndex).IsUnique();
         template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateQuotationIndex).IsUnique().HasFilter("kind = 'Quotation'");
+        // Spec 2026-11-09 D1: la del pedido, con la misma regla.
+        template.HasIndex(value => new { value.TenantId, value.ConnectionId }, MessageTemplateOrderIndex).IsUnique().HasFilter("kind = 'Order'");
         // Cobros recurrentes §5: una fila por tipo de aviso en cada conexión, como la de cotización (dos aprovisionamientos a la vez).
         template.HasIndex(value => new { value.TenantId, value.ConnectionId, value.Kind }, MessageTemplateBillingIndex).IsUnique()
             .HasFilter("kind IN ('BillingReminder','BillingOverdue')");

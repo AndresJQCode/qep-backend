@@ -128,9 +128,10 @@ public sealed record CancelOrderRequest(string? Reason);
 /// <paramref name="Recipient"/> es <c>"Customer"</c> (default) o <c>"Billing"</c>, una opción cerrada
 /// que el backend resuelve contra lo que el pedido ya guarda, nunca un teléfono suelto. <b>El cuerpo
 /// entero es opcional</b>: un cuerpo requerido rompió el envío de la cotización con 500
-/// (<c>SendWorksWithoutABody</c>).
+/// (<c>SendWorksWithoutABody</c>). <paramref name="ConnectionId"/> (spec 2026-11-09 D8): la conexión
+/// elegida cuando hay varias disponibles para pedidos, como en la cotización.
 /// </summary>
-public sealed record SendOrderRequest(string? Recipient = null);
+public sealed record SendOrderRequest(string? Recipient = null, Guid? ConnectionId = null);
 
 /// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
 /// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede

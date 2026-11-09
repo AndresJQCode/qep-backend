@@ -74,7 +74,7 @@ public sealed class SendQuotationHandler(
         // (plan 2026-10-21), y una elección que no corresponde (otra conexión cuando el tenant ya tiene una, o una que no
         // está) tampoco: fuera del try, que anota las fallas. Antes del PDF, que cuesta una llamada a `qcode-pdf`.
         var resolved = WhatsAppChannelSelection.Resolve(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken),
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, WhatsAppDocument.Quotation, cancellationToken),
             await channelChoices.FindAsync(command.TenantId, cancellationToken),
             command.ConnectionId);
         var channel = resolved.Channel;

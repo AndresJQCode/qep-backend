@@ -20,10 +20,12 @@ public static class WhatsAppChannelEndpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/quotations")
             .WithTags("Quotations");
 
+        // ?document=quotation|order (spec 2026-11-09 D8): default quotation; otro valor es 422.
         group.MapGet("/whatsapp-channels", GetAsync)
             .RequireAuthorization(QuotationsPolicies.WhatsAppChannelsRead)
             .Produces<WhatsAppChannelsDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden);
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
         group.MapPut("/whatsapp-channel", ChooseAsync)
             .RequireAuthorization(TenancyPermissions.SettingsUpdate)
@@ -36,8 +38,24 @@ public static class WhatsAppChannelEndpoints
     }
 
     private static async Task<IResult> GetAsync(
-        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new GetWhatsAppChannelsQuery(tenantId), cancellationToken));
+        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken, string? document = null) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetWhatsAppChannelsQuery(tenantId, ParseDocument(document)), cancellationToken));
+
+    // Por nombre y sin distinguir mayúsculas, como el recipient del envío; un valor desconocido no cae a la cotización en silencio.
+    private static WhatsAppDocument ParseDocument(string? document)
+    {
+        if (string.IsNullOrWhiteSpace(document))
+        {
+            return WhatsAppDocument.Quotation;
+        }
+
+        var name = Enum.GetNames<WhatsAppDocument>()
+            .FirstOrDefault(value => string.Equals(value, document.Trim(), StringComparison.OrdinalIgnoreCase));
+        return name is not null && Enum.TryParse<WhatsAppDocument>(name, out var parsed)
+            ? parsed
+            : throw new Modules.Quotations.Domain.QuotationsDomainException(
+                "quotation.whatsapp.document_invalid", $"'{document}' is not a WhatsApp document; use 'quotation' or 'order'.");
+    }
 
     private static async Task<IResult> ChooseAsync(
         Guid tenantId,

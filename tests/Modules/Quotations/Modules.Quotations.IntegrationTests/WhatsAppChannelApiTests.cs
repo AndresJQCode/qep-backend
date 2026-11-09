@@ -374,6 +374,38 @@ public sealed class WhatsAppChannelApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // Spec 2026-11-09 D8: ?document=order responde los canales disponibles para pedidos (D6), con la elección guardada sólo si está
+    // en esa lista y NeedsChoice calculado sobre ella; quien manda pedidos puede leerlos; otro valor es 422.
+    [Fact]
+    public async Task ChannelsForOrdersAreFilteredByDocumentAndReadableWithOrderManage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, owner) = await RegisterTenantAsync(factory, OwnerPermissions);
+        using var _ = owner;
+        var zenviaWithoutOrderTemplate = (ZenviaWhatsAppChannel)RecordingWhatsAppChannelDirectory.Default with { OrderTemplateId = null };
+        factory.WhatsAppChannels.Channels.Clear();
+        factory.WhatsAppChannels.Channels.AddRange([zenviaWithoutOrderTemplate, RecordingWhatsAppChannelDirectory.Meta]);
+        using (var saved = await PutChannelAsync(owner, tenantId, zenviaWithoutOrderTemplate.ConnectionId))
+        {
+            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        }
+
+        using var orderSender = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString(), OrdersPermissions.OrderManage);
+        var forOrders = (await orderSender.GetFromJsonAsync<ChannelsPayload>($"{ChannelsUrl(tenantId)}?document=order", TestContext.Current.CancellationToken))!;
+        var forQuotations = await ReadChannelsAsync(owner, tenantId);
+
+        Assert.Equal([RecordingWhatsAppChannelDirectory.Meta.ConnectionId], forOrders.Channels.Select(channel => channel.ConnectionId));
+        Assert.Null(forOrders.SelectedConnectionId);
+        Assert.False(forOrders.NeedsChoice);
+        Assert.Equal(2, forQuotations.Channels.Count);
+        Assert.Equal(zenviaWithoutOrderTemplate.ConnectionId, forQuotations.SelectedConnectionId);
+
+        using var invalid = await owner.GetAsync($"{ChannelsUrl(tenantId)}?document=invoice", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invalid.StatusCode);
+        Assert.Equal("quotation.whatsapp.document_invalid", await CodeAsync(invalid));
+    }
+
     [Fact]
     public async Task ChannelsAreReadableWithOnlySettingsUpdate()
     {

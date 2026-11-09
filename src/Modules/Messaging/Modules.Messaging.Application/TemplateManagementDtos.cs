@@ -33,6 +33,10 @@ public sealed record ManagedTemplateDto(
 /// <summary>§4.3: el estado de la plantilla de cotización de la conexión. <c>null</c> en la pantalla = no aprovisionada, botón de crear.</summary>
 public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
 
+/// <summary>Spec 2026-11-09 D4: el estado de la plantilla de pedido de la conexión, con la misma forma que la de cotización. <c>null</c> =
+/// no aprovisionada. Un frontend viejo lo ignora.</summary>
+public sealed record OrderTemplateStatusDto(Guid TemplateId, string Status, string? StatusReason);
+
 /// <summary>
 /// §4.3: la pantalla de plantillas de una conexión en una llamada: la conexión (nombre y número), el estado de la plantilla de
 /// cotización, cuándo se sincronizó el espejo por última vez (<c>null</c> = nunca) y todas las plantillas, sin paginar, por nombre e
@@ -41,5 +45,6 @@ public sealed record QuotationTemplateStatusDto(Guid TemplateId, string Status, 
 public sealed record TemplateManagementDto(
     MessagingConnectionDto Connection,
     QuotationTemplateStatusDto? QuotationTemplate,
+    OrderTemplateStatusDto? OrderTemplate,
     DateTimeOffset? LastSyncedAt,
     IReadOnlyList<ManagedTemplateDto> Templates);

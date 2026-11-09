@@ -69,9 +69,11 @@ public sealed class TemplateManagementReader(IMessageTemplateRepository reposito
         var creators = templates.Where(template => template.CreatedByMemberId is not null).Select(template => template.CreatedByMemberId!.Value).Distinct().ToArray();
         var names = await TemplateManagementSupport.MemberNamesAsync(memberNames, tenantId, creators, cancellationToken);
         var quotation = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Quotation);
+        var order = templates.FirstOrDefault(template => template.Kind == MessageTemplateKind.Order);
         return new TemplateManagementDto(
             connection,
             quotation is null ? null : new QuotationTemplateStatusDto(quotation.Id, quotation.Status, quotation.StatusReason),
+            order is null ? null : new OrderTemplateStatusDto(order.Id, order.Status, order.StatusReason),
             await repository.LastSyncAsync(tenantId, connectionId, cancellationToken),
             templates.Select(template => ManagedTemplateMapping.ToDto(template, names)).ToArray());
     }
