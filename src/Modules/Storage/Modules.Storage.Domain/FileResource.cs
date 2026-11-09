@@ -273,6 +273,18 @@ public sealed class FileResource
         UpdatedAt = occurredAt;
     }
 
+    // Spec 2026-11-08, «Liberación de imágenes»: la imagen de un producto eliminado se purga. La llama
+    // ProductImageReleaseProcessor después de borrar los objetos de R2. PublicStorageKey se conserva
+    // como registro de dónde estuvo: un recurso Purged no se descarga ni se vuelve a adjuntar.
+    public void PurgeReleasedProductImage(DateTimeOffset occurredAt)
+    {
+        RequireProductImage();
+        RequireStatus(FileResourceStatus.Available);
+        Status = FileResourceStatus.Purged;
+        DeletedAt = occurredAt;
+        UpdatedAt = occurredAt;
+    }
+
     public void UpdateMetadata(
         string? category,
         IEnumerable<string>? tags,
@@ -392,6 +404,16 @@ public sealed class FileResource
             throw new StorageDomainException(
                 "storage.file.invalid_state",
                 $"Expected a {FileOwnerType.PaymentProof} resource but it was {OwnerType}.");
+        }
+    }
+
+    private void RequireProductImage()
+    {
+        if (OwnerType is not FileOwnerType.Product)
+        {
+            throw new StorageDomainException(
+                "storage.file.invalid_state",
+                $"Expected a {FileOwnerType.Product} resource but it was {OwnerType}.");
         }
     }
 

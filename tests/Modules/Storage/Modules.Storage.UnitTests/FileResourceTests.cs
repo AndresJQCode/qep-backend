@@ -184,4 +184,59 @@ public sealed class FileResourceTests
         Assert.Equal(FileResourceStatus.Deleted, resource.Status);
         Assert.Throws<StorageDomainException>(() => resource.EnsureDownloadable());
     }
+
+    private static FileResource NewProductImage(bool available = true)
+    {
+        var resource = FileResource.CreatePendingUpload(
+            FileResourceId.New(), Guid.NewGuid(), Guid.NewGuid(), FileOwnerType.Product,
+            "product.jpg", "image/jpeg", 1024, "staging/product", DateTimeOffset.UtcNow);
+        resource.CompleteUpload("abc", 1024, DateTimeOffset.UtcNow);
+        if (available)
+        {
+            resource.MarkClean(DateTimeOffset.UtcNow);
+        }
+
+        return resource;
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageMarksAnAvailableProductImagePurged()
+    {
+        var resource = NewProductImage();
+        resource.Publish("public/product.jpg", DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        resource.PurgeReleasedProductImage(now);
+
+        Assert.Equal(FileResourceStatus.Purged, resource.Status);
+        Assert.Equal(now, resource.DeletedAt);
+        Assert.Equal(now, resource.UpdatedAt);
+        Assert.Equal("public/product.jpg", resource.PublicStorageKey);
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageRequiresAvailable()
+    {
+        var resource = NewProductImage(available: false);
+        Assert.Equal(FileResourceStatus.PendingScan, resource.Status);
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedProductImage(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+    }
+
+    [Fact]
+    public void PurgeReleasedProductImageRequiresAProductImage()
+    {
+        var resource = NewPending();
+        resource.CompleteUpload("abc", 10, DateTimeOffset.UtcNow);
+        resource.MarkClean(DateTimeOffset.UtcNow);
+
+        var ex = Assert.Throws<StorageDomainException>(
+            () => resource.PurgeReleasedProductImage(DateTimeOffset.UtcNow));
+
+        Assert.Equal("storage.file.invalid_state", ex.Code);
+        Assert.Equal(FileResourceStatus.Available, resource.Status);
+    }
 }
