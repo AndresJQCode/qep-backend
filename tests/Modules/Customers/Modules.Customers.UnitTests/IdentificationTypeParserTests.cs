@@ -12,8 +12,13 @@ public sealed class IdentificationTypeParserTests
         Assert.True(IdentificationTypeParser.SupportedWireValues.ToHashSet(StringComparer.Ordinal).SetEquals(DocumentTypesByCountry.All));
 
     [Theory]
-    [InlineData("NIT")] [InlineData("CC")] [InlineData("CE")] [InlineData("PASAPORTE")]
-    [InlineData("NIF")] [InlineData("NIE")] [InlineData("TAX_ID")]
+    [InlineData("NIT")]
+    [InlineData("CC")]
+    [InlineData("CE")]
+    [InlineData("PASAPORTE")]
+    [InlineData("NIF")]
+    [InlineData("NIE")]
+    [InlineData("TAX_ID")]
     public void EveryCodeRoundTripsInAnyCase(string code)
     {
         Assert.Equal(code, IdentificationTypeParser.Parse(code).ToWireValue());

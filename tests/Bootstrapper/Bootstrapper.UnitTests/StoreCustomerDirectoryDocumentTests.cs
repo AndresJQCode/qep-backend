@@ -20,7 +20,10 @@ public sealed class StoreCustomerDirectoryDocumentTests
             new CustomerIdentification { Type = IdentificationType.Nif, Number = "12345678Z" }, null,
             new CustomerContactInfo
             {
-                Phone = "+34 600 111 222", Address = "Calle Gran Via 28", Country = "ES", CityName = "Madrid"
+                Phone = "+34 600 111 222",
+                Address = "Calle Gran Via 28",
+                Country = "ES",
+                CityName = "Madrid"
             },
             new CustomerCommercialInfo(), Now);
 

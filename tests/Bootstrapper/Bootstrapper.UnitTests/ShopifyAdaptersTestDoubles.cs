@@ -215,7 +215,7 @@ internal sealed class FakeCustomerRepository(params Customer[] customers) : ICus
     public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
 
-public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
+    public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
     {
         Calls++;
         return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.PhoneE164 is null && customer.Phone == phone));

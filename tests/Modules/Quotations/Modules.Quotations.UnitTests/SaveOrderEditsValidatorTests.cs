@@ -67,7 +67,10 @@ public sealed class SaveOrderEditsValidatorTests
         new("Otra S.L.", "12345678Z", null, null, null, null, null, IdentificationType: type, Country: country, CityName: cityName);
 
     [Theory]
-    [InlineData("NIF", "ES", "Madrid")] [InlineData("NIE", "ES", "Madrid")] [InlineData("TAX_ID", "US", "Miami")] [InlineData("CC", null, null)]
+    [InlineData("NIF", "ES", "Madrid")]
+    [InlineData("NIE", "ES", "Madrid")]
+    [InlineData("TAX_ID", "US", "Miami")]
+    [InlineData("CC", null, null)]
     public void AnAllowedBillingPairIsAccepted(string type, string? country, string? cityName)
     {
         var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party(type, country, cityName))));
@@ -76,7 +79,9 @@ public sealed class SaveOrderEditsValidatorTests
     }
 
     [Theory]
-    [InlineData("CC", "ES", "Madrid")] [InlineData("NIF", null, null)] [InlineData("TAX_ID", "CO", null)]
+    [InlineData("CC", "ES", "Madrid")]
+    [InlineData("NIF", null, null)]
+    [InlineData("TAX_ID", "CO", null)]
     public void ABillingTypeItsCountryDoesNotAllowIsAFieldError(string type, string? country, string? cityName)
     {
         var result = _save.Validate(Command(billing: new OrderBillingEditRequest(Party(type, country, cityName))));

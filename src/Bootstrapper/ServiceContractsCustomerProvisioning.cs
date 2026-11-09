@@ -1,8 +1,8 @@
 using BuildingBlocks.Domain.Identification;
-using Modules.ServiceContracts.Application;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
+using Modules.ServiceContracts.Application;
 
 namespace Bootstrapper;
 

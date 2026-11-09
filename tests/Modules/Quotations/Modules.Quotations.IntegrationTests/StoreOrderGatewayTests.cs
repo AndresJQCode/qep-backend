@@ -208,7 +208,10 @@ public sealed class StoreOrderGatewayTests
         var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
         var billing = ForeignParty() with
         {
-            Country = "US", CityName = "Miami", IdentificationType = "TAX_ID", IdentificationNumber = "12-3456789",
+            Country = "US",
+            CityName = "Miami",
+            IdentificationType = "TAX_ID",
+            IdentificationNumber = "12-3456789",
         };
 
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(

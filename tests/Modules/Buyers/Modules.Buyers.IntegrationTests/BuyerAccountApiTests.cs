@@ -19,23 +19,23 @@ public sealed class BuyerAccountApiTests
 
     private static object Profile(
         string name = "Ana Pérez", string email = "facturas@empresa.com", string identificationType = "CC", string country = "CO") => new
-    {
-        billing = new
         {
-            name,
-            identificationType,
-            identificationNumber = "1020304050",
-            phone = "3001234567",
-            email,
-            address = "Cra 1 # 2-3",
-            country,
-            departmentId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
-            cityId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
-            cityName = country == "CO" ? null : "Madrid",
-        },
-        shipping = (object?)null,
-        shippingSameAsBilling = true,
-    };
+            billing = new
+            {
+                name,
+                identificationType,
+                identificationNumber = "1020304050",
+                phone = "3001234567",
+                email,
+                address = "Cra 1 # 2-3",
+                country,
+                departmentId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
+                cityId = country == "CO" ? Guid.NewGuid() : (Guid?)null,
+                cityName = country == "CO" ? null : "Madrid",
+            },
+            shipping = (object?)null,
+            shippingSameAsBilling = true,
+        };
 
     private static async Task<JsonNode> JsonAsync(HttpResponseMessage response) =>
         JsonNode.Parse(await response.Content.ReadAsStringAsync(Ct))!;

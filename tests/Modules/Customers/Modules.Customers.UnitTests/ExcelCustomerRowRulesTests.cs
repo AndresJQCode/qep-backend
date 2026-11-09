@@ -251,7 +251,9 @@ public sealed class ExcelCustomerRowRulesTests
     }
 
     [Theory]
-    [InlineData("NIF")] [InlineData("NIE")] [InlineData("TAX_ID")]
+    [InlineData("NIF")]
+    [InlineData("NIE")]
+    [InlineData("TAX_ID")]
     public void ACodeOutsideColombiaFailsWithTheInvalidCode(string code)
     {
         var result = validator.Validate(ValidRow(identificationType: code));

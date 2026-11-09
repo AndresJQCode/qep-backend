@@ -1,5 +1,5 @@
-using BuildingBlocks.Domain.Identification;
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Microsoft.Extensions.Logging;
 using Modules.Store.Domain;

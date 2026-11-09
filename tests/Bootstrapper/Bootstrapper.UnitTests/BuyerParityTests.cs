@@ -1,4 +1,4 @@
-﻿using FluentValidation.Results;
+using FluentValidation.Results;
 using Modules.Buyers.Api;
 using Modules.Buyers.Application;
 using Modules.Buyers.Domain;
