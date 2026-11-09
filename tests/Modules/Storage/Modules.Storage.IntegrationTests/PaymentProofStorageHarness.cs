@@ -14,6 +14,7 @@ using Modules.Storage.Application;
 using Modules.Storage.Infrastructure.ObjectStorage;
 using Modules.Storage.Infrastructure.PaymentProofs;
 using Modules.Storage.Infrastructure.Persistence;
+using Modules.Storage.Infrastructure.ProductImages;
 using Npgsql;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -287,6 +288,67 @@ internal static class PaymentProofStorageHarness
             TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Escribe en el outbox el evento que Catalog escribe al soltar fotos de producto (spec
+    /// 2026-11-08), con el nombre y los campos del contrato escritos a mano, igual que
+    /// <see cref="AddDetachedEventAsync"/>. Devuelve el id del mensaje.</summary>
+    public static Task<Guid> AddImagesReleasedEventAsync(
+        StorageApiFactory factory, Guid tenantId, params Guid[] fileIds) =>
+        AddImagesReleasedPayloadAsync(factory, JsonSerializer.Serialize(new { tenantId, fileIds }));
+
+    /// <summary>El evento de fotos soltadas con el payload tal cual, para ejercer mensajes mal formados.</summary>
+    public static async Task<Guid> AddImagesReleasedPayloadAsync(StorageApiFactory factory, string payloadJson)
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        dbContext.Outbox.Add(new StorageOutboxMessage
+        {
+            Id = id,
+            EventName = "catalog.product.images-released.v1",
+            PayloadJson = payloadJson,
+            CorrelationId = id.ToString(),
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>Un lote de las fotos soltadas, a mano: el hosted service no corre en este host (ver
+    /// <see cref="StorageApiFactory"/>).</summary>
+    public static async Task<int> RunImageReleaseAsync(StorageApiFactory factory)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IProductImageReleaseProcessor>()
+            .ProcessPendingAsync(TestContext.Current.CancellationToken);
+    }
+
+    public static async Task<bool> IsProcessedByImageReleaseAsync(StorageApiFactory factory, Guid messageId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StorageDbContext>();
+        return await dbContext.Inbox.AnyAsync(
+            entry => entry.Consumer == "storage.product-image-release" && entry.MessageId == messageId,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Las claves de las variantes de un archivo, leídas con SQL.</summary>
+    public static async Task<IReadOnlyList<string>> VariantKeysAsync(string connectionString, Guid fileId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT storage_key FROM storage.file_variants WHERE file_resource_id = @id", connection);
+        command.Parameters.AddWithValue("id", fileId);
+        var keys = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            keys.Add(reader.GetString(0));
+        }
+
+        return keys;
+    }
+
     /// <summary>La fila de storage.file_resources y cuántas variantes tiene, leída con SQL para no
     /// depender de lo que expone la API.</summary>
     public static async Task<FileRow> ReadFileAsync(string connectionString, Guid fileId)
@@ -435,6 +497,16 @@ internal sealed class StorageApiFactory(string connectionString, bool orphanClea
             {
                 services.Remove(descriptor);
             }
+
+            // Igual el de las fotos de producto: la prueba corre el lote a mano (RunImageReleaseAsync).
+            var imageReleaseWorkers = services
+                .Where(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationType == typeof(ProductImageReleaseWorker))
+                .ToList();
+            foreach (var descriptor in imageReleaseWorkers)
+            {
+                services.Remove(descriptor);
+            }
         });
     }
 }
@@ -538,6 +610,8 @@ internal sealed class InMemoryPublicObjectStorage : IPublicObjectStorage
     /// <summary>La clave cuya verificación de existencia falla, para ejercer un error transitorio de R2
     /// en el movimiento (revisión final, I1); null si ninguna.</summary>
     public string? FailingExistsKey { get; set; }
+
+    public IReadOnlyCollection<string> Keys => _objects.Keys.ToArray();
 
     public bool IsConfigured => true;
 

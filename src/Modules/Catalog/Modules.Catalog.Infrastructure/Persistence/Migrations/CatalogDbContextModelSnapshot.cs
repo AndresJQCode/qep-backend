@@ -286,6 +286,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FileId")
+                        .HasDatabaseName("IX_product_gallery_images_file");
+
                     b.HasIndex("ProductId")
                         .HasDatabaseName("IX_product_gallery_images_product");
 

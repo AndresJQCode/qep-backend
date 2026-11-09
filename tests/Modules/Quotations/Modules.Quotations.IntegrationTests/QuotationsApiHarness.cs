@@ -555,6 +555,74 @@ internal static class QuotationsApiHarness
                 }
             ]);
 
+    private static readonly string[] Sizes = ["M", "L"];
+
+    public sealed record Shirt(Guid ProductId, Guid M, Guid L, Guid OptionId, Guid ValueM, Guid ValueL);
+
+    public sealed record OptionValueDto(Guid Id, string Name);
+
+    public sealed record OptionDto(Guid Id, IReadOnlyList<OptionValueDto> Values);
+
+    public sealed record VariantDto(Guid Id, string Code, string Name);
+
+    public sealed record ProductDto(Guid Id, long Version, IReadOnlyList<VariantDto> Variants);
+
+    public static object[] NoDiscountScales() =>
+    [
+        new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 }
+    ];
+
+    public static object Pricing(decimal cop, object[] scales) => new
+    {
+        prices = new Dictionary<string, decimal> { ["COP"] = cop },
+        scales,
+        packagingUnits = Array.Empty<int>()
+    };
+
+    /// <summary>Un producto con la opción «Talla» M y L: CAM-M a 30.000 y CAM-L a 32.000 COP, con las
+    /// mismas escalas salvo que <paramref name="scalesL"/> le dé a L las suyas. El nombre visible de cada
+    /// variante es «{<paramref name="name"/>} – M» y «{<paramref name="name"/>} – L».</summary>
+    public static async Task<Shirt> CreateShirtInTwoSizesAsync(
+        HttpClient client, Guid tenantId, object[]? scales = null, object[]? scalesL = null, string name = "Camiseta")
+    {
+        scales ??= NoDiscountScales();
+        scalesL ??= scales;
+        var optionResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/options",
+            new { name = "Talla", values = Sizes },
+            TestContext.Current.CancellationToken);
+        Assert.True(optionResponse.IsSuccessStatusCode, await optionResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var option = await optionResponse.Content.ReadFromJsonAsync<OptionDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(option);
+        var valueM = option.Values.Single(value => value.Name == "M").Id;
+        var valueL = option.Values.Single(value => value.Name == "L").Id;
+
+        var productResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name,
+                optionIds = new[] { option.Id },
+                variants = new object[]
+                {
+                    new { code = "CAM-M", optionValueIds = new[] { valueM }, pricing = Pricing(30_000m, scales) },
+                    new { code = "CAM-L", optionValueIds = new[] { valueL }, pricing = Pricing(32_000m, scalesL) },
+                }
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(productResponse.IsSuccessStatusCode, await productResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(product);
+
+        return new Shirt(
+            product.Id,
+            product.Variants.Single(variant => variant.Code == "CAM-M").Id,
+            product.Variants.Single(variant => variant.Code == "CAM-L").Id,
+            option.Id,
+            valueM,
+            valueL);
+    }
+
     /// <summary>
     /// Sube un archivo real a Storage (misma sesión de carga firmada que ya usa el resto del
     /// backend) y lo deja en <c>Available</c>. Devuelve su id. Necesita

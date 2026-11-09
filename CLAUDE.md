@@ -513,6 +513,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
   Una tabla nueva que guarde un id de cliente vivo entra en `MoveAsync` y en esas dos pruebas, o la fusión la deja apuntando a un
   cliente inactivo. Y `merged_into_id` apunta siempre a un no fusionado: quien lea un fusionado sigue un solo salto.
+- **`CatalogProductDeletionCleanup` escribe en `store.order_request_lines`/`order_requests` por nombre y enrola el
+  `QuotationsDbContext` en la transacción de Catalog.** El borrado permanente de un producto (`DELETE .../catalog/products/{id}`)
+  vive en Bootstrapper por la misma razón que `CustomerMergeReferences`: borra las líneas de las solicitudes de la tienda en
+  `New` con SQL crudo (`request_id`, `variant_id`, `status`, `version`) y llama a `IQuotationVariantDeletion` de Quotations sobre
+  la conexión del `CatalogDbContext` (`SetDbConnection` + `UseTransactionAsync`), todo envuelto en `CustomersWriteRaces.RunAsync`
+  para que un deadlock o una falla de serialización sea 412 y no 500. Renombrar una de esas columnas compila y deja el `DELETE` del
+  producto en 500 (`42703`/`42P01`); como es una transacción, no queda nada escrito. Lo amarran `ProductDeletionCleanupTests`
+  (Quotations) y `ProductDeletionStoreCleanupTests` (Store), que resuelven el adaptador real y lo corren contra el esquema migrado.
+  Tras confirmar, ese `QuotationsDbContext` queda apuntando a una transacción terminada: nada más en el scope debe usarlo.
 - **El `Version++` del fusionado es lo que impide fusionar al mismo cliente en dos que quedan.** `ApplyMergedInto` pasa por
   `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
   chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
