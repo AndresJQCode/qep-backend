@@ -10,8 +10,9 @@ public interface IWhatsAppSender
     Task SendQuotationAsync(
         WhatsAppChannel channel, WhatsAppQuotationMessage message, CancellationToken cancellationToken);
 
-    /// <summary>Envía el PDF de un pedido. Plantilla propia (<see cref="ZenviaWhatsAppChannel.OrderTemplateId"/>):
-    /// la de la cotización dice «cotización» y lleva <c>valid_until</c>, que un pedido no tiene. Sólo por Zenvia.</summary>
+    /// <summary>Envía el PDF de un pedido. Plantilla propia: en Zenvia <see cref="ZenviaWhatsAppChannel.OrderTemplateId"/>, en Meta
+    /// la fila <c>Order</c> aprobada de la conexión (spec 2026-11-09 D9); la de la cotización dice «cotización» y lleva
+    /// <c>valid_until</c>, que un pedido no tiene.</summary>
     Task SendOrderAsync(
         WhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken);
 }
@@ -68,7 +69,9 @@ public sealed record WhatsAppOrderMessage(
     /// <summary>Quién envía.</summary>
     Guid? SentByMemberId = null,
     /// <summary>El cliente destinatario; <c>null</c> si va a los datos de facturación.</summary>
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    /// <summary>El tenant del pedido: el envío por Meta pasa por Mensajería, que aísla por tenant (spec 2026-11-09 D9).</summary>
+    Guid? TenantId = null);
 
 /// <summary>El puerto de Zenvia: la plantilla se manda por su API con el token del canal. La implementa la
 /// Infrastructure de este módulo (<c>ZenviaWhatsAppSender</c>).</summary>
@@ -89,4 +92,8 @@ public interface IMetaWhatsAppSender
 {
     Task SendQuotationAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-09 D9: el pedido por la fila <c>Order</c> aprobada de la conexión, con el PDF privado como encabezado.</summary>
+    Task SendOrderAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken);
 }

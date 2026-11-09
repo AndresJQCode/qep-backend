@@ -128,6 +128,19 @@ public sealed class MessageTemplateTests
         Assert.Equal(MessagingErrorCodes.TemplateQuotationConflict, exception.Code);
     }
 
+    // Spec 2026-11-09 D1 y D3: la plantilla de pedido se adopta igual que la de cotización, sólo desde una externa.
+    [Fact]
+    public void AdoptAsOrderOnlyWorksOnAnExternalTemplate()
+    {
+        var external = External(MessageTemplateName.OrderName);
+        external.AdoptAsOrder(Now.AddMinutes(1));
+        Assert.Equal(MessageTemplateKind.Order, external.Kind);
+
+        var free = Pending();
+        var exception = Assert.Throws<MessagingDomainException>(() => free.AdoptAsOrder(Now));
+        Assert.Equal(MessagingErrorCodes.TemplateOrderConflict, exception.Code);
+    }
+
     [Theory]
     [InlineData("PENDING", true)]
     [InlineData("APPROVED", true)]
@@ -175,4 +188,12 @@ public sealed class MessageTemplateTests
     [InlineData("qep_cotizaciones", false)]
     [InlineData("cotizacion", false)]
     public void TheQuotationNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
+
+    // Spec 2026-11-09 D1: qep_pedido y sus versiones también son del sistema.
+    [Theory]
+    [InlineData("qep_pedido", true)]
+    [InlineData("qep_pedido_v2", true)]
+    [InlineData("qep_pedidos", false)]
+    [InlineData("pedido", false)]
+    public void TheOrderNameAndItsPrefixAreReserved(string name, bool reserved) => Assert.Equal(reserved, MessageTemplateName.IsReserved(name));
 }

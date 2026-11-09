@@ -798,13 +798,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Name", "Language" }, "UX_message_templates_name_language")
                         .IsUnique();
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_order")
+                        .IsUnique()
+                        .HasFilter("kind = 'Order'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_quotation")
                         .IsUnique()
                         .HasFilter("kind = 'Quotation'");
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order')");
                         });
                 });
 

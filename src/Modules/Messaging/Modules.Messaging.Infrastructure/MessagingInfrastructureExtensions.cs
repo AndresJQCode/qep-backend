@@ -30,6 +30,7 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IQuotationTemplateOutbound, QuotationTemplateOutbound>();
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
+        services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
@@ -112,6 +113,8 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
         services.AddScoped<IQuotationTemplateReadiness, QuotationTemplateReadiness>();
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
+        // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
+        services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();

@@ -28,7 +28,7 @@ public sealed class QuotationsMetaWhatsAppSenderTests
         var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
         var message = Message();
 
-        await new QuotationsMetaWhatsAppSender(outbound, storage, new StubReadiness(Approved)).SendQuotationAsync(channel, "573001234567", message, Ct);
+        await NewSender(outbound, storage, new StubReadiness(Approved)).SendQuotationAsync(channel, "573001234567", message, Ct);
 
         var send = Assert.Single(outbound.Sends);
         Assert.Equal(
@@ -46,7 +46,7 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     [MemberData(nameof(NotSentResults))]
     public async Task AnythingButSentIsSendFailed(QuotationTemplateSendResult result)
     {
-        var sender = new QuotationsMetaWhatsAppSender(new RecordingOutbound(result), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved));
+        var sender = NewSender(new RecordingOutbound(result), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved));
         var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
 
         var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
@@ -59,7 +59,7 @@ public sealed class QuotationsMetaWhatsAppSenderTests
     public async Task ATemplateNoLongerApprovedIsSendFailed()
     {
         var outbound = new RecordingOutbound();
-        var sender = new QuotationsMetaWhatsAppSender(outbound, new StubStorage(StorageKey, Pdf), new StubReadiness(null));
+        var sender = NewSender(outbound, new StubStorage(StorageKey, Pdf), new StubReadiness(null));
         var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null);
 
         var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
@@ -68,6 +68,91 @@ public sealed class QuotationsMetaWhatsAppSenderTests
         Assert.Equal("quotation.whatsapp.send_failed", exception.Code);
         Assert.Contains("template_not_approved", exception.Message, StringComparison.Ordinal);
         Assert.Empty(outbound.Sends);
+    }
+
+    // Spec 2026-11-09 D9: el pedido sale por Mensajería con la fila Order aprobada, el PDF privado y el adjunto «Pedido-{numero}.pdf».
+    [Fact]
+    public async Task AnOrderSendsThePrivatePdfTheOrderTemplateAndTheFormattedValues()
+    {
+        var orders = new RecordingOrderOutbound();
+        var channel = new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", "+57 300 123 4567");
+
+        await NewSender(new RecordingOutbound(), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved), orders, new StubOrderReadiness(ApprovedOrder))
+            .SendOrderAsync(channel, "573001234567", OrderMessage(), Ct);
+
+        var send = Assert.Single(orders.Sends);
+        Assert.Equal(
+            (TenantId, channel.ConnectionId, MemberId, "573001234567", (Guid?)CustomerId, "Ana Pérez"),
+            (send.TenantId, send.ConnectionId, send.SentByMemberId, send.WaId, send.CustomerId, send.RecipientName));
+        Assert.Same(ApprovedOrder, send.Template);
+        Assert.Equal(("Ana Pérez", "PED-000123"), (send.FullName, send.OrderNumber));
+        Assert.Equal(WhatsAppTemplateValues.Total(2450000m, "COP", null), send.Total);
+        Assert.Equal("Pedido-PED-000123.pdf", send.DocumentFileName);
+        Assert.Equal(Pdf, send.Document.ToArray());
+    }
+
+    [Fact]
+    public async Task AnOrderWhoseTemplateIsNoLongerApprovedIsSendFailed()
+    {
+        var orders = new RecordingOrderOutbound();
+        var sender = NewSender(new RecordingOutbound(), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved), orders, new StubOrderReadiness(null));
+
+        var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
+            () => sender.SendOrderAsync(new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null), "573001234567", OrderMessage(), Ct));
+
+        Assert.Equal("order.whatsapp.send_failed", exception.Code);
+        Assert.Contains("template_not_approved", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(orders.Sends);
+    }
+
+    [Fact]
+    public async Task AnOrderNotSentIsOrderSendFailed()
+    {
+        var orders = new RecordingOrderOutbound(new OrderTemplateSendResult.Failed("messaging.message.rejected"));
+        var sender = NewSender(new RecordingOutbound(), new StubStorage(StorageKey, Pdf), new StubReadiness(Approved), orders, new StubOrderReadiness(ApprovedOrder));
+
+        var exception = await Assert.ThrowsAsync<QuotationsDomainException>(
+            () => sender.SendOrderAsync(new MetaWhatsAppChannel(Guid.CreateVersion7(), "Cuenta de Meta", null), "573001234567", OrderMessage(), Ct));
+
+        Assert.Equal("order.whatsapp.send_failed", exception.Code);
+        Assert.Contains("messaging.message.rejected", exception.Message, StringComparison.Ordinal);
+    }
+
+    private static QuotationsMetaWhatsAppSender NewSender(
+        RecordingOutbound outbound, StubStorage storage, StubReadiness readiness,
+        RecordingOrderOutbound? orders = null, StubOrderReadiness? orderReadiness = null) =>
+        new(outbound, storage, readiness, orders ?? new RecordingOrderOutbound(), orderReadiness ?? new StubOrderReadiness(null));
+
+    private static WhatsAppOrderMessage OrderMessage() =>
+        new(
+            ToPhone: "300 123 4567",
+            FullName: "Ana Pérez",
+            OrderNumber: "PED-000123",
+            Total: 2450000m,
+            Currency: "COP",
+            DocumentUrl: null,
+            DocumentStorageKey: StorageKey,
+            SentByMemberId: MemberId,
+            CustomerId: CustomerId,
+            TenantId: TenantId);
+
+    private static readonly ApprovedTemplate ApprovedOrder = new("qep_pedido_v2", "es", "UTILITY", "NAMED", "[]");
+
+    private sealed class StubOrderReadiness(ApprovedTemplate? template) : IOrderTemplateReadiness
+    {
+        public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+            Task.FromResult(template);
+    }
+
+    private sealed class RecordingOrderOutbound(OrderTemplateSendResult? result = null) : IOrderTemplateOutbound
+    {
+        public List<OrderTemplateSend> Sends { get; } = [];
+
+        public Task<OrderTemplateSendResult> SendAsync(OrderTemplateSend send, CancellationToken cancellationToken)
+        {
+            Sends.Add(send);
+            return Task.FromResult(result ?? new OrderTemplateSendResult.Sent(Guid.CreateVersion7(), Guid.CreateVersion7()));
+        }
     }
 
     public static TheoryData<QuotationTemplateSendResult> NotSentResults() => new()

@@ -19,8 +19,23 @@ public sealed class RecordingWhatsAppChannelDirectory : IWhatsAppChannelDirector
 
     public List<WhatsAppChannel> Channels { get; } = [Default];
 
-    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<WhatsAppChannel>>([.. Channels]);
+    /// <summary>Qué documento pidió cada llamada (spec 2026-11-09 D6).</summary>
+    public List<WhatsAppDocument> Documents { get; } = [];
+
+    /// <summary>Como el adaptador real (spec 2026-11-09 D6): para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible.
+    /// Los demás canales valen para los dos documentos.</summary>
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken)
+    {
+        lock (Documents)
+        {
+            Documents.Add(document);
+        }
+
+        return Task.FromResult<IReadOnlyList<WhatsAppChannel>>(
+            document == WhatsAppDocument.Order
+                ? [.. Channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })]
+                : [.. Channels]);
+    }
 }
 
 /// <summary>Lo que el envío le entregó a Zenvia, sin salir a la red: el canal y el número del documento.</summary>

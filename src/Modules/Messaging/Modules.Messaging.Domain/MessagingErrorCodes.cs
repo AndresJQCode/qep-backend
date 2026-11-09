@@ -155,6 +155,13 @@ public static class MessagingErrorCodes
     /// <summary>§4.5: existe una <c>qep_cotizacion</c> creada fuera de QEP cuyo cuerpo no es el de la definición.</summary>
     public const string TemplateQuotationConflict = "messaging.template.quotation_conflict";
 
+    /// <summary>Spec 2026-11-09 D1: la conexión ya tiene su plantilla de pedido viva, o dos aprovisionamientos a la vez chocaron en
+    /// <c>UX_message_templates_order</c>.</summary>
+    public const string TemplateOrderExists = "messaging.template.order_exists";
+
+    /// <summary>Spec 2026-11-09 D3: existe una <c>qep_pedido</c> creada fuera de QEP con otro cuerpo o una forma incompatible.</summary>
+    public const string TemplateOrderConflict = "messaging.template.order_conflict";
+
     /// <summary>§4.3: una campaña <c>Scheduled</c> o <c>Sending</c> de la conexión referencia nombre e idioma.</summary>
     public const string TemplateInUseByCampaign = "messaging.template.in_use_by_campaign";
 

@@ -22,11 +22,21 @@ internal sealed class FailingWhatsAppSender(Exception failure) : IWhatsAppSender
         Task.FromException(failure);
 }
 
-/// <summary>Los canales de Zenvia del tenant, fijos por prueba (spec 2026-10-21, plan Zenvia por tenant).</summary>
+/// <summary>Los canales del tenant, fijos por prueba (spec 2026-10-21). Replica la única regla por documento del adaptador real
+/// (spec 2026-11-09 D6) que un handler puede notar: para un pedido, una Zenvia sin <c>OrderTemplateId</c> no está disponible.
+/// <see cref="Documents"/> guarda qué documento pidió cada llamada.</summary>
 internal sealed class StubWhatsAppChannelDirectory(params WhatsAppChannel[] channels) : IWhatsAppChannelDirectory
 {
-    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<WhatsAppChannel>>(channels);
+    public List<WhatsAppDocument> Documents { get; } = [];
+
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken)
+    {
+        Documents.Add(document);
+        return Task.FromResult<IReadOnlyList<WhatsAppChannel>>(
+            document == WhatsAppDocument.Order
+                ? [.. channels.Where(channel => channel is not ZenviaWhatsAppChannel { OrderTemplateId: null or "" })]
+                : channels);
+    }
 }
 
 /// <summary>La elección del canal en memoria: una sola por tenant, como la tabla. <see cref="Remembered"/> cuenta las
@@ -101,10 +111,19 @@ internal sealed class RecordingMetaSender : IMetaWhatsAppSender
 {
     public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppQuotationMessage Message)> Quotations { get; } = [];
 
+    public List<(MetaWhatsAppChannel Channel, string WaId, WhatsAppOrderMessage Message)> Orders { get; } = [];
+
     public Task SendQuotationAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
     {
         Quotations.Add((channel, waId, message));
+        return Task.CompletedTask;
+    }
+
+    public Task SendOrderAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        Orders.Add((channel, waId, message));
         return Task.CompletedTask;
     }
 }

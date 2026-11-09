@@ -10,9 +10,11 @@ namespace Modules.Quotations.Application;
 /// <see cref="SendQuotationCommand"/> lo hace con la cotización. <paramref name="Recipient"/> es la
 /// misma opción cerrada: <c>"Customer"</c> (default) o <c>"Billing"</c>, los datos de facturación
 /// propios del pedido. Nunca un teléfono suelto: el destinatario lo resuelve el backend.
+/// <paramref name="ConnectionId"/> (spec 2026-11-09 D8): la conexión elegida cuando el tenant tiene varias
+/// disponibles para pedidos; la elección es la misma que la de la cotización (D7).
 /// </summary>
 public sealed record SendOrderCommand(
-    Guid TenantId, Guid OrderId, string? Recipient = null) : ICommand<OrderDetailDto>;
+    Guid TenantId, Guid OrderId, string? Recipient = null, Guid? ConnectionId = null) : ICommand<OrderDetailDto>;
 
 /// <summary>
 /// Responde el detalle entero (<see cref="OrderDetailDto"/>) y no sólo el pedido: la pantalla repinta el
@@ -41,6 +43,7 @@ public sealed class SendOrderHandler(
     IQuotationCustomerLookup customerLookup,
     IWhatsAppSender whatsAppSender,
     IWhatsAppChannelDirectory whatsAppChannels,
+    IWhatsAppChannelChoiceStore channelChoices,
     ITenantDirectory tenantDirectory,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -68,10 +71,15 @@ public sealed class SendOrderHandler(
         var sentBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
-        // Por dónde sale (plan 2026-10-21), también fuera y después de saber quién envía: sin canal, con
-        // varios o sin plantilla de pedido, el envío nunca empezó, y saberlo no cuesta un PDF.
-        var channel = WhatsAppChannelSelection.ForOrder(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken));
+        // Por dónde sale (spec 2026-11-09 D6 y D7: los canales disponibles para pedidos y la misma elección que la
+        // cotización), también fuera y después de saber quién envía: sin canal, con varios sin elegir o con una
+        // elección que no corresponde, el envío nunca empezó, y saberlo no cuesta un PDF.
+        var resolved = WhatsAppChannelSelection.Resolve(
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, WhatsAppDocument.Order, cancellationToken),
+            await channelChoices.FindAsync(command.TenantId, cancellationToken),
+            command.ConnectionId,
+            WhatsAppDocument.Order);
+        var channel = resolved.Channel;
 
         // El paso en curso, para que la falla diga dónde se cayó: el teléfono del cliente, `qcode-pdf`,
         // R2 o Zenvia se destraban en lados distintos. Los pasos son los de la cotización.
@@ -104,9 +112,14 @@ public sealed class SendOrderHandler(
             var storageKey = await pdfProvider.RenderAndSaveAsync(
                 command.TenantId, order.Id, detail, cancellationToken);
 
-            // Meta no puede bajar el PDF desde una URL prefirmada de R2 (ver IQuotationPdfStorage).
-            stage = QuotationSendStage.Publish;
-            var documentUrl = await pdfStorage.PublishAsync(storageKey, cancellationToken);
+            // Sólo Zenvia necesita la copia pública (ver IQuotationPdfStorage): Meta lee el PDF privado desde
+            // Mensajería por su clave (spec 2026-11-09 D9), igual que en la cotización.
+            string? documentUrl = null;
+            if (channel is ZenviaWhatsAppChannel)
+            {
+                stage = QuotationSendStage.Publish;
+                documentUrl = await pdfStorage.PublishAsync(storageKey, cancellationToken);
+            }
 
             // El WhatsApp sale antes de guardar, con el mismo criterio que la cotización: la entrada del
             // historial dice que el documento llegó, así que no se escribe si Zenvia falla.
@@ -126,7 +139,8 @@ public sealed class SendOrderHandler(
                     NumberFormat: regional?.NumberFormat,
                     DocumentStorageKey: storageKey,
                     SentByMemberId: sentBy.Value,
-                    CustomerId: recipient == QuotationRecipient.Customer ? order.ClientId : null),
+                    CustomerId: recipient == QuotationRecipient.Customer ? order.ClientId : null,
+                    TenantId: command.TenantId),
                 cancellationToken);
 
             stage = QuotationSendStage.Persistence;
@@ -145,7 +159,32 @@ public sealed class SendOrderHandler(
                 order.Id.ToString(),
                 "success",
                 now);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
+
+            if (resolved.Remember)
+            {
+                // La elección viaja con el envío (spec 2026-11-09 D7, como D9 de la cotización): un envío que no llegó a
+                // guardarse no la deja. Sin transacción, el INSERT ... ON CONFLICT quedaría confirmado aparte del historial.
+                await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+                var remembered = await channelChoices.RememberAsync(
+                    command.TenantId, channel.ConnectionId, resolved.PreviousChoice, sentBy.Value, now, cancellationToken);
+                if (remembered)
+                {
+                    auditPublisher.Publish(
+                        command.TenantId,
+                        executionContext.SubjectId,
+                        ChooseWhatsAppChannelHandler.AuditAction,
+                        channel.ConnectionId.ToString(),
+                        "success",
+                        now);
+                }
+
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            else
+            {
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
         }
         catch (Exception exception) when (exception is not QuotationsDomainException)
         {

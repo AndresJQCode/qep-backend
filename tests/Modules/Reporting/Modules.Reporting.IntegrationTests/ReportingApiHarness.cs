@@ -1092,7 +1092,7 @@ internal sealed class SingleWhatsAppChannel : IWhatsAppChannelDirectory
     private static readonly WhatsAppChannel Channel = new ZenviaWhatsAppChannel(
         Guid.CreateVersion7(), "Zenvia de prueba", "token-de-prueba", "570000000000", "d0e79149-ed61-4784-9883-d86807f46ce5", null);
 
-    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<WhatsAppChannel>> ListAvailableAsync(Guid tenantId, WhatsAppDocument document, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WhatsAppChannel>>([Channel]);
 }
 

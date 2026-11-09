@@ -7,12 +7,13 @@ namespace Bootstrapper;
 
 /// <summary>
 /// Spec 2026-10-21 §4.1 y D16: el adaptador de <see cref="IMetaWhatsAppSender"/> hacia Mensajería. Lee el PDF privado de
-/// Storage y le entrega a <see cref="IQuotationTemplateOutbound"/> la plantilla vigente de la conexión con los valores ya
-/// formateados (los mismos que usa Zenvia); el mensaje queda en el hilo de la conversación. Sólo aquí se tocan Quotations,
-/// Mensajería y Storage: Quotations no referencia ninguno de los dos.
+/// Storage y le entrega a <see cref="IQuotationTemplateOutbound"/> (o a <see cref="IOrderTemplateOutbound"/>, spec 2026-11-09 D9) la
+/// plantilla vigente de la conexión con los valores ya formateados (los mismos que usa Zenvia); el mensaje queda en el hilo de la
+/// conversación. Sólo aquí se tocan Quotations, Mensajería y Storage: Quotations no referencia ninguno de los dos.
 /// </summary>
 internal sealed class QuotationsMetaWhatsAppSender(
-    IQuotationTemplateOutbound outbound, IObjectStorage storage, IQuotationTemplateReadiness readiness) : IMetaWhatsAppSender
+    IQuotationTemplateOutbound outbound, IObjectStorage storage, IQuotationTemplateReadiness readiness,
+    IOrderTemplateOutbound orderOutbound, IOrderTemplateReadiness orderReadiness) : IMetaWhatsAppSender
 {
     public async Task SendQuotationAsync(
         MetaWhatsAppChannel channel, string waId, WhatsAppQuotationMessage message, CancellationToken cancellationToken)
@@ -57,6 +58,49 @@ internal sealed class QuotationsMetaWhatsAppSender(
             };
             throw new QuotationsDomainException(
                 "quotation.whatsapp.send_failed", $"Meta did not accept the quotation ({reason}).");
+        }
+    }
+
+    /// <summary>Spec 2026-11-09 D9: lo mismo con la fila <c>Order</c> aprobada, sin vigencia y con el adjunto <c>Pedido-{numero}.pdf</c>.</summary>
+    public async Task SendOrderAsync(
+        MetaWhatsAppChannel channel, string waId, WhatsAppOrderMessage message, CancellationToken cancellationToken)
+    {
+        var tenantId = message.TenantId ?? throw new InvalidOperationException("The order message carries no tenant.");
+        var sentBy = message.SentByMemberId ?? throw new InvalidOperationException("The order message carries no sender.");
+        var storageKey = message.DocumentStorageKey ?? throw new InvalidOperationException("The order message carries no PDF.");
+
+        if (await orderReadiness.FindApprovedAsync(tenantId, channel.ConnectionId, cancellationToken) is not { } template)
+        {
+            throw new QuotationsDomainException(
+                "order.whatsapp.send_failed", "Meta did not accept the order (template_not_approved).");
+        }
+
+        var document = await storage.DownloadAsync(storageKey, cancellationToken);
+
+        var result = await orderOutbound.SendAsync(
+            new OrderTemplateSend(
+                tenantId, channel.ConnectionId, sentBy,
+                waId,
+                message.CustomerId,
+                message.FullName,
+                template,
+                message.FullName,
+                message.OrderNumber,
+                WhatsAppTemplateValues.Total(message.Total, message.Currency, message.NumberFormat),
+                document,
+                WhatsAppTemplateValues.OrderDocumentFileName(message.OrderNumber)),
+            cancellationToken);
+
+        if (result is not OrderTemplateSendResult.Sent)
+        {
+            var reason = result switch
+            {
+                OrderTemplateSendResult.ConnectionUnavailable unavailable => unavailable.Reason ?? "connection_unavailable",
+                OrderTemplateSendResult.Failed failed => failed.Code,
+                _ => "unknown",
+            };
+            throw new QuotationsDomainException(
+                "order.whatsapp.send_failed", $"Meta did not accept the order ({reason}).");
         }
     }
 }

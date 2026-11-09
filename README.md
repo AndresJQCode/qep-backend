@@ -1702,9 +1702,10 @@ pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran lo
 WhatsApp, como `POST /quotations/{id}/send` lo hace con la cotización. Contrato completo y códigos de
 error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizaciones-y-pedidos.md).
 
-- **Permiso** `quotations.order.manage`. **Cuerpo opcional** `{ "recipient": "Customer" | "Billing" }`
+- **Permiso** `quotations.order.manage`. **Cuerpo opcional** `{ "recipient": "Customer" | "Billing", "connectionId": "…" }`
   (default `Customer`): el teléfono lo resuelve el backend — el del cliente, o el de la facturación
-  propia del pedido (`order.order.billing_phone_missing` si no la tiene).
+  propia del pedido (`order.order.billing_phone_missing` si no la tiene). `connectionId` es la conexión elegida
+  cuando hay varias disponibles para pedidos (spec 2026-11-09 D8).
 - **Responde el `OrderDetailResponse` entero**, con la entrada `Sent` en el historial.
 - **No cambia el pedido**: ni estado ni `version`. Se manda en `Pending`, `Approved` e `Invoiced`; un
   anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
@@ -1715,17 +1716,28 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
   llama `Pedido-<número>.pdf`. Sale del detalle del pedido (`QuotationPdfDocumentMapper.FromOrder`),
   nunca de la cotización de origen, que puede no existir.
 - **Sin caché ni migración**: se genera en cada envío y se guarda bajo `quotations/tenants/…/orders/`
-  (lo limpia la misma regla de lifecycle), y la copia pública para Meta sale como la de la cotización.
-  Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar un pedido es raro.
+  (lo limpia la misma regla de lifecycle); la copia pública sólo se publica para Zenvia, como en la cotización
+  (Meta lee el PDF privado por su clave). Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar
+  un pedido es raro.
 - **Sin registro propio de fallas**: el log de fallas de la API guarda la excepción, y `order.send.failed`
   nombra el paso.
-- **Plantilla propia en Zenvia**: el `orderTemplateId` de la conexión de Zenvia del tenant, ver
-  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Sin él, enviar un pedido responde
-  `order.whatsapp.not_configured` antes de generar el PDF; sin conexión, `order.whatsapp.no_channel`, y con
-  más de una, `order.whatsapp.channel_required`.
-- **El pedido sigue saliendo sólo por Zenvia** (DP-1): no recibe `connectionId`, no lee la elección guardada del
-  tenant y, con una conexión de Meta sola, responde `order.whatsapp.no_channel`. Lo de
-  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia) sobre elegir canal aplica sólo a la cotización.
+- **Sale por el canal del tenant, como la cotización** (spec 2026-11-09, cierra DP-1 y DP-2). Los canales
+  disponibles para pedidos (D6) son: Meta con la plantilla de sistema `qep_pedido` **APPROVED**
+  (`MessageTemplateKind.Order`, se aprovisiona con `POST …/template-management/order`, ver
+  [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep)) y Zenvia con token, número, `templateId`
+  **y** `orderTemplateId` (ver [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia)). Una Zenvia sin
+  `orderTemplateId` simplemente no está disponible para pedidos: `order.whatsapp.not_configured` ya no sale de la
+  selección (sigue como chequeo defensivo del sender de Zenvia). La selección (D7) es la misma que la de la
+  cotización, con prefijo `order.whatsapp.`: sin canal `no_channel`; varios sin elección guardada
+  `channel_required`; elección guardada disponible → sale por ella (otro `connectionId` es `channel_already_set`);
+  elección guardada **no disponible para pedidos** → se ignora; `connectionId` que no está en la lista →
+  `channel_unavailable`. La elección es una por tenant y **compartida** con la cotización: un envío de pedido con
+  `connectionId` la guarda igual (misma auditoría, misma transacción, nunca si el envío falla). La pantalla pregunta
+  por los canales de pedido con `GET /quotations/whatsapp-channels?document=order`.
+- **Por Meta** (D9): la fila `Order` aprobada se relee al enviar (`order.whatsapp.send_failed (template_not_approved)` si
+  ya no está), el PDF viaja como encabezado de documento con el nombre `Pedido-<número>.pdf` y el mensaje queda en el
+  hilo de Mensajería con las variables `nombre_contacto`, `numero_pedido`, `valor_total` (más `asesor`, `empresa` y
+  `saludo` si la plantilla las usa).
 
 ### Catálogo: opciones, variantes y galería
 
@@ -2723,9 +2735,12 @@ en borrador con `SendFailed` en el historial y no dicen por qué canal fue.
 
 - `GET /quotations/whatsapp-channels` lista los canales (Meta primero, después Zenvia, cada grupo por nombre)
   con `selectedConnectionId` (sólo si la elección sigue disponible) y `needsChoice`. Se lee con
-  `quotations.quotation.manage` **o** `tenancy.settings.update` (decisión del owner DP-F1, 2026-10-25: quien
-  elige el canal desde Configuración no necesariamente envía cotizaciones). Política
-  `QuotationsPolicies.WhatsAppChannelsRead`, y el handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny`.
+  `quotations.quotation.manage`, `quotations.order.manage` (spec 2026-11-09 D8: quien manda pedidos pregunta por
+  el canal) **o** `tenancy.settings.update` (decisión del owner DP-F1, 2026-10-25: quien elige el canal desde
+  Configuración no necesariamente envía cotizaciones). Política `QuotationsPolicies.WhatsAppChannelsRead`, y el
+  handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny`. Acepta `?document=quotation|order` (default
+  `quotation`; otro valor es `422 quotation.whatsapp.document_invalid`): con `order` la lista es la de canales
+  disponibles para pedidos, y `selectedConnectionId` y `needsChoice` se calculan sobre ella.
 - `PUT /quotations/whatsapp-channel` con `{ "connectionId": "…" }` guarda la elección y responde con la forma
   del `GET`. Exige `tenancy.settings.update`; `422 validation.failed` (`errors.connectionId`) si falta o es
   `Guid.Empty`, y `422 quotation.whatsapp.channel_unavailable` si no está disponible.
@@ -2752,11 +2767,12 @@ conexión apunta a ella. Sus variables son las de la cotización menos
 | `order_number` | `Order.OrderNumber` |
 | `total` | `Order.Total`, con el mismo formato que la cotización |
 
-> **Decisión pendiente (owner):** el texto de la plantilla del pedido, su `name` y su aprobación en
-> Zenvia/Meta. Por eso `orderTemplateId` es opcional en la conexión: sin él, el endpoint responde
-> `order.whatsapp.not_configured`. Se crea con el mismo procedimiento de abajo, cambiando
-> `components.body.text` y quitando `valid_until` de `examples`, y su `id` se carga en la conexión de cada
-> tenant.
+> **Zenvia:** el texto de la plantilla del pedido, su `name` y su aprobación siguen siendo del owner. Por eso
+> `orderTemplateId` es opcional en la conexión: sin él, la conexión no está disponible para pedidos (spec 2026-11-09 D6)
+> y, si no queda otra, el endpoint responde `order.whatsapp.no_channel`. Se crea con el mismo procedimiento de abajo,
+> cambiando `components.body.text` y quitando `valid_until` de `examples`, y su `id` se carga en la conexión de cada
+> tenant. **Meta** no necesita nada de esto: la plantilla `qep_pedido` la aprovisiona QEP
+> (`POST …/template-management/order`).
 
 **Cambiar el texto de la plantilla no se hace acá: se crea una plantilla nueva en Zenvia y se
 edita el `templateId` de la conexión de Zenvia del tenant con el `id` que devuelva.** Meta no permite
@@ -3441,11 +3457,13 @@ bajo `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-m
 
 | Método y ruta | Qué hace |
 | --- | --- |
-| `GET /` | La pantalla: conexión, estado de la plantilla de cotización, última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
+| `GET /` | La pantalla: conexión, estado de la plantilla de cotización (`quotationTemplate`) y de la de pedido (`orderTemplate`, spec 2026-11-09 D4), última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
 | `POST /templates` | Crea una plantilla libre (texto, variables con nombre, pie, botones) y la manda a aprobar. |
 | `POST /quotation` | Aprovisiona la plantilla de cotización con su PDF de ejemplo; reintenta si la anterior fue rechazada; adopta una `qep_cotizacion` igual creada a mano en Meta. |
+| `POST /order` | Lo mismo para la plantilla de pedido `qep_pedido` (spec 2026-11-09 D1–D3): variables fijas más `numero_pedido` y `valor_total`, sin vigencia; una por conexión (`messaging.template.order_exists`), adopción de una `qep_pedido` compatible o `messaging.template.order_conflict`. Con ella aprobada, la conexión puede mandar pedidos. |
 | `POST /billing` | Aprovisiona las dos plantillas de cobro (recordatorio y mora). Igual que `POST /quotation`, el cuerpo HTTP es **opcional**: sin él se crea el texto base de la definición; con él, el tenant manda su propio texto. |
 | `GET /quotation/draft` | Borrador que abre la ventana de edición de la plantilla de cotización: texto inicial, variables disponibles con su etiqueta y si ya se puede editar. |
+| `GET /order/draft` | Lo mismo para la plantilla de pedido. |
 | `GET /billing/draft` | Lo mismo para las dos plantillas de cobro. |
 | `DELETE /templates/{templateId}` | Borra en Meta (sólo ese idioma) y en el espejo; 422 `messaging.template.in_use_by_campaign` si una campaña programada o enviándose la usa. |
 | `POST /sync` | Sincroniza el espejo contra Meta. |
