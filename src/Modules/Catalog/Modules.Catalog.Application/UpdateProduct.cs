@@ -39,6 +39,7 @@ public sealed class UpdateProductHandler(
     IVariantUsageChecker usageChecker,
     ICatalogUnitOfWork unitOfWork,
     ICatalogAuditPublisher auditPublisher,
+    IProductImageReleasePublisher imageReleasePublisher,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<UpdateProductCommand> validator)
@@ -150,6 +151,9 @@ public sealed class UpdateProductHandler(
         repository.AddPriceChanges(ProductPriceChangeDetector.Detect(
             product, variants, executionContext.SubjectId, now));
 
+        // La galería de antes de Update: después ya es la nueva.
+        var galleryBefore = product.Gallery.Select(image => image.FileId).ToArray();
+
         // Los campos opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
         // entero, así que un campo ausente se limpia. Es lo que verifica CA-CAT-04-03.
         product.Update(
@@ -174,6 +178,11 @@ public sealed class UpdateProductHandler(
             product.Id.ToString(),
             "success",
             now);
+
+        // Las fotos que ya no están en la galería quedan sin dueño: Storage purga sus archivos. En
+        // la misma transacción, así que si el guardado falla no sale ningún aviso.
+        imageReleasePublisher.Publish(
+            command.TenantId, galleryBefore.Except(gallery).ToArray(), now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 

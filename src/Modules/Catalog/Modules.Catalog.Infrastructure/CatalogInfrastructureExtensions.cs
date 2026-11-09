@@ -33,7 +33,8 @@ public static class CatalogInfrastructureExtensions
         services.AddScoped<IOptionLibraryProvisioner, OptionLibraryProvisioner>();
         services.AddScoped<IProductExportWorkbookBuilder, ClosedXmlProductExportBuilder>();
         services.AddScoped<IProductExportEventPublisher, ProductExportEventPublisher>();
-        services.AddScoped<ICatalogUnitOfWork, CatalogUnitOfWork>();
+        services.AddScoped<IProductImageReleasePublisher, ProductImageReleasePublisher>();
+        services.AddScoped<ICatalogUnitOfWork,CatalogUnitOfWork>();
         services.AddScoped<ICatalogAuditPublisher, CatalogAuditPublisher>();
         // Sonda que Identity consulta antes de borrar un usuario huérfano (OrphanUserCleanupWorker).
         services.AddScoped<IUserReferenceProbe, ProductPriceChangeUserReferenceProbe>();
