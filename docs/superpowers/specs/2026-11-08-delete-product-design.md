@@ -87,10 +87,12 @@ pendientes o fuera de alcance).
 - **D-5. Nada bloquea el borrado.** No hay caso 422 «en uso».
 - **D-6. Una sola transacción, orquestada en el composition root** (`Bootstrapper`), como
   `CatalogVariantUsageChecker` (`Bootstrapper/CatalogVariantUsageChecker.cs:48-63`), que ya consulta
-  `quotations.quotation_items`, `quotations.order_items` y `pos.sale_lines` entre esquemas. Es la **primera escritura
-  entre módulos**: hasta hoy sólo hay lecturas. Ver «Pasos de la transacción».
+  `quotations.quotation_items`, `quotations.order_items` y `pos.sale_lines` entre esquemas. La escritura entre
+  módulos tiene precedente: `Bootstrapper/CustomerMergeReferences.cs` ya hace UPDATE en otros esquemas dentro de la
+  transacción de Customers. Ver «Pasos de la transacción».
 - **D-7. Solicitudes de la tienda en estado `New` pierden la línea.** Si no, `TakeOrderRequest` vuelve a cotizar y
-  falla con `quotation.item.product_not_found`, que el frontend no traduce. Los totales se conservan (decisión del
+  falla con `quotation.item.product_not_found`, que el flujo de tomar solicitud del frontend no traduce (`store.api.ts`;
+  cotizaciones y pedidos sí, en `quotes.api.ts` y `orders.api.ts`). Los totales se conservan (decisión del
   owner 8).
 - **D-8. Cotizaciones enviadas:** el recálculo de precio salta las líneas cuya variante ya no existe, como ya hace
   `OrderPricingRecalculation.cs:47-57`, en vez de dejarlas sin escalas y bajar su descuento a 0 %
@@ -280,8 +282,9 @@ otro trabajo.
 ## Orden de despliegue
 
 **Backend primero.** No hay columnas nuevas: la ruta, los pasos y el evento usan tablas existentes (outbox e inbox de
-plataforma). Un frontend nuevo contra un backend viejo recibe 404 o 405 y lo muestra como error genérico; no rompe
-nada.
+plataforma); el plan agrega sólo un índice sobre el archivo de la galería. Un frontend nuevo contra un backend viejo
+recibe 404 o 405: el 405 se muestra como error genérico y el 404 se trata como «ya eliminado» (spec del frontend,
+F-6). No rompe nada.
 
 ## Queda para el constructor
 
