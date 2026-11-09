@@ -442,6 +442,61 @@ public sealed class QuotationTests
     }
 
     [Fact]
+    public void RemovingDeletedVariantsDropsTheirLinesAndBumpsTheVersion()
+    {
+        var quotation = NewQuotation();
+        var variantA = Guid.CreateVersion7();
+        var variantB = Guid.CreateVersion7();
+        quotation.AddItem(QuotationItemId.New(), variantA, Guid.CreateVersion7(), 1, 1000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), variantB, Guid.CreateVersion7(), 1, 2000m, 0m, 19, AdvisorId, Now);
+        var onlyA = NewQuotation();
+        onlyA.AddItem(QuotationItemId.New(), variantA, Guid.CreateVersion7(), 1, 1000m, 0m, 19, AdvisorId, Now);
+        var versionBefore = quotation.Version;
+        var updatedByBefore = quotation.UpdatedBy;
+        var later = Now.AddHours(1);
+
+        var removed = quotation.RemoveItemsOfDeletedVariants(new HashSet<Guid> { variantB }, later);
+
+        Assert.Equal(1, removed);
+        Assert.Equal(variantA, Assert.Single(quotation.Items).VariantId);
+        Assert.Equal(versionBefore + 1, quotation.Version);
+        Assert.Equal(later, quotation.UpdatedAt);
+        Assert.Equal(updatedByBefore, quotation.UpdatedBy);
+        Assert.Equal(onlyA.Total, quotation.Total);
+    }
+
+    [Fact]
+    public void RemovingDeletedVariantsFromASentQuotationIsRejected()
+    {
+        var quotation = NewQuotation(billingAccount: BillingAccount);
+        var variantA = Guid.CreateVersion7();
+        var variantB = Guid.CreateVersion7();
+        quotation.AddItem(QuotationItemId.New(), variantA, Guid.CreateVersion7(), 1, 1000m, 0m, 19, AdvisorId, Now);
+        quotation.AddItem(QuotationItemId.New(), variantB, Guid.CreateVersion7(), 1, 2000m, 0m, 19, AdvisorId, Now);
+        quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
+
+        var error = Assert.Throws<QuotationsDomainException>(
+            () => quotation.RemoveItemsOfDeletedVariants(new HashSet<Guid> { variantB }, Now));
+
+        Assert.Equal("quotation.quotation.not_draft", error.Code);
+        Assert.Equal(2, quotation.Items.Count);
+    }
+
+    [Fact]
+    public void RemovingVariantsThatAreNotThereChangesNothing()
+    {
+        var quotation = NewQuotation();
+        quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1, 1000m, 0m, 19, AdvisorId, Now);
+        var versionBefore = quotation.Version;
+
+        var removed = quotation.RemoveItemsOfDeletedVariants(new HashSet<Guid> { Guid.CreateVersion7() }, Now.AddHours(1));
+
+        Assert.Equal(0, removed);
+        Assert.Equal(versionBefore, quotation.Version);
+        Assert.Single(quotation.Items);
+    }
+
+    [Fact]
     public void UpdateDetailsReplacesEditableFieldsAndTouchesVersion()
     {
         var quotation = NewQuotation(notes: "nota original");

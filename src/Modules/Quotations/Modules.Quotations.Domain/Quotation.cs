@@ -614,6 +614,31 @@ public sealed class Quotation
         Touch(updatedBy, occurredAt);
     }
 
+    /// <summary>Quita las líneas cuya variante se borró del catálogo. La usa el borrado de un
+    /// producto (spec 2026-11-08, paso 3). Sólo aplica a un borrador. No es una edición del
+    /// asesor, por eso no cambia <see cref="UpdatedBy"/>; sí sube la versión para que un guardado
+    /// con la versión vieja falle. Devuelve cuántas líneas quitó; si no quitó ninguna, no toca nada.</summary>
+    public int RemoveItemsOfDeletedVariants(IReadOnlySet<Guid> variantIds, DateTimeOffset occurredAt)
+    {
+        if (Status is not QuotationStatus.Draft)
+        {
+            throw new QuotationsDomainException(
+                "quotation.quotation.not_draft",
+                "Only a draft quotation can lose lines of deleted variants.");
+        }
+
+        var removed = _items.RemoveAll(item => variantIds.Contains(item.VariantId));
+        if (removed == 0)
+        {
+            return 0;
+        }
+
+        RecalculateTotals();
+        UpdatedAt = occurredAt;
+        Version++;
+        return removed;
+    }
+
     /// <summary>Edita el encabezado (US-6, US-10): forma de pago, vigencia, notas y los datos de
     /// facturación/entrega. La tasa de impuesto no se edita acá — la trae
     /// cada línea desde su producto (RN-013). Reemplaza el recurso entero, mismo criterio que
