@@ -50,6 +50,9 @@ public sealed class CustomerMergePlanTests
     private static Customer WhatsApp(string bsuid = "CO.1349120865530274") =>
         Customer.CreateIncomplete(CustomerId.New(), TenantId, "Laura", "+573001234567", "CO", bsuid, Created, new PlusNormalizer());
 
+    private static Customer WhatsAppFrom(string country, string phone, string bsuid) =>
+        Customer.CreateIncomplete(CustomerId.New(), TenantId, "Laura", phone, country, bsuid, Created, new PlusNormalizer());
+
     private static Customer Instagram(string igsid = "17841400000000001") =>
         Customer.CreateIncompleteFromInstagram(CustomerId.New(), TenantId, "Laura", igsid, "@laura", Created);
 
@@ -71,6 +74,37 @@ public sealed class CustomerMergePlanTests
 
     private static Customer Shopify(string? email = null) =>
         Customer.CreateIncompleteFromExternalSale(CustomerId.New(), TenantId, "Laura", null, email, null, Created, new PlusNormalizer());
+
+    [Fact]
+    public void ASurvivorWithoutCountryTakesTheDocumentAndTheCountryFromTheSameMerged()
+    {
+        var survivor = Instagram();
+        var spanish = WhatsAppFrom("ES", "+34600111222", "ES.1");
+        var register = Register("1020");
+
+        var plan = CustomerMergePlan.Create(survivor, [spanish, register]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.Equal((IdentificationType.Cc, "CO"), (survivor.IdentificationType, survivor.Country));
+        Assert.Contains(CustomerMergeField.Identification, plan.FilledFields);
+        Assert.Contains(CustomerMergeField.Country, plan.FilledFields);
+    }
+
+    [Fact]
+    public void ASurvivorNeverTakesADocumentItsCountryDoesNotAllow()
+    {
+        var survivor = WhatsAppFrom("ES", "+34600111222", "ES.1");
+        var register = Register("1020");
+
+        var plan = CustomerMergePlan.Create(survivor, [register]);
+        plan.MarkMerged(Now);
+        plan.FillSurvivor(Now);
+
+        Assert.DoesNotContain(CustomerMergeField.Identification, plan.FilledFields);
+        Assert.Null(survivor.IdentificationType);
+        Assert.Equal(IdentificationType.Cc, register.IdentificationType);
+    }
 
     [Fact]
     public void EmptyFieldsAreFilledFromTheFirstMergedThatHasThemAndNothingIsOverwritten()
