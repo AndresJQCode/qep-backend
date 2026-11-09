@@ -1,11 +1,10 @@
-using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Catalog.Application;
 using Modules.Catalog.Infrastructure.Persistence;
+using Modules.Customers.Infrastructure.Persistence;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
-using Npgsql;
 
 namespace Bootstrapper;
 
@@ -48,18 +47,11 @@ internal sealed class CatalogProductDeletionCleanup(
         quotations.Database.SetDbConnection(catalog.Database.GetDbConnection(), contextOwnsConnection: false);
         await quotations.Database.UseTransactionAsync(transaction.GetDbTransaction(), cancellationToken);
 
-        // Un choque con otra escritura es 412 concurrency.conflict, nunca 500 (mismo criterio que CustomersWriteRaces): el
-        // borrador que otro guardó lo traduce el unit of work de Quotations; un deadlock o una falla de serialización del
-        // SQL de acá no pasa por ningún unit of work, así que se traduce en este punto.
-        try
-        {
-            await ApplyCoreAsync(tenantId, variantIds.Distinct().ToArray(), occurredAt, cancellationToken);
-        }
-        catch (Exception exception) when (IsRace(exception))
-        {
-            throw new RequestConcurrencyException(
-                "concurrency.conflict", "Another write raced with this one. Reload and try again.", exception);
-        }
+        // Un choque con otra escritura es 412 concurrency.conflict, nunca 500 (CustomersWriteRaces, como en
+        // CustomerMergeReferences): el borrador que otro guardó lo traduce el unit of work de Quotations; un deadlock o una
+        // falla de serialización del SQL de acá no pasa por ningún unit of work, así que se traduce en este punto.
+        await CustomersWriteRaces.RunAsync(
+            () => ApplyCoreAsync(tenantId, variantIds.Distinct().ToArray(), occurredAt, cancellationToken));
     }
 
     private async Task ApplyCoreAsync(Guid tenantId, Guid[] ids, DateTimeOffset occurredAt, CancellationToken cancellationToken)
@@ -79,20 +71,5 @@ internal sealed class CatalogProductDeletionCleanup(
             UPDATE store.order_requests r SET version = r.version + 1
             WHERE r.id IN (SELECT request_id FROM removed);
             """, cancellationToken);
-    }
-
-    // Deadlock (40P01) o falla de serialización (40001), en toda la cadena de InnerException: SaveChanges los envuelve en
-    // un DbUpdateException y la estrategia de ejecución de Npgsql en un InvalidOperationException.
-    private static bool IsRace(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is PostgresException { SqlState: PostgresErrorCodes.DeadlockDetected or PostgresErrorCodes.SerializationFailure })
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

@@ -100,7 +100,11 @@ public static class CategoryEndpoints
     {
         var category = await dispatcher.SendAsync(
             new UpdateCategoryCommand(
-                tenantId, categoryId, request.Name, request.ParentId, CatalogIfMatch.RequireVersion(httpContext, "category")),
+                tenantId,
+                categoryId,
+                request.Name,
+                request.ParentId,
+                CatalogIfMatch.RequireVersion(httpContext, "category")),
             cancellationToken);
 
         return Results.Ok(ToResponse(category));
