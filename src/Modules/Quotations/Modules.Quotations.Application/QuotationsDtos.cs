@@ -177,7 +177,7 @@ public sealed record QuotationPartyDto(
     Guid? CityId,
     /// <summary>"Natural" o "Juridica"; sólo en facturación (spec 2026-10-26), siempre null en la entrega.</summary>
     string? PersonType = null,
-    /// <summary>One of the seven document codes (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID); billing only, always null on delivery.</summary>
+    /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID); sólo en facturación, siempre null en la entrega.</summary>
     string? IdentificationType = null,
     /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
     string? Country = null,
@@ -469,7 +469,7 @@ public sealed record QuotationClientResponse(
     string? Country = null,
     /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
     string? PersonType = null,
-    /// <summary>One of the seven document codes (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) from the customer record. Null if it has none.</summary>
+    /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
     string? IdentificationType = null);
 
 public sealed record QuotationClientAddressResponse(

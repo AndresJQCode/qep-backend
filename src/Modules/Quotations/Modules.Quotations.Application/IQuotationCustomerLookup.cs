@@ -102,7 +102,7 @@ public sealed record QuotationCustomerRef(
     string? PersonType = null,
     /// <summary>País del cliente (ISO alfa-2). Con él se decide a qué país se factura: el del cliente, o el del tenant si no lo tiene.</summary>
     string? Country = null,
-    /// <summary>Document type of the customer record (one of the seven codes: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), the type of <see cref="IdentificationNumber"/>.</summary>
+    /// <summary>Tipo del documento de la ficha (uno de los siete códigos: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), el tipo de <see cref="IdentificationNumber"/>.</summary>
     string? IdentificationType = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
