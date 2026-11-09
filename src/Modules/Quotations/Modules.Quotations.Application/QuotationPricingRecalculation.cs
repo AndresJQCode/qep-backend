@@ -72,20 +72,17 @@ internal static class QuotationPricingRecalculation
             quotation.Items.Select(item => item.VariantId).Distinct().ToArray(),
             cancellationToken);
 
-        // Una variante que ya no está —borrada o movida de tenant después de cotizarla— se queda
-        // sin escalas y por lo tanto sin descuento. No se lanza: la línea ya está en la
-        // cotización, y un recálculo disparado por otra línea no es el momento de romper. Las
-        // escalas van por variante (spec 2026-10-20 §4): ver QuotationScaleGroupPricing.
-        var scalesByVariant = quotation.Items
-            .Select(item => item.VariantId)
-            .Distinct()
-            .ToDictionary(
-                variantId => variantId,
-                variantId => products.TryGetValue(variantId, out var product)
-                    ? product.Scales
-                    : []);
+        // Una variante que ya no está —borrada o movida de tenant después de cotizarla— queda fuera
+        // de la pasada: sin escalas contra las que recalcular, la línea conserva el descuento que
+        // tenía (spec 2026-11-08, D-8), igual que en el pedido. Darle escalas vacías lo bajaría a
+        // 0 % al editar otra línea. No se lanza: la línea ya está en la cotización, y un recálculo
+        // disparado por otra línea no es el momento de romper. Como tampoco entra en `discounts`,
+        // el barrido del mínimo de compra no la toca. Las escalas van por variante (spec
+        // 2026-10-20 §4): ver QuotationScaleGroupPricing.
+        var scalesByVariant = products.ToDictionary(entry => entry.Key, entry => entry.Value.Scales);
 
         var lines = quotation.Items
+            .Where(item => scalesByVariant.ContainsKey(item.VariantId))
             .Select(item => new QuotationPricingLine(
                 item.Id.Value, item.VariantId, item.Quantity))
             .ToArray();

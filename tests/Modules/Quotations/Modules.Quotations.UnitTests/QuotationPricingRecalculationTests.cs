@@ -449,6 +449,59 @@ public sealed class QuotationPricingRecalculationTests
         Assert.Equal(("COP", new PriceRounding(0, PriceRoundingMode.Nearest)), (quotation.Currency, quotation.PriceRounding));
     }
 
+    // Spec 2026-11-08 (D-8), gemela de OrderPricingRecalculationTests.ALineWhoseProductIsGoneKeepsItsDiscount: editar
+    // otra línea no le resetea el descuento a la de la variante borrada. El catálogo ya no la devuelve, así que no hay
+    // escalas contra las que recalcularla.
+    [Fact]
+    public async Task ALineWhoseVariantIsGoneKeepsItsDiscount()
+    {
+        var gone = Guid.CreateVersion7();
+        var kept = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var goneLine = QuotationItemId.New();
+        var keptLine = QuotationItemId.New();
+        quotation.AddItem(goneLine, gone, gone, 2m, 10_000m, 10m, 19, AdvisorId, Now);
+        quotation.AddItem(keptLine, kept, kept, 10m, 10_000m, 0m, 19, AdvisorId, Now);
+
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(kept, 10_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now.AddDays(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal((10m, 5m), (DiscountOf(quotation, goneLine), DiscountOf(quotation, keptLine)));
+    }
+
+    // El barrido del mínimo de compra recorre los descuentos que la pasada resolvió: la línea que quedó fuera no
+    // está entre ellos, así que no se le quita lo que se vendió.
+    [Fact]
+    public async Task TheMinimumPurchaseSweepLeavesAGoneLineAlone()
+    {
+        var gone = Guid.CreateVersion7();
+        var kept = Guid.CreateVersion7();
+        var quotation = NewQuotation();
+        var goneLine = QuotationItemId.New();
+        var keptLine = QuotationItemId.New();
+        quotation.AddItem(goneLine, gone, gone, 2m, 10_000m, 10m, 19, AdvisorId, Now);
+        quotation.AddItem(keptLine, kept, kept, 10m, 10_000m, 0m, 19, AdvisorId, Now);
+
+        // 100 unidades que no se alcanzan, y el monto tampoco.
+        await QuotationPricingRecalculation.ApplyAsync(
+            new StubPricingLookup(Product(kept, 10_000m, null, FlatTier())),
+            new FixedQuotationSettingsStore(QuotationSettings.Create(
+                100, new Dictionary<string, decimal> { ["COP"] = 5_000_000m })),
+            new FixedTenantPriceRounding(),
+            TenantId,
+            quotation,
+            Now.AddDays(1),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal((10m, 0m), (DiscountOf(quotation, goneLine), DiscountOf(quotation, keptLine)));
+    }
+
     private static void ChangeBillingCurrency(Quotation quotation, Guid variantId, string currency, decimal unitPrice) =>
         quotation.UpdateDetails(
             validUntil: new DateOnly(2026, 10, 31),
