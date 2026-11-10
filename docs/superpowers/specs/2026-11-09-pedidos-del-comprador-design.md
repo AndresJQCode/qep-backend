@@ -146,8 +146,8 @@ Las rutas van en `PublicBuyerEndpoints` (Buyers.Api), que ya tiene el grupo, el 
 Buyers.Application no puede ver Quotations, así que declara el puerto `IBuyerOrders` (nombre al builder):
 
 ```text
-Task<BuyerOrderPage>   ListAsync(Guid tenantId, Guid accountId, int page, int pageSize, ct)
-Task<BuyerOrderDetail?> FindAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
+Task<BuyerOrderPageDto>    ListAsync(Guid tenantId, Guid accountId, int page, int pageSize, ct)
+Task<BuyerOrderDetailDto?> FindAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
 Task<BuyerOrderDetailDto?> CancelAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
 ```
 
@@ -238,7 +238,7 @@ Integración (Testcontainers; un proyecto a la vez, `-- xUnit.MaxParallelThreads
   para pedido del mismo comprador en otro tenant; listado paginado; cancel → 200 con `status = "Cancelled"`,
   fila `order_history` con `member_id NULL`, evento `quotations.order.cancelled.v1` en el outbox; segundo
   cancel → 409; pedido `Pending` con comprobante (`POST …/proofs` de la consola) → 409 y sin cambios. Hasta el
-  rebase (D4) los pedidos se siembran con `StoreOrderGateway.CreateAsync` y `BuyerAccountId` fijado directamente.
+  rebase (D4) los pedidos se siembran por SQL directo (sin `StoreOrderGateway`) con `BuyerAccountId` fijado.
 - `OrdersMigrationTests` (Quotations.IntegrationTests): columna `buyer_account_id` e índice; la migración aplica sobre la anterior.
 - `ArchitectureTests`: `BuyersLayerTests` y `QuotationsLayerTests` siguen en verde (Buyers no gana referencias
   a Quotations ni al revés); agregar una aserción nombrada de que `Modules.Buyers.*` no referencia
