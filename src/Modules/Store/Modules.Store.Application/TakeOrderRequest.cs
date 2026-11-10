@@ -125,7 +125,7 @@ public sealed partial class TakeOrderRequestHandler(
                 cancellationToken);
         }
 
-        var billing = BillingData(request, command.Body.NewCustomer?.ClassificationId);
+        var billing = StoreOrderRequestParties.BillingData(request.Billing, command.Body.NewCustomer?.ClassificationId);
         StoreCustomerRef customer;
         var created = false;
         var completed = false;
@@ -166,7 +166,8 @@ public sealed partial class TakeOrderRequestHandler(
             }
         }
 
-        var outcomes = await customers.EnsureAddressesAsync(tenantId, customer.Id, AddressInputs(request), cancellationToken);
+        var outcomes = await customers.EnsureAddressesAsync(
+            tenantId, customer.Id, StoreOrderRequestParties.AddressInputs(request.Billing, request.Shipping), cancellationToken);
         var addresses = new StoreTakeAddressesDto(
             outcomes[0].ToString(), request.Shipping is null ? null : outcomes[1].ToString());
 
@@ -178,8 +179,8 @@ public sealed partial class TakeOrderRequestHandler(
             // El modo de precios de la tienda AHORA, no el de la solicitud: el pedido se precia como la tienda vende hoy.
             store.PricingMode == StorePricingMode.RetailOnly,
             account,
-            BillingParty(request.Billing),
-            ShippingParty(request),
+            StoreOrderRequestParties.BillingParty(request.Billing),
+            StoreOrderRequestParties.ShippingParty(request.Billing, request.Shipping),
             customer.WithRetention,
             customer.VatSurplus,
             request.Lines.OrderBy(line => line.Position).Select(line => new StoreOrderLineInput(line.VariantId, line.Quantity)).ToList(),
@@ -261,76 +262,4 @@ public sealed partial class TakeOrderRequestHandler(
 
     private static StoreDomainException CustomerNotFound() =>
         new(StoreErrorCodes.CustomerNotFound, "The customer does not exist, is inactive or was merged.");
-
-    // Una ciudad de Colombia va sólo con su id; afuera, sólo con el texto.
-    private static StoreNewCustomer BillingData(StoreOrderRequest request, Guid? classificationId)
-    {
-        var billing = request.Billing;
-        var place = billing.Place;
-        return new StoreNewCustomer(
-            billing.Name,
-            billing.IdentificationType,
-            billing.IdentificationNumber,
-            billing.Phone,
-            billing.Email,
-            billing.Address,
-            place.Country,
-            place.CityId,
-            place.IsColombian ? null : place.CityName,
-            classificationId);
-    }
-
-    private static List<StoreAddressInput> AddressInputs(StoreOrderRequest request)
-    {
-        var billing = request.Billing;
-        var inputs = new List<StoreAddressInput>
-        {
-            new(billing.Name, billing.Address, billing.PhoneE164, billing.Place.Country, billing.Place.CityId,
-                billing.Place.IsColombian ? null : billing.Place.CityName),
-        };
-        if (request.Shipping is { } shipping)
-        {
-            inputs.Add(new StoreAddressInput(
-                shipping.EffectiveRecipientName(billing), shipping.Address, shipping.PhoneE164, shipping.Place.Country,
-                shipping.Place.CityId, shipping.Place.IsColombian ? null : shipping.Place.CityName));
-        }
-
-        return inputs;
-    }
-
-    private static StoreOrderPartyInput BillingParty(StoreRequestBilling billing) =>
-        new(
-            billing.Name,
-            billing.Phone,
-            billing.Email,
-            billing.Address,
-            billing.Place.Country,
-            billing.Place.DepartmentId,
-            billing.Place.CityId,
-            billing.Place.IsColombian ? null : billing.Place.CityName,
-            billing.IdentificationType,
-            billing.IdentificationNumber);
-
-    // Sin «Usar los mismos datos» el destinatario es quien el visitante escribió; con él, la parte repite la facturación. En los dos
-    // casos lleva el correo de facturación (el bloque de envío no tiene uno) y ningún documento: éste va sólo en facturación.
-    private static StoreOrderPartyInput ShippingParty(StoreOrderRequest request)
-    {
-        var billing = request.Billing;
-        if (request.Shipping is not { } shipping)
-        {
-            return BillingParty(billing) with { IdentificationType = null, IdentificationNumber = null };
-        }
-
-        return new StoreOrderPartyInput(
-            shipping.EffectiveRecipientName(billing),
-            shipping.Phone,
-            billing.Email,
-            shipping.Address,
-            shipping.Place.Country,
-            shipping.Place.DepartmentId,
-            shipping.Place.CityId,
-            shipping.Place.IsColombian ? null : shipping.Place.CityName,
-            null,
-            null);
-    }
 }
