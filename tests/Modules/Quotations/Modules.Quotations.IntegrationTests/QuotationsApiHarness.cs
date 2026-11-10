@@ -334,7 +334,8 @@ internal static class QuotationsApiHarness
         string? identificationNumber = null,
         bool withRetention = false,
         bool vatSurplus = false,
-        string? personType = null)
+        string? personType = null,
+        bool withDocument = true)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -344,8 +345,8 @@ internal static class QuotationsApiHarness
             new
             {
                 name = "Verde Esencial S.A.S.",
-                identificationType = "NIT",
-                identificationNumber = identificationNumber
+                identificationType = withDocument ? "NIT" : null,
+                identificationNumber = !withDocument ? null : identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
                 phone = "310 935 2187",
                 email = "compras@verde.co",
@@ -884,6 +885,32 @@ internal static class QuotationsApiHarness
             UPDATE tenancy.tenants
             SET date_format = COALESCE({dateFormat}, date_format),
                 number_format = COALESCE({numberFormat}, number_format)
+            WHERE id = {tenantId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Politica de campos del cliente del tenant (documento y ciudad x al guardar / al facturar), por SQL como lo
+    /// haria una pantalla de configuracion.
+    /// </summary>
+    public static async Task SetTenantCustomerFieldPolicyAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        bool documentOnSave,
+        bool documentOnBilling,
+        bool cityOnSave,
+        bool cityOnBilling)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = {documentOnSave},
+                customer_document_required_on_billing = {documentOnBilling},
+                customer_city_required_on_save = {cityOnSave},
+                customer_city_required_on_billing = {cityOnBilling}
             WHERE id = {tenantId}
             """,
             TestContext.Current.CancellationToken);

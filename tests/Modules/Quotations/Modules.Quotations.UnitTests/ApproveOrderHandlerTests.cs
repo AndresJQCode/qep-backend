@@ -75,6 +75,26 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
+    public async Task ApproveRejectsACustomerWithoutDocumentAndLeavesTheOrderPending()
+    {
+        var row = NewRow();
+        var audit = new RecordingQuotationAuditPublisher();
+        var handler = NewHandler(
+            row, audit,
+            customer: new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
+                PersonType: "Natural", Country: "CO")));
+
+        var error = await Assert.ThrowsAsync<BilledCustomerFieldRequiredException>(() => ApproveAsync(handler, row));
+
+        Assert.Equal("order.order.billed_document_required", error.Code);
+        Assert.Equal("Customer", error.ProblemExtensions["missingOn"]);
+        Assert.Equal(OrderStatus.Pending, row.Status);
+        Assert.Empty(audit.Actions);
+    }
+
+    [Fact]
     public async Task WithoutABillingRowTheLiveCustomerIsRead()
     {
         var row = NewRow();
@@ -225,7 +245,8 @@ public sealed class ApproveOrderHandlerTests
         new(new QuotationCustomerRef(
             Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
-            PersonType: personType, Country: country));
+            PersonType: personType, Country: country,
+            IdentificationNumber: "900123456", IdentificationType: "NIT"));
 
     private static QuotationParties BillingParties(PartyPersonType? personType) =>
         QuotationParties.Empty with
