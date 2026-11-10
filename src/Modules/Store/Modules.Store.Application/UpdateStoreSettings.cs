@@ -168,7 +168,7 @@ public sealed class UpdateStoreSettingsHandler(
             && !await members.IsActiveMemberAsync(command.TenantId, advisorId, cancellationToken))
         {
             throw new StoreDomainException(
-                StoreErrorCodes.AdvisorNotFound, "The advisor is not an active member of this tenant.");
+                StoreErrorCodes.AdvisorNotFound, "El asesor no es un miembro activo de este tenant.");
         }
 
         var input = new StoreSettingsInput(
