@@ -33,6 +33,9 @@ internal static class CustomerWriteDoubles
         public static TenantDirectory With(string country, PersonTypeRequirement requirement) =>
             new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", country, requirement) };
 
+        public static TenantDirectory WithPolicy(CustomerFieldPolicy policy) =>
+            new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", CustomerFieldPolicy: policy) };
+
         public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult(Regional);
 

@@ -17,9 +17,9 @@ public interface ICustomerWriteCommand
 {
     string Name { get; }
 
-    string IdentificationType { get; }
+    string? IdentificationType { get; }
 
-    string IdentificationNumber { get; }
+    string? IdentificationNumber { get; }
 
     string? Phone { get; }
 

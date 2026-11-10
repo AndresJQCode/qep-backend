@@ -37,7 +37,7 @@ public sealed record EnsuredAddress(Guid AddressId, EnsuredAddressKind Kind);
 /// <summary>Lo que la caja del POS sabe del comprador al darlo de alta: nombre, documento y, si lo dio, teléfono. El correo
 /// lo trae la importación de cobros recurrentes (spec cobros-recurrentes §5); la caja no lo pide.</summary>
 public sealed record RegisterCustomerData(
-    string Name, string IdentificationType, string IdentificationNumber, string? Phone, string? Email = null);
+    string Name, string? IdentificationType, string? IdentificationNumber, string? Phone, string? Email = null);
 
 /// <summary>
 /// Altas de clientes que hace el sistema, casi todas por una integración sin persona detrás (spec de Shopify §6.2.1
@@ -584,7 +584,7 @@ public sealed class CustomerProvisioning(
     private sealed record CompletionParts(
         string Cuc,
         CustomerAddressDetails? Address,
-        CustomerIdentification Identification,
+        CustomerIdentification? Identification,
         CustomerContactInfo Contact,
         CustomerCommercialInfo Commercial);
 
