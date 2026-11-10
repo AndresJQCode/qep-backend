@@ -171,7 +171,7 @@ public sealed class SubmitOrderRequestHandlerTests
 
         await rig.SubmitAsync(CheckoutRig.Body());
 
-        Assert.Equal(("Ana Pérez", "+573001234567", "ana@test.co", "CO"), Assert.Single(rig.Customers.IncompleteCalls));
+        Assert.Equal(("Ana Pérez", "300 123 4567", "ana@test.co", "CO"), Assert.Single(rig.Customers.IncompleteCalls));
         Assert.Equal(FakeCustomers.IncompleteId, Assert.Single(rig.Orders.Drafts).ClientId);
         Assert.Contains(rig.Logger.At(LogLevel.Information), message => message.Contains("NotCompletable", StringComparison.Ordinal));
     }
@@ -184,7 +184,7 @@ public sealed class SubmitOrderRequestHandlerTests
 
         await rig.SubmitAsync(CheckoutRig.Body());
 
-        Assert.Equal(("Ana Pérez", "+573001234567", "ana@test.co", "CO"), Assert.Single(rig.Customers.IncompleteCalls));
+        Assert.Equal(("Ana Pérez", "300 123 4567", "ana@test.co", "CO"), Assert.Single(rig.Customers.IncompleteCalls));
         Assert.Single(rig.Orders.Drafts);
         Assert.Empty(rig.Customers.CompleteCalls);
         var logged = Assert.Single(rig.Logger.At(LogLevel.Information), message => message.Contains("DocumentOwnerUnavailable", StringComparison.Ordinal));

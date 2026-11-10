@@ -86,8 +86,9 @@ internal static class StoreApiHarness
     /// Inserta en <c>customers.customers</c> lo mínimo para que el cliente exista; Store lo
     /// referencia por id suelto, así que las pruebas no necesitan pasar por el módulo Customers.
     /// </summary>
-    /// <param name="identificationType">Con <paramref name="identificationNumber"/> la ficha queda <c>Complete</c>, con CUC y país
-    /// <c>CO</c>: lo que exige CK_customers_complete_fields. Sin documento queda <c>Incomplete</c>.</param>
+    /// <param name="identificationType">El código de la tienda (<c>CC</c>, <c>NIT</c>…). Con <paramref name="identificationNumber"/>
+    /// la ficha queda <c>Complete</c>, con CUC, país <c>CO</c>, persona natural, teléfono y dirección: lo que exige
+    /// CK_customers_complete_fields más lo que una ficha completa lleva. Sin documento queda <c>Incomplete</c>.</param>
     public static async Task<Guid> SeedCustomerAsync(
         QepApiFactory factory,
         Guid tenantId,
@@ -99,6 +100,15 @@ internal static class StoreApiHarness
     {
         var id = Guid.CreateVersion7();
         var complete = identificationType is not null && identificationNumber is not null;
+        // La columna guarda el nombre del enum de Customers (HasConversion<string>: 'Cc', no 'CC'); con el código crudo la búsqueda
+        // por documento no encontraría la fila.
+        var storedType = identificationType is null
+            ? null
+            : Enum.Parse<Modules.Customers.Domain.IdentificationType>(identificationType.Replace("_", string.Empty, StringComparison.Ordinal), ignoreCase: true).ToString();
+        if (complete)
+        {
+            phoneE164 ??= "+573009990000";
+        }
         var connectionString = factory.Services
             .GetRequiredService<IConfiguration>()
             .GetConnectionString("QepDatabase")!;
@@ -106,8 +116,8 @@ internal static class StoreApiHarness
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var insert = new NpgsqlCommand(
             """
-            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone_e164, email, completeness, cuc, identification_type, identification_number, country, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenantId, @name, true, @phone, @email, @completeness, @cuc, @identificationType, @identificationNumber, @country, @whatsAppUserId, false, false, 1, now(), now())
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone, phone_e164, email, address, person_type, completeness, cuc, identification_type, identification_number, country, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, true, @rawPhone, @phone, @email, @address, @personType, @completeness, @cuc, @identificationType, @identificationNumber, @country, @whatsAppUserId, false, false, 1, now(), now())
             """,
             connection);
         insert.Parameters.AddWithValue("id", id);
@@ -117,7 +127,10 @@ internal static class StoreApiHarness
         // documento y país a una ficha 'Complete'.
         insert.Parameters.AddWithValue("completeness", complete ? "Complete" : "Incomplete");
         insert.Parameters.AddWithValue("cuc", complete ? $"SEED-{id.ToString("N")[..8]}" : (object)DBNull.Value);
-        insert.Parameters.AddWithValue("identificationType", (object?)identificationType ?? DBNull.Value);
+        insert.Parameters.AddWithValue("identificationType", (object?)storedType ?? DBNull.Value);
+        insert.Parameters.AddWithValue("rawPhone", complete ? phoneE164!.Replace("+57", string.Empty, StringComparison.Ordinal) : (object)DBNull.Value);
+        insert.Parameters.AddWithValue("address", complete ? "Calle 9 # 9-9" : (object)DBNull.Value);
+        insert.Parameters.AddWithValue("personType", complete ? nameof(Modules.Customers.Domain.PersonType.Natural) : (object)DBNull.Value);
         insert.Parameters.AddWithValue("identificationNumber", (object?)identificationNumber ?? DBNull.Value);
         insert.Parameters.AddWithValue("country", complete ? "CO" : (object)DBNull.Value);
         // Único por llamada: Customers puede exigir un whatsapp_user_id distinto por cliente.

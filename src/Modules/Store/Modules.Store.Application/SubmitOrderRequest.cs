@@ -362,7 +362,7 @@ public sealed partial class SubmitOrderRequestHandler(
             default:
                 LogCustomerCreatedIncomplete(logger, tenantId, creation.Outcome);
                 return await customers.CreateIncompleteAsync(
-                    tenantId, billing.Name, billing.PhoneE164, billing.Email, billing.Place.Country, cancellationToken);
+                    tenantId, billing.Name, billing.Phone, billing.Email, billing.Place.Country, cancellationToken);
         }
     }
 
