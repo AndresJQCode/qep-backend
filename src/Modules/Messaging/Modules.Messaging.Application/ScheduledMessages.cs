@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using BuildingBlocks.Application;
 using FluentValidation;
 using FluentValidation.Results;
@@ -154,6 +155,8 @@ public sealed class CreateScheduledMessageHandler(
 
     private OutboundMediaPreparer Preparer => new(meta, store, compressor);
 
+    private ScheduledMessageWriter Writer => new(scheduled, store, executionContext, audit, clock, mapper);
+
     public async Task<ScheduleMessageResult> HandleAsync(CreateScheduledMessageCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -175,7 +178,7 @@ public sealed class CreateScheduledMessageHandler(
         // Un solo activo por conversación: se mira antes de admitir para que un request condenado a 409 no autoasigne.
         if (await scheduled.FindActiveAsync(command.TenantId, conversation.Id, cancellationToken) is not null)
         {
-            throw AlreadyExists();
+            throw ScheduledMessageWriter.AlreadyExists();
         }
 
         return command.UploadId is null
@@ -272,7 +275,31 @@ public sealed class CreateScheduledMessageHandler(
         return await SaveAsync(command.TenantId, message, conversation, now, scheduledKey, stagingKey, cancellationToken);
     }
 
-    private async Task<ScheduleMessageResult> SaveAsync(
+    private Task<ScheduleMessageResult> SaveAsync(
+        Guid tenantId, ScheduledMessage message, ConversationRow conversation, DateTimeOffset now, string? scheduledKey, string? stagingKey,
+        CancellationToken cancellationToken) =>
+        Writer.SaveAsync(tenantId, message, conversation, now, scheduledKey, stagingKey, cancellationToken);
+
+    private Task<ScheduleMessageResult> ExistingAsync(
+        Guid tenantId, ScheduledMessage existing, ConversationRow conversation, CancellationToken cancellationToken) =>
+        Writer.ExistingAsync(tenantId, existing, conversation, cancellationToken);
+
+    private Task DiscardAsync(string key) => ScheduledMessageWriter.DiscardAsync(store, key);
+}
+
+/// <summary>
+/// El tramo que comparten crear un programado de texto o adjunto y crear una nota de voz: guardar la fila con su auditoría, resolver la
+/// carrera del <c>clientId</c> y devolver el ya guardado. Una sola copia para que los dos caminos no se separen.
+/// </summary>
+internal sealed class ScheduledMessageWriter(
+    IScheduledMessageRepository scheduled,
+    IMessagingMediaStore store,
+    IExecutionContext executionContext,
+    IMessagingAuditRecorder audit,
+    IClock clock,
+    ScheduledMessageMapper mapper)
+{
+    public async Task<ScheduleMessageResult> SaveAsync(
         Guid tenantId, ScheduledMessage message, ConversationRow conversation, DateTimeOffset now, string? scheduledKey, string? stagingKey,
         CancellationToken cancellationToken)
     {
@@ -287,7 +314,7 @@ public sealed class CreateScheduledMessageHandler(
             // La copia del adjunto es de esta fila; ni la ganadora de una carrera ni nadie más la usa.
             if (scheduledKey is not null)
             {
-                await DiscardAsync(scheduledKey);
+                await DiscardAsync(store, scheduledKey);
             }
 
             // Dos requests con el mismo clientId a la vez: el índice dejó pasar uno. El otro devuelve lo que ganó, no un 409.
@@ -303,21 +330,21 @@ public sealed class CreateScheduledMessageHandler(
         // Guardado: ahora sí el uploadId se consume. Best effort, el lifecycle del bucket limpia el resto.
         if (stagingKey is not null)
         {
-            await DiscardAsync(stagingKey);
+            await DiscardAsync(store, stagingKey);
         }
 
         return new ScheduleMessageResult(true, await mapper.ToDtoAsync(tenantId, message, conversation, now, cancellationToken));
     }
 
-    private async Task<ScheduleMessageResult> ExistingAsync(
+    public async Task<ScheduleMessageResult> ExistingAsync(
         Guid tenantId, ScheduledMessage existing, ConversationRow conversation, CancellationToken cancellationToken) =>
         new(false, await mapper.ToDtoAsync(tenantId, existing, conversation, clock.UtcNow, cancellationToken));
 
-    private static ResourceConflictException AlreadyExists() =>
+    internal static ResourceConflictException AlreadyExists() =>
         new(MessagingErrorCodes.ScheduledAlreadyExists, "The conversation already has a scheduled message.");
 
     // Best effort: si borrar falla queda un objeto en un bucket privado que nadie puede pedir y el lifecycle lo limpia.
-    private async Task DiscardAsync(string key)
+    internal static async Task DiscardAsync(IMessagingMediaStore store, string key)
     {
         try
         {
@@ -327,6 +354,117 @@ public sealed class CreateScheduledMessageHandler(
         {
             // Ver comentario.
         }
+    }
+}
+
+/// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>POST …/scheduled-message/voice-note</c>, multipart con <c>file</c>. Una nota de voz nunca
+/// lleva pie de foto (decisión del owner) ni <c>replyTo</c>.</summary>
+public sealed record CreateScheduledVoiceNoteCommand(
+    Guid TenantId, Guid ConversationId, Guid? ClientId, DateTimeOffset? ScheduledAt, byte[]? Audio) : ICommand<ScheduleMessageResult>;
+
+/// <summary>Las reglas de <see cref="SendAudioMessageValidator"/> (<c>clientId</c>; <c>file</c> de 1 B a su tope y OGG/Opus por contenido)
+/// más <c>scheduledAt</c> obligatorio.</summary>
+public sealed class CreateScheduledVoiceNoteValidator : AbstractValidator<CreateScheduledVoiceNoteCommand>
+{
+    public CreateScheduledVoiceNoteValidator()
+    {
+        RuleFor(command => command.ClientId).NotNull().NotEqual(Guid.Empty).OverridePropertyName("clientId");
+        RuleFor(command => command.ScheduledAt).NotNull().OverridePropertyName("scheduledAt");
+        RuleFor(command => command.Audio)
+            .Cascade(CascadeMode.Stop)
+            .Must(audio => audio is { Length: > 0 and <= SendAudioMessageValidator.MaxAudioBytes }).WithMessage("Graba una nota de voz de hasta 16 MB.")
+            .Must(audio => OggOpusSniffer.IsOggOpus(audio!)).WithMessage("La nota de voz no está en el formato que admite WhatsApp. Graba de nuevo.")
+            .OverridePropertyName("file");
+    }
+}
+
+/// <summary>
+/// Mismo orden que <see cref="CreateScheduledMessageHandler"/>: validador → tenant, permiso y conversación → el <c>clientId</c> ya guardado
+/// (200 sin transcodificar, admitir ni subir) → hora → un solo activo → Instagram a WAV (un 422 del campo no debe cambiar el dueño) →
+/// admisión → R2 → guardar. Se guarda lo que se enviará: OGG/Opus, o el WAV en Instagram, con <c>kind = Audio</c>, nota de voz, sin nombre
+/// de archivo ni pie.
+/// </summary>
+public sealed class CreateScheduledVoiceNoteHandler(
+    IScheduledMessageRepository scheduled,
+    IConversationQueries conversations,
+    IConversationRepository repository,
+    IMessageQueries messages,
+    IOutboundMessages outbound,
+    IMessagingMediaStore store,
+    IOpusTranscoder transcoder,
+    IMessagingConnectionDirectory connections,
+    IMessagingMemberNames memberNames,
+    IMembershipDirectory membershipDirectory,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext,
+    IClock clock,
+    IMessagingNotifier notifier,
+    ReadReceipts receipts,
+    IAutomationsChatbotNames chatbotNames,
+    IMessagingAuditRecorder audit,
+    ScheduledMessageMapper mapper,
+    IValidator<CreateScheduledVoiceNoteCommand> validator)
+    : ICommandHandler<CreateScheduledVoiceNoteCommand, ScheduleMessageResult>
+{
+    // Propiedades y no campos: los parámetros que van a la guarda y al escritor también se usan en los métodos (CS9124).
+    private OutboundGuards Guards => new(
+        conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames);
+
+    private ScheduledMessageWriter Writer => new(scheduled, store, executionContext, audit, clock, mapper);
+
+    public async Task<ScheduleMessageResult> HandleAsync(CreateScheduledVoiceNoteCommand command, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await validator.ValidateAndThrowAsync(command, cancellationToken);
+        var guards = Guards;
+        var target = await guards.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
+        var conversation = target.Conversation;
+        var clientId = command.ClientId!.Value;
+
+        if (await scheduled.FindByClientIdAsync(command.TenantId, conversation.Id, clientId, cancellationToken) is { } existing)
+        {
+            return await Writer.ExistingAsync(command.TenantId, existing, conversation, cancellationToken);
+        }
+
+        var now = clock.UtcNow;
+        var scheduledAt = command.ScheduledAt!.Value;
+        ScheduledMessage.EnsureSchedulable(scheduledAt, conversation.LastInboundAt, now);
+
+        if (await scheduled.FindActiveAsync(command.TenantId, conversation.Id, cancellationToken) is not null)
+        {
+            throw ScheduledMessageWriter.AlreadyExists();
+        }
+
+        // Como SendAudioMessageHandler: Instagram no acepta Opus, y una grabación que no decodifica es un 422 antes de admitir.
+        var audio = command.Audio!;
+        var mimeType = OggOpusSniffer.MimeType;
+        var extension = ".ogg";
+        if (conversation.Channel == ConversationChannel.Instagram)
+        {
+            audio = InstagramVoiceNote.Transcode(transcoder, audio);
+            mimeType = InstagramAudio.WavMimeType;
+            extension = ".wav";
+        }
+
+        await guards.AdmitAsync(command.TenantId, target, replyTo: null, cancellationToken);
+
+        var messageId = Guid.CreateVersion7();
+        var key = MessagingMediaKeys.Scheduled(command.TenantId, messageId, extension);
+        try
+        {
+            using var content = new MemoryStream(audio, writable: false);
+            await store.UploadAsync(key, content, audio.Length, mimeType, cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            await ScheduledMessageWriter.DiscardAsync(store, key);
+            throw new MessagingDomainException(MessagingErrorCodes.MediaUploadFailed, "The voice note could not be stored.", exception);
+        }
+
+        var message = ScheduledMessage.CreateMedia(
+            messageId, command.TenantId, conversation.Id, clientId, MessageKind.Audio, isVoiceNote: true, caption: null,
+            new ScheduledMedia(key, mimeType, FileName: null, audio.Length, Convert.ToHexStringLower(SHA256.HashData(audio))), scheduledAt, target.Member, now);
+        return await Writer.SaveAsync(command.TenantId, message, conversation, now, key, stagingKey: null, cancellationToken);
     }
 }
 

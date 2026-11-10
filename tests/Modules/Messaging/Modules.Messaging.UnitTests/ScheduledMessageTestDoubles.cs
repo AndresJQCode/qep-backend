@@ -93,6 +93,35 @@ internal sealed class ScheduledMessageTestBed
             new CreateScheduledMessageValidator());
     }
 
+    public CreateScheduledVoiceNoteHandler CreateVoiceNoteHandler(bool canManage = true)
+    {
+        var membership = new FakeMembershipDirectory();
+        membership.Active[(Bed.SubjectId, Bed.TenantId)] = Bed.MemberId;
+        string[] permissions = canManage
+            ? [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage]
+            : [MessagingPermissions.ConversationRead];
+        return new CreateScheduledVoiceNoteHandler(
+            Scheduled,
+            Bed.Conversations,
+            Bed.Repository,
+            Bed.Messages,
+            Bed.Outbound,
+            Bed.Store,
+            Bed.Transcoder,
+            Bed.Connections,
+            new FakeMemberNames(Bed.MemberId),
+            membership,
+            Bed.TenantModules,
+            new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, permissions),
+            new FakeClock(Bed.Now),
+            Bed.Notifier,
+            Bed.Receipts,
+            new FakeChatbotNames(),
+            Audit,
+            new ScheduledMessageMapper(new FakeMemberNames(Bed.MemberId)),
+            new CreateScheduledVoiceNoteValidator());
+    }
+
     public GetScheduledMessageHandler GetHandler(Guid? tenantId = null, params string[] permissions) =>
         new(
             Scheduled,
