@@ -9,7 +9,7 @@ namespace Modules.Buyers.Infrastructure.Signup;
 /// Lleva el hash, nunca la contraseña.
 /// </summary>
 public sealed record BuyerSignupRequestedMessage(
-    Guid OrderRequestId,
+    Guid OrderId,
     Guid TenantId,
     Guid ClientRequestId,
     string StoreHost,
@@ -28,7 +28,7 @@ public sealed record BuyerSignupRequestedMessage(
     {
         var message = JsonSerializer.Deserialize<BuyerSignupRequestedMessage>(payloadJson, JsonSerializerOptions.Web)
             ?? throw new JsonException("The signup message is empty.");
-        if (message.OrderRequestId == Guid.Empty
+        if (message.OrderId == Guid.Empty
             || string.IsNullOrWhiteSpace(message.StoreHost)
             || string.IsNullOrWhiteSpace(message.StoreName)
             || string.IsNullOrWhiteSpace(message.VisitorIp)

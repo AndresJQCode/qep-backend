@@ -144,7 +144,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
         }
 
         if (await dbContext.ProcessedSignups.AnyAsync(
-            processed => processed.OrderRequestId == message.OrderRequestId, stoppingToken))
+            processed => processed.OrderId == message.OrderId, stoppingToken))
         {
             await CloseAsync(dbContext, record.Id, clock.UtcNow);
             return;
@@ -158,7 +158,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
             await services.GetRequiredService<BuyerSignup>().SignUpAsync(
                 request,
                 stoppingToken,
-                beforeSave: () => MarkProcessed(dbContext, record.Id, message.OrderRequestId, clock.UtcNow));
+                beforeSave: () => MarkProcessed(dbContext, record.Id, message.OrderId, clock.UtcNow));
         }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, BuyersDbContext.ProcessedSignupsKey))
         {
@@ -169,9 +169,9 @@ internal sealed partial class BuyerSignupRequestedWorker(
     }
 
     // La fila del inbox la escribió el reclamo en SQL crudo: se adjunta un talón y sólo processed_at queda modificado.
-    private static void MarkProcessed(BuyersDbContext dbContext, Guid messageId, Guid orderRequestId, DateTimeOffset now)
+    private static void MarkProcessed(BuyersDbContext dbContext, Guid messageId, Guid orderId, DateTimeOffset now)
     {
-        dbContext.ProcessedSignups.Add(new BuyerProcessedSignup { OrderRequestId = orderRequestId, ProcessedAt = now });
+        dbContext.ProcessedSignups.Add(new BuyerProcessedSignup { OrderId = orderId, ProcessedAt = now });
         AttachClosed(dbContext, messageId, now);
     }
 

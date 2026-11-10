@@ -21,11 +21,11 @@ public sealed class BuyerSignupRequestedWorkerTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static string Payload(Guid orderRequestId, string email = "ana@correo.com", string passwordHash = "hash-del-mensaje") =>
+    private static string Payload(Guid orderId, string email = "ana@correo.com", string passwordHash = "hash-del-mensaje") =>
         JsonSerializer.Serialize(
             new
             {
-                orderRequestId,
+                orderId,
                 tenantId = Guid.CreateVersion7(),
                 clientRequestId = Guid.CreateVersion7(),
                 storeHost = Host,
@@ -96,9 +96,9 @@ public sealed class BuyerSignupRequestedWorkerTests
     public async Task TwoMessagesForTheSameOrderRequestApplyOnce()
     {
         await using var api = await BuyersApiHarness.OpenAsync();
-        var orderRequestId = Guid.CreateVersion7();
-        await SeedAsync(api, Payload(orderRequestId));
-        await SeedAsync(api, Payload(orderRequestId, passwordHash: "otro-hash"));
+        var orderId = Guid.CreateVersion7();
+        await SeedAsync(api, Payload(orderId));
+        await SeedAsync(api, Payload(orderId, passwordHash: "otro-hash"));
 
         await DrainAsync(api);
 
@@ -158,7 +158,7 @@ public sealed class BuyerSignupRequestedWorkerTests
     public async Task AMalformedMessageIsRecordedAsExhaustedAfterThreeAttempts()
     {
         await using var api = await BuyersApiHarness.OpenAsync();
-        var id = await SeedAsync(api, """{"orderRequestId":"not-a-guid"}""");
+        var id = await SeedAsync(api, """{"orderId":"not-a-guid"}""");
 
         for (var attempt = 0; attempt < BuyerSignupRequestedWorker.MaxAttempts + 1; attempt++)
         {
@@ -223,8 +223,8 @@ public sealed class BuyerSignupRequestedWorkerTests
             "/register",
             new { email = "ana@correo.com", password = "una-contrasena-larga", acceptsDataPolicy = true, turnstileToken = "ok", profile = (object?)null });
         registered.EnsureSuccessStatusCode();
-        var orderRequestId = Guid.CreateVersion7();
-        await SeedAsync(api, Payload(orderRequestId, passwordHash: "hash-del-checkout"));
+        var orderId = Guid.CreateVersion7();
+        await SeedAsync(api, Payload(orderId, passwordHash: "hash-del-checkout"));
         blind.Armed = true;
 
         await DrainAsync(api);
@@ -232,7 +232,7 @@ public sealed class BuyerSignupRequestedWorkerTests
         Assert.False(blind.Armed);
         Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.accounts"));
         Assert.Equal("hash-del-checkout", await api.ScalarAsync<string>("SELECT password_hash FROM buyers.accounts"));
-        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.processed_signups WHERE order_request_id = $1", orderRequestId));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.processed_signups WHERE order_id = $1", orderId));
         Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.inbox_messages WHERE processed_at IS NOT NULL"));
     }
 
