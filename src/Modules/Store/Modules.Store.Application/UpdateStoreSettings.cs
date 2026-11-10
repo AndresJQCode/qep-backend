@@ -175,7 +175,8 @@ public sealed class UpdateStoreSettingsHandler(
             resolvedEntries,
             body.PrimaryCurrency,
             salesCountries,
-            body.FeaturedCategoryIds!);
+            body.FeaturedCategoryIds!,
+            AdvisorMembershipId: null);
 
         var previousSlug = store.Slug;
         var before = Snapshot(store);

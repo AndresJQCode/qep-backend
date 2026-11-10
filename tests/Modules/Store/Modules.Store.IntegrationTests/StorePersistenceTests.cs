@@ -62,7 +62,8 @@ public sealed class StorePersistenceTests
                 Currencies: currencies ?? [Currency("COP", "Bancolombia", "123-456")],
                 PrimaryCurrency: primaryCurrency,
                 SalesCountries: countries ?? ["CO"],
-                FeaturedCategoryIds: featured ?? []),
+                FeaturedCategoryIds: featured ?? [],
+                AdvisorMembershipId: null),
             KnowsSomeCountries,
             Caller,
             Now);

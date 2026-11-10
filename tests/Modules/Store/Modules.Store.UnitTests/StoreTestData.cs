@@ -28,7 +28,8 @@ internal static class StoreTestData
         string? policy = "https://acme.test/politica",
         IReadOnlyList<StoreCurrency>? currencies = null,
         string? primaryCurrency = "COP",
-        IReadOnlyList<string>? countries = null) =>
+        IReadOnlyList<string>? countries = null,
+        Guid? advisorMembershipId = null) =>
         new(
             slug,
             Name: null,
@@ -43,7 +44,8 @@ internal static class StoreTestData
             Currencies: currencies ?? [Cop],
             PrimaryCurrency: primaryCurrency,
             SalesCountries: countries ?? ["CO"],
-            FeaturedCategoryIds: []);
+            FeaturedCategoryIds: [],
+            AdvisorMembershipId: advisorMembershipId);
 
     public static OnlineStore ConfiguredStore(StoreSettingsInput? input = null)
     {

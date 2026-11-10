@@ -109,6 +109,46 @@ public sealed class OnlineStoreTests
     }
 
     [Fact]
+    public void ConfiguringTheAdvisorStoresItAndBumpsTheVersion()
+    {
+        var store = ConfiguredStore();
+
+        Assert.True(store.Configure(Input(advisorMembershipId: Member), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(Member, store.AdvisorMembershipId);
+        Assert.Equal(2, store.Version);
+    }
+
+    [Fact]
+    public void ReconfiguringTheSameAdvisorChangesNothing()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+        var version = store.Version;
+
+        Assert.False(store.Configure(Input(advisorMembershipId: Member), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(version, store.Version);
+    }
+
+    [Fact]
+    public void ClearingTheAdvisorBumpsTheVersion()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+
+        Assert.True(store.Configure(Input(), KnowsCoAndEs, Member, Now));
+
+        Assert.Null(store.AdvisorMembershipId);
+    }
+
+    [Fact]
+    public void AnAdvisorIsNotAPublishBlocker()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+
+        Assert.Empty(store.PublishBlockers());
+    }
+
+    [Fact]
     public void AStoreWithoutPolicyIsPublishable()
     {
         var store = ConfiguredStore(Input(policy: null));
