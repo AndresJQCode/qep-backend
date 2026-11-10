@@ -19,8 +19,8 @@ public sealed class ScheduledMessageRecoveryTests
         new(Guid.CreateVersion7(), _bed.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), MessageKind.Text, false, "Hola", null, mediaKey, null,
             null, null, null, Guid.CreateVersion7(), attempts, _bed.Now);
 
-    private static ExistingOutbound Row(MessageStatus status) =>
-        new(Guid.CreateVersion7(), status, DateTimeOffset.UnixEpoch, null, "Hola");
+    private static ExistingOutbound Row(MessageStatus status, int? failureCode = null) =>
+        new(Guid.CreateVersion7(), status, DateTimeOffset.UnixEpoch, null, "Hola", FailureCode: failureCode);
 
     [Theory]
     [InlineData(MessageStatus.Sent)]
@@ -41,16 +41,35 @@ public sealed class ScheduledMessageRecoveryTests
         Assert.Single(_bed.Notifier.Events);
     }
 
+    // Sólo un código de Meta prueba que Meta rechazó el mensaje: no salió, y reintentarlo no duplica nada.
     [Fact]
-    public async Task AnExpiredLeaseWithAFailedMessageBecomesFailedRejected()
+    public async Task AnExpiredLeaseWithAMessageMetaRejectedBecomesFailedRejected()
     {
         var message = Expired();
-        _bed.Outbound.Committed = Row(MessageStatus.Failed);
+        _bed.Outbound.Committed = Row(MessageStatus.Failed, failureCode: 131026);
         _store.Expired.Enqueue([message]);
 
         await Dispatcher().RecoverExpiredAsync(Ct);
 
         Assert.Equal(new CompletedFailed(message.Id, 2, MessagingErrorCodes.MessageRejected), Assert.Single(_store.Failed));
+        Assert.Empty(_store.Sent);
+        Assert.Single(_bed.Notifier.Events);
+    }
+
+    // Decisión del owner (2026-11-10): un Failed sin confirmar (timeout, 5xx, red) o sin código pudo haber salido. Llamarlo rejected invita
+    // a un reintento que le duplica el mensaje al cliente.
+    [Theory]
+    [InlineData(MessageFailureReasons.Unconfirmed)]
+    [InlineData(null)]
+    public async Task AnExpiredLeaseWithAnUnconfirmedFailedMessageIsUnknownOutcome(int? failureCode)
+    {
+        var message = Expired();
+        _bed.Outbound.Committed = Row(MessageStatus.Failed, failureCode);
+        _store.Expired.Enqueue([message]);
+
+        await Dispatcher().RecoverExpiredAsync(Ct);
+
+        Assert.Equal(new CompletedFailed(message.Id, 2, MessagingErrorCodes.ScheduledUnknownOutcome), Assert.Single(_store.Failed));
         Assert.Empty(_store.Sent);
         Assert.Single(_bed.Notifier.Events);
     }

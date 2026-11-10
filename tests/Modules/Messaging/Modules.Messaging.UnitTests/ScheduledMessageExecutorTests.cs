@@ -237,6 +237,24 @@ public sealed class ScheduledMessageExecutorTests
         Assert.Empty(_scheduled.Sent);
     }
 
+    // Decisión del owner (2026-11-10): sin respuesta de Meta (timeout, 5xx, red, 2xx sin id) el mensaje pudo haber salido. La fila del
+    // mensaje queda Failed sin confirmar como siempre, pero el programado es unknown_outcome, nunca message.rejected.
+    [Theory]
+    [InlineData(SendOutcome.Unconfirmed)]
+    [InlineData(SendOutcome.NotSent)]
+    public async Task AnUnconfirmedSendIsUnknownOutcomeNotRejected(SendOutcome outcome)
+    {
+        var conversation = _bed.OpenConversation(lastInboundHoursAgo: 1);
+        var message = Text(conversation);
+        _bed.Meta.NextSend = new SendResult(outcome, null, null, null);
+
+        await Executor().ExecuteAsync(message, Ct);
+
+        Assert.Equal($"committed-failed:{MessageFailureReasons.Unconfirmed}", Assert.Single(_bed.Outbound.Claims).Outcome);
+        Assert.Equal(new CompletedFailed(message.Id, 1, MessagingErrorCodes.ScheduledUnknownOutcome), Assert.Single(_scheduled.Failed));
+        Assert.Empty(_scheduled.Sent);
+    }
+
     // §8.3: Meta rechazó la credencial al enviar; la fila nueva se deshace, la conexión queda marcada y el programado dice por qué.
     [Fact]
     public async Task ACredentialRejectionWhileSendingIsConnectionUnavailable()

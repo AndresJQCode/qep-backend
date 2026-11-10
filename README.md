@@ -3236,8 +3236,10 @@ fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed
   hilo ya no puede reenviarlo (`409 messaging.message.not_retriable`) y, si el ejecutor lo encuentra así, cierra el
   programado con ese mismo código sin reenviar.
 - **D9, nunca reenvía solo.** Un `Sending` con el lease vencido (el pod murió) se **cierra**, no se reprograma: `Sent` si el
-  mensaje ya salió, `message.rejected` si falló, y si no hay rastro `unknown_outcome`. Reenviar podría mandarlo dos veces.
-  Lo reintenta una persona con `retry`.
+  mensaje ya salió, `message.rejected` sólo si Meta lo rechazó (la fila `Failed` guarda su código), y `unknown_outcome` si no
+  hay rastro o la falla no la confirmó Meta (timeout, 5xx, red: `failure_code = -1`). Reenviar podría mandarlo dos veces.
+  El ejecutor sigue la misma regla: sin respuesta de Meta el programado es `unknown_outcome`, nunca `message.rejected`
+  (decisión del owner, 2026-11-10). Lo reintenta una persona con `retry`.
 
 Configuración: `Messaging:Workers:ScheduledPollSeconds` (5) es el tick del worker, y la purga usa `PurgeIntervalHours`.
 

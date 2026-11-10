@@ -9,7 +9,9 @@ namespace Modules.Messaging.Application;
 /// terminal no pudo borrar.
 /// <para>
 /// La recuperación <b>cierra</b> la fila, nunca la reprograma ni la reejecuta: reenviar podría mandar el mensaje dos veces. Mira la tabla de
-/// mensajes con el <c>clientId</c> y cierra con eso (<c>Sent</c>, <c>message.rejected</c>) o como <c>unknown_outcome</c>. El cierre es el
+/// mensajes con el <c>clientId</c> y cierra con eso (<c>Sent</c>, o <c>message.rejected</c> sólo si la fila guarda un código de Meta) o como
+/// <c>unknown_outcome</c>: sin fila, o con un <c>Failed</c> que Meta no confirmó (<see cref="MessageFailureReasons.Unconfirmed"/>) o sin código.
+/// Decisión del owner (2026-11-10): llamar rechazado a algo que quizá salió invita a un reintento que duplica el mensaje. El cierre es el
 /// compare-and-set de siempre, así que si el worker original termina tarde su cierre no escribe nada.
 /// </para>
 /// </summary>
@@ -35,7 +37,7 @@ public sealed class ScheduledMessageDispatcher(
             {
                 { Status: MessageStatus.Sent or MessageStatus.Delivered or MessageStatus.Read } =>
                     await store.CompleteSentAsync(message, existing.Id, clock.UtcNow, CancellationToken.None),
-                { Status: MessageStatus.Failed } =>
+                { Status: MessageStatus.Failed, FailureCode: { } code } when code != MessageFailureReasons.Unconfirmed =>
                     await store.CompleteFailedAsync(message, MessagingErrorCodes.MessageRejected, clock.UtcNow, CancellationToken.None),
                 _ => await store.CompleteFailedAsync(message, MessagingErrorCodes.ScheduledUnknownOutcome, clock.UtcNow, CancellationToken.None),
             };

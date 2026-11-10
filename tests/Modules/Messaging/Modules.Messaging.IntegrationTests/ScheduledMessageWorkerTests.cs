@@ -242,6 +242,38 @@ public sealed class ScheduledMessageWorkerTests
             ("id", scheduled.Id.ToString())));
     }
 
+    /// <summary>Decisión del owner (2026-11-10): sólo un error de Meta es <c>message.rejected</c>. Un 5xx deja el mensaje Failed sin confirmar,
+    /// y tanto el ejecutor como la recuperación (que lee ese Failed con el lease vencido) cierran el programado <c>unknown_outcome</c>.</summary>
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError, "{}", "messaging.scheduled.unknown_outcome")]
+    [InlineData(HttpStatusCode.BadRequest, """{"error":{"message":"x","type":"OAuthException","code":131026,"fbtrace_id":"trace"}}""", "messaging.message.rejected")]
+    public async Task AFailedSendClosesAsRejectedOnlyWhenMetaRejectedIt(HttpStatusCode status, string body, string expected)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        f.Factory.MetaHandler.Reset();
+        f.Factory.MetaHandler.Respond("/111/messages$", status, body);
+        var scheduled = await SeedDueTextAsync(f);
+        const string closedAs = "SELECT count(*) FROM messaging.scheduled_messages WHERE id = @id AND status = 'Failed' AND failure_code = @code";
+
+        await DrainScheduledMessagesAsync(f.Host);
+
+        Assert.Equal(1, MetaSends(f));
+        Assert.Equal(1, await CountAsync(f.ConnectionString, closedAs, ("id", scheduled.Id), ("code", expected)));
+
+        // El pod murió después de liquidar el mensaje y antes de cerrar el programado: la recuperación lee el Failed que quedó.
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.scheduled_messages SET status = 'Sending', failure_code = NULL, locked_until = now() - interval '1 minute' WHERE id = @id",
+            ("id", scheduled.Id));
+
+        await DrainScheduledMessagesAsync(f.Host);
+
+        Assert.Equal(1, MetaSends(f));
+        Assert.Equal(1, await CountAsync(f.ConnectionString, closedAs, ("id", scheduled.Id), ("code", expected)));
+    }
+
     [Fact]
     public async Task ClaimingExpiredRowsRenewsTheLeaseWithoutAddingAnAttempt()
     {

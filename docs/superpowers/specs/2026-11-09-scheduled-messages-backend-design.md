@@ -118,9 +118,11 @@ navegador.
   (409) en vez de reenviarla; un programado nuevo siempre usa un `clientId` nuevo (también único en
   `scheduled_messages`).
 - **D9. Resultado incierto no se reenvía solo** [spec]. Un lease vencido en `Sending` se recupera mirando
-  el mensaje con ese `client_id`: `Sent`/`Delivered`/`Read` → `Sent`; `Failed` → `Failed`
-  (`messaging.message.rejected`); sin fila → `Failed` con **NUEVO** `messaging.scheduled.unknown_outcome`
-  (el proceso pudo morir con Meta ya aceptado). Reintentarlo lo decide una persona.
+  el mensaje con ese `client_id`: `Sent`/`Delivered`/`Read` → `Sent`; `Failed` con un código de Meta →
+  `Failed` (`messaging.message.rejected`); `Failed` sin confirmar (`failure_code = -1`: timeout, 5xx, red) o
+  sin código, y sin fila → `Failed` con **NUEVO** `messaging.scheduled.unknown_outcome` (el proceso pudo
+  morir con Meta ya aceptado). Reintentarlo lo decide una persona. Decisión del owner (2026-11-10): sólo un
+  rechazo explícito de Meta es `message.rejected`, porque reintentar algo que quizá salió duplica el mensaje.
 - **D10. «Enviar ya» y «Reintentar» no envían en el request** [spec]: ponen `scheduled_at = now` y estado
   `Scheduled`, responden 202 y el worker lo toma en el siguiente tick. Un envío de un documento de 100 MB
   no cabe en los 100 s de Cloudflare, y así hay un solo camino de envío.
@@ -324,7 +326,8 @@ D8b: el reclamo encuentra el `clientId` quemado porque el mensaje `Failed` se de
     intento desaparece y una fila `Failed` reutilizada queda `Failed` sin cambios; el objeto de la clave
     final se borra sólo si la fila era nueva (como `SendMediaMessageHandler`). Una respuesta de Meta, en
     cambio, la liquida `OutboundSettlement` y el programado queda `Sent` o `Failed`
-    (`messaging.message.rejected`).
+    (`messaging.message.rejected`). Un envío que `OutboundSettlement` deja `Failed` sin confirmar (timeout,
+    5xx, red, 2xx sin id) cierra el programado `messaging.scheduled.unknown_outcome`, no `message.rejected` (D9).
 - **Cierre**, compare-and-set por `(id, status = 'Sending', attempts)`: `Sent` con `sent_message_id`, o
   `Failed` con `failure_code`. Si el CAS no toca filas (el lease venció y otro lo recuperó), no se escribe.
   Después: borrar el objeto de `messaging/scheduled/` si quedó `Sent` (best effort), auditoría en la misma

@@ -203,8 +203,13 @@ public sealed class ScheduledMessageExecutor(
         }
         catch (MessagingDomainException exception)
         {
-            // message.rejected, window_closed o connection_unavailable: la tabla ya cerró el reclamo.
-            await CompleteFailedAsync(message, exception.Code);
+            // window_closed, connection_unavailable o message.rejected: la tabla ya cerró el reclamo. La tabla también lanza
+            // message.rejected cuando Meta no respondió (timeout, 5xx, red); eso pudo haber salido, y el programado queda unknown_outcome
+            // (decisión del owner, 2026-11-10: un reintento de un «rechazado» puede duplicarle el mensaje al cliente).
+            var code = exception.Code == MessagingErrorCodes.MessageRejected && result.Outcome != SendOutcome.GraphError
+                ? MessagingErrorCodes.ScheduledUnknownOutcome
+                : exception.Code;
+            await CompleteFailedAsync(message, code);
             return;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
