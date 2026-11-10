@@ -46,6 +46,9 @@ internal sealed class MessageRecord
     /// <summary>Decisión del owner del 2026-10-30: lo escribió la importación del historial por coexistencia. Nunca se apaga.</summary>
     public bool Imported { get; set; }
 
+    /// <summary>Spec 2026-11-09 D8b: descartar un programado fallido quema el reintento del mensaje <c>Failed</c> con su <c>clientId</c>.</summary>
+    public bool RetryDisabled { get; set; }
+
     public MessageMediaRecord? Media { get; set; }
 }
 

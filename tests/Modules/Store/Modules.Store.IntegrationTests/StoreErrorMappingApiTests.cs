@@ -24,16 +24,16 @@ public sealed class StoreErrorMappingApiTests
         [
             // UpdateStoreSettings.cs:157 y StoreUnitOfWork.cs:61.
             (new ResourceConflictException(StoreErrorCodes.SlugTaken, "taken"), StoreErrorCodes.SlugTaken, HttpStatusCode.Conflict),
-            // TakeOrderRequest.cs:63.
-            (new ResourceConflictException(StoreErrorCodes.NotNew, "not new"), StoreErrorCodes.NotNew, HttpStatusCode.Conflict),
             // SubmitOrderRequest.cs:167.
             (new StoreDomainException(StoreErrorCodes.ConsentRequired, "consent"), StoreErrorCodes.ConsentRequired, HttpStatusCode.UnprocessableEntity),
             // StorefrontResolver.cs:62.
             (new StoreDomainException(StoreErrorCodes.PublicCurrencyInvalid, "currency"), StoreErrorCodes.PublicCurrencyInvalid, HttpStatusCode.UnprocessableEntity),
-            // TakeOrderRequest.cs:71.
+            // SubmitOrderRequest.cs: la cuenta de la moneda ya no está.
             (new StoreDomainException(StoreErrorCodes.CurrencyNotInStore, "currency"), StoreErrorCodes.CurrencyNotInStore, HttpStatusCode.UnprocessableEntity),
-            // StoreNotFound.cs:11.
-            (new ResourceNotFoundException(StoreErrorCodes.OrderRequestNotFound, "missing"), StoreErrorCodes.OrderRequestNotFound, HttpStatusCode.NotFound),
+            // UpdateStoreSettings.cs: el asesor de la tienda no es un miembro activo del tenant.
+            (new StoreDomainException(StoreErrorCodes.AdvisorNotFound, "advisor"), StoreErrorCodes.AdvisorNotFound, HttpStatusCode.UnprocessableEntity),
+            // SubmitOrderRequest.cs: el tope diario de pedidos de la tienda.
+            (new RequestRateLimitedException(StoreErrorCodes.DailyCap, "cap", retryAfter: null), StoreErrorCodes.DailyCap, HttpStatusCode.TooManyRequests),
             // CloudflareTurnstileVerifier.cs:148.
             (new ServiceUnavailableException(StoreErrorCodes.CaptchaUnavailable, "down"), StoreErrorCodes.CaptchaUnavailable, HttpStatusCode.ServiceUnavailable),
         ];

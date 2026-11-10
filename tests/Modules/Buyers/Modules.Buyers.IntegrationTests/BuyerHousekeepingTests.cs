@@ -296,7 +296,7 @@ public sealed class BuyerHousekeepingTests
         await SeedSignupInboxAsync(api, gone, processedAt: Now.AddDays(-40));
         await api.ScalarAsync<long>(
             """
-            WITH s AS (INSERT INTO buyers.processed_signups (order_request_id, processed_at) VALUES ($1, $2) RETURNING 1)
+            WITH s AS (INSERT INTO buyers.processed_signups (order_id, processed_at) VALUES ($1, $2) RETURNING 1)
             SELECT count(*) FROM s
             """,
             Guid.CreateVersion7(), Now.AddDays(-40));
@@ -383,7 +383,7 @@ public sealed class BuyerHousekeepingTests
                     ('buyers.signup-requested', $1, $3, 1, $3),
                     ('buyers.signup-requested', $2, $4, 1, $4) RETURNING 1),
             s AS (
-                INSERT INTO buyers.processed_signups (order_request_id, processed_at) VALUES
+                INSERT INTO buyers.processed_signups (order_id, processed_at) VALUES
                     ($5, $3), ($6, $4) RETURNING 1)
             SELECT (SELECT count(*) FROM i) + (SELECT count(*) FROM s)
             """,

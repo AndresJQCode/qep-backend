@@ -746,6 +746,17 @@ internal sealed class FakeOutboundMessages : IOutboundMessages
         Claims.Add(claim);
         return Task.FromResult<IOutboundClaim>(claim);
     }
+
+    /// <summary>Spec 2026-11-09 (revisión final): con <c>true</c>, el lease del programado ya no es del ejecutor y el reclamo no se abre.</summary>
+    public bool LeaseLost { get; set; }
+
+    public List<ScheduledLease> Leases { get; } = [];
+
+    public async Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken)
+    {
+        Leases.Add(lease);
+        return LeaseLost ? null : await ClaimAsync(draft, cancellationToken);
+    }
 }
 
 internal sealed class FakeClaim(OutboundDraft draft, ExistingOutbound? existing) : IOutboundClaim

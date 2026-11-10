@@ -13,9 +13,9 @@ namespace Modules.Buyers.Infrastructure.Signup;
 /// Crea la cuenta pedida desde el checkout (D7): consume <c>store.buyer-signup-requested.v1</c> del outbox de plataforma con su
 /// inbox propio y aplica <see cref="BuyerSignup"/>, el mismo algoritmo del registro, con el hash que trae el mensaje.
 ///
-/// Idempotente por solicitud de pedido: <c>buyers.processed_signups</c> y el <c>processed_at</c> del inbox entran en el mismo
+/// Idempotente por pedido: <c>buyers.processed_signups</c> y el <c>processed_at</c> del inbox entran en el mismo
 /// <c>SaveChanges</c> que la cuenta, el perfil, el consentimiento, el token y el outbox del correo. Un mensaje reprocesado (o un
-/// segundo mensaje de la misma solicitud) sólo cierra su inbox; dos réplicas a la vez chocan en <c>PK_processed_signups</c> y la
+/// segundo mensaje del mismo pedido) sólo cierra su inbox; dos réplicas a la vez chocan en <c>PK_processed_signups</c> y la
 /// perdedora descarta lo suyo. Los logs llevan el id del mensaje y nunca el email, el hash ni el token.
 /// </summary>
 internal sealed partial class BuyerSignupRequestedWorker(
@@ -47,6 +47,10 @@ internal sealed partial class BuyerSignupRequestedWorker(
     [LoggerMessage(Level = LogLevel.Error,
         Message = "Buyer signup message {MessageId} carries an email that does not normalize; it is closed without an account.")]
     private static partial void LogInvalidEmail(ILogger logger, Guid messageId);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Linking store order {OrderId} to its new buyer account failed; the account stands and the order stays unlinked.")]
+    private static partial void LogLinkFailed(ILogger logger, Guid orderId, Exception exception);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -144,7 +148,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
         }
 
         if (await dbContext.ProcessedSignups.AnyAsync(
-            processed => processed.OrderRequestId == message.OrderRequestId, stoppingToken))
+            processed => processed.OrderId == message.OrderId, stoppingToken))
         {
             await CloseAsync(dbContext, record.Id, clock.UtcNow);
             return;
@@ -153,25 +157,52 @@ internal sealed partial class BuyerSignupRequestedWorker(
         var profile = new BuyerProfileDto(message.Billing, message.Shipping, message.Shipping is null);
         var request = new BuyerSignupRequest(
             message.StoreHost, message.StoreName, message.VisitorIp, message.Email, message.PasswordHash, profile);
+        Guid? accountId;
         try
         {
-            await services.GetRequiredService<BuyerSignup>().SignUpAsync(
+            accountId = await services.GetRequiredService<BuyerSignup>().SignUpAsync(
                 request,
                 stoppingToken,
-                beforeSave: () => MarkProcessed(dbContext, record.Id, message.OrderRequestId, clock.UtcNow));
+                beforeSave: () => MarkProcessed(dbContext, record.Id, message.OrderId, clock.UtcNow));
         }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, BuyersDbContext.ProcessedSignupsKey))
         {
-            // Otra réplica aplicó la misma solicitud primero: lo pendiente de ésta se descarta y el mensaje queda como procesado.
+            // Otra réplica aplicó el mismo pedido primero: lo pendiente de ésta se descarta y el mensaje queda como procesado.
             dbContext.ChangeTracker.Clear();
             await CloseAsync(dbContext, record.Id, clock.UtcNow);
+            return;
+        }
+
+        if (accountId is { } created)
+        {
+            await LinkOrderAsync(services, message, created, stoppingToken);
+        }
+    }
+
+    // Pedidos del comprador §4.2(2): la cuenta creada o reactivada se pone en el pedido que la pidió, después del commit del alta y
+    // fuera de él. Si falla, el alta ya está y el mensaje ya se cerró: queda un aviso y el pedido sin cuenta, sin reintento.
+    private async Task LinkOrderAsync(
+        IServiceProvider services, BuyerSignupRequestedMessage message, Guid accountId, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await services.GetRequiredService<IBuyerOrderLinker>()
+                .LinkAsync(message.TenantId, message.OrderId, accountId, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogLinkFailed(logger, message.OrderId, exception);
         }
     }
 
     // La fila del inbox la escribió el reclamo en SQL crudo: se adjunta un talón y sólo processed_at queda modificado.
-    private static void MarkProcessed(BuyersDbContext dbContext, Guid messageId, Guid orderRequestId, DateTimeOffset now)
+    private static void MarkProcessed(BuyersDbContext dbContext, Guid messageId, Guid orderId, DateTimeOffset now)
     {
-        dbContext.ProcessedSignups.Add(new BuyerProcessedSignup { OrderRequestId = orderRequestId, ProcessedAt = now });
+        dbContext.ProcessedSignups.Add(new BuyerProcessedSignup { OrderId = orderId, ProcessedAt = now });
         AttachClosed(dbContext, messageId, now);
     }
 

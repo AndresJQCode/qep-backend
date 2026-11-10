@@ -140,8 +140,10 @@ public sealed class CustomerCompletenessApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        // PascalCase: es la clave que CustomerWriteRules ya emite para el formulario (customerFieldErrors).
-        Assert.Contains("IdentificationNumber", await ValidationFieldsAsync(response));
+        // Ruling P2: un tipo sin numero conserva identification_number_required; ahora lo emite la politica y no el
+        // validador. PascalCase: es la clave que el formulario lee (customerFieldErrors).
+        Assert.Equal("customers.customer.identification_number_required", await ProblemCodeAsync(response));
+        Assert.Equal(["IdentificationNumber"], await ValidationFieldsAsync(response));
         var detail = await client.GetFromJsonAsync<JsonElement>($"{CustomersUrl()}/{incomplete}", TestContext.Current.CancellationToken);
         Assert.False(detail.GetProperty("isComplete").GetBoolean());
     }
@@ -189,5 +191,38 @@ public sealed class CustomerCompletenessApiTests
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains("customers.customer.incomplete", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompletingAWhatsAppCustomerWithoutCityPassesWhenTheCityIsOptional()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, true, true, false, true);
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var incomplete = await SeedIncompleteAsync(factory);
+
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{incomplete}",
+            new
+            {
+                name = "Laura Pérez",
+                identificationType = "CC",
+                identificationNumber = "1020304050",
+                phone = "310 935 2187",
+                email = "laura@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.True(body.GetProperty("isComplete").GetBoolean());
     }
 }

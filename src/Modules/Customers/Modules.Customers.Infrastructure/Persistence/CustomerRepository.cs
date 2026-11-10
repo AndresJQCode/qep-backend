@@ -223,14 +223,22 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         Guid tenantId,
         string? search,
         int take,
+        bool includeIncompleteWithoutDocument,
         CancellationToken cancellationToken)
     {
         var searchPattern = LikePattern(search);
 
-        // Activo y con documento (numero Y tipo: el lookup de Pos desreferencia el tipo) en la consulta y no despues: los incompletos de WhatsApp (sin documento) son los
-        // mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
+        // Activo y, o con documento (numero Y tipo), o completo (spec 2026-11-09: un tenant que no exige el documento
+        // tiene clientes completos sin el), en la consulta y no despues: los incompletos de WhatsApp sin documento son
+        // los mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
         var query = FilteredQuery(tenantId, searchPattern, null, null, null)
-            .Where(customer => customer.IsActive && customer.IdentificationNumber != null && customer.IdentificationType != null);
+            .Where(customer => customer.IsActive
+                && ((customer.IdentificationNumber != null && customer.IdentificationType != null)
+                    || customer.Completeness == CustomerCompleteness.Complete
+                    // Un tenant que no exige el documento al facturar le vende tambien a un incompleto sin el (el alta
+                    // rapida de la caja lo deja asi): si no se lista, cada visita es otra alta. El costo, aceptado, es que
+                    // tambien aparecen los incompletos de WhatsApp o de la tienda.
+                    || (includeIncompleteWithoutDocument && customer.IdentificationNumber == null)));
 
         // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
         return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)

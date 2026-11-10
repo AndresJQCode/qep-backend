@@ -147,7 +147,7 @@ local y por variable de entorno en k8s
 | `Meta:App:WebhookOverrideCallbackUrl` | vacío | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia) |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `ScheduledPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas, mensajes programados y purga |
 | `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
 | `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
 | `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
@@ -1001,20 +1001,28 @@ manuales. Efecto inmediato, sin reiniciar la API.
 
 Cada tenant puede publicar una tienda en `{slug}.lulocrm.com` (spec `docs/superpowers/specs/2026-11-03-tienda-publica-design.md`,
 plan `docs/superpowers/plans/2026-11-03-tienda-publica-backend.md`). Es el módulo `store`: exige `orders`, no viene con el signup y se
-prende por tenant desde la consola de operador. Sin él, los manejadores de la bandeja (listar, «Tomar», «Descartar») responden
-`403 tenancy.module_not_enabled`; los ajustes y la vista previa de colores responden un `403` pelado, porque la máscara de permisos del
-módulo apagado ya los descarta antes.
+prende por tenant desde la consola de operador. Sin él, los ajustes y la vista previa de colores responden un `403` pelado, porque la
+máscara de permisos del módulo apagado ya los descarta antes, y las rutas públicas responden `404 store.public.not_found`.
 
-- **Backoffice:** `/api/v1/tenants/{tenantId}/store` (ajustes, publicar, bandeja de solicitudes, «Tomar» y «Descartar»). Los ajustes
-  piden `store.settings.manage` (sólo `admin` por defecto); la bandeja, `quotations.order.manage`.
+- **Backoffice:** `/api/v1/tenants/{tenantId}/store/settings` (ajustes, publicar y despublicar, vista previa de colores y cuentas de
+  cobro). Todo pide `store.settings.manage` (sólo `admin` por defecto). No hay bandeja de solicitudes: el pedido nace en el checkout
+  (spec `docs/superpowers/specs/2026-11-09-pedidos-tienda-directos-design.md`).
+- **Ajustes, asesor de los pedidos:** `PUT /settings` acepta `advisorMembershipId` (opcional; `null` lo quita) y `GET /settings` lo
+  devuelve junto con `advisorName`, el nombre visible de esa membresía. Cuando cambia, tiene que ser una membresía **activa del tenant**;
+  si no, `422 store.settings.advisor_not_found` (reenviar el mismo valor no lo revalida, para no bloquear los demás ajustes si esa
+  persona dejó el tenant). No se exige un permiso concreto al asesor: el pedido lo crea el sistema. No bloquea la
+  publicación.
 - **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
   `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
   `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
   `X-Qep-Visitor-Ip`. Los límites son por IP del visitante: 300 lecturas por minuto y 5 envíos cada 10 minutos, más un tope de 500
-  solicitudes por tienda y por día (`Store:DailyRequestCap`).
-- **El pedido:** «Tomar» crea un pedido con origen `Store`. Su detalle (`GET /orders/{orderId}`) trae `storeRequest` con el número de la
-  solicitud, el cliente, el nombre, teléfono y correo de facturación, el total que vio el visitante y `totalDifference`; es `null` para
-  los pedidos de otro origen. `GET /orders?source=Store` los filtra.
+  pedidos de la tienda por tenant en 24 horas, anulados incluidos (`Store:DailyRequestCap`).
+- **El pedido:** `POST /order-requests` crea directamente un pedido con origen `Store`, registrado como creado por el sistema. El asesor
+  es el configurado en los ajustes si su membresía sigue activa; si no (nunca se configuró, o lo suspendieron o quitaron), el owner del
+  tenant. El cliente se busca por documento: si existe se completa lo que tenga en blanco; si no, se crea completo o, si Customers lo
+  rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
+  (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
+  `store.order_consents`, una fila por pedido.
 
 ### Secretos
 
@@ -1051,16 +1059,23 @@ acepta en `Development` y `Testing` (en Staging el arranque falla, para que no c
 | 422 | `store.order_request.city_invalid` | La ciudad no cumple su carril (ids en Colombia, texto afuera). |
 | 422 | `store.order_request.phone_invalid` | El teléfono no se normaliza en el país de su bloque. |
 | 422 | `store.order_request.line_unavailable` | Una línea del carrito ya no se puede vender. |
-| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de solicitudes. |
+| 422 | `store.order_request.currency_not_in_store` | La tienda ya no tiene cuenta de cobro en esa moneda. |
+| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de pedidos. |
 | 429 | (sin cuerpo, con `Retry-After`) | La IP del visitante superó su límite. |
 | 503 | `store.captcha.unavailable` | Turnstile no responde o su configuración está rota. |
 
-Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con la misma solicitud.
+Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con el mismo pedido (la clave del pedido es
+`store-checkout:{clientRequestId}`, única por tenant), sin volver a pedir captcha. Los códigos conservan el prefijo
+`store.order_request.*` aunque ya no haya solicitud: renombrarlos obligaría a desplegar storefront y backend juntos.
+
+En el backoffice, `PUT /settings` suma `422 store.settings.advisor_not_found` (ver «Ajustes, asesor de los pedidos»).
 
 ### Despliegue
 
-**El backend va antes que el frontend y el storefront.** El backend nuevo sólo agrega: el módulo nace apagado en todos los tenants, el
-detalle del pedido suma `storeRequest` al final y las direcciones y partes de afuera de Colombia no existen hasta que la tienda las crea.
+**El backend va antes que el frontend y el storefront.** El módulo nace apagado en todos los tenants y las direcciones y partes de afuera
+de Colombia no existen hasta que la tienda las crea. Los pedidos directos (spec del 2026-11-09) **sí rompen**: las migraciones
+`DropStoreOrderRequests` (Store) y `RenameProcessedSignupOrderId` (Buyers) descartan la bandeja y sus solicitudes, y el frontend viejo
+responde 404 en `/orders/store` hasta que se despliegue el suyo. El storefront viejo sigue andando: misma ruta y misma forma del recibo.
 Orden: (1) backend con sus migraciones y los dos secretos (en Production deben estar **antes** de desplegar: sin ellos la API entera no arranca); (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
 antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
 
@@ -1134,6 +1149,9 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 | 9 | `POST /buyer/password/forgot` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
 | 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
 | 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
+| 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
+| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
+| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está en `Pending` con pago `PaymentPending` y sin comprobantes, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
 
 Notas:
 
@@ -1146,6 +1164,22 @@ Notas:
 - Login de cuenta sin verificar con contraseña correcta es `403` y **no** reenvía solo: el storefront ofrece reenviar (ruta 3, con Turnstile).
 - El email se normaliza (trim y minúsculas) en toda entrada: registro, login, reenviar, olvidé y checkout caen en la misma cuenta.
 
+#### Pedidos del comprador
+
+Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
+
+- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status`, `paymentStatus`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`) y `cancelledAt`.
+- **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
+- **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
+  1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
+     sirve (vencida, de otro host, de cuenta borrada) o una falla de Buyers (queda un `Warning`) deja un pedido de invitado; sin `updateProfile` el recibo
+     no se marca con `buyerSessionRejected`.
+  2. **En el alta diferida de `createAccount`.** Cuando `BuyerSignupRequestedWorker` crea la cuenta o reemplaza una sin verificar, enlaza el pedido del
+     mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
+     toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
+     sin cuenta, sin reintento.
+- **La anulación del comprador es más estricta que la del equipo** (D5): sólo si `Status == Pending`, `PaymentStatus == PaymentPending` **y** no hay ningún comprobante de pago registrado (un asesor puede registrar un comprobante dejando el pago en `PaymentPending`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
+- Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
 
 Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
@@ -1161,17 +1195,18 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
 - `createAccount`: contraseña 10–128, si no `422 validation.failed` con `errors["CreateAccount.Password"]`; `acceptsDataPolicy` distinto de `true`,
   `422 validation.failed` con `errors["CreateAccount.AcceptsDataPolicy"]`. Se valida con el resto del cuerpo, **antes** de aceptar el pedido. Email de login =
   `billing.email`; perfil = `billing`, `shipping`, `shippingSameAsBilling = (shipping == null)`.
+- Con `X-Qep-Buyer-Session` válido el pedido queda enlazado a la cuenta (ver «Pedidos del comprador»), con o sin `updateProfile`.
 - `updateProfile: true` usa el header `X-Qep-Buyer-Session` (el BFF lo manda con la sesión). Si falta o no sirve, el pedido se acepta igual
   (`201`) y el recibo lleva `buyerSessionRejected: true`: no es un error. Con `createAccount` a la vez, `422 validation.failed` en `CreateAccount`.
 - Recibo `201`: suma **`"buyerSessionRejected": bool`**, `true` sólo si se pidió `updateProfile` y la sesión no sirve (ausente, vencida, de otro host, de cuenta borrada).
   El pedido se acepta igual y el BFF borra la cookie.
 
 ```jsonc
-{ "id": "<guid>", "number": "T-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
+{ "id": "<guid del pedido>", "number": "PED-2026-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
 ```
 
 - Reintento con el mismo `clientRequestId`: el primer recibo, `buyerSessionRejected: false`, sin crear cuenta ni tocar el perfil.
-- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea con la solicitud), así que puede tardar unos segundos en existir después del `201`.
+- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea en la transacción de Store posterior al pedido), así que puede tardar unos segundos en existir después del `201`.
   Sus errores (email existente, fallo al guardar) nunca cambian la respuesta.
 
 #### Correos
@@ -1191,7 +1226,7 @@ Todos viven en `platform.outbox_messages`.
 
 | Evento | Lo escribe | Lo consume | Lleva |
 | --- | --- | --- | --- |
-| `store.buyer-signup-requested.v1` | Store, en la **misma transacción** que la solicitud del pedido (`createAccount`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
+| `store.buyer-signup-requested.v1` | Store, en la **misma transacción de Store posterior al pedido** (`createAccount`); idempotente por `orderId` (`buyers.processed_signups`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
 | `buyers.email-verification-requested.v1` | Buyers | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro |
 | `buyers.existing-account-notice.v1` | Buyers | `BuyerExistingAccountDeliveryWorker` | sin token |
 | `buyers.password-reset-requested.v1` | Buyers | `BuyerPasswordResetDeliveryWorker` | token de restablecer en claro |
@@ -1876,8 +1911,7 @@ variante por defecto), y siguen otra regla (owner, 2026-09-26):
   producto** (`DELETE /catalog/products/{productId}`), que congela código y nombre de las líneas que
   todavía no la tienen (cotizaciones que no son borrador y pedidos) en la misma transacción del borrado.
   Las demás se congelan solas si la cotización se reenvía o se convierte. En un borrador la línea del
-  producto borrado desaparece y la cotización se recotiza; en una solicitud `New` de la tienda también
-  desaparece, con sus totales intactos.
+  producto borrado desaparece y la cotización se recotiza.
 - Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
   Excel). Ninguna transición devuelve una cotización a borrador.
 
@@ -3189,6 +3223,83 @@ en `true`.
 - **Eventos del sistema** (`direction: System`, `kind: Event`) en el hilo; no suben `unreadCount` ni cambian
   la foto de la lista.
 - **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.
+
+#### Mensajes programados (spec 2026-11-09)
+
+Un asesor deja **un** mensaje (texto, imagen, documento, video, audio o nota de voz) para que salga solo a la hora
+elegida, mientras la ventana de 24 h siga abierta. Hay a lo sumo uno activo por conversación (`Scheduled`, `Sending` o
+`Failed` ocupan el cupo). Rutas bajo `/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}`; leer pide
+`messaging.conversation.read` y el resto `messaging.conversation.manage`, por permiso (no por ser el asignado ni el autor):
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /scheduled-message` | `{ scheduledMessage }`: el activo o `null`. Trae `canRetry`, calculado por el backend |
+| `POST /scheduled-messages` | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada |
+| `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`) |
+| `PUT /scheduled-messages/{id}` | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled` |
+| `POST …/{id}/cancel` | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
+| `POST …/{id}/discard` | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }` |
+| `GET …/{id}/media` | El adjunto, con `Range` |
+
+La versión viaja en el cuerpo (`expectedVersion`), no en `If-Match`, como las campañas: una versión vieja responde `412`.
+
+**Estados.** `Scheduled` → `Sending` (el worker lo reclama con un lease de 10 min; al reclamar el mensaje vuelve a mirar que el
+lease siga siendo suyo y le queden al menos 30 s, y si no, no envía y deja la fila a la recuperación) → `Sent` o `Failed`; `Cancelled` sale de
+`Scheduled`. `Sent` y `Cancelled` son finales. `FailureCode` guarda el motivo, con los códigos de siempre de Mensajería
+(`messaging.window_closed`, contacto bloqueado, conexión no disponible, `messaging.message.rejected`…) más los propios de
+abajo.
+
+**Errores propios.** `422 messaging.scheduled.too_soon` (la hora va a menos de 1 min) y `outside_window` (pasa de
+`último entrante + 24 h − 2 min`, o no hay entrante); `409 already_exists`, `not_editable` (editar, cancelar o «Enviar ya»
+fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed`); `404 not_found`. En la fila:
+`messaging.scheduled.media_missing`, `messaging.scheduled.unknown_outcome` y `messaging.message.not_retriable` (D8b).
+
+**Decisiones que conviene no romper.**
+
+- **D4, no toca la conversación.** Enviar un programado no cambia el estado ni la asignación, ni apaga el asistente. El
+  mensaje queda con el autor del contenido y entra con `seen: 0` (sin el acuse de lectura que sí manda el envío directo).
+- **D5, `{saludo}`.** Se resuelve **al enviar**, con la hora del tenant en ese momento, en el texto o en el pie. Los topes
+  miden con el saludo más largo (13 caracteres).
+- **D6, adjuntos.** Viven en `messaging/scheduled/{tenantId}/{id}{ext}` hasta que sale el mensaje, que los promueve a su
+  clave final. Una fila terminal borra el suyo; si no puede, el worker lo barre (cada `PurgeIntervalHours`). El bucket **no
+  debe tener regla de expiración** sobre `messaging/scheduled/`, o una de más de 2 días: un programado puede esperar casi 24 h
+  y borrarle el archivo antes lo deja en `media_missing`.
+- **D8b, `retry_disabled`.** Descartar un programado `Failed` desde su tarjeta quema el `clientId` de su mensaje fallido: el
+  hilo ya no puede reenviarlo (`409 messaging.message.not_retriable`) y, si el ejecutor lo encuentra así, cierra el
+  programado con ese mismo código sin reenviar.
+- **D9, nunca reenvía solo.** Un `Sending` con el lease vencido (el pod murió) se **cierra**, no se reprograma: `Sent` si el
+  mensaje ya salió, `message.rejected` sólo si Meta lo rechazó (la fila `Failed` guarda su código), y `unknown_outcome` si no
+  hay rastro o la falla no la confirmó Meta (timeout, 5xx, red: `failure_code = -1`). Reenviar podría mandarlo dos veces.
+  El ejecutor sigue la misma regla: sin respuesta de Meta el programado es `unknown_outcome`, nunca `message.rejected`
+  (decisión del owner, 2026-11-10). Lo reintenta una persona con `retry`.
+
+Configuración: `Messaging:Workers:ScheduledPollSeconds` (5) es el tick del worker, y la purga usa `PurgeIntervalHours`.
+
+**Despliegue.** Backend primero: la migración `AddScheduledMessages` crea `messaging.scheduled_messages` y agrega
+`retry_disabled` a `messaging.messages`; el frontend sale después.
+
+**Bucket privado (`Storage:R2:Bucket`), antes de desplegar.** No hay nada que crear: lo que se revisa es que ninguna regla
+existente borre los adjuntos programados. Los limpia el código (al terminar cada fila y con el barrido de
+`PurgeIntervalHours`, 24 h por defecto); el bucket no tiene que hacerlo.
+
+1. **Ninguna regla de lifecycle cubre `messaging/scheduled/`.** Ni una propia ni una más amplia: una regla sobre
+   `messaging/` o sin prefijo también la alcanza. Si por política se quiere una red de seguridad, que expire a **más de 2
+   días** (un programado espera hasta 24 h; antes de eso el envío falla con `messaging.scheduled.media_missing`).
+2. **La regla de `messaging/staging/` sigue con su prefijo exacto** (`expire-messaging-staging`, 1 día; ver «Pendientes del
+   owner antes de producción: imágenes y documentos del asesor»). El adjunto se sube a staging y se copia a
+   `messaging/scheduled/` al programar, así que esa regla no lo toca después.
+3. **El CORS del bucket privado** es el mismo de los adjuntos del asesor ([`ops/r2-cors.aws.json`](ops/r2-cors.aws.json)): la
+   subida usa la misma sesión de staging. No cambia nada.
+
+Para verificar, en PowerShell (wrangler pide su propio login):
+
+```powershell
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+En la salida, ningún prefijo puede ser `messaging/scheduled/`, `messaging/` ni vacío, salvo con más de 2 días.
 
 #### Secretos en local
 

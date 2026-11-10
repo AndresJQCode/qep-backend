@@ -75,6 +75,26 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
+    public async Task ApproveRejectsACustomerWithoutDocumentAndLeavesTheOrderPending()
+    {
+        var row = NewRow();
+        var audit = new RecordingQuotationAuditPublisher();
+        var handler = NewHandler(
+            row, audit,
+            customer: new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
+                PersonType: "Natural", Country: "CO")));
+
+        var error = await Assert.ThrowsAsync<BilledCustomerFieldRequiredException>(() => ApproveAsync(handler, row));
+
+        Assert.Equal("order.order.billed_document_required", error.Code);
+        Assert.Equal("Customer", error.ProblemExtensions["missingOn"]);
+        Assert.Equal(OrderStatus.Pending, row.Status);
+        Assert.Empty(audit.Actions);
+    }
+
+    [Fact]
     public async Task WithoutABillingRowTheLiveCustomerIsRead()
     {
         var row = NewRow();
@@ -122,7 +142,7 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
-    public async Task AForeignCustomerApprovesWithoutPersonType()
+    public async Task OnOrderApprovalRejectsAForeignCustomerWithoutPersonType()
     {
         var row = NewRow();
         var handler = NewHandler(
@@ -130,9 +150,9 @@ public sealed class ApproveOrderHandlerTests
             directory: Directory(PersonTypeRequirement.OnOrderApproval),
             customer: Customer(personType: null, country: "ES"));
 
-        var approved = await ApproveAsync(handler, row);
+        var error = await Assert.ThrowsAsync<BilledPersonTypeRequiredException>(() => ApproveAsync(handler, row));
 
-        Assert.Equal("Approved", approved.Status);
+        Assert.Equal("Customer", error.ProblemExtensions["missingOn"]);
     }
 
     [Fact]
@@ -164,18 +184,15 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
-    public async Task ANonColombianTenantWithOnOrderApprovalApprovesWithoutPersonType()
+    public async Task ANonColombianTenantWithOnOrderApprovalRequiresThePersonType()
     {
-        // El requisito guardado sólo cuenta si el tenant es colombiano: aquí el efectivo es Never.
         var row = NewRow();
         var handler = NewHandler(
             row,
             directory: Directory(PersonTypeRequirement.OnOrderApproval, tenantCountry: "ES"),
             customer: Customer(personType: null, country: null));
 
-        var approved = await ApproveAsync(handler, row);
-
-        Assert.Equal("Approved", approved.Status);
+        await Assert.ThrowsAsync<BilledPersonTypeRequiredException>(() => ApproveAsync(handler, row));
     }
 
     [Fact]
@@ -228,7 +245,8 @@ public sealed class ApproveOrderHandlerTests
         new(new QuotationCustomerRef(
             Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
             "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
-            PersonType: personType, Country: country));
+            PersonType: personType, Country: country,
+            IdentificationNumber: "900123456", IdentificationType: "NIT"));
 
     private static QuotationParties BillingParties(PartyPersonType? personType) =>
         QuotationParties.Empty with

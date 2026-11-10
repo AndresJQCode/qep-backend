@@ -163,14 +163,16 @@ internal static class CustomerMapping
     /// tipo de documento desconocido; no se traduce a un valor por defecto, porque elegir NIT en
     /// silencio le cambia el documento al cliente sin que nadie se entere.
     /// </summary>
-    public static CustomerIdentification ToIdentification(
-        string identificationType,
-        string identificationNumber) =>
-        new()
-        {
-            Type = IdentificationTypeParser.Parse(identificationType),
-            Number = identificationNumber
-        };
+    public static CustomerIdentification? ToIdentification(
+        string? identificationType,
+        string? identificationNumber) =>
+        string.IsNullOrWhiteSpace(identificationType) && string.IsNullOrWhiteSpace(identificationNumber)
+            ? null
+            : new()
+            {
+                Type = IdentificationTypeParser.Parse(identificationType),
+                Number = identificationNumber!
+            };
 
     public static CustomerCommercialInfo ToCommercialInfo(
         Guid? classificationId,

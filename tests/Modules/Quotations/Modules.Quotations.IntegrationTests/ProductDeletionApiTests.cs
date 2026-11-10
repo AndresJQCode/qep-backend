@@ -244,12 +244,11 @@ public sealed class ProductDeletionApiTests
     }
 
     // Ruling del controlador: un choque dentro de la limpieza es 412 concurrency.conflict, nunca 500. Un trigger simula
-    // cada camino: el guardado del borrador que otro cambió (0 filas → concurrencia del unit of work de Quotations), un
-    // deadlock en el congelado de las líneas y una falla de serialización en el SQL de la tienda.
+    // los dos caminos de Quotations: el guardado del borrador que otro cambió (0 filas → concurrencia del unit of work de
+    // Quotations) y un deadlock en el congelado de las líneas. La tienda ya no tiene líneas propias que limpiar.
     [Theory]
     [InlineData("quotations.quotations", "lost_update")]
     [InlineData("quotations.quotation_items", "40P01")]
-    [InlineData("store.order_request_lines", "40001")]
     public async Task AConflictInsideTheCleanupIs412AndTouchesNothing(string table, string failure)
     {
         await using var database = await StartDatabaseAsync();

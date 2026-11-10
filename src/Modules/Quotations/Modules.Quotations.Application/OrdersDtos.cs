@@ -306,21 +306,7 @@ public sealed record OrderDetailResponse(
     IReadOnlyCollection<QuotationItemResponse> Items,
     SourceQuotationResponse? SourceQuotation,
     IReadOnlyCollection<OrderHistoryEntryResponse> History,
-    int[] AvailableFloors,
-    OrderStoreRequestResponse? StoreRequest);
-
-/// <summary>La solicitud de la tienda de la que salió el pedido (<see cref="OrderStoreRequestRef"/>); null para otros orígenes.</summary>
-public sealed record OrderStoreRequestResponse(
-    Guid Id,
-    string Number,
-    Guid CustomerId,
-    string CustomerName,
-    string Phone,
-    string PhoneE164,
-    string Email,
-    decimal DisplayedTotal,
-    string Currency,
-    decimal? TotalDifference);
+    int[] AvailableFloors);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

@@ -175,6 +175,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("bills_to_final_consumer");
 
+                    b.Property<Guid?>("BuyerAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("buyer_account_id");
+
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -429,6 +433,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "Source")
                         .HasDatabaseName("IX_orders_tenant_source");
+
+                    b.HasIndex("TenantId", "BuyerAccountId", "CreatedAt")
+                        .HasDatabaseName("IX_orders_tenant_buyer_created")
+                        .HasFilter("buyer_account_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "ConvertedAt", "OrderNumber")
                         .HasDatabaseName("IX_orders_tenant_converted_at_number");

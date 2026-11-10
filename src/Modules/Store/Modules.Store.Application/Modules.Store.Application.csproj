@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <!-- StoreAuthorization y StoreNotFound son internal: no son API publica del modulo. Mismo patron que Loans. -->
+    <!-- StoreAuthorization y StoreCheckoutParties son internal: no son API publica del modulo. Mismo patron que Loans. -->
     <InternalsVisibleTo Include="Modules.Store.UnitTests" />
   </ItemGroup>
   <ItemGroup>

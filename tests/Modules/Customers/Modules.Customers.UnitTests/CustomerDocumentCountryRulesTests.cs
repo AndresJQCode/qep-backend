@@ -52,4 +52,28 @@ public sealed class CustomerDocumentCountryRulesTests
             Assert.Single(
                 Validator.Validate(Command("XX", "CO")).Errors,
                 error => error.PropertyName == "IdentificationType").ErrorMessage);
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("  ", "  ")]
+    public void BothDocumentFieldsEmptyIsNotAValidatorError(string? type, string? number)
+    {
+        var fields = Validator.Validate(Command("CC", "CO") with { IdentificationType = type, IdentificationNumber = number })
+            .Errors.Select(error => error.PropertyName).ToList();
+
+        Assert.DoesNotContain("IdentificationType", fields);
+        Assert.DoesNotContain("IdentificationNumber", fields);
+    }
+
+    [Fact]
+    public void AColombianBodyWithoutCityIdIsNotAValidatorError() =>
+        Assert.DoesNotContain(
+            "CityId",
+            Validator.Validate(Command("CC", "CO") with { CityId = null }).Errors.Select(error => error.PropertyName));
+
+    [Fact]
+    public void AnEmptyCityIdIsStillAValidatorError() =>
+        Assert.Contains(
+            "CityId",
+            Validator.Validate(Command("CC", "CO") with { CityId = Guid.Empty }).Errors.Select(error => error.PropertyName));
 }

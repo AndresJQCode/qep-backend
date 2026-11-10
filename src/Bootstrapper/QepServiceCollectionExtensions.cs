@@ -793,6 +793,8 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
+        services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
         // Bootstrapper dentro de la transacción de Catalog; nadie más referencia Modules.Quotations.Application.
         services.AddScoped<IQuotationVariantDeletion, QuotationVariantDeletion>();
@@ -950,6 +952,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
         services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
         services.AddScoped<ICommandHandler<RetryCampaignCommand, CampaignDetailDto>, RetryCampaignHandler>();
+        // Messaging (spec 2026-11-09): el mensaje programado de una conversación. Cada handler a mano: sin registro, 500 (lo cubre
+        // ScheduledMessageApiTests.EveryRouteIsRegisteredAndAnswersItsStatus). Los validadores entran con AddValidatorsFromAssemblyContaining
+        // de arriba. Los cinco de gestión arman a mano su ScheduledMessageManager (es internal de Application): no se registra.
+        services.AddScoped<ScheduledMessageMapper>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageQuery, ScheduledMessageEnvelopeDto>, GetScheduledMessageHandler>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageMediaQuery, MediaStreamDto?>, GetScheduledMessageMediaHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledMessageCommand, ScheduleMessageResult>, CreateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledVoiceNoteCommand, ScheduleMessageResult>, CreateScheduledVoiceNoteHandler>();
+        services.AddScoped<ICommandHandler<UpdateScheduledMessageCommand, ScheduledMessageDto>, UpdateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CancelScheduledMessageCommand, bool>, CancelScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<SendScheduledMessageNowCommand, ScheduledMessageDto>, SendScheduledMessageNowHandler>();
+        services.AddScoped<ICommandHandler<RetryScheduledMessageCommand, ScheduledMessageDto>, RetryScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<DiscardScheduledMessageCommand, bool>, DiscardScheduledMessageHandler>();
         // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
@@ -1381,10 +1396,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
         services.AddScoped<Modules.Store.Application.IStoreCustomerDirectory, StoreCustomerDirectory>();
         services.AddScoped<Modules.Store.Application.IStoreMemberDirectory, StoreMemberDirectory>();
-        services.AddScoped<Modules.Store.Application.OrderRequestRowComposer>();
         services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
-        // Quotations → Store: el detalle de un pedido de la tienda muestra su solicitud (teléfono y total que vio el visitante).
-        services.AddScoped<IOrderStoreRequestLookup, OrderStoreRequestLookup>();
         services.AddScoped<Modules.Store.Application.StorefrontResolver>();
         services.AddScoped<Modules.Store.Application.PublicCartPricing>();
         services.AddScoped<
@@ -1412,24 +1424,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Store.Application.ListPublicCitiesQuery, Modules.Store.Application.PublicGeoListDto>,
             Modules.Store.Application.ListPublicCitiesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Store.Application.ListOrderRequestsQuery, Modules.Store.Application.StoreOrderRequestPageDto>,
-            Modules.Store.Application.ListOrderRequestsHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestSummaryQuery, Modules.Store.Application.StoreInboxSummaryDto>,
-            Modules.Store.Application.GetOrderRequestSummaryHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestQuery, Modules.Store.Application.StoreOrderRequestDetailDto>,
-            Modules.Store.Application.GetOrderRequestHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetCustomerCandidatesQuery, Modules.Store.Application.StoreCustomerCandidatesDto>,
-            Modules.Store.Application.GetCustomerCandidatesHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.TakeOrderRequestCommand, Modules.Store.Application.StoreTakeResultDto>,
-            Modules.Store.Application.TakeOrderRequestHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.DiscardOrderRequestCommand, Modules.Store.Application.StoreOrderRequestRowDto>,
-            Modules.Store.Application.DiscardOrderRequestHandler>();
-        services.AddScoped<
             IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
             Modules.Store.Application.GetStoreSettingsHandler>();
         services.AddScoped<
@@ -1449,6 +1443,8 @@ public static class QepServiceCollectionExtensions
         // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
         // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrders, BuyerOrdersAdapter>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrderLinker, BuyerOrderLinker>();
         services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
         services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
         services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
@@ -1469,6 +1465,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Buyers.Application.GetBuyerSessionQuery, Modules.Buyers.Application.BuyerDto>,
             Modules.Buyers.Application.GetBuyerSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.ListBuyerOrdersQuery, Modules.Buyers.Application.BuyerOrderPageDto>,
+            Modules.Buyers.Application.ListBuyerOrdersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerOrderQuery, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.GetBuyerOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.CancelBuyerOrderCommand, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.CancelBuyerOrderHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.LogoutBuyerCommand, bool>,
             Modules.Buyers.Application.LogoutBuyerHandler>();

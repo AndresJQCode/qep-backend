@@ -35,7 +35,11 @@ public sealed partial class BuyerSignup(
     /// Corre justo antes de cada guardado, en el mismo <c>SaveChanges</c> que el efecto: el worker del checkout agrega ahí su marca de
     /// procesado y el cierre del inbox. Corre de nuevo en el reintento de la carrera, porque el descarte también se lleva lo suyo.
     /// </param>
-    public async Task SignUpAsync(BuyerSignupRequest request, CancellationToken cancellationToken, Action? beforeSave = null)
+    /// <returns>
+    /// El id de la cuenta creada o reactivada (email nuevo, o sin verificar con contraseña y perfil reemplazados); <c>null</c> en
+    /// «ya tienes cuenta», donde no se toca nada. Quien llama no lo muestra: sólo sirve para enlazar el pedido del checkout.
+    /// </returns>
+    public async Task<Guid?> SignUpAsync(BuyerSignupRequest request, CancellationToken cancellationToken, Action? beforeSave = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!BuyerEmail.TryNormalize(request.Email, out var email))
@@ -45,24 +49,24 @@ public sealed partial class BuyerSignup(
 
         try
         {
-            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
+            return await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }
         catch (ResourceConflictException exception) when (exception.Code == BuyerErrorCodes.EmailTaken)
         {
             // El ganador de la carrera ya guardó la cuenta: ahora existe, así que el segundo intento no vuelve a crearla.
             unitOfWork.DiscardPendingChanges();
-            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
+            return await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }
         catch (RequestConcurrencyException)
         {
             // M2: la cuenta sin verificar cambió (un restablecimiento la verificó) o la purga la borró desde que se leyó. El segundo
             // intento sigue la regla de lo que hay ahora: verificada avisa, borrada se crea de nuevo. Nunca un 500.
             unitOfWork.DiscardPendingChanges();
-            await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
+            return await SignUpOnceAsync(request, email, beforeSave, cancellationToken);
         }
     }
 
-    private async Task SignUpOnceAsync(
+    private async Task<Guid?> SignUpOnceAsync(
         BuyerSignupRequest original, string email, Action? beforeSave, CancellationToken cancellationToken)
     {
         var request = DropProfileTheCountryDoesNotAllow(original);
@@ -85,7 +89,7 @@ public sealed partial class BuyerSignup(
                 now);
             beforeSave?.Invoke();
             await unitOfWork.SaveChangesAsync(cancellationToken);
-            return;
+            return null;
         }
         else
         {
@@ -104,6 +108,7 @@ public sealed partial class BuyerSignup(
         await tokens.IssueAsync(account, BuyerEmailTokenPurpose.Verify, request.Host, request.StoreName, now, cancellationToken);
         beforeSave?.Invoke();
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        return account.Id;
     }
 
     /// <summary>

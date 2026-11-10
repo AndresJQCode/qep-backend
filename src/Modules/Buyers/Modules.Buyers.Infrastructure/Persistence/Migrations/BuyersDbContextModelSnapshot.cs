@@ -275,15 +275,15 @@ namespace Modules.Buyers.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Buyers.Infrastructure.Persistence.BuyerProcessedSignup", b =>
                 {
-                    b.Property<Guid>("OrderRequestId")
+                    b.Property<Guid>("OrderId")
                         .HasColumnType("uuid")
-                        .HasColumnName("order_request_id");
+                        .HasColumnName("order_id");
 
                     b.Property<DateTimeOffset>("ProcessedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("processed_at");
 
-                    b.HasKey("OrderRequestId")
+                    b.HasKey("OrderId")
                         .HasName("PK_processed_signups");
 
                     b.ToTable("processed_signups", "buyers");

@@ -249,7 +249,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var hasher = rig.Fixture.Settings.Factory.Services.GetRequiredService<IBuyerPasswordHasher>();
         Assert.NotEqual(BuyerPasswordCheck.Failed, hasher.Verify(hash, Password));
 
-        foreach (var row in await rig.TextsAsync("SELECT row_to_json(t)::text FROM store.order_requests t"))
+        foreach (var row in await rig.TextsAsync("SELECT row_to_json(t)::text FROM store.order_consents t"))
         {
             Assert.DoesNotContain(Password, row, StringComparison.Ordinal);
         }
@@ -261,7 +261,7 @@ public sealed class PublicOrderBuyerAccountApiTests
     }
 
     [Fact]
-    public async Task TheSignupMessageCommitsWithTheOrderRequest()
+    public async Task TheSignupMessageCommitsWithTheOrder()
     {
         await using var rig = await OpenRigAsync();
         var body = WithAccount(rig, email: "  Ana.Perez@Test.CO ");
@@ -269,7 +269,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var receipt = await CreatedAsync(await SubmitAsync(rig, body, visitorIp: "203.0.113.77"));
 
         var payload = JsonNode.Parse(Assert.Single(await rig.SignupPayloadsAsync()))!;
-        Assert.Equal((Guid)receipt["id"]!, (Guid)payload["orderRequestId"]!);
+        Assert.Equal((Guid)receipt["id"]!, (Guid)payload["orderId"]!);
         Assert.Equal((Guid)body["clientRequestId"]!, (Guid)payload["clientRequestId"]!);
         Assert.Equal(Tenant, (Guid)payload["tenantId"]!);
         // Review Focus 2: el email de ingreso sale normalizado igual que en el registro.
@@ -380,7 +380,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var responses = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => SubmitAsync(rig, body)));
 
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.Created, response.StatusCode));
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
         Assert.Single(await rig.SignupPayloadsAsync());
     }
 
@@ -397,7 +397,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         await AssertValidationAsync(shortPassword, "CreateAccount.Password");
         await AssertValidationAsync(noPolicy, "CreateAccount.AcceptsDataPolicy");
         await AssertValidationAsync(withSession, "CreateAccount");
-        Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
         Assert.Empty(await rig.SignupPayloadsAsync());
     }
 
@@ -416,6 +416,9 @@ public sealed class PublicOrderBuyerAccountApiTests
         public Task<bool> ReplaceProfileAsync(
             string host, string? sessionToken, PublicBillingInput billing, PublicShippingInput? shipping, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("buyers down");
+
+        public Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("buyers down");
     }
 
     [Fact]
@@ -431,12 +434,12 @@ public sealed class PublicOrderBuyerAccountApiTests
         var withAccount = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
         var withProfile = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["updateProfile"] = true), session: "cualquier-token"));
 
-        Assert.Equal("T-0001", (string)withAccount["number"]!);
+        Assert.EndsWith("0001", (string)withAccount["number"]!, StringComparison.Ordinal);
         Assert.False((bool)withAccount["buyerSessionRejected"]!);
-        Assert.Equal("T-0002", (string)withProfile["number"]!);
+        Assert.EndsWith("0002", (string)withProfile["number"]!, StringComparison.Ordinal);
         Assert.False((bool)withProfile["buyerSessionRejected"]!);
         Assert.Empty(await rig.SignupPayloadsAsync());
-        Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
     private static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
@@ -546,7 +549,7 @@ public sealed class PublicOrderBuyerAccountApiTests
 
         Assert.True((bool)receipt["buyerSessionRejected"]!);
         Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM buyers.profiles"));
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
     [Fact]
@@ -557,7 +560,102 @@ public sealed class PublicOrderBuyerAccountApiTests
         var receipt = await CreatedAsync(await SubmitAsync(rig, UpdatingProfile(rig)));
 
         Assert.True((bool)receipt["buyerSessionRejected"]!);
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
+    }
+
+    // ---- La cuenta en el pedido (pedidos del comprador §4.2) ----------------------------------------------------------------
+
+    // ScalarTextAsync devuelve "" para un NULL de SQL (DBNull.ToString()).
+    private static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
+        await rig.ScalarTextAsync($"SELECT buyer_account_id::text FROM quotations.orders WHERE id = '{orderId}'") is { Length: > 0 } id
+            ? id
+            : null;
+
+    private static async Task<JsonNode> BuyerOrdersAsync(Rig rig, string session)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, Url("/buyer/orders"));
+        request.Headers.Add("X-Qep-Visitor-Ip", NextIp());
+        request.Headers.Add("X-Qep-Buyer-Session", session);
+        var response = await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
+        var json = await JsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, json.ToJsonString());
+        return json;
+    }
+
+    private static async Task<string> AccountIdAsync(Rig rig, string email) =>
+        (await rig.ScalarTextAsync($"SELECT id::text FROM buyers.accounts WHERE email = '{email}'"))!;
+
+    [Fact]
+    public async Task ACheckoutWithAValidSessionStampsTheAccountWithoutUpdateProfile()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        var session = await LoginAsync(rig);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: session));
+
+        var orderId = (Guid)receipt["id"]!;
+        Assert.False((bool)receipt["buyerSessionRejected"]!);
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, orderId));
+        var listed = await BuyerOrdersAsync(rig, session);
+        Assert.Equal([orderId], listed["items"]!.AsArray().Select(item => (Guid)item!["id"]!));
+    }
+
+    [Fact]
+    public async Task ACheckoutWithASessionFromAnotherStoreIsAGuestOrder()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        var session = await LoginAsync(rig);
+        var accountId = Guid.Parse(await AccountIdAsync(rig, "ana@test.co"));
+        string foreignSession;
+        await using (var scope = rig.Fixture.Settings.Factory.Services.CreateAsyncScope())
+        {
+            (foreignSession, _) = await scope.ServiceProvider.GetRequiredService<BuyerSessions>()
+                .IssueAsync(accountId, "otra-tienda.lulocrm.com", "203.0.113.5", TestContext.Current.CancellationToken);
+        }
+
+        var foreign = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: foreignSession));
+        var anonymous = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        // Sin updateProfile la sesión que no sirve no marca el recibo: el pedido sale como invitado y nada más.
+        Assert.False((bool)foreign["buyerSessionRejected"]!);
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)foreign["id"]!));
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)anonymous["id"]!));
+        Assert.Empty((await BuyerOrdersAsync(rig, session))["items"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task ADeferredSignupLinksTheOrderToTheNewAccount()
+    {
+        await using var rig = await OpenRigAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
+        var orderId = (Guid)receipt["id"]!;
+        Assert.Null(await OrderBuyerAccountAsync(rig, orderId));
+        await rig.DrainBuyerSignupsAsync();
+
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, orderId));
+        var token = (await rig.OutboxAsync(BuyerIntegrationEvents.EmailVerificationRequested))
+            .Select(payload => JsonNode.Parse(payload)!)
+            .Last(payload => (string?)payload["email"] == "ana@test.co")["token"]!.GetValue<string>();
+        Assert.Equal(HttpStatusCode.NoContent, (await rig.PostBuyerAsync("/email/verify", new { token })).StatusCode);
+        var session = await LoginAsync(rig, password: Password);
+        var listed = await BuyerOrdersAsync(rig, session);
+        Assert.Equal([orderId], listed["items"]!.AsArray().Select(item => (Guid)item!["id"]!));
+    }
+
+    [Fact]
+    public async Task ADeferredSignupForAVerifiedEmailDoesNotLinkTheOrder()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
+        await rig.DrainBuyerSignupsAsync();
+
+        Assert.Single(await rig.OutboxAsync(BuyerIntegrationEvents.ExistingAccountNotice));
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
     }
 
     [Fact]

@@ -89,6 +89,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 order => order.TenantId == tenantId && order.Source == source && order.ExternalKey == externalKey,
                 cancellationToken);
 
+    // Sin filtro de estado a propósito: anular un pedido no devuelve cupo del tope diario.
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .AsNoTracking()
+            .CountAsync(
+                order => order.TenantId == tenantId && order.Source == source && order.ConvertedAt >= since,
+                cancellationToken);
+
     public async Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -115,6 +124,33 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
             .ToListAsync(cancellationToken);
         return (items, total);
     }
+
+    public async Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var orders = dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.BuyerAccountId == buyerAccountId);
+        var total = await orders.CountAsync(cancellationToken);
+        var items = await orders
+            .Include(order => order.Items)
+            .Include(order => order.PaymentProofs)
+            .OrderByDescending(order => order.CreatedAt)
+            .ThenByDescending(order => order.OrderNumber)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    public Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
+        WithAggregate(dbContext.Orders)
+            .SingleOrDefaultAsync(
+                order => order.TenantId == tenantId
+                    && order.BuyerAccountId == buyerAccountId
+                    && order.Id == orderId,
+                cancellationToken);
 
     public Task<bool> AnyForExportAsync(
         Guid tenantId,

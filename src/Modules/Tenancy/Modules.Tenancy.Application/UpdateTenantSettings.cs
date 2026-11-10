@@ -19,7 +19,9 @@ public sealed record UpdateTenantSettingsCommand(
     long ExpectedVersion,
     string CorrelationId,
     // Null keeps the stored requirement, same deployment window as Country (spec 2026-10-26).
-    string? PersonTypeRequirement = null) : ICommand<TenantSettingsDto>;
+    string? PersonTypeRequirement = null,
+    // Null keeps the stored policy; present means all four flags (spec 2026-11-09 6.7).
+    CustomerFieldPolicyInput? CustomerFieldPolicy = null) : ICommand<TenantSettingsDto>;
 
 public sealed class UpdateTenantSettingsValidator
     : AbstractValidator<UpdateTenantSettingsCommand>
@@ -38,6 +40,20 @@ public sealed class UpdateTenantSettingsValidator
         // Only the column limit: an unknown value is a domain rule (PersonTypeRequirementPolicy.Parse).
         RuleFor(command => command.PersonTypeRequirement).MaximumLength(20);
         RuleFor(command => command.ExpectedVersion).GreaterThan(0);
+
+        // If the policy comes, all four flags come: a missing one must not read as false.
+        RuleFor(command => command.CustomerFieldPolicy!.Document).NotNull()
+            .When(command => command.CustomerFieldPolicy is not null);
+        RuleFor(command => command.CustomerFieldPolicy!.City).NotNull()
+            .When(command => command.CustomerFieldPolicy is not null);
+        RuleFor(command => command.CustomerFieldPolicy!.Document!.OnCustomerSave).NotNull()
+            .When(command => command.CustomerFieldPolicy?.Document is not null);
+        RuleFor(command => command.CustomerFieldPolicy!.Document!.OnBilling).NotNull()
+            .When(command => command.CustomerFieldPolicy?.Document is not null);
+        RuleFor(command => command.CustomerFieldPolicy!.City!.OnCustomerSave).NotNull()
+            .When(command => command.CustomerFieldPolicy?.City is not null);
+        RuleFor(command => command.CustomerFieldPolicy!.City!.OnBilling).NotNull()
+            .When(command => command.CustomerFieldPolicy?.City is not null);
     }
 }
 
@@ -92,7 +108,8 @@ public sealed class UpdateTenantSettingsHandler(
             command.PersonTypeRequirement is { } requirement
                 ? PersonTypeRequirementPolicy.Parse(requirement)
                 : tenant.PersonTypeRequirement,
-            clock.UtcNow);
+            clock.UtcNow,
+            command.CustomerFieldPolicy?.ToDomain());
 
         if (!changed)
         {

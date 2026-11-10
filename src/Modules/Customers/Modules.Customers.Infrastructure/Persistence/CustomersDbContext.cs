@@ -33,13 +33,19 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
     internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
 
-    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. Teléfono y ciudad siguen exigidos
-    /// por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. El teléfono sigue exigido por
+    /// CustomerWriteRules, como antes; la ciudad, desde el 2026-11-09, la exige (o no) la política de campos del tenant en
+    /// Application (<c>CustomerFieldPolicyRequirement</c>), así que tampoco va en este check. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
     /// ficha completa puede no tenerla, y su CUC va sin prefijo. La dirección salió el 2026-11-01: es opcional, y sin
-    /// ella la ficha guarda <c>null</c> y nace sin libreta.</summary>
+    /// ella la ficha guarda <c>null</c> y nace sin libreta. La identificación salió el 2026-11-09: la política de campos
+    /// del tenant decide en Application si una ficha completa la lleva; aquí sólo se exige que tipo y número vayan
+    /// juntos, ver <see cref="IdentificationPairCheck"/>.</summary>
     public const string CompleteFieldsCheck =
-        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
-        + "AND country IS NOT NULL)";
+        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND country IS NOT NULL)";
+
+    /// <summary>Tipo y número de identificación van juntos o ninguno: media identificación no es un dato. Vale para
+    /// fichas completas e incompletas, y deja fuera del índice único a las que no la tienen.</summary>
+    public const string IdentificationPairCheck = "(identification_type IS NULL) = (identification_number IS NULL)";
 
     /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>
@@ -73,6 +79,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         {
             table.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
             table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
+            table.HasCheckConstraint("CK_customers_identification_pair", IdentificationPairCheck);
             table.HasCheckConstraint(
                 "CK_customers_marketing_opt_out_source",
                 "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");

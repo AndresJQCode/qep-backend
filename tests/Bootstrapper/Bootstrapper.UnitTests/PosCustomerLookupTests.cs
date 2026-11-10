@@ -25,10 +25,40 @@ public sealed class PosCustomerLookupTests
         var customer = Registered("Laura Verde", IdentificationType.Cc, "1020304050");
         var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
 
-        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, Ct);
+        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, false, Ct);
 
         var item = Assert.Single(found);
         Assert.Equal(new PosCustomerRef(customer.Id.Value, "Laura Verde", "CC", "1020304050", false, true), item);
+    }
+
+    [Fact]
+    public async Task SearchMapsACompleteCustomerWithoutDocumentToARefWithNulls()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000001", "Verde Esencial", null, null, null, null,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = Guid.CreateVersion7() },
+            new CustomerCommercialInfo(),
+            Now,
+            new PassThroughPhones());
+        var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
+
+        var found = await lookup.SearchAsync(TenantId, null, PosCustomerRules.Take, false, Ct);
+
+        var item = Assert.Single(found);
+        Assert.Equal(new PosCustomerRef(customer.Id.Value, "Verde Esencial", null, null, true, true), item);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterPassesAMissingDocumentThroughAsNulls()
+    {
+        var stored = Customer.CreateFromRegister(CustomerId.New(), TenantId, "Laura Verde", null, null, Now, new PassThroughPhones());
+        var provisioning = new PosFakeProvisioning { Result = stored.Id.Value };
+        var lookup = Lookup(new PosFakeCustomers(stored), provisioning, new PosFakeExecutionContext());
+
+        var created = await lookup.CreateFromRegisterAsync(TenantId, new NewPosCustomer("Laura Verde", null, null, null), Ct);
+
+        Assert.Equal(new PosCustomerRef(stored.Id.Value, "Laura Verde", null, null, false, true), created);
+        Assert.Equal(new RegisterCustomerData("Laura Verde", null, null, null), Assert.Single(provisioning.Calls).Data);
     }
 
     [Fact]
@@ -150,7 +180,7 @@ public sealed class PosCustomerLookupTests
         public Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken, Guid? actorUserId = null, string? source = null) =>
             throw new NotSupportedException();
 
-        public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken) =>
+        public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid? actorUserId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
         public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
@@ -185,7 +215,7 @@ public sealed class PosCustomerLookupTests
         public Dictionary<(IdentificationType Type, string Number), CustomerId> Identifications { get; } = [];
 
         public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
-            Guid tenantId, string? search, int take, CancellationToken cancellationToken) =>
+            Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Customer>>(
                 customers.Where(customer => customer.TenantId == tenantId && customer.IsActive).Take(take).ToList());
 

@@ -8,10 +8,7 @@ public sealed class StoreOptions
     /// <summary>Dominio raíz del que cuelga el host de cada tienda: <c>{slug}.{RootDomain}</c> (spec §5.3).</summary>
     public string RootDomain { get; set; } = "lulocrm.com";
 
-    /// <summary>Cuánto dura el candado con que «Tomar» reserva una solicitud mientras crea el pedido, para que un segundo clic no la duplique.</summary>
-    public TimeSpan ConversionLease { get; set; } = TimeSpan.FromMinutes(2);
-
-    /// <summary>Tope de solicitudes que una tienda recibe por día: frena el spam que pasó el rate limit por IP.</summary>
+    /// <summary>Tope de pedidos que una tienda recibe por día: frena el spam que pasó el rate limit por IP.</summary>
     public int DailyRequestCap { get; set; } = 500;
 
     public StorefrontOptions Storefront { get; set; } = new();
@@ -29,11 +26,6 @@ public sealed class StoreOptions
         if (string.IsNullOrWhiteSpace(RootDomain))
         {
             failures.Add("Store:RootDomain is required.");
-        }
-
-        if (ConversionLease <= TimeSpan.Zero)
-        {
-            failures.Add("Store:ConversionLease must be greater than zero.");
         }
 
         if (DailyRequestCap <= 0)

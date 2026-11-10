@@ -46,6 +46,11 @@ public interface IOrderRepository
     Task<Order?> FindByExternalKeyAsync(
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
 
+    /// <summary>Cuántos pedidos de ese origen entraron desde <paramref name="since"/> (por <c>ConvertedAt</c>), en
+    /// cualquier estado: el tope diario de la tienda cuenta también los anulados.</summary>
+    Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken);
+
     Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -60,6 +65,14 @@ public interface IOrderRepository
         int page,
         int pageSize,
         CancellationToken cancellationToken);
+
+    /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>
+    Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>Un pedido del comprador, con tracking y con sus comprobantes, para poder cancelarlo.</summary>
+    Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken);
 
     Task<bool> AnyForExportAsync(
         Guid tenantId,

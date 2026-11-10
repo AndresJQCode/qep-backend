@@ -15,12 +15,12 @@ internal sealed class BuyerInboxMessage
 }
 
 /// <summary>
-/// La marca de idempotencia del alta desde el checkout: una fila por solicitud de pedido. La PK decide entre dos réplicas y entre
-/// dos mensajes de la misma solicitud.
+/// La marca de idempotencia del alta desde el checkout: una fila por pedido. La PK decide entre dos réplicas y entre
+/// dos mensajes del mismo pedido.
 /// </summary>
 internal sealed class BuyerProcessedSignup
 {
-    public Guid OrderRequestId { get; init; }
+    public Guid OrderId { get; init; }
 
     public DateTimeOffset ProcessedAt { get; init; }
 }

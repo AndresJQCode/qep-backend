@@ -21,7 +21,6 @@ public sealed class PosSale
         RequestFingerprint = string.Empty;
         SaleNumber = string.Empty;
         CustomerName = string.Empty;
-        CustomerIdentificationNumber = string.Empty;
     }
 
     public PosSaleId Id { get; private set; }
@@ -44,7 +43,9 @@ public sealed class PosSale
 
     public string? CustomerIdentificationType { get; private set; }
 
-    public string CustomerIdentificationNumber { get; private set; }
+    /// <summary>El número del cliente de la venta, que puede ser nulo si el tenant no exige el documento al facturar
+    /// (spec 2026-11-09). El del consumidor final sólo va cuando no hay cliente: un cliente sin documento nunca lo hereda.</summary>
+    public string? CustomerIdentificationNumber { get; private set; }
 
     /// <summary>Copiada de la caja, nunca leída en vivo: una caja no mezcla monedas.</summary>
     public string Currency { get; private set; } = "COP";
@@ -130,7 +131,7 @@ public sealed class PosSale
             CustomerId = customer?.Id,
             CustomerName = customer?.Name ?? PosFinalConsumer.Name,
             CustomerIdentificationType = customer?.IdentificationType,
-            CustomerIdentificationNumber = customer?.IdentificationNumber ?? PosFinalConsumer.IdentificationNumber,
+            CustomerIdentificationNumber = customer is null ? PosFinalConsumer.IdentificationNumber : customer.IdentificationNumber,
             Subtotal = subtotal,
             DiscountAmount = discount,
             TaxAmount = tax,

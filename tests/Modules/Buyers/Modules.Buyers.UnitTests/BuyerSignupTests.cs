@@ -27,9 +27,10 @@ public sealed class BuyerSignupTests
     {
         var world = new BuyersWorld();
 
-        await world.Signup.SignUpAsync(Request("hash-1", Profile("Ana")), TestContext.Current.CancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-1", Profile("Ana")), TestContext.Current.CancellationToken);
 
         var account = Assert.Single(world.SavedAccounts);
+        Assert.Equal(account.Id, result);
         Assert.Null(account.EmailVerifiedAt);
         Assert.Equal(Email, account.Email);
         Assert.Equal("hash-1", account.PasswordHash);
@@ -68,8 +69,10 @@ public sealed class BuyerSignupTests
         var world = new BuyersWorld();
         var existing = world.AddVerifiedAccount(Email, "hash-original");
 
-        await world.Signup.SignUpAsync(Request("hash-new", Profile("Otra")), TestContext.Current.CancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-new", Profile("Otra")), TestContext.Current.CancellationToken);
 
+        // «Ya tienes cuenta» no toca la cuenta: no hay nada que enlazar (pedidos del comprador §4.2(2)).
+        Assert.Null(result);
         Assert.Equal("hash-original", existing.PasswordHash);
         Assert.Empty(world.SavedProfiles);
         Assert.Empty(world.SavedConsents);
@@ -90,9 +93,10 @@ public sealed class BuyerSignupTests
         await world.Signup.SignUpAsync(Request("hash-1", Profile("Primero")), cancellationToken);
         var firstToken = Assert.Single(world.SavedTokens);
 
-        await world.Signup.SignUpAsync(Request("hash-2", Profile("Segundo")), cancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-2", Profile("Segundo")), cancellationToken);
 
         var account = Assert.Single(world.SavedAccounts);
+        Assert.Equal(account.Id, result);
         Assert.Equal("hash-2", account.PasswordHash);
         Assert.Equal("Segundo", Assert.Single(world.SavedProfiles).Data.Billing.Name);
         Assert.NotNull(firstToken.UsedAt);
@@ -167,11 +171,12 @@ public sealed class BuyerSignupTests
         BuyerAccount? winner = null;
         world.WinTheRaceOnNextSave = () => winner = world.AddUnverifiedAccount(Email, "hash-winner");
 
-        await world.Signup.SignUpAsync(Request("hash-loser", Profile("Perdedor")), TestContext.Current.CancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-loser", Profile("Perdedor")), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, world.SaveCalls);
         var account = Assert.Single(world.SavedAccounts);
         Assert.Same(winner, account);
+        Assert.Equal(account.Id, result);
         Assert.Equal("hash-loser", account.PasswordHash);
         var queued = Assert.Single(world.SavedEvents);
         Assert.Equal(BuyerIntegrationEvents.EmailVerificationRequested, queued.EventName);
@@ -199,11 +204,12 @@ public sealed class BuyerSignupTests
         var purged = world.AddUnverifiedAccount(Email, "hash-old");
         world.ConflictOnNextSave = () => world.SavedAccounts.Remove(purged);
 
-        await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, world.SaveCalls);
         var account = Assert.Single(world.SavedAccounts);
         Assert.NotEqual(purged.Id, account.Id);
+        Assert.Equal(account.Id, result);
         Assert.Equal("hash-new", account.PasswordHash);
     }
 
@@ -219,8 +225,9 @@ public sealed class BuyerSignupTests
             account.MarkEmailVerified(BuyersWorld.Now);
         };
 
-        await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
+        var result = await world.Signup.SignUpAsync(Request("hash-new"), TestContext.Current.CancellationToken);
 
+        Assert.Null(result);
         Assert.Equal("hash-reset", account.PasswordHash);
         var queued = Assert.Single(world.SavedEvents);
         Assert.Equal(BuyerIntegrationEvents.ExistingAccountNotice, queued.EventName);

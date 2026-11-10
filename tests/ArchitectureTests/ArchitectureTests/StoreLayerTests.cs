@@ -106,6 +106,53 @@ public sealed class StoreLayerTests
         }
     }
 
+    /// <summary>
+    /// `Modules.Store.Application` usa `TenantModuleKeys` de `Modules.Tenancy.Domain`, así que no se puede prohibir la referencia
+    /// al assembly. Lo que sí se prohíbe es que un tipo de Application tenga un campo, propiedad, parámetro o retorno del tipo
+    /// <c>Tenant</c> o <c>Membership</c>: el dueño entra por el puerto, no por el agregado.
+    /// </summary>
+    [Fact]
+    public void ApplicationDoesNotReferenceTenancyDomainTypesForTheOwner()
+    {
+        var types = typeof(StorePermissions).Assembly.GetTypes();
+        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
+                                 BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+        var offenders = new List<string>();
+
+        foreach (var type in types)
+        {
+            foreach (var field in type.GetFields(all))
+                Check(field.FieldType, $"{type.FullName}.{field.Name}");
+            foreach (var property in type.GetProperties(all))
+                Check(property.PropertyType, $"{type.FullName}.{property.Name}");
+            foreach (var constructor in type.GetConstructors(all))
+                foreach (var parameter in constructor.GetParameters())
+                    Check(parameter.ParameterType, $"{type.FullName}..ctor({parameter.Name})");
+            foreach (var method in type.GetMethods(all))
+            {
+                Check(method.ReturnType, $"{type.FullName}.{method.Name} (retorno)");
+                foreach (var parameter in method.GetParameters())
+                    Check(parameter.ParameterType, $"{type.FullName}.{method.Name}({parameter.Name})");
+            }
+        }
+
+        Assert.NotEmpty(types);
+        Assert.Empty(offenders);
+
+        void Check(Type candidate, string where)
+        {
+            if (Mentions(candidate)) offenders.Add(where);
+        }
+
+        static bool Mentions(Type candidate)
+        {
+            if (candidate.HasElementType && Mentions(candidate.GetElementType()!)) return true;
+            if (candidate.IsGenericType && candidate.GetGenericArguments().Any(Mentions)) return true;
+            return candidate.Namespace == "Modules.Tenancy.Domain" && candidate.Name is "Tenant" or "Membership";
+        }
+    }
+
     private static string?[] ReferenceNamesOf(Assembly assembly) => assembly
         .GetReferencedAssemblies()
         .Select(name => name.Name)

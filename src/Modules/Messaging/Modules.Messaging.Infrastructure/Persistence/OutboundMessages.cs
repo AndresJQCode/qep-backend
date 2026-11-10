@@ -18,6 +18,43 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     {
         ArgumentNullException.ThrowIfNull(draft);
         var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    public async Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(lease);
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // FOR SHARE y no una lectura suelta: el cierre de la recuperación (un UPDATE con CAS) espera a que este reclamo termine, y su
+            // reclamo de vencidos (FOR UPDATE SKIP LOCKED) salta la fila. locked_until igual al de este lease: la recuperación lo renueva
+            // sin sumar intentos, así que el intento solo no distingue a un ejecutor tardío.
+            var held = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT id AS "Value" FROM messaging.scheduled_messages
+                 WHERE id = {lease.ScheduledMessageId} AND tenant_id = {lease.TenantId} AND status = 'Sending' AND attempts = {lease.Attempts}
+                   AND locked_until = {lease.LockedUntil} AND locked_until > {lease.ValidAfter}
+                   FOR SHARE
+                """).ToListAsync(cancellationToken);
+            if (held.Count == 0)
+            {
+                await transaction.DisposeAsync();
+                return null;
+            }
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    private async Task<IOutboundClaim> ClaimInAsync(IDbContextTransaction transaction, OutboundDraft draft, CancellationToken cancellationToken)
+    {
         try
         {
             // Un segundo request con el mismo clientId espera acá hasta que el primero cierre su transacción.
@@ -43,7 +80,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
                 SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId", coalesce(m.text, '') AS "Text",
                        m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                        mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
-                       m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
+                       m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName", m.retry_disabled AS "RetryDisabled"
                 FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
                 WHERE m.conversation_id = {draft.ConversationId} AND m.client_id = {draft.ClientId} FOR UPDATE OF m
                 """).ToListAsync(cancellationToken);
@@ -85,7 +122,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
             SELECT m.id AS "Id", m.status AS "Status", m.occurred_at AS "OccurredAt", m.sent_by_member_id AS "SentByMemberId", m.sent_by_chatbot_id AS "SentByChatbotId",
                    coalesce(m.text, '') AS "Text", m.reply_to_message_id AS "ReplyToMessageId", m.kind AS "Kind", mm.mime_type AS "MediaMimeType", m.details::text AS "DetailsJson",
                    mm.file_name AS "MediaFileName", m.caption AS "Caption", m.failure_code AS "FailureCode",
-                   m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName"
+                   m.sent_by_api_key_id AS "SentByApiKeyId", m.sent_by_api_key_name AS "SentByApiKeyName", m.retry_disabled AS "RetryDisabled"
             FROM messaging.messages m LEFT JOIN messaging.message_media mm ON mm.message_id = m.id
             WHERE m.conversation_id = {conversationId} AND m.client_id = {clientId}
             """).ToListAsync(cancellationToken);
@@ -110,7 +147,7 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     private static ExistingOutbound ToExisting(ExistingRow row) =>
         new(row.Id, MessageColumnCodes.ToStatus(row.Status), row.OccurredAt, row.SentByMemberId, row.Text, row.ReplyToMessageId,
             MessageColumnCodes.ToKind(row.Kind), row.MediaMimeType, row.DetailsJson, row.MediaFileName, row.Caption, row.SentByChatbotId,
-            row.FailureCode, row.SentByApiKeyId, row.SentByApiKeyName);
+            row.FailureCode, row.SentByApiKeyId, row.SentByApiKeyName, row.RetryDisabled);
 
     private sealed class ExistingRow
     {
@@ -143,6 +180,8 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
         public Guid? SentByApiKeyId { get; set; }
 
         public string? SentByApiKeyName { get; set; }
+
+        public bool RetryDisabled { get; set; }
     }
 
     private sealed class ApiMessageRow

@@ -241,6 +241,48 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// Review Focus 3: con documento y ciudad opcionales al guardar, dos filas sin documento ni ciudad en el mismo
+    /// archivo conviven (sin <c>duplicate_in_file</c>) y nacen con CUC de departamento <c>00</c>.
+    /// </summary>
+    [Fact]
+    public async Task AnImportWithTwoRowsWithoutDocumentCreatesBothWhenAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateImporter(factory);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Documento Uno",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null),
+                new ExcelRowInput(
+                    Name: "Sin Documento Dos",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(2, result.ImportedCount);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("00000001", result.Imported[0].Cuc);
+        Assert.Equal("00000002", result.Imported[1].Cuc);
+    }
+
+    /// <summary>
     /// La clasificacion es opcional (decision 2026-10-19, <c>Customer.cs</c>): una fila sin ella
     /// crea el cliente con un CUC sin prefijo (departamento + consecutivo) y sin clasificacion.
     /// </summary>
@@ -496,6 +538,111 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(existing.Cuc, item.Cuc);
         Assert.Equal("Nombre Actualizado", item.Name);
         Assert.Equal("3009998877", item.Phone);
+    }
+
+    /// <summary>
+    /// Una fila de actualizacion (Cuc lleno) con documento y departamento+ciudad vacios significa "no enviado": con la
+    /// politica relajada conserva el documento y la ciudad guardados en vez de borrarlos.
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowWithBlankDocumentAndCityKeepsTheStoredOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
+
+        var item = await GetAsync(client, existing.Id);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal(existing.IdentificationType, item.IdentificationType);
+        Assert.Equal(existing.IdentificationNumber, item.IdentificationNumber);
+        Assert.Equal(city.CityName, item.City?.Name);
+    }
+
+    /// <summary>
+    /// Un cliente que nunca tuvo documento ni ciudad se puede reimportar con la politica estricta: la fila de
+    /// actualizacion en blanco no exige lo que el cliente nunca tuvo (opcion B).
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowForALegacyCustomerWithoutDocumentOrCityPassesUnderTheDefaultPolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var classification = await CreateClassificationAsync(manager);
+        var created = await manager.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Legado S.A.S.",
+                identificationType = (string?)null,
+                identificationNumber = (string?)null,
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = (Guid?)null,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var legacy = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(legacy);
+        await SetTenantCustomerFieldPolicyAsync(factory, true, true, true, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: legacy.Cuc,
+                    Name: "Legado Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
     }
 
     /// <summary>

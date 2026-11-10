@@ -37,6 +37,58 @@ public sealed class StoreOrdersAdapterTests
         Assert.DoesNotContain("No tax rate", entry.Message, StringComparison.Ordinal);
     }
 
+    // El visitante anónimo tampoco ve quotation.* al crear el pedido: la tienda ya no lo toma un asesor.
+    [Fact]
+    public async Task AQuotationEngineRejectionOnCreateBecomesLineUnavailableAndLogsItsCode()
+    {
+        var original = new QuotationsDomainException("quotation.item.product_inactive", "Product is inactive");
+        var logger = new RecordingLogger();
+        var adapter = Adapter(new ThrowingGateway(original), logger);
+
+        var error = await Assert.ThrowsAsync<StoreDomainException>(() => adapter.CreateAsync(Draft(), Ct));
+
+        Assert.Equal(StoreErrorCodes.LineUnavailable, error.Code);
+        Assert.Same(original, error.InnerException);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Contains("quotation.item.product_inactive", entry.Message, StringComparison.Ordinal);
+        Assert.Contains(TenantId.ToString(), entry.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Product is inactive", entry.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateHandsTheBuyerAccountToTheGateway()
+    {
+        var account = Guid.CreateVersion7();
+        var gateway = new RecordingGateway();
+        var adapter = Adapter(gateway, new RecordingLogger());
+
+        await adapter.CreateAsync(Draft() with { BuyerAccountId = account }, Ct);
+        await adapter.CreateAsync(Draft(), Ct);
+
+        Assert.Equal([account, null], gateway.Drafts.Select(draft => draft.BuyerAccountId));
+    }
+
+    private static Modules.Store.Application.StoreOrderDraft Draft()
+    {
+        var party = new StoreOrderPartyInput(
+            "Ana Pérez", "+573001112233", "ana@example.com", "Calle 1 # 2-3", "CO", Guid.NewGuid(), Guid.NewGuid(), null,
+            "CC", "1020304050");
+        return new Modules.Store.Application.StoreOrderDraft(
+            TenantId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            IsRetail: true,
+            new StoreBillingAccount(Guid.NewGuid(), "Bancolombia", "7542", "COP"),
+            party,
+            party,
+            BillingWithRetention: false,
+            BillingVatSurplus: false,
+            [new StoreOrderLineInput(Guid.NewGuid(), 2m)],
+            Notes: null);
+    }
+
     private static StoreOrdersAdapter Adapter(IStoreOrderGateway gateway, ILogger<StoreOrdersAdapter> logger)
     {
         var services = new ServiceCollection().AddScoped(_ => gateway).BuildServiceProvider();
@@ -48,9 +100,33 @@ public sealed class StoreOrdersAdapterTests
         public Task<StoreQuote> QuoteAsync(StoreQuoteRequest request, CancellationToken cancellationToken) => throw error;
 
         public Task<StoreOrderResult> CreateAsync(Modules.Quotations.Application.StoreOrderDraft draft, CancellationToken cancellationToken) =>
+            throw error;
+
+        public Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken) =>
+        public Task<int> CountStoreOrdersSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class RecordingGateway : IStoreOrderGateway
+    {
+        public List<Modules.Quotations.Application.StoreOrderDraft> Drafts { get; } = [];
+
+        public Task<StoreQuote> QuoteAsync(StoreQuoteRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoreOrderResult> CreateAsync(Modules.Quotations.Application.StoreOrderDraft draft, CancellationToken cancellationToken)
+        {
+            Drafts.Add(draft);
+            return Task.FromResult(new StoreOrderResult(
+                Guid.CreateVersion7(), "PED-0001", 1m, "COP", draft.ClientId, draft.AdvisorMembershipId, AlreadyExisted: false));
+        }
+
+        public Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountStoreOrdersSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

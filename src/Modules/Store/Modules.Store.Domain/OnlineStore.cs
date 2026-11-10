@@ -50,6 +50,9 @@ public sealed class OnlineStore
 
     public StorePricingMode PricingMode { get; private set; }
 
+    /// <summary>Asesor de los pedidos de la tienda (spec 2026-11-09, D2); null = el owner del tenant, resuelto al crear el pedido.</summary>
+    public Guid? AdvisorMembershipId { get; private set; }
+
     public string? PrimaryCurrency { get; private set; }
 
     public IReadOnlyList<StoreCurrency> Currencies => _currencies;
@@ -141,6 +144,7 @@ public sealed class OnlineStore
             StoreText.Clean(input.Contact.TiktokUrl));
         DataPolicyUrl = policyUrl;
         PricingMode = input.PricingMode;
+        AdvisorMembershipId = input.AdvisorMembershipId;
         PrimaryCurrency = currencies.Count == 0 ? null : input.PrimaryCurrency!.Trim().ToUpperInvariant();
 
         _currencies.Clear();
@@ -162,7 +166,7 @@ public sealed class OnlineStore
     // Los records componen su ToString con todos sus campos, así que la clave cambia si cambia cualquiera.
     private string StateKey() => string.Join(
         '',
-        Slug, Name, PrimaryColor, OnPrimaryColor, AccentTextColor, BannerFileId, BannerText, Contact, DataPolicyUrl, PricingMode,
+        Slug, Name, PrimaryColor, OnPrimaryColor, AccentTextColor, BannerFileId, BannerText, Contact, DataPolicyUrl, PricingMode, AdvisorMembershipId,
         PrimaryCurrency, string.Join('|', _currencies), string.Join('|', _salesCountries), string.Join('|', _featuredCategoryIds));
 
     /// <summary>Lo que falta para publicar, en el orden del contrato; vacío = publicable.</summary>

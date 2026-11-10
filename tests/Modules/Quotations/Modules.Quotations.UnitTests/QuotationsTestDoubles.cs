@@ -197,9 +197,18 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
 
     public IReadOnlyCollection<Guid> LastRequestedIds { get; private set; } = [];
 
+    /// <summary>Cuántas veces se pidió la ficha: las reglas que no deben leer al cliente lo afirman con esto.</summary>
+    public int FindCalls { get; private set; }
+
+    /// <summary>Con true, <see cref="FindAsync"/> no resuelve al cliente (borrado o de otro tenant).</summary>
+    public bool Unresolvable { get; init; }
+
     public Task<QuotationCustomerRef?> FindAsync(
-        Guid tenantId, Guid clientId, CancellationToken cancellationToken) =>
-        Task.FromResult<QuotationCustomerRef?>(customer);
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        FindCalls++;
+        return Task.FromResult<QuotationCustomerRef?>(Unresolvable ? null : customer);
+    }
 
     /// <summary>Los ids que el filtro por NIT debe resolver. Vacío por defecto, igual que
     /// <see cref="IdsByCuc"/>: la prueba que ejerce ese filtro los siembra, y el doble no inventa
@@ -916,12 +925,19 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
 
     public Task<Order?> FindByIdAsync(
-        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken)
+    {
+        IEnumerable<Order> candidates = _idReads.Count > 0 ? [_idReads.Dequeue()] : rows;
+        return Task.FromResult(candidates.FirstOrDefault(row => row.Id == orderId));
+    }
 
     public Task<Order?> FindByExternalKeyAsync(
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Source == source && row.ExternalKey == externalKey));
+
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.Count(row => row.Source == source && row.ConvertedAt >= since));
 
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
@@ -955,6 +971,53 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         LastSearchRange = (convertedFrom, convertedBefore);
         LastSource = source;
         return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
+    }
+
+    public (Guid TenantId, Guid BuyerAccountId, int Page, int PageSize)? LastBuyerSearch { get; private set; }
+
+    public Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        LastBuyerSearch = (tenantId, buyerAccountId, page, pageSize);
+        var matching = rows
+            .Where(row => row.TenantId == tenantId && row.BuyerAccountId == buyerAccountId)
+            .OrderByDescending(row => row.CreatedAt)
+            .ThenByDescending(row => row.OrderNumber, StringComparer.Ordinal)
+            .ToList();
+        IReadOnlyList<Order> items = matching.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult((items, matching.Count));
+    }
+
+    private readonly Queue<Order> _buyerReads = new();
+
+    private readonly Queue<Order> _idReads = new();
+
+    /// <summary>Como <see cref="QueueBuyerReads"/>, para <see cref="FindByIdAsync"/>.</summary>
+    public void QueueIdReads(params Order[] instances)
+    {
+        foreach (var instance in instances)
+        {
+            _idReads.Enqueue(instance);
+        }
+    }
+
+    /// <summary>Instancias que <see cref="FindByBuyerAsync"/> entrega en orden, una por llamada, antes de volver a las
+    /// filas sembradas. Con dos, la relectura después de perder una carrera ve un agregado nuevo, como lo vería el
+    /// repositorio real después de <c>DiscardPendingChanges</c>.</summary>
+    public void QueueBuyerReads(params Order[] instances)
+    {
+        foreach (var instance in instances)
+        {
+            _buyerReads.Enqueue(instance);
+        }
+    }
+
+    public Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken)
+    {
+        IEnumerable<Order> candidates = _buyerReads.Count > 0 ? [_buyerReads.Dequeue()] : rows;
+        return Task.FromResult(candidates.FirstOrDefault(row =>
+            row.TenantId == tenantId && row.BuyerAccountId == buyerAccountId && row.Id == orderId));
     }
 
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
@@ -1251,7 +1314,8 @@ internal static class OrderBuilders
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
         string orderNumber = "PED-2026-0001",
-        QuotationParties? parties = null) =>
+        QuotationParties? parties = null,
+        ShippingDetails? shipping = null) =>
         Order.CreateManual(
             OrderId.New(),
             tenantId,
@@ -1259,7 +1323,7 @@ internal static class OrderBuilders
             new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
             parties ?? QuotationParties.Empty,
             BillingAccount,
-            ShippingDetails.None,
+            shipping ?? ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
             paymentStatus,
             notes: null,
@@ -1372,9 +1436,15 @@ internal sealed class StubTenantDirectory : ITenantDirectory
     public static StubTenantDirectory WithNumberFormat(string numberFormat) =>
         new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", numberFormat) };
 
+    /// <summary>Cuántas veces se leyó la configuración regional del tenant.</summary>
+    public int RegionalCalls { get; private set; }
+
     public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(
-        TenantId tenantId, CancellationToken cancellationToken) =>
-        Task.FromResult(Regional);
+        TenantId tenantId, CancellationToken cancellationToken)
+    {
+        RegionalCalls++;
+        return Task.FromResult(Regional);
+    }
 
     public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<string?>(null);
@@ -1416,11 +1486,4 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
 
         return all;
     }
-}
-
-/// <summary>Ningún pedido de estas pruebas sale de la tienda: el compositor nunca encuentra una solicitud.</summary>
-internal sealed class NoOrderStoreRequestLookup : IOrderStoreRequestLookup
-{
-    public Task<OrderStoreRequestRef?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
-        Task.FromResult<OrderStoreRequestRef?>(null);
 }

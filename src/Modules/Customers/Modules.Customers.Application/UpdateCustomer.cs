@@ -10,8 +10,8 @@ public sealed record UpdateCustomerCommand(
     Guid CustomerId,
     string Name,
     string? BusinessName,
-    string IdentificationType,
-    string IdentificationNumber,
+    string? IdentificationType,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
@@ -64,6 +64,10 @@ public sealed class UpdateCustomerHandler(
         // Antes de pedir el CUC: Customer.Complete también rechaza, pero para entonces el consecutivo ya se quemó.
         customer.EnsureNotMerged();
 
+        // Despues de leer al cliente: la opcion B compara contra lo guardado (G14). Tambien antes del CUC.
+        await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command, customer, cancellationToken);
+
         // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
         // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
         // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —
@@ -71,7 +75,8 @@ public sealed class UpdateCustomerHandler(
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
-        // suya. El validador ya exigio la que corresponde al pais. Sobre una ficha completa es puro
+        // suya. Puede no venir: si hacia falta, ya lo rechazo la politica del tenant
+        // (CustomerFieldPolicyRequirement). Sobre una ficha completa es puro
         // chequeo de existencia: el CUC no se reconstruye en un Update (el departamento de su
         // codigo es el del alta, no el vigente). Sobre una incompleta, la ciudad da el departamento
         // del CUC que se emite al completarla, como en el alta.
@@ -80,8 +85,8 @@ public sealed class UpdateCustomerHandler(
             command.Country.Trim(),
             Customer.ColombiaCountryCode,
             StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
                     "The city was not found.")

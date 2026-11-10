@@ -11,7 +11,7 @@ public static class StoreEndpoints
     public static IEndpointRouteBuilder MapStoreEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Tenant en la ruta, como loans y billing: la política frena a quien no tiene el permiso y el handler
-        // (StoreAuthorization) a quien lo tiene en otro tenant. Las rutas de la bandeja llegan con su tarea.
+        // (StoreAuthorization) a quien lo tiene en otro tenant. Los pedidos de la tienda se atienden en Pedidos.
         var group = endpoints
             .MapGroup("/api/v1/tenants/{tenantId:guid}/store")
             .WithTags("Store");
@@ -58,77 +58,9 @@ public static class StoreEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        // La bandeja «Desde la tienda»: quotations.order.manage (el permiso de Pedidos) y, en el handler, el módulo `store`.
-        var inbox = group.MapGroup("/order-requests");
-
-        inbox.MapGet("/", ListOrderRequestsAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreOrderRequestPageDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        inbox.MapGet("/summary", GetOrderRequestSummaryAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreInboxSummaryDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden);
-
-        inbox.MapGet("/{requestId:guid}", GetOrderRequestAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreOrderRequestDetailDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
-
-        inbox.MapGet("/{requestId:guid}/customer-candidates", GetCustomerCandidatesAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreCustomerCandidatesDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound);
-
-        // Sin If-Match: el estado de la solicitud (y su lease) es la comprobación de concurrencia.
-        inbox.MapPost("/{requestId:guid}/take", TakeOrderRequestAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreTakeResultDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
-        inbox.MapPost("/{requestId:guid}/discard", DiscardOrderRequestAsync)
-            .RequireAuthorization(StorePermissions.OrderManage)
-            .Produces<StoreOrderRequestRowDto>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status409Conflict)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         // Las rutas públicas las cablea Program.cs con sus limitadores (MapPublicStoreEndpoints).
         return endpoints;
     }
-
-    private static async Task<IResult> ListOrderRequestsAsync(
-        Guid tenantId, string? view, int? page, int? pageSize, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new ListOrderRequestsQuery(tenantId, view, page, pageSize), cancellationToken));
-
-    private static async Task<IResult> GetOrderRequestSummaryAsync(
-        Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new GetOrderRequestSummaryQuery(tenantId), cancellationToken));
-
-    private static async Task<IResult> GetOrderRequestAsync(
-        Guid tenantId, Guid requestId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new GetOrderRequestQuery(tenantId, requestId), cancellationToken));
-
-    private static async Task<IResult> GetCustomerCandidatesAsync(
-        Guid tenantId, Guid requestId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.QueryAsync(new GetCustomerCandidatesQuery(tenantId, requestId), cancellationToken));
-
-    private static async Task<IResult> TakeOrderRequestAsync(
-        Guid tenantId, Guid requestId, TakeOrderRequestBody body, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(new TakeOrderRequestCommand(tenantId, requestId, body), cancellationToken));
-
-    private static async Task<IResult> DiscardOrderRequestAsync(
-        Guid tenantId, Guid requestId, DiscardOrderRequestBody body, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
-        Results.Ok(await dispatcher.SendAsync(
-            new DiscardOrderRequestCommand(tenantId, requestId, body.Reason, body.Note), cancellationToken));
 
     private static async Task<IResult> GetSettingsAsync(
         Guid tenantId, IRequestDispatcher dispatcher, HttpContext httpContext, CancellationToken cancellationToken)
