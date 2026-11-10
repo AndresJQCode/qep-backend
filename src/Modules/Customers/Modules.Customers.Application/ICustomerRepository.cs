@@ -35,8 +35,9 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Desviación B1 del plan POS: los que la caja puede elegir — activos y con documento — filtrados en la consulta y no
-    /// después, porque los incompletos de WhatsApp (sin documento) son los más nuevos y llenarían la página.
+    /// Desviación B1 del plan POS: los que la caja puede elegir — activos y con documento, o completos (spec 2026-11-09:
+    /// un tenant puede no exigir el documento) — filtrados en la consulta y no después, porque los incompletos de WhatsApp
+    /// sin documento son los más nuevos y llenarían la página.
     /// Un solo término contra nombre, documento y CUC, con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
     /// </summary>
     Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, CancellationToken cancellationToken);

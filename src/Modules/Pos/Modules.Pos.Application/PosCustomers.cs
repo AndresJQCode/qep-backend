@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using BuildingBlocks.Domain;
 using FluentValidation;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Pos.Application;
 
@@ -23,6 +24,23 @@ public sealed class PosCustomerIdentificationTakenException(PosCustomerOptionRes
         new Dictionary<string, object?> { ["existing"] = existing };
 }
 
+/// <summary>
+/// El alta rápida no trae el documento que el tenant exige al guardar un cliente, o lo trae a medias. Pos.Application no ve
+/// Customers (PosLayerTests), así que repite sus códigos y las claves de <c>errors</c> de <c>CustomerFieldPolicyRequirement</c>:
+/// el formulario de la caja marca los mismos campos que el del padrón. Es un 422 de dominio.
+/// </summary>
+public sealed class PosCustomerIdentificationException(string code, IReadOnlyDictionary<string, string[]> fieldErrors)
+    : DomainException(code, "The customer identification is missing or incomplete."), IHasFieldErrors
+{
+    public const string Required = "customers.customer.identification_required";
+
+    public const string Incomplete = "customers.customer.identification_incomplete";
+
+    public const string NumberRequired = "customers.customer.identification_number_required";
+
+    public IReadOnlyDictionary<string, string[]> FieldErrors { get; } = fieldErrors;
+}
+
 // Públicos a propósito: AddValidatorsFromAssemblyContaining sólo registra los tipos públicos.
 public sealed class SearchPosCustomersValidator : AbstractValidator<SearchPosCustomersQuery>
 {
@@ -37,10 +55,13 @@ public sealed class CreatePosCustomerValidator : AbstractValidator<CreatePosCust
     public CreatePosCustomerValidator()
     {
         RuleFor(command => command.Name).NotEmpty().MaximumLength(PosCustomerRules.NameMaxLength);
+        // El documento es opcional (spec 2026-11-09): que falte o venga a medias lo decide el handler, que conoce la
+        // política del tenant. Acá sólo se mira la forma de lo que sí llegó.
         RuleFor(command => command.IdentificationType)
-            .Must(type => type is not null && PosCustomerRules.IdentificationTypes.Contains(type, StringComparer.Ordinal))
-            .WithMessage("The identification type must be one of: " + string.Join(", ", PosCustomerRules.IdentificationTypes) + ".");
-        RuleFor(command => command.IdentificationNumber).NotEmpty().MaximumLength(PosCustomerRules.IdentificationNumberMaxLength);
+            .Must(type => PosCustomerRules.IdentificationTypes.Contains(type!, StringComparer.Ordinal))
+            .WithMessage("The identification type must be one of: " + string.Join(", ", PosCustomerRules.IdentificationTypes) + ".")
+            .When(command => !string.IsNullOrWhiteSpace(command.IdentificationType));
+        RuleFor(command => command.IdentificationNumber).MaximumLength(PosCustomerRules.IdentificationNumberMaxLength);
         RuleFor(command => command.Phone).MaximumLength(PosCustomerRules.PhoneMaxLength);
     }
 }
@@ -65,6 +86,7 @@ public sealed class SearchPosCustomersHandler(
 
 public sealed class CreatePosCustomerHandler(
     IPosCustomerLookup customers,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IValidator<CreatePosCustomerCommand> validator)
     : ICommandHandler<CreatePosCustomerCommand, PosCustomerOptionResponse>
@@ -76,12 +98,15 @@ public sealed class CreatePosCustomerHandler(
         PosAuthorization.EnsureAuthorized(executionContext, command.TenantId, PosPermissions.SaleCustomer);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
-        var type = command.IdentificationType!;
-        var number = command.IdentificationNumber!.Trim();
+        var type = string.IsNullOrWhiteSpace(command.IdentificationType) ? null : command.IdentificationType;
+        var number = string.IsNullOrWhiteSpace(command.IdentificationNumber) ? null : command.IdentificationNumber.Trim();
+        await EnsureIdentificationAsync(command.TenantId, type, number, cancellationToken);
+
         // La consulta previa existe para devolver `existing` en el 422 (el selector lo ofrece en vez del alta); la
         // carrera entre dos cajas la cubre la unidad de trabajo de Customers, que lanza
-        // customers.customer.identification_taken.
-        if (await customers.FindByIdentificationAsync(command.TenantId, type, number, cancellationToken) is { } taken)
+        // customers.customer.identification_taken. Sin documento no hay a quién preguntarle.
+        if (type is not null && number is not null
+            && await customers.FindByIdentificationAsync(command.TenantId, type, number, cancellationToken) is { } taken)
         {
             throw new PosCustomerIdentificationTakenException(PosCustomerMapping.ToOption(taken));
         }
@@ -90,6 +115,50 @@ public sealed class CreatePosCustomerHandler(
         var created = await customers.CreateFromRegisterAsync(
             command.TenantId, new NewPosCustomer(command.Name!.Trim(), type, number, phone), cancellationToken);
         return PosCustomerMapping.ToOption(created);
+    }
+
+    // Forma del par primero, sin leer el tenant; después la política (spec 2026-11-09 §6.4: el alta rápida es un
+    // «guardar cliente», así que rige OnCustomerSave). Con documento la política no se lee. Los códigos y las claves
+    // son los de CustomerFieldPolicyRequirement.
+    private async Task EnsureIdentificationAsync(Guid tenantId, string? type, string? number, CancellationToken cancellationToken)
+    {
+        if (type is not null && number is null)
+        {
+            throw new PosCustomerIdentificationException(
+                PosCustomerIdentificationException.NumberRequired,
+                new Dictionary<string, string[]>
+                {
+                    ["IdentificationNumber"] = [PosCustomerIdentificationException.NumberRequired],
+                });
+        }
+
+        if (number is not null && type is null)
+        {
+            throw new PosCustomerIdentificationException(
+                PosCustomerIdentificationException.Incomplete,
+                new Dictionary<string, string[]>
+                {
+                    ["IdentificationType"] = [PosCustomerIdentificationException.Incomplete],
+                });
+        }
+
+        if (type is not null)
+        {
+            return;
+        }
+
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
+        var policy = regional?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
+        if (policy.Document.OnCustomerSave)
+        {
+            throw new PosCustomerIdentificationException(
+                PosCustomerIdentificationException.Required,
+                new Dictionary<string, string[]>
+                {
+                    ["IdentificationType"] = [PosCustomerIdentificationException.Required],
+                    ["IdentificationNumber"] = [PosCustomerIdentificationException.Required],
+                });
+        }
     }
 }
 

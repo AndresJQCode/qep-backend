@@ -71,12 +71,12 @@ internal sealed class PosCustomerLookup(
         return ToRef(customer);
     }
 
-    // Todo cliente que llega acá tiene documento: la búsqueda del selector lo exige y FindByIdentification parte de él.
+    // El documento es opcional (spec 2026-11-09): el selector admite a un cliente completo sin él.
     private static PosCustomerRef ToRef(Customer customer) => new(
         customer.Id.Value,
         customer.Name,
-        customer.IdentificationType!.Value.ToWireValue(),
-        customer.IdentificationNumber!,
+        customer.IdentificationType?.ToWireValue(),
+        customer.IdentificationNumber,
         customer.IsComplete,
         customer.IsActive);
 }

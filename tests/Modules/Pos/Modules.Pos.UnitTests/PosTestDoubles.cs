@@ -395,11 +395,6 @@ internal sealed class FakeCategoryLookup : IPosCategoryLookup
             Totals.GetValueOrDefault(tenantId)));
 }
 
-/// <summary>
-/// El adaptador de Customers en memoria. Guarda por tenant las referencias del selector (con documento) y las
-/// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
-/// para que una prueba pueda afirmar que algo NO se llamó.
-/// </summary>
 /// <summary>El tenant que lee la venta para saber si exige el documento al facturar: sólo
 /// <see cref="Regional"/> responde; sin fijarlo (null) rige la política por defecto (todo exigido).</summary>
 internal sealed class FakeTenantDirectory : ITenantDirectory
@@ -428,6 +423,11 @@ internal sealed class FakeTenantDirectory : ITenantDirectory
     public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
+/// <summary>
+/// El adaptador de Customers en memoria. Guarda por tenant las referencias del selector (con documento) y las
+/// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
+/// para que una prueba pueda afirmar que algo NO se llamó.
+/// </summary>
 internal sealed class FakeCustomerLookup : IPosCustomerLookup
 {
     public List<(Guid TenantId, PosCustomerRef Customer)> Refs { get; } = [];
@@ -438,7 +438,7 @@ internal sealed class FakeCustomerLookup : IPosCustomerLookup
     public List<string> Calls { get; } = [];
 
     public PosCustomerRef AddRef(
-        string name, string type = "CC", string number = "1020304050", bool complete = false, bool active = true,
+        string name, string? type = "CC", string? number = "1020304050", bool complete = false, bool active = true,
         Guid? id = null, Guid? tenantId = null)
     {
         var customer = new PosCustomerRef(id ?? Guid.CreateVersion7(), name, type, number, complete, active);

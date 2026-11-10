@@ -32,6 +32,36 @@ public sealed class PosCustomerLookupTests
     }
 
     [Fact]
+    public async Task SearchMapsACompleteCustomerWithoutDocumentToARefWithNulls()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000001", "Verde Esencial", null, null, null, null,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = Guid.CreateVersion7() },
+            new CustomerCommercialInfo(),
+            Now,
+            new PassThroughPhones());
+        var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
+
+        var found = await lookup.SearchAsync(TenantId, null, PosCustomerRules.Take, Ct);
+
+        var item = Assert.Single(found);
+        Assert.Equal(new PosCustomerRef(customer.Id.Value, "Verde Esencial", null, null, true, true), item);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterPassesAMissingDocumentThroughAsNulls()
+    {
+        var stored = Customer.CreateFromRegister(CustomerId.New(), TenantId, "Laura Verde", null, null, Now, new PassThroughPhones());
+        var provisioning = new PosFakeProvisioning { Result = stored.Id.Value };
+        var lookup = Lookup(new PosFakeCustomers(stored), provisioning, new PosFakeExecutionContext());
+
+        var created = await lookup.CreateFromRegisterAsync(TenantId, new NewPosCustomer("Laura Verde", null, null, null), Ct);
+
+        Assert.Equal(new PosCustomerRef(stored.Id.Value, "Laura Verde", null, null, false, true), created);
+        Assert.Equal(new RegisterCustomerData("Laura Verde", null, null, null), Assert.Single(provisioning.Calls).Data);
+    }
+
+    [Fact]
     public async Task FindReturnsNullForAnotherTenantsCustomer()
     {
         var customer = Registered("Laura Verde", IdentificationType.Cc, "1020304050");
