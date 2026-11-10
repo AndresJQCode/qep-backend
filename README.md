@@ -1001,20 +1001,28 @@ manuales. Efecto inmediato, sin reiniciar la API.
 
 Cada tenant puede publicar una tienda en `{slug}.lulocrm.com` (spec `docs/superpowers/specs/2026-11-03-tienda-publica-design.md`,
 plan `docs/superpowers/plans/2026-11-03-tienda-publica-backend.md`). Es el módulo `store`: exige `orders`, no viene con el signup y se
-prende por tenant desde la consola de operador. Sin él, los manejadores de la bandeja (listar, «Tomar», «Descartar») responden
-`403 tenancy.module_not_enabled`; los ajustes y la vista previa de colores responden un `403` pelado, porque la máscara de permisos del
-módulo apagado ya los descarta antes.
+prende por tenant desde la consola de operador. Sin él, los ajustes y la vista previa de colores responden un `403` pelado, porque la
+máscara de permisos del módulo apagado ya los descarta antes, y las rutas públicas responden `404 store.public.not_found`.
 
-- **Backoffice:** `/api/v1/tenants/{tenantId}/store` (ajustes, publicar, bandeja de solicitudes, «Tomar» y «Descartar»). Los ajustes
-  piden `store.settings.manage` (sólo `admin` por defecto); la bandeja, `quotations.order.manage`.
+- **Backoffice:** `/api/v1/tenants/{tenantId}/store/settings` (ajustes, publicar y despublicar, vista previa de colores y cuentas de
+  cobro). Todo pide `store.settings.manage` (sólo `admin` por defecto). No hay bandeja de solicitudes: el pedido nace en el checkout
+  (spec `docs/superpowers/specs/2026-11-09-pedidos-tienda-directos-design.md`).
+- **Ajustes, asesor de los pedidos:** `PUT /settings` acepta `advisorMembershipId` (opcional; `null` lo quita) y `GET /settings` lo
+  devuelve junto con `advisorName`, el nombre visible de esa membresía. Cuando cambia, tiene que ser una membresía **activa del tenant**;
+  si no, `422 store.settings.advisor_not_found` (reenviar el mismo valor no lo revalida, para no bloquear los demás ajustes si esa
+  persona dejó el tenant). No se exige un permiso concreto al asesor: el pedido lo crea el sistema. No bloquea la
+  publicación.
 - **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
   `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
   `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
   `X-Qep-Visitor-Ip`. Los límites son por IP del visitante: 300 lecturas por minuto y 5 envíos cada 10 minutos, más un tope de 500
-  solicitudes por tienda y por día (`Store:DailyRequestCap`).
-- **El pedido:** «Tomar» crea un pedido con origen `Store`. Su detalle (`GET /orders/{orderId}`) trae `storeRequest` con el número de la
-  solicitud, el cliente, el nombre, teléfono y correo de facturación, el total que vio el visitante y `totalDifference`; es `null` para
-  los pedidos de otro origen. `GET /orders?source=Store` los filtra.
+  pedidos de la tienda por tenant en 24 horas, anulados incluidos (`Store:DailyRequestCap`).
+- **El pedido:** `POST /order-requests` crea directamente un pedido con origen `Store`, registrado como creado por el sistema. El asesor
+  es el configurado en los ajustes si su membresía sigue activa; si no (nunca se configuró, o lo suspendieron o quitaron), el owner del
+  tenant. El cliente se busca por documento: si existe se completa lo que tenga en blanco; si no, se crea completo o, si Customers lo
+  rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
+  (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
+  `store.order_consents`, una fila por pedido.
 
 ### Secretos
 
@@ -1051,16 +1059,23 @@ acepta en `Development` y `Testing` (en Staging el arranque falla, para que no c
 | 422 | `store.order_request.city_invalid` | La ciudad no cumple su carril (ids en Colombia, texto afuera). |
 | 422 | `store.order_request.phone_invalid` | El teléfono no se normaliza en el país de su bloque. |
 | 422 | `store.order_request.line_unavailable` | Una línea del carrito ya no se puede vender. |
-| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de solicitudes. |
+| 422 | `store.order_request.currency_not_in_store` | La tienda ya no tiene cuenta de cobro en esa moneda. |
+| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de pedidos. |
 | 429 | (sin cuerpo, con `Retry-After`) | La IP del visitante superó su límite. |
 | 503 | `store.captcha.unavailable` | Turnstile no responde o su configuración está rota. |
 
-Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con la misma solicitud.
+Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con el mismo pedido (la clave del pedido es
+`store-checkout:{clientRequestId}`, única por tenant), sin volver a pedir captcha. Los códigos conservan el prefijo
+`store.order_request.*` aunque ya no haya solicitud: renombrarlos obligaría a desplegar storefront y backend juntos.
+
+En el backoffice, `PUT /settings` suma `422 store.settings.advisor_not_found` (ver «Ajustes, asesor de los pedidos»).
 
 ### Despliegue
 
-**El backend va antes que el frontend y el storefront.** El backend nuevo sólo agrega: el módulo nace apagado en todos los tenants, el
-detalle del pedido suma `storeRequest` al final y las direcciones y partes de afuera de Colombia no existen hasta que la tienda las crea.
+**El backend va antes que el frontend y el storefront.** El módulo nace apagado en todos los tenants y las direcciones y partes de afuera
+de Colombia no existen hasta que la tienda las crea. Los pedidos directos (spec del 2026-11-09) **sí rompen**: las migraciones
+`DropStoreOrderRequests` (Store) y `RenameProcessedSignupOrderId` (Buyers) descartan la bandeja y sus solicitudes, y el frontend viejo
+responde 404 en `/orders/store` hasta que se despliegue el suyo. El storefront viejo sigue andando: misma ruta y misma forma del recibo.
 Orden: (1) backend con sus migraciones y los dos secretos (en Production deben estar **antes** de desplegar: sin ellos la API entera no arranca); (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
 antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
 
@@ -1167,11 +1182,11 @@ Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
   El pedido se acepta igual y el BFF borra la cookie.
 
 ```jsonc
-{ "id": "<guid>", "number": "T-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
+{ "id": "<guid del pedido>", "number": "PED-2026-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
 ```
 
 - Reintento con el mismo `clientRequestId`: el primer recibo, `buyerSessionRejected: false`, sin crear cuenta ni tocar el perfil.
-- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea con la solicitud), así que puede tardar unos segundos en existir después del `201`.
+- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea en la transacción de Store posterior al pedido), así que puede tardar unos segundos en existir después del `201`.
   Sus errores (email existente, fallo al guardar) nunca cambian la respuesta.
 
 #### Correos
@@ -1191,7 +1206,7 @@ Todos viven en `platform.outbox_messages`.
 
 | Evento | Lo escribe | Lo consume | Lleva |
 | --- | --- | --- | --- |
-| `store.buyer-signup-requested.v1` | Store, en la **misma transacción** que la solicitud del pedido (`createAccount`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
+| `store.buyer-signup-requested.v1` | Store, en la **misma transacción de Store posterior al pedido** (`createAccount`); idempotente por `orderId` (`buyers.processed_signups`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
 | `buyers.email-verification-requested.v1` | Buyers | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro |
 | `buyers.existing-account-notice.v1` | Buyers | `BuyerExistingAccountDeliveryWorker` | sin token |
 | `buyers.password-reset-requested.v1` | Buyers | `BuyerPasswordResetDeliveryWorker` | token de restablecer en claro |
@@ -1876,8 +1891,7 @@ variante por defecto), y siguen otra regla (owner, 2026-09-26):
   producto** (`DELETE /catalog/products/{productId}`), que congela código y nombre de las líneas que
   todavía no la tienen (cotizaciones que no son borrador y pedidos) en la misma transacción del borrado.
   Las demás se congelan solas si la cotización se reenvía o se convierte. En un borrador la línea del
-  producto borrado desaparece y la cotización se recotiza; en una solicitud `New` de la tienda también
-  desaparece, con sus totales intactos.
+  producto borrado desaparece y la cotización se recotiza.
 - Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
   Excel). Ninguna transición devuelve una cotización a borrador.
 

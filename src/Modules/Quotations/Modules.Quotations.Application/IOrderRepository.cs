@@ -46,6 +46,11 @@ public interface IOrderRepository
     Task<Order?> FindByExternalKeyAsync(
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken);
 
+    /// <summary>Cuántos pedidos de ese origen entraron desde <paramref name="since"/> (por <c>ConvertedAt</c>), en
+    /// cualquier estado: el tope diario de la tienda cuenta también los anulados.</summary>
+    Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken);
+
     Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

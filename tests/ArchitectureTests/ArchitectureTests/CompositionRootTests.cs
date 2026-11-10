@@ -629,9 +629,6 @@ public sealed class CompositionRootTests
         {
             Assert.DoesNotContain(StorePermissions.SettingsManage, catalog.PermissionsFor(role));
         }
-
-        // La bandeja no suma un permiso: es el mismo de Pedidos.
-        Assert.Single(RegisteredPermissionDefinitions(), candidate => candidate.Permission == StorePermissions.OrderManage);
     }
 
     /// <summary>

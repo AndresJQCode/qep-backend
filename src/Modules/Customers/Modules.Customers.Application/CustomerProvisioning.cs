@@ -129,8 +129,9 @@ public interface ICustomerProvisioning
     /// viejo. La ciudad sigue al país ya mezclado: con país propio sólo se usa la de <paramref name="data"/> si es el mismo país; si
     /// no, queda la que tiene y, de estar vacía, las reglas fallan con <c>validation.failed</c>. Después, los mismos pasos que
     /// <see cref="CompleteExternalSaleAsync"/>: reglas del <c>POST</c>, clasificación y ciudad antes del CUC, <c>Customer.Complete</c>
-    /// y auditoría <see cref="CustomerAuditActions.Completed"/> con <paramref name="actorUserId"/>. Uno que ya es completo vuelve
-    /// sin tocarse (la versión no sube).
+    /// y auditoría <see cref="CustomerAuditActions.Completed"/> con <paramref name="actorUserId"/>, o como de una integración cuando es
+    /// <c>null</c> (el pedido directo de la tienda no tiene persona detrás; misma regla que <see cref="CreateCompleteAsync"/>). Uno que
+    /// ya es completo vuelve sin tocarse (la versión no sube).
     /// </summary>
     /// <exception cref="BuildingBlocks.Application.ResourceNotFoundException">Con <c>customers.customer.not_found</c> si no existe en
     /// el tenant, está fusionado o inactivo.</exception>
@@ -138,7 +139,7 @@ public interface ICustomerProvisioning
     /// <exception cref="CustomersDomainException">Con <c>customers.customer.identification_taken</c> si el documento ya lo tiene otro
     /// cliente; con <c>classification_not_found</c> o <c>city_not_found</c> como el alta.</exception>
     Task<ProvisionedCustomer> CompleteFromStoreAsync(
-        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken);
+        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid? actorUserId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Tienda pública, «Tomar»: busca cada dirección en la libreta del cliente (<see cref="Customer.EnsureAddress"/>) y agrega las que
@@ -304,7 +305,7 @@ public sealed class CustomerProvisioning(
     }
 
     public async Task<ProvisionedCustomer> CompleteFromStoreAsync(
-        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken)
+        Guid tenantId, Guid customerId, CompleteCustomerData data, Guid? actorUserId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
         var customer = await repository.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
@@ -327,7 +328,15 @@ public sealed class CustomerProvisioning(
         customer.Complete(
             parts.Cuc, command.Name, command.BusinessName, parts.Address, parts.Identification,
             customer.PersonType, parts.Contact, parts.Commercial, now, phoneNormalizer);
-        auditPublisher.Publish(tenantId, actorUserId, CustomerAuditActions.Completed, customer.Id.ToString(), Success, now, StoreSource);
+        if (actorUserId is { } actor)
+        {
+            auditPublisher.Publish(tenantId, actor, CustomerAuditActions.Completed, customer.Id.ToString(), Success, now, StoreSource);
+        }
+        else
+        {
+            auditPublisher.PublishByIntegration(tenantId, CustomerAuditActions.Completed, customer.Id.ToString(), Success, now);
+        }
+
         // IdentificationTaken sube tal cual: otro cliente ya tiene ese documento y la tienda no cambia en silencio al otro cliente.
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return new ProvisionedCustomer(customer.Id.Value, IsComplete: true, IsActive: true, Created: false, customer.Version);

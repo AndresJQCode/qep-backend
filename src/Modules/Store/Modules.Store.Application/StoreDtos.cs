@@ -26,7 +26,8 @@ public sealed record StoreSettingsRequest(
     IReadOnlyList<StoreCurrencyRequest?>? Currencies,
     string? PrimaryCurrency,
     IReadOnlyList<string?>? SalesCountries,
-    IReadOnlyList<Guid>? FeaturedCategoryIds);
+    IReadOnlyList<Guid>? FeaturedCategoryIds,
+    Guid? AdvisorMembershipId);
 
 public sealed record StoreCurrencyRequest(string? Currency, StoreBillingAccountRequest? BillingAccount);
 
@@ -57,6 +58,9 @@ public sealed record StoreSettingsDto(
     string PricingMode,
     IReadOnlyList<string> SalesCountries,
     IReadOnlyList<StoreFeaturedCategoryDto> FeaturedCategories,
+    Guid? AdvisorMembershipId,
+    // El nombre viaja con el id porque la pantalla de ajustes lo pinta sin consultar membresías (BFF).
+    string? AdvisorName,
     IReadOnlyList<string> PublishBlockers,
     long Version,
     DateTimeOffset? UpdatedAt);

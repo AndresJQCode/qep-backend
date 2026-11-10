@@ -89,6 +89,15 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
                 order => order.TenantId == tenantId && order.Source == source && order.ExternalKey == externalKey,
                 cancellationToken);
 
+    // Sin filtro de estado a propósito: anular un pedido no devuelve cupo del tope diario.
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        dbContext.Orders
+            .AsNoTracking()
+            .CountAsync(
+                order => order.TenantId == tenantId && order.Source == source && order.ConvertedAt >= since,
+                cancellationToken);
+
     public async Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,

@@ -923,6 +923,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Source == source && row.ExternalKey == externalKey));
 
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.Count(row => row.Source == source && row.ConvertedAt >= since));
+
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,
@@ -1416,11 +1420,4 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
 
         return all;
     }
-}
-
-/// <summary>Ningún pedido de estas pruebas sale de la tienda: el compositor nunca encuentra una solicitud.</summary>
-internal sealed class NoOrderStoreRequestLookup : IOrderStoreRequestLookup
-{
-    public Task<OrderStoreRequestRef?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
-        Task.FromResult<OrderStoreRequestRef?>(null);
 }

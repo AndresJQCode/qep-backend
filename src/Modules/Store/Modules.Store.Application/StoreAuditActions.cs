@@ -9,17 +9,14 @@ public static class StoreAuditActions
 
     public const string Unpublished = "store.settings.unpublished";
 
-    public const string RequestReceived = "store.order_request.received";
-
-    public const string RequestConverted = "store.order_request.converted";
-
-    public const string RequestDiscarded = "store.order_request.discarded";
+    /// <summary>El checkout creó un pedido: anónima, sobre el id del pedido.</summary>
+    public const string OrderCreated = "store.order.created";
 
     /// <summary>Tipos de recurso (<c>resourceType</c>) de esas acciones.</summary>
     public static class Resources
     {
         public const string Store = "store";
 
-        public const string OrderRequest = "order_request";
+        public const string Order = "order";
     }
 }

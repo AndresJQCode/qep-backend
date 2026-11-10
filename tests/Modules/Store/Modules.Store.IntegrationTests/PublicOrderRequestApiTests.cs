@@ -31,7 +31,7 @@ internal sealed class FakeCaptchaVerifier : ICaptchaVerifier
 }
 
 /// <summary>
-/// El envío de solicitudes de punta a punta, con la API real, Postgres y las rutas públicas en su orden de middleware real (limitador,
+/// El checkout de punta a punta (crea el pedido en Quotations), con la API real, Postgres y las rutas públicas en su orden de middleware real (limitador,
 /// después la clave). Necesitan Docker; se corren una vez en la tanda final.
 /// </summary>
 public sealed class PublicOrderRequestApiTests
@@ -157,76 +157,173 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal(code, await CodeAsync(response));
     }
 
-    private static async Task<long> CountAsync(Rig rig, string table)
-    {
-        var connectionString = rig.Fixture.Settings.Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!;
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = new NpgsqlCommand($"SELECT count(*) FROM {table}", connection);
-        return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
-    }
+    private static Task<long> OrdersAsync(Rig rig) => rig.Fixture.OrderRowsAsync();
 
-    private static Task<long> RequestsAsync(Rig rig) => CountAsync(rig, "store.order_requests");
+    private static Task<Modules.Quotations.Domain.Order> LoadOrderAsync(Rig rig, Guid orderId) => rig.Fixture.LoadOrderAsync(orderId);
 
-    private static async Task<Modules.Store.Domain.StoreOrderRequest> LoadAsync(Rig rig, Guid clientRequestId)
+    private static async Task<JsonNode> CreatedAsync(HttpResponseMessage response)
     {
-        await using var scope = rig.Fixture.Settings.Factory.Services.CreateAsyncScope();
-        var repository = scope.ServiceProvider.GetRequiredService<IStoreOrderRequestRepository>();
-        return (await repository.FindByClientRequestIdAsync(Tenant, clientRequestId, TestContext.Current.CancellationToken))!;
+        var json = await PublicStoreFixture.JsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.Created, json.ToJsonString());
+        return json;
     }
 
     private static async Task AssertNextNumberIsFirstAsync(Rig rig)
     {
         rig.Captcha.Passes = true;
-        var response = await SubmitAsync(rig, Body(rig));
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Equal("T-0001", (string)(await PublicStoreFixture.JsonAsync(response))["number"]!);
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+        Assert.EndsWith("0001", (string)receipt["number"]!, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ASubmissionFreezesTheRepricedLinesAndConsent()
+    public async Task ASubmissionCreatesAStoreOrderWithAdvisorCustomerAndConsent()
     {
         await using var rig = await OpenRigAsync();
         var body = Body(rig);
         var visitorIp = "198.51.100.23";
 
-        var response = await SubmitAsync(rig, body, visitorIp);
+        var receipt = await CreatedAsync(await SubmitAsync(rig, body, visitorIp));
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var receipt = await PublicStoreFixture.JsonAsync(response);
-        Assert.Equal("T-0001", (string)receipt["number"]!);
-        Assert.Equal(20_000m, (decimal)receipt["total"]!);
+        var orderId = (Guid)receipt["id"]!;
+        Assert.EndsWith("0001", (string)receipt["number"]!, StringComparison.Ordinal);
         Assert.Equal("COP", (string)receipt["currency"]!);
-        var saved = await LoadAsync(rig, (Guid)body["clientRequestId"]!);
-        var line = Assert.Single(saved.Lines);
-        Assert.Equal(rig.Variant, line.VariantId);
-        Assert.Equal(2m, line.Quantity);
-        Assert.Equal(10_000m, line.UnitPrice);
-        Assert.Equal(20_000m, line.LineTotal);
-        Assert.Equal(20_000m, saved.Total);
-        Assert.Equal(visitorIp, saved.Consent.Ip);
-        Assert.Equal("https://demo.test/politica", saved.Consent.PolicyUrl);
-        Assert.NotEqual(default, saved.Consent.PolicySetAt);
-        Assert.Equal("+573001234567", saved.Billing.PhoneE164);
+        var order = await LoadOrderAsync(rig, orderId);
+        Assert.Equal((decimal)receipt["total"]!, order.Total);
+        Assert.Equal((string)receipt["number"]!, order.OrderNumber);
+        Assert.Equal(Modules.Quotations.Domain.OrderSource.Store, order.Source);
+        Assert.Equal(Modules.Quotations.Domain.OrderPaymentStatus.PaymentPending, order.PaymentStatus);
+        Assert.Equal(rig.Fixture.OwnerMembershipId, order.AdvisorId.Value);
+        Assert.Equal($"store-checkout:{(Guid)body["clientRequestId"]!}", order.ExternalKey);
+        Assert.Null(order.ExternalReference);
+        Assert.Equal("Entregar en portería", order.Notes);
+
+        Assert.Equal(1L, await rig.Fixture.ScalarAsync(
+            "SELECT count(*) FROM customers.customers WHERE identification_number = '123456' AND id = @id", order.ClientId));
+
+        var consent = await rig.Fixture.ConsentAsync(orderId);
+        Assert.NotNull(consent);
+        Assert.Equal(visitorIp, consent.Consent.Ip);
+        Assert.Equal("https://demo.test/politica", consent.Consent.PolicyUrl);
+        Assert.NotNull(consent.Consent.PolicySetAt);
+        Assert.Equal(1, await StoreApiHarness.CountAuditEntriesAsync(rig.Fixture.Settings.Factory, "store.order.created", orderId.ToString()));
     }
 
     [Fact]
-    public async Task AStoreWithoutPolicyFreezesTheConsentWithoutPolicy()
+    public async Task AStoreWithoutPolicyRecordsTheConsentWithoutPolicy()
     {
         await using var rig = await OpenRigAsync((_, settings) => settings["dataPolicyUrl"] = null);
-        var body = Body(rig);
         var visitorIp = "198.51.100.24";
 
-        var response = await SubmitAsync(rig, body, visitorIp);
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig), visitorIp));
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var receipt = await PublicStoreFixture.JsonAsync(response);
-        Assert.Equal("T-0001", (string)receipt["number"]!);
-        var saved = await LoadAsync(rig, (Guid)body["clientRequestId"]!);
-        Assert.Equal(visitorIp, saved.Consent.Ip);
-        Assert.Null(saved.Consent.PolicyUrl);
-        DateTimeOffset? policySetAt = saved.Consent.PolicySetAt;
-        Assert.Null(policySetAt);
+        var consent = await rig.Fixture.ConsentAsync((Guid)receipt["id"]!);
+        Assert.NotNull(consent);
+        Assert.Equal(visitorIp, consent.Consent.Ip);
+        Assert.Null(consent.Consent.PolicyUrl);
+        Assert.Null(consent.Consent.PolicySetAt);
+    }
+
+    [Fact]
+    public async Task AConfiguredAdvisorReceivesTheOrder()
+    {
+        Guid advisor = default;
+        await using var rig = await OpenRigAsync((fixture, settings) =>
+        {
+            // El tweak es síncrono: la siembra se espera acá, antes del PUT que guarda el asesor.
+            advisor = StoreApiHarness.SeedMemberAsync(fixture.Factory, "asesora@test.co", "Asesora", "advisor").GetAwaiter().GetResult();
+            settings["advisorMembershipId"] = advisor;
+        });
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(advisor, (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).AdvisorId.Value);
+    }
+
+    [Fact]
+    public async Task AnAdvisorRemovedAfterBeingConfiguredFallsBackToTheOwner()
+    {
+        Guid advisor = default;
+        await using var rig = await OpenRigAsync((fixture, settings) =>
+        {
+            advisor = StoreApiHarness.SeedMemberAsync(fixture.Factory, "asesora@test.co", "Asesora", "advisor").GetAwaiter().GetResult();
+            settings["advisorMembershipId"] = advisor;
+        });
+        await RemoveMembershipAsync(rig, advisor);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(rig.Fixture.OwnerMembershipId, (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).AdvisorId.Value);
+    }
+
+    private static async Task RemoveMembershipAsync(Rig rig, Guid membershipId)
+    {
+        await using var scope = rig.Fixture.Settings.Factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+        var ct = TestContext.Current.CancellationToken;
+        var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Tenant)], ct);
+        var membership = await tenancy.Memberships.FindAsync([new Modules.Tenancy.Domain.MembershipId(membershipId)], ct);
+        membership!.Remove(tenant!, DateTimeOffset.UtcNow);
+        await tenancy.SaveChangesAsync(ct);
+    }
+
+    [Fact]
+    public async Task AnExistingCompleteCustomerIsReusedAndNotModified()
+    {
+        await using var rig = await OpenRigAsync();
+        var customerId = await StoreApiHarness.SeedCustomerAsync(
+            rig.Fixture.Settings.Factory, Tenant, "Lucía Gómez", identificationType: "CC", identificationNumber: "123456");
+        var before = await rig.Fixture.CustomerRowsAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(customerId, (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).ClientId);
+        Assert.Equal("Lucía Gómez", await rig.Fixture.ScalarAsync("SELECT name FROM customers.customers WHERE id = @id", customerId));
+        Assert.Equal(before, await rig.Fixture.CustomerRowsAsync());
+    }
+
+    [Fact]
+    public async Task ADocumentOfAnInactiveCustomerCreatesANewIncompleteCustomerWithoutDocument()
+    {
+        await using var rig = await OpenRigAsync();
+        var inactive = await StoreApiHarness.SeedCustomerAsync(
+            rig.Fixture.Settings.Factory, Tenant, "Lucía Gómez", identificationType: "CC", identificationNumber: "123456");
+        await StoreApiHarness.DeactivateCustomerAsync(rig.Fixture.Settings.Factory, inactive);
+        var before = await rig.Fixture.CustomerRowsAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(before + 1, await rig.Fixture.CustomerRowsAsync());
+        var clientId = (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).ClientId;
+        Assert.NotEqual(inactive, clientId);
+        Assert.Null(await rig.Fixture.ScalarAsync("SELECT identification_number FROM customers.customers WHERE id = @id", clientId));
+        Assert.Equal("Incomplete", await rig.Fixture.ScalarAsync("SELECT completeness FROM customers.customers WHERE id = @id", clientId));
+        Assert.Equal("Lucía Gómez", await rig.Fixture.ScalarAsync("SELECT name FROM customers.customers WHERE id = @id", inactive));
+        Assert.Equal(false, await rig.Fixture.ScalarAsync("SELECT is_active FROM customers.customers WHERE id = @id", inactive));
+        Assert.Equal("123456", await rig.Fixture.ScalarAsync("SELECT identification_number FROM customers.customers WHERE id = @id", inactive));
+    }
+
+    [Fact]
+    public async Task ABillingAndShippingAddressGoToTheCustomerBook()
+    {
+        await using var rig = await OpenRigAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["shipping"] = Shipping(rig))));
+
+        var clientId = (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).ClientId;
+        Assert.Equal(2L, await rig.Fixture.ScalarAsync("SELECT count(*) FROM customers.customer_addresses WHERE customer_id = @id", clientId));
+    }
+
+    [Fact]
+    public async Task CreateAccountEmitsTheSignupWithTheOrderId()
+    {
+        await using var rig = await OpenRigAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(
+            rig, Body(rig, body => body["createAccount"] = new { password = "una-contrasena-larga", acceptsDataPolicy = true })));
+
+        Assert.Equal(1L, await rig.Fixture.ScalarAsync(
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'store.buyer-signup-requested.v1' AND (payload->>'orderId')::uuid = @id",
+            (Guid)receipt["id"]!));
     }
 
     [Fact]
@@ -237,11 +334,11 @@ public sealed class PublicOrderRequestApiTests
         var response = await SubmitAsync(rig, Body(rig, body => body["acceptsDataPolicy"] = false));
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.consent_required");
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
     }
 
     [Fact]
-    public async Task TheSameClientRequestIdReturnsTheSameReceipt()
+    public async Task TheSameClientRequestIdReturnsTheSameOrder()
     {
         await using var rig = await OpenRigAsync();
         var body = Body(rig);
@@ -253,11 +350,11 @@ public sealed class PublicOrderRequestApiTests
         var second = await PublicStoreFixture.JsonAsync(retry);
         Assert.Equal((string)first["number"]!, (string)second["number"]!);
         Assert.Equal((Guid)first["id"]!, (Guid)second["id"]!);
-        Assert.Equal(1, await RequestsAsync(rig));
+        Assert.Equal(1, await OrdersAsync(rig));
     }
 
     [Fact]
-    public async Task TwoSimultaneousSubmissionsOfTheSameIdCreateOneRequest()
+    public async Task TwoSimultaneousSubmissionsOfTheSameIdCreateOneOrder()
     {
         await using var rig = await OpenRigAsync();
         var body = Body(rig);
@@ -272,7 +369,8 @@ public sealed class PublicOrderRequestApiTests
         }
 
         Assert.Single(numbers.Distinct());
-        Assert.Equal(1, await RequestsAsync(rig));
+        Assert.Equal(1, await OrdersAsync(rig));
+        Assert.Equal(1L, await rig.Fixture.ScalarAsync("SELECT count(*) FROM store.order_consents"));
     }
 
     [Fact]
@@ -283,7 +381,7 @@ public sealed class PublicOrderRequestApiTests
 
         await AssertRejectedAsync(await SubmitAsync(rig, Body(rig)), HttpStatusCode.UnprocessableEntity, "store.order_request.captcha_invalid");
 
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
         Assert.Equal("tienda-demo.lulocrm.com", rig.Captcha.LastHostname);
         await AssertNextNumberIsFirstAsync(rig);
     }
@@ -305,7 +403,7 @@ public sealed class PublicOrderRequestApiTests
 
         await AssertRejectedAsync(await SubmitAsync(rig, Body(rig)), HttpStatusCode.ServiceUnavailable, "store.captcha.unavailable");
 
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -317,7 +415,7 @@ public sealed class PublicOrderRequestApiTests
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.consent_required");
         Assert.Equal(0, rig.Captcha.Calls);
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -332,41 +430,36 @@ public sealed class PublicOrderRequestApiTests
     }
 
     [Fact]
-    public async Task ASubmissionWithAStaleLineIs422()
+    public async Task ASubmissionWithAStaleLineIs422AndCreatesNoCustomer()
     {
         await using var rig = await OpenRigAsync();
         var (_, hidden) = await rig.Fixture.CreateProductAsync("Oculto", "OCU-1", Prices(5_000m), visible: false);
+        var customers = await rig.Fixture.CustomerRowsAsync();
 
         var response = await SubmitAsync(
             rig, Body(rig, body => body["lines"] = new[] { new { variantId = hidden, quantity = 1 } }));
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.order_request.line_unavailable");
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
+        Assert.Equal(customers, await rig.Fixture.CustomerRowsAsync());
         await AssertNextNumberIsFirstAsync(rig);
     }
 
     [Fact]
-    public async Task ThePublicEndpointNeverCreatesACustomer()
-    {
-        await using var rig = await OpenRigAsync();
-        var before = await CountAsync(rig, "customers.customers");
-
-        var response = await SubmitAsync(rig, Body(rig, body => body["shipping"] = Shipping(rig)));
-
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Equal(before, await CountAsync(rig, "customers.customers"));
-    }
-
-    [Fact]
-    public async Task TheDailyCapIs429()
+    public async Task TheDailyCapCountsCancelledOrders()
     {
         await using var rig = await OpenRigAsync(configure: services => services.PostConfigure<StoreOptions>(options => options.DailyRequestCap = 2));
+        await StoreApiHarness.SeedCallerMembershipAsync(rig.Fixture.Settings.Factory, "Quien anula");
+        using var canceller = rig.Fixture.Settings.ClientFor(StoreApiHarness.TenantId, "quotations.order.read", "quotations.order.cancel");
+
+        var first = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+        var cancelled = await canceller.PostAsJsonAsync(
+            $"/api/v1/tenants/{Tenant}/orders/{(Guid)first["id"]!}/cancel", new { reason = "Pedido basura" }, TestContext.Current.CancellationToken);
+        Assert.True(cancelled.IsSuccessStatusCode, await StoreApiHarness.BodyAsync(cancelled));
 
         Assert.Equal(HttpStatusCode.Created, (await SubmitAsync(rig, Body(rig))).StatusCode);
-        Assert.Equal(HttpStatusCode.Created, (await SubmitAsync(rig, Body(rig))).StatusCode);
-
         await AssertRejectedAsync(await SubmitAsync(rig, Body(rig)), HttpStatusCode.TooManyRequests, "store.order_request.daily_cap");
-        Assert.Equal(2, await RequestsAsync(rig));
+        Assert.Equal(2, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -379,29 +472,23 @@ public sealed class PublicOrderRequestApiTests
         var response = await SubmitAsync(rig, Body(rig, body => body["padding"] = new string('a', 70_000)));
 
         await AssertRejectedAsync(response, HttpStatusCode.RequestEntityTooLarge, "store.public.body_too_large");
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
         Assert.Equal(0, rig.Captcha.Calls);
     }
 
     [Fact]
-    public async Task ASubmissionStoresItsCurrency()
+    public async Task AnEurSubmissionCreatesAnEurOrder()
     {
         await using var rig = await OpenRigAsync(PublicStoreFixture.TwoCurrencies, eurPrice: true);
-        var body = Body(rig, b => b["currency"] = "eur");
 
-        var response = await SubmitAsync(rig, body);
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig, b => b["currency"] = "eur")));
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var receipt = await PublicStoreFixture.JsonAsync(response);
         Assert.Equal("EUR", (string)receipt["currency"]!);
-        Assert.Equal(8m, (decimal)receipt["total"]!);
-        var saved = await LoadAsync(rig, (Guid)body["clientRequestId"]!);
-        Assert.Equal("EUR", saved.Currency);
-        Assert.Equal(4m, Assert.Single(saved.Lines).UnitPrice);
+        Assert.Equal("EUR", (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).Currency);
     }
 
     [Fact]
-    public async Task ARetryNamingAnotherCurrencyGetsTheFirstReceiptInItsOwnCurrency()
+    public async Task ARetryNamingAnotherCurrencyGetsTheFirstOrderInItsOwnCurrency()
     {
         await using var rig = await OpenRigAsync(PublicStoreFixture.TwoCurrencies, eurPrice: true);
         var body = Body(rig, b => b["currency"] = "EUR");
@@ -411,7 +498,7 @@ public sealed class PublicOrderRequestApiTests
         var retry = await PublicStoreFixture.JsonAsync(await SubmitAsync(rig, body));
 
         Assert.Equal("EUR", (string)retry["currency"]!);
-        Assert.Equal(1, await RequestsAsync(rig));
+        Assert.Equal(1, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -423,7 +510,7 @@ public sealed class PublicOrderRequestApiTests
 
         await AssertRejectedAsync(response, HttpStatusCode.UnprocessableEntity, "store.public.currency_invalid");
         Assert.Equal(0, rig.Captcha.Calls);
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
         await AssertNextNumberIsFirstAsync(rig);
     }
 
@@ -438,24 +525,19 @@ public sealed class PublicOrderRequestApiTests
     }
 
     [Fact]
-    public async Task ASubmissionFreezesBillingAndShipping()
+    public async Task TheOrderCarriesTheShippingRecipient()
     {
         await using var rig = await OpenRigAsync();
-        var withShipping = Body(rig, body => body["shipping"] = Shipping(rig));
-        var sameData = Body(rig);
 
-        Assert.Equal(HttpStatusCode.Created, (await SubmitAsync(rig, withShipping)).StatusCode);
-        Assert.Equal(HttpStatusCode.Created, (await SubmitAsync(rig, sameData)).StatusCode);
+        var withShipping = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["shipping"] = Shipping(rig))));
+        var sameData = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
 
-        var saved = await LoadAsync(rig, (Guid)withShipping["clientRequestId"]!);
-        Assert.Equal(rig.DepartmentName, saved.Billing.Place.DepartmentName);
-        Assert.Equal(rig.CityName, saved.Billing.Place.CityName);
-        Assert.Equal("CO", saved.Billing.Place.Country);
-        var shipping = saved.Shipping!;
-        Assert.Equal("Luis Gómez", shipping.RecipientName);
-        Assert.Equal("+573007654321", shipping.PhoneE164);
-        Assert.Equal(rig.CityName, shipping.Place.CityName);
-        Assert.Null((await LoadAsync(rig, (Guid)sameData["clientRequestId"]!)).Shipping);
+        var order = await LoadOrderAsync(rig, (Guid)withShipping["id"]!);
+        Assert.Equal("Luis Gómez", order.Shipping!.Name);
+        Assert.Equal(rig.City, order.Shipping.CityId);
+        Assert.Equal("ana@test.co", order.Shipping.Email);
+        Assert.Null(order.Shipping.IdentificationNumber);
+        Assert.Equal("Ana Pérez", (await LoadOrderAsync(rig, (Guid)sameData["id"]!)).Shipping!.Name);
     }
 
     [Fact]
@@ -532,12 +614,11 @@ public sealed class PublicOrderRequestApiTests
 
         var response = await SubmitAsync(rig, body);
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var saved = await LoadAsync(rig, (Guid)body["clientRequestId"]!);
-        Assert.Equal("Madrid", saved.Billing.Place.CityName);
-        Assert.Null(saved.Billing.Place.CityId);
-        Assert.Null(saved.Billing.Place.DepartmentId);
-        Assert.Equal("+34612345678", saved.Billing.PhoneE164);
+        var order = await LoadOrderAsync(rig, (Guid)(await CreatedAsync(response))["id"]!);
+        Assert.Equal("ES", order.Billing!.Country);
+        Assert.Equal("Madrid", order.Billing.CityName);
+        Assert.Null(order.Billing.CityId);
+        Assert.Null(order.Billing.DepartmentId);
     }
 
     [Fact]
@@ -549,8 +630,8 @@ public sealed class PublicOrderRequestApiTests
 
         var response = await SubmitAsync(rig, body);
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Equal("NIF", (await LoadAsync(rig, (Guid)body["clientRequestId"]!)).Billing.IdentificationType);
+        var order = await LoadOrderAsync(rig, (Guid)(await CreatedAsync(response))["id"]!);
+        Assert.Equal(Modules.Quotations.Domain.PartyIdentificationType.Nif, order.Billing!.IdentificationType);
     }
 
     [Fact]
@@ -567,7 +648,7 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal("validation.failed", (string)json["code"]!);
         Assert.NotNull(json["errors"]!["Billing.IdentificationType"]);
         Assert.Equal(0, rig.Captcha.Calls);
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
         await AssertNextNumberIsFirstAsync(rig);
     }
 
@@ -583,7 +664,7 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal("validation.failed", (string)json["code"]!);
         Assert.NotNull(json["errors"]!["Billing.Email"]);
         Assert.Equal(0, rig.Captcha.Calls);
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -615,7 +696,7 @@ public sealed class PublicOrderRequestApiTests
         var response = await SubmitAsync(rig, Body(rig), client: anonymous);
 
         await AssertRejectedAsync(response, HttpStatusCode.Unauthorized, "store.public.client_unauthorized");
-        Assert.Equal(0, await RequestsAsync(rig));
+        Assert.Equal(0, await OrdersAsync(rig));
     }
 
     [Fact]
@@ -673,6 +754,6 @@ public sealed class PublicOrderRequestApiTests
         // El envío también lleva la cookie: la ruta no la lee, y el recibo es el de siempre.
         var submit = await SubmitAsync(rig, Body(rig), cookie: "qep_session=not-a-real-session");
         Assert.Equal(HttpStatusCode.Created, submit.StatusCode);
-        Assert.Equal("T-0001", (string)(await PublicStoreFixture.JsonAsync(submit))["number"]!);
+        Assert.EndsWith("0001", (string)(await PublicStoreFixture.JsonAsync(submit))["number"]!, StringComparison.Ordinal);
     }
 }

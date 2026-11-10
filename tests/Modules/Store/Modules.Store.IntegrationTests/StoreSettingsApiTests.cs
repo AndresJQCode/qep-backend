@@ -22,6 +22,33 @@ public sealed class StoreSettingsApiTests
     private static string[] Strings(JsonNode? array) => array!.AsArray().Select(node => (string)node!).ToArray();
 
     [Fact]
+    public async Task SavingTheAdvisorRoundTripsWithItsName()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var advisor = await SeedMemberAsync(fixture.Factory, "luis@test.co", "Luis Gómez", "advisor");
+
+        var saved = await fixture.SaveAsync(fixture.Body(body => body["advisorMembershipId"] = advisor));
+
+        Assert.Equal(advisor, (Guid)saved["advisorMembershipId"]!);
+        Assert.Equal("Luis Gómez", (string)saved["advisorName"]!);
+        var read = await StoreSettingsFixture.JsonAsync(await fixture.GetAsync());
+        Assert.Equal(advisor, (Guid)read["advisorMembershipId"]!);
+        Assert.Equal("Luis Gómez", (string)read["advisorName"]!);
+    }
+
+    [Fact]
+    public async Task ARemovedAdvisorIs422AdvisorNotFound()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var removed = await SeedMemberAsync(fixture.Factory, "baja@test.co", "Baja", "advisor", removed: true);
+
+        var response = await fixture.PutAsync(fixture.Body(body => body["advisorMembershipId"] = removed));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("store.settings.advisor_not_found", await StoreSettingsFixture.CodeAsync(response));
+    }
+
+    [Fact]
     public async Task ANeverSavedStoreReadsAsDefaultsWithVersionZero()
     {
         await using var fixture = await StoreSettingsFixture.OpenAsync();

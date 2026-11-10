@@ -45,13 +45,13 @@ public sealed record StoreOrderParty(
     string? IdentificationType,
     string? IdentificationNumber);
 
-/// <summary>Lo que «Tomar» entrega al motor de pedidos. <c>Shipping</c> nunca es null: la tienda pasa los datos de
-/// facturación cuando el visitante marcó «Usar los mismos datos». <c>TakerUserId</c> es la persona que toma la
-/// solicitud: firma la auditoría, porque el pedido no tiene otro actor humano.</summary>
+/// <summary>Lo que el checkout de la tienda entrega al motor de pedidos. <c>Shipping</c> nunca es null: la tienda
+/// pasa los datos de facturación cuando el visitante marcó «Usar los mismos datos». <c>ClientRequestId</c> es el id
+/// que el navegador genera por checkout: de él sale la clave de idempotencia. No hay persona detrás: el pedido lo
+/// crea el sistema.</summary>
 public sealed record StoreOrderDraft(
     Guid TenantId,
-    Guid RequestId,
-    string RequestNumber,
+    Guid ClientRequestId,
     Guid ClientId,
     Guid AdvisorMembershipId,
     bool IsRetail,
@@ -61,8 +61,7 @@ public sealed record StoreOrderDraft(
     bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreQuoteLine> Lines,
-    string? Notes,
-    Guid TakerUserId);
+    string? Notes);
 
 /// <summary>El pedido de la tienda. Con <c>AlreadyExisted</c> el resto describe el pedido que ya estaba (cliente y
 /// asesor incluidos), no lo que trajo la llamada repetida.</summary>
@@ -75,18 +74,22 @@ public sealed record StoreOrderResult(
     Guid AdvisorMembershipId,
     bool AlreadyExisted);
 
-/// <summary>El puerto de la tienda pública hacia el motor de pedidos: cotiza el carrito y crea el pedido de una
-/// solicitud. Los totales salen siempre de acá; el navegador nunca los calcula.</summary>
+/// <summary>El puerto de la tienda pública hacia el motor de pedidos: cotiza el carrito y crea el pedido del
+/// checkout. Los totales salen siempre de acá; el navegador nunca los calcula.</summary>
 public interface IStoreOrderGateway
 {
     /// <summary>Precia el carrito con las reglas de un pedido. No guarda nada.</summary>
     Task<StoreQuote> QuoteAsync(StoreQuoteRequest request, CancellationToken cancellationToken);
 
-    /// <summary>Crea el pedido de la solicitud; idempotente por <see cref="StoreOrderGateway.ExternalKeyFor"/>.</summary>
+    /// <summary>Crea el pedido del checkout; idempotente por <see cref="StoreOrderGateway.ExternalKeyFor"/>.</summary>
     Task<StoreOrderResult> CreateAsync(StoreOrderDraft draft, CancellationToken cancellationToken);
 
-    /// <summary>El pedido que ya salió de esa solicitud, o <c>null</c>. «Tomar» lo mira antes de tocar al cliente.</summary>
-    Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken);
+    /// <summary>El pedido que ya salió de ese checkout, o <c>null</c>. Se mira antes de tocar al cliente.</summary>
+    Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken);
+
+    /// <summary>Cuántos pedidos de la tienda entraron desde <paramref name="since"/>, anulados incluidos: el tope
+    /// diario no devuelve cupo al anular.</summary>
+    Task<int> CountStoreOrdersSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken);
 }
 
 public sealed class StoreOrderGateway(
@@ -107,8 +110,8 @@ public sealed class StoreOrderGateway(
     ITenantClock tenantClock)
     : IStoreOrderGateway
 {
-    /// <summary>La clave de idempotencia del pedido de una solicitud: «Tomar» reintentado devuelve el mismo pedido.</summary>
-    public static string ExternalKeyFor(Guid requestId) => $"store-request:{requestId}";
+    /// <summary>La clave de idempotencia del pedido de un checkout: el reintento del navegador devuelve el mismo pedido.</summary>
+    public static string ExternalKeyFor(Guid clientRequestId) => $"store-checkout:{clientRequestId}";
 
     public async Task<StoreQuote> QuoteAsync(StoreQuoteRequest request, CancellationToken cancellationToken)
     {
@@ -153,7 +156,7 @@ public sealed class StoreOrderGateway(
 
         // Con clave, un pedido que ya entró se devuelve tal cual, sin escribir nada: si el cliente quedó inactivo
         // después, el reintento igual encuentra su pedido.
-        var externalKey = ExternalKeyFor(draft.RequestId);
+        var externalKey = ExternalKeyFor(draft.ClientRequestId);
         if (await orderRepository.FindByExternalKeyAsync(
                 draft.TenantId, OrderSource.Store, externalKey, cancellationToken) is { } existing)
         {
@@ -162,7 +165,7 @@ public sealed class StoreOrderGateway(
 
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
-        // La cuenta es la entrada de la tienda para la moneda de la solicitud: de ella sale la moneda del pedido
+        // La cuenta es la entrada de la tienda para la moneda del pedido: de ella sale la moneda del pedido
         // y con ella se precian las líneas, nunca con una moneda aparte que pudiera discrepar.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
                 companyLookup, draft.TenantId, draft.BillingAccount, cancellationToken)
@@ -193,18 +196,19 @@ public sealed class StoreOrderGateway(
             {
                 var order = Order.CreateFromStore(
                     OrderId.New(), draft.TenantId, orderNumber, header, parties, billingAccount, lines, draft.Notes,
-                    advisor, now, draft.RequestNumber, externalKey);
+                    advisor, now, externalKey);
                 await OrderPricingRecalculation.ApplyAsync(
                     pricingLookup, settingsStore, priceRounding, draft.TenantId, order, now, cancellationToken);
                 return order;
             },
             (order, now) =>
             {
+                // Ninguna persona crea este pedido: el historial va sin autor y la auditoría, como integración.
                 orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
-                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, advisor,
-                    OrderChangeSummary.CreatedFromStore(draft.RequestNumber), now));
-                auditPublisher.Publish(
-                    draft.TenantId, draft.TakerUserId, "quotation.order.created", order.Id.ToString(), "success", now);
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Created, memberId: null,
+                    OrderChangeSummary.CreatedFromStore(), now));
+                auditPublisher.PublishByIntegration(
+                    draft.TenantId, "quotation.order.created", order.Id.ToString(), "success", now);
                 lifecycleEvents.PublishOrderCreated(order, now);
             },
             cancellationToken);
@@ -221,11 +225,16 @@ public sealed class StoreOrderGateway(
         return Existing(winner);
     }
 
-    public async Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken) =>
-        await orderRepository.FindByExternalKeyAsync(tenantId, OrderSource.Store, ExternalKeyFor(requestId), cancellationToken)
+    public async Task<StoreOrderResult?> FindExistingAsync(
+        Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+        await orderRepository.FindByExternalKeyAsync(
+                tenantId, OrderSource.Store, ExternalKeyFor(clientRequestId), cancellationToken)
             is { } order
             ? Existing(order)
             : null;
+
+    public Task<int> CountStoreOrdersSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
+        orderRepository.CountBySourceSinceAsync(tenantId, OrderSource.Store, since, cancellationToken);
 
     private static StoreOrderResult Existing(Order order) => ToResult(order, alreadyExisted: true);
 

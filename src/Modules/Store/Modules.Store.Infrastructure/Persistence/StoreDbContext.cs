@@ -11,16 +11,14 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
 {
     public const string Schema = "store";
 
-    // Sombras que el dominio no conoce: el orden de las monedas y el "hay envío" que la bandeja consulta sin abrir el bloque.
+    // Sombra que el dominio no conoce: el orden de las monedas.
     internal const string CurrencyPositionColumn = "position";
-
-    internal const string HasShippingProperty = "HasShipping";
 
     public DbSet<OnlineStore> Stores => Set<OnlineStore>();
 
     public DbSet<StoreDomain> Domains => Set<StoreDomain>();
 
-    public DbSet<StoreOrderRequest> OrderRequests => Set<StoreOrderRequest>();
+    public DbSet<StoreOrderConsent> OrderConsents => Set<StoreOrderConsent>();
 
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
@@ -45,13 +43,12 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         AuditDbContext.ConfigureEntry(modelBuilder, ownsTable: false);
         ConfigureStore(modelBuilder);
         ConfigureDomain(modelBuilder);
-        ConfigureOrderRequest(modelBuilder);
-        ConfigureRequestCounter(modelBuilder);
+        ConfigureOrderConsent(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
 
-    // Dos columnas se derivan del agregado y no tienen propiedad en el dominio: se escriben acá, justo antes de guardar, para que
-    // ningún llamador tenga que acordarse de ellas.
+    // La posición de cada moneda se deriva del agregado y no tiene propiedad en el dominio: se escribe acá, justo antes de guardar,
+    // para que ningún llamador tenga que acordarse de ella.
     private void SyncDerivedColumns()
     {
         ChangeTracker.DetectChanges();
@@ -64,12 +61,6 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             {
                 Entry(currency).Property<int>(CurrencyPositionColumn).CurrentValue = position++;
             }
-        }
-
-        foreach (var entry in ChangeTracker.Entries<StoreOrderRequest>()
-            .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
-        {
-            entry.Property<bool>(HasShippingProperty).CurrentValue = entry.Entity.Shipping is not null;
         }
     }
 
@@ -118,6 +109,9 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             .HasConversion<string>()
             .HasMaxLength(16);
         store.Property(value => value.PrimaryCurrency).HasColumnName("primary_currency").HasMaxLength(3);
+
+        // Sin FK a tenancy: los módulos no se cruzan por clave foránea; Application valida que sea un miembro activo.
+        store.Property(value => value.AdvisorMembershipId).HasColumnName("advisor_membership_id");
 
         // Arreglos nativos de Postgres: el orden de la lista es el de la pantalla y un arreglo lo conserva sin columna extra.
         store.Property(value => value.SalesCountries)
@@ -191,178 +185,23 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         domain.HasIndex(value => value.TenantId).HasDatabaseName("IX_store_domains_tenant");
     }
 
-    private static void ConfigureOrderRequest(ModelBuilder modelBuilder)
+    private static void ConfigureOrderConsent(ModelBuilder modelBuilder)
     {
-        var request = modelBuilder.Entity<StoreOrderRequest>();
-        request.ToTable("order_requests", Schema, table =>
+        var entity = modelBuilder.Entity<StoreOrderConsent>();
+        entity.ToTable("order_consents", Schema);
+        entity.HasKey(value => value.OrderId).HasName("PK_order_consents");
+        entity.Property(value => value.OrderId).HasColumnName("order_id").ValueGeneratedNever();
+        entity.Property(value => value.TenantId).HasColumnName("tenant_id");
+        entity.HasIndex(value => value.TenantId).HasDatabaseName("IX_order_consents_tenant");
+
+        entity.OwnsOne(value => value.Consent, consent =>
         {
-            table.HasCheckConstraint("CK_order_requests_status", "status IN ('New','Converted','Discarded')");
-            table.HasCheckConstraint(
-                "CK_order_requests_discard_reason",
-                "discard_reason IS NULL OR discard_reason IN ('Spam','Duplicate','Other')");
-            // Un envío es todo o nada: has_shipping es true exactamente cuando están las columnas que el dominio exige.
-            table.HasCheckConstraint(
-                "CK_order_requests_shipping",
-                "has_shipping = (shipping_phone IS NOT NULL AND shipping_phone_e164 IS NOT NULL"
-                + " AND shipping_address IS NOT NULL AND shipping_country IS NOT NULL AND shipping_city_name IS NOT NULL)");
-            // Los dos carriles de ciudad (spec 4.2): Colombia lleva los ids de DIVIPOLA y cualquier otro país no.
-            table.HasCheckConstraint(
-                "CK_order_requests_billing_lane",
-                "(billing_country = 'CO') = (billing_department_id IS NOT NULL AND billing_city_id IS NOT NULL)");
-            table.HasCheckConstraint(
-                "CK_order_requests_shipping_lane",
-                "shipping_country IS NULL"
-                + " OR ((shipping_country = 'CO') = (shipping_department_id IS NOT NULL AND shipping_city_id IS NOT NULL))");
+            consent.Property(value => value.At).HasColumnName("accepted_at");
+            consent.Property(value => value.Ip).HasColumnName("visitor_ip").HasMaxLength(45);
+            consent.Property(value => value.PolicyUrl).HasColumnName("policy_url").HasMaxLength(500);
+            consent.Property(value => value.PolicySetAt).HasColumnName("policy_set_at");
         });
-        request.HasKey(value => value.Id);
-        request.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
-        request.Property(value => value.TenantId).HasColumnName("tenant_id");
-        request.Property(value => value.Number).HasColumnName("number").HasColumnType("bigint");
-        request.Property(value => value.ClientRequestId).HasColumnName("client_request_id");
-        request.Property(value => value.Status)
-            .HasColumnName("status")
-            .HasConversion<string>()
-            .HasMaxLength(16);
-
-        // Billing y Shipping son complex y no owned: sus constructores validan y reciben el lugar como parámetro, y EF no enlaza
-        // navegaciones owned a parámetros. Siguen siendo columnas planas de la misma tabla.
-        request.ComplexProperty(value => value.Billing, billing =>
-        {
-            billing.Property(value => value.Name).HasColumnName("billing_name").HasMaxLength(150);
-            billing.Property(value => value.IdentificationType).HasColumnName("billing_identification_type").HasMaxLength(16);
-            billing.Property(value => value.IdentificationNumber).HasColumnName("billing_identification_number").HasMaxLength(32);
-            billing.Property(value => value.Phone).HasColumnName("billing_phone").HasMaxLength(32);
-            billing.Property(value => value.PhoneE164).HasColumnName("billing_phone_e164").HasMaxLength(20);
-            billing.Property(value => value.Email).HasColumnName("billing_email").HasMaxLength(254);
-            billing.Property(value => value.Address).HasColumnName("billing_address").HasMaxLength(200);
-            billing.ComplexProperty(value => value.Place, place => ConfigurePlace(place, "billing"));
-        });
-
-        // Un bloque en columnas y no en JSON: la bandeja lo consulta. Nulo = "usar los mismos datos".
-        request.ComplexProperty(value => value.Shipping, shipping =>
-        {
-            shipping.Property(value => value.RecipientName).HasColumnName("shipping_recipient_name").HasMaxLength(120);
-            shipping.Property(value => value.Phone).HasColumnName("shipping_phone").HasMaxLength(32);
-            shipping.Property(value => value.PhoneE164).HasColumnName("shipping_phone_e164").HasMaxLength(20);
-            shipping.Property(value => value.Address).HasColumnName("shipping_address").HasMaxLength(200);
-            shipping.ComplexProperty(value => value.Place, place => ConfigurePlace(place, "shipping"));
-        });
-        request.Property<bool>(HasShippingProperty).HasColumnName("has_shipping");
-
-        request.Property(value => value.Note).HasColumnName("note").HasMaxLength(StoreOrderRequest.NoteMaxLength);
-        request.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3);
-        request.Property(value => value.PricingMode)
-            .HasColumnName("pricing_mode")
-            .HasConversion<string>()
-            .HasMaxLength(16);
-        request.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(18, 2);
-        request.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(18, 2);
-        request.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(18, 2);
-        request.Property(value => value.Total).HasColumnName("total").HasPrecision(18, 2);
-
-        request.OwnsOne(value => value.Consent, consent =>
-        {
-            consent.Property(value => value.At).HasColumnName("consent_at");
-            consent.Property(value => value.Ip).HasColumnName("consent_ip").HasMaxLength(45);
-            consent.Property(value => value.PolicyUrl).HasColumnName("consent_policy_url").HasMaxLength(500);
-            consent.Property(value => value.PolicySetAt).HasColumnName("consent_policy_set_at");
-        });
-        request.Navigation(value => value.Consent).IsRequired();
-
-        request.Property(value => value.ReceivedAt).HasColumnName("received_at");
-        request.Property(value => value.LeaseMemberId).HasColumnName("lease_member_id");
-        request.Property(value => value.LeaseUntil).HasColumnName("lease_until");
-        request.Property(value => value.ConvertedBy).HasColumnName("converted_by");
-        request.Property(value => value.ConvertedAt).HasColumnName("converted_at");
-        request.Property(value => value.OrderId).HasColumnName("order_id");
-        request.Property(value => value.CustomerId).HasColumnName("customer_id");
-        request.Property(value => value.OrderNumber).HasColumnName("order_number").HasMaxLength(32);
-        request.Property(value => value.OrderTotal).HasColumnName("order_total").HasPrecision(18, 2);
-        request.Property(value => value.TotalDifference).HasColumnName("total_difference").HasPrecision(18, 2);
-        request.Property(value => value.DiscardedBy).HasColumnName("discarded_by");
-        request.Property(value => value.DiscardedAt).HasColumnName("discarded_at");
-        request.Property(value => value.DiscardReason)
-            .HasColumnName("discard_reason")
-            .HasConversion<string>()
-            .HasMaxLength(16);
-        request.Property(value => value.DiscardNote)
-            .HasColumnName("discard_note")
-            .HasMaxLength(StoreOrderRequest.DiscardNoteMaxLength);
-        request.Property(value => value.Version)
-            .HasColumnName("version")
-            .HasColumnType("bigint")
-            .IsConcurrencyToken();
-
-        // Calculadas desde otras columnas: no se mapean.
-        request.Ignore(value => value.DisplayNumber);
-        request.Ignore(value => value.HasScaleDiscount);
-
-        request.HasIndex(value => new { value.TenantId, value.Number })
-            .IsUnique()
-            .HasDatabaseName("IX_order_requests_tenant_number");
-        request.HasIndex(value => new { value.TenantId, value.ClientRequestId })
-            .IsUnique()
-            .HasDatabaseName("IX_order_requests_tenant_client_request");
-        request.HasIndex(value => new { value.TenantId, value.Status, value.ReceivedAt })
-            .HasDatabaseName("IX_order_requests_tenant_status_received");
-        request.HasIndex(value => new { value.TenantId, value.ConvertedBy })
-            .HasDatabaseName("IX_order_requests_tenant_converted_by");
-        // IX_order_requests_tenant_billing_phone (tenant, billing_phone_e164) no se declara: EF no expresa un índice que cruce una columna
-        // del dueño con una de un complex type, así que lo crea a mano InitialStore.
-        // Un pedido sale de una sola solicitud; los que no vienen de la tienda no tienen fila acá.
-        request.HasIndex(value => value.OrderId)
-            .IsUnique()
-            .HasFilter("order_id IS NOT NULL")
-            .HasDatabaseName("IX_order_requests_order");
-
-        ConfigureLines(request);
-    }
-
-    private static void ConfigurePlace(ComplexPropertyBuilder<StorePlace> place, string prefix)
-    {
-        place.Property(value => value.Country).HasColumnName($"{prefix}_country").HasMaxLength(2);
-        place.Property(value => value.DepartmentId).HasColumnName($"{prefix}_department_id");
-        place.Property(value => value.DepartmentName)
-            .HasColumnName($"{prefix}_department_name")
-            .HasMaxLength(StorePlace.NameMaxLength);
-        place.Property(value => value.CityId).HasColumnName($"{prefix}_city_id");
-        place.Property(value => value.CityName)
-            .HasColumnName($"{prefix}_city_name")
-            .HasMaxLength(StorePlace.NameMaxLength);
-    }
-
-    private static void ConfigureLines(EntityTypeBuilder<StoreOrderRequest> request)
-    {
-        request.OwnsMany(value => value.Lines, line =>
-        {
-            line.ToTable("order_request_lines", Schema);
-            line.WithOwner().HasForeignKey("request_id");
-            line.Property(value => value.Position).HasColumnName("position").ValueGeneratedNever();
-            line.HasKey("request_id", nameof(StoreOrderRequestLine.Position));
-            line.Property(value => value.VariantId).HasColumnName("variant_id");
-            line.Property(value => value.ProductId).HasColumnName("product_id");
-            line.Property(value => value.Name).HasColumnName("name").HasMaxLength(StoreOrderRequestLine.NameMaxLength);
-            line.Property(value => value.Quantity).HasColumnName("quantity").HasPrecision(18, 2);
-            line.Property(value => value.UnitPrice).HasColumnName("unit_price").HasPrecision(18, 2);
-            line.Property(value => value.DiscountPercentage).HasColumnName("discount_percentage").HasPrecision(5, 2);
-            line.Property(value => value.DiscountOrigin)
-                .HasColumnName("discount_origin")
-                .HasMaxLength(StoreOrderRequestLine.DiscountOriginMaxLength);
-            line.Property(value => value.DiscountedUnitPrice).HasColumnName("discounted_unit_price").HasPrecision(18, 2);
-            line.Property(value => value.LineTotal).HasColumnName("line_total").HasPrecision(18, 2);
-        });
-        request.Navigation(value => value.Lines).UsePropertyAccessMode(PropertyAccessMode.Field);
-    }
-
-    // Una fila por tenant; el generador la crea con INSERT ... ON CONFLICT y la avanza con UPDATE ... RETURNING, así que el modelo
-    // sólo la declara para que la migración cree la tabla.
-    private static void ConfigureRequestCounter(ModelBuilder modelBuilder)
-    {
-        var counter = modelBuilder.Entity<StoreRequestCounter>();
-        counter.ToTable("request_counters", Schema);
-        counter.HasKey(value => value.TenantId);
-        counter.Property(value => value.TenantId).HasColumnName("tenant_id").ValueGeneratedNever();
-        counter.Property(value => value.NextValue).HasColumnName("next_value").HasColumnType("bigint");
+        entity.Navigation(value => value.Consent).IsRequired();
     }
 
     // Copia de IdentityDbContext.ConfigureOutboxProjection: se escribe, pero la tabla no se migra desde acá. Las columnas NOT NULL
@@ -379,12 +218,4 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         outbox.Property(value => value.OccurredAt).HasColumnName("occurred_at");
         outbox.Property(value => value.Attempts).HasColumnName("attempts");
     }
-}
-
-// Sólo existe para que EF cree la tabla; el contador se toca con SQL (StoreRequestNumberGenerator).
-internal sealed class StoreRequestCounter
-{
-    public Guid TenantId { get; set; }
-
-    public long NextValue { get; set; }
 }

@@ -21,6 +21,67 @@ public sealed class StoreSettingsHandlerTests
         Assert.IsType<StoreDomainException>(await Record.ExceptionAsync(act)).Code;
 
     [Fact]
+    public async Task SavingAnActiveAdvisorStoresItAndReturnsItsName()
+    {
+        var rig = new SettingsRig();
+        rig.Members.Active.Add(Member);
+        rig.Members.Names[Member] = "Ana";
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: Member)), Ct);
+
+        Assert.Equal(Member, saved.AdvisorMembershipId);
+        Assert.Equal("Ana", saved.AdvisorName);
+        Assert.Contains("advisorMembershipId", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task AnInactiveOrForeignAdvisorIs422AdvisorNotFound()
+    {
+        var rig = new SettingsRig();
+
+        Assert.Equal(
+            StoreErrorCodes.AdvisorNotFound,
+            await CodeOfAsync(() => rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: OtherMember)), Ct)));
+        Assert.Empty(rig.Log.Entries);
+    }
+
+    [Fact]
+    public async Task KeepingAnAdvisorThatIsNoLongerActiveSavesWithoutCheckingIt()
+    {
+        // El asesor guardado se desactivó después: el checkout ya cae al owner, y cualquier otro cambio de ajustes no debe trabarse.
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva", advisorMembershipId: Member), version: 1), Ct);
+
+        Assert.Equal(Member, saved.AdvisorMembershipId);
+        Assert.Empty(rig.Members.ActiveChecks);
+    }
+
+    [Fact]
+    public async Task ChangingToAnInactiveAdvisorIsStill422AdvisorNotFound()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        Assert.Equal(
+            StoreErrorCodes.AdvisorNotFound,
+            await CodeOfAsync(
+                () => rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: OtherMember), version: 1), Ct)));
+        Assert.Equal([OtherMember], rig.Members.ActiveChecks);
+    }
+
+    [Fact]
+    public async Task ClearingTheAdvisorAuditsTheField()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(), version: 1), Ct);
+
+        Assert.Null(saved.AdvisorMembershipId);
+        Assert.Null(saved.AdvisorName);
+        Assert.Contains("advisorMembershipId", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
     public async Task ANeverSavedStoreReadsAsDefaultsWithVersionZero()
     {
         var rig = new SettingsRig();

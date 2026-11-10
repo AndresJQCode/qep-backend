@@ -19,10 +19,11 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
 
     private static readonly string[] Sizes = ["M", "L"];
 
-    private PublicStoreFixture(StoreSettingsFixture settings, HttpClient storefront)
+    private PublicStoreFixture(StoreSettingsFixture settings, HttpClient storefront, Guid ownerMembershipId)
     {
         Settings = settings;
         Storefront = storefront;
+        OwnerMembershipId = ownerMembershipId;
     }
 
     public StoreSettingsFixture Settings { get; }
@@ -31,6 +32,9 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
     public HttpClient Storefront { get; }
 
     public static Guid Tenant => StoreSettingsFixture.Tenant;
+
+    /// <summary>La membresía owner del tenant, con su fila: el asesor de respaldo de los pedidos de la tienda.</summary>
+    public Guid OwnerMembershipId { get; }
 
     /// <param name="tweak">Pisa campos del cuerpo del <c>PUT</c> de ajustes antes de guardar.</param>
     /// <param name="publish">Falso deja la tienda guardada pero sin publicar.</param>
@@ -41,6 +45,7 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
         Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? configureServices = null)
     {
         var settings = await StoreSettingsFixture.OpenAsync(modules, configureServices);
+        var owner = await StoreApiHarness.SeedOwnerMembershipAsync(settings.Factory);
         var body = settings.Body();
         tweak?.Invoke(settings, body);
         await settings.SaveAsync(body);
@@ -52,7 +57,7 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
 
         var storefront = settings.Factory.CreateClient();
         storefront.DefaultRequestHeaders.Add("X-Qep-Storefront-Key", StorefrontKey);
-        return new PublicStoreFixture(settings, storefront);
+        return new PublicStoreFixture(settings, storefront, owner);
     }
 
     public static string Url(string path, string host = Host) => $"/api/v1/public/stores/{host}{path}";
@@ -189,6 +194,48 @@ internal sealed class PublicStoreFixture : IAsyncDisposable
         await using var command = new Npgsql.NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("id", id);
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Un <c>SELECT</c> escalar sin parámetros más que el opcional <c>@id</c>.</summary>
+    public async Task<object?> ScalarAsync(string sql, Guid? id = null)
+    {
+        var connectionString = Settings.Factory.Services
+            .GetRequiredService<IConfiguration>()
+            .GetConnectionString("QepDatabase")!;
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new Npgsql.NpgsqlCommand(sql, connection);
+        if (id is not null)
+        {
+            command.Parameters.AddWithValue("id", id.Value);
+        }
+
+        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return value is DBNull ? null : value;
+    }
+
+    /// <summary>Las filas de <c>quotations.orders</c>: el checkout crea pedidos ahí.</summary>
+    public async Task<long> OrderRowsAsync() => (long)(await ScalarAsync("SELECT count(*) FROM quotations.orders"))!;
+
+    public async Task<long> CustomerRowsAsync() => (long)(await ScalarAsync("SELECT count(*) FROM customers.customers"))!;
+
+    /// <summary>El pedido con sus partes, leído por el repositorio de Quotations.</summary>
+    public async Task<Modules.Quotations.Domain.Order> LoadOrderAsync(Guid orderId)
+    {
+        await using var scope = Settings.Factory.Services.CreateAsyncScope();
+        var repository = scope.ServiceProvider.GetRequiredService<Modules.Quotations.Application.IOrderRepository>();
+        var order = await repository.FindByIdAsync(
+            Tenant, new Modules.Quotations.Domain.OrderId(orderId), TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
+    }
+
+    /// <summary>El consentimiento del invitado guardado con el pedido, o null.</summary>
+    public async Task<Modules.Store.Domain.StoreOrderConsent?> ConsentAsync(Guid orderId)
+    {
+        await using var scope = Settings.Factory.Services.CreateAsyncScope();
+        var consents = scope.ServiceProvider.GetRequiredService<Modules.Store.Application.IStoreOrderConsents>();
+        return await consents.FindAsync(Tenant, orderId, TestContext.Current.CancellationToken);
     }
 
     public async ValueTask DisposeAsync()

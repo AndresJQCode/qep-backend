@@ -39,7 +39,7 @@ public sealed class BuyerParityTests
 
         var message = BuyerSignupRequestedMessage.Parse(System.Text.Json.JsonSerializer.Serialize(payload, System.Text.Json.JsonSerializerOptions.Web));
 
-        Assert.Equal(payload.OrderRequestId, message.OrderRequestId);
+        Assert.Equal(payload.OrderId, message.OrderId);
         Assert.Equal(payload.TenantId, message.TenantId);
         Assert.Equal(payload.ClientRequestId, message.ClientRequestId);
         Assert.Equal(payload.StoreHost, message.StoreHost);

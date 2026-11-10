@@ -788,4 +788,18 @@ public sealed class CustomerProvisioningTests
 
         Assert.Equal((IdentificationType.Cc, "1020304050", "CO"), (customer.IdentificationType, customer.IdentificationNumber, customer.Country));
     }
+
+    [Fact]
+    public async Task CompleteFromStoreWithoutActorAuditsAsIntegration()
+    {
+        var phones = new LibPhoneNumberNormalizer();
+        var customer = Customer.CreateIncompleteFromExternalSale(CustomerId.New(), Tenant, "Laura", "3001234567", null, "CO", Now, phones);
+        var bed = NewBed(customer, phones: phones);
+
+        await bed.Provisioning.CompleteFromStoreAsync(Tenant, customer.Id.Value, SpanishBuyer(), null, TestContext.Current.CancellationToken);
+
+        Assert.True(customer.IsComplete);
+        Assert.Empty(bed.Audit.Human);
+        Assert.Equal((Tenant, "customers.customer.completed", customer.Id.ToString(), "success"), Assert.Single(bed.Audit.ByIntegration));
+    }
 }
