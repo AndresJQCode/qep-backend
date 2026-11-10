@@ -131,4 +131,11 @@ public static class MessagingAuditActions
 
     public const string ScheduledMessageResourceType = "scheduled_message";
     public const string ScheduledMessageCreated = "messaging.scheduled_message.created";
+    public const string ScheduledMessageUpdated = "messaging.scheduled_message.updated";
+    public const string ScheduledMessageCancelled = "messaging.scheduled_message.cancelled";
+    public const string ScheduledMessageSendNow = "messaging.scheduled_message.send_now";
+    public const string ScheduledMessageRetried = "messaging.scheduled_message.retried";
+    public const string ScheduledMessageDiscarded = "messaging.scheduled_message.discarded";
+    public const string ScheduledMessageSent = "messaging.scheduled_message.sent";
+    public const string ScheduledMessageFailed = "messaging.scheduled_message.failed";
 }

@@ -25,8 +25,43 @@ internal sealed class InMemoryScheduledMessageRepository : IScheduledMessageRepo
     public Task<ScheduledMessage?> FindActiveAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) =>
         Task.FromResult(Rows.SingleOrDefault(row => row.TenantId == tenantId && row.ConversationId == conversationId && row.IsActive));
 
-    public Task<IScheduledMessageLock?> LockAsync(Guid tenantId, Guid conversationId, Guid scheduledMessageId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    /// <summary>Lo que se confirmó con <c>CommitAsync</c> / <c>CommitDiscardAsync</c> y cuántas veces se tomó el candado.</summary>
+    public List<Guid> Commits { get; } = [];
+
+    public List<Guid> DiscardCommits { get; } = [];
+
+    public int Locks { get; private set; }
+
+    public Task<IScheduledMessageLock?> LockAsync(Guid tenantId, Guid conversationId, Guid scheduledMessageId, CancellationToken cancellationToken)
+    {
+        var row = Rows.SingleOrDefault(r => r.TenantId == tenantId && r.ConversationId == conversationId && r.Id == scheduledMessageId);
+        if (row is null)
+        {
+            return Task.FromResult<IScheduledMessageLock?>(null);
+        }
+
+        Locks++;
+        return Task.FromResult<IScheduledMessageLock?>(new InMemoryLock(this, row));
+    }
+
+    private sealed class InMemoryLock(InMemoryScheduledMessageRepository owner, ScheduledMessage message) : IScheduledMessageLock
+    {
+        public ScheduledMessage Message => message;
+
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            owner.Commits.Add(message.Id);
+            return Task.CompletedTask;
+        }
+
+        public Task CommitDiscardAsync(CancellationToken cancellationToken)
+        {
+            owner.DiscardCommits.Add(message.Id);
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 
     public Task AddAsync(ScheduledMessage message, CancellationToken cancellationToken)
     {
@@ -120,6 +155,62 @@ internal sealed class ScheduledMessageTestBed
             Audit,
             new ScheduledMessageMapper(new FakeMemberNames(Bed.MemberId)),
             new CreateScheduledVoiceNoteValidator());
+    }
+
+    private (FakeMembershipDirectory Membership, FakeExecutionContext Context) ManagementContext(bool canManage, bool member)
+    {
+        var membership = new FakeMembershipDirectory();
+        if (member)
+        {
+            membership.Active[(Bed.SubjectId, Bed.TenantId)] = Bed.MemberId;
+        }
+
+        string[] permissions = canManage
+            ? [MessagingPermissions.ConversationRead, MessagingPermissions.ConversationManage]
+            : [MessagingPermissions.ConversationRead];
+        return (membership, new FakeExecutionContext(Bed.TenantId, Bed.SubjectId, permissions));
+    }
+
+    private ScheduledMessageMapper Mapper => new(new FakeMemberNames(Bed.MemberId));
+
+    public UpdateScheduledMessageHandler UpdateHandler(bool canManage = true, bool member = true)
+    {
+        var (membership, context) = ManagementContext(canManage, member);
+        return new UpdateScheduledMessageHandler(
+            Scheduled, Bed.Conversations, membership, Bed.TenantModules, context, new FakeClock(Bed.Now), Bed.Notifier, Audit, Mapper,
+            new UpdateScheduledMessageValidator());
+    }
+
+    public CancelScheduledMessageHandler CancelHandler(bool canManage = true)
+    {
+        var (membership, context) = ManagementContext(canManage, member: true);
+        return new CancelScheduledMessageHandler(
+            Scheduled, Bed.Conversations, membership, Bed.TenantModules, context, new FakeClock(Bed.Now), Bed.Notifier, Audit, Bed.Store,
+            new CancelScheduledMessageValidator());
+    }
+
+    public SendScheduledMessageNowHandler SendNowHandler(bool canManage = true)
+    {
+        var (membership, context) = ManagementContext(canManage, member: true);
+        return new SendScheduledMessageNowHandler(
+            Scheduled, Bed.Conversations, membership, Bed.TenantModules, context, new FakeClock(Bed.Now), Bed.Notifier, Audit, Mapper,
+            new SendScheduledMessageNowValidator());
+    }
+
+    public RetryScheduledMessageHandler RetryHandler(bool canManage = true)
+    {
+        var (membership, context) = ManagementContext(canManage, member: true);
+        return new RetryScheduledMessageHandler(
+            Scheduled, Bed.Conversations, membership, Bed.TenantModules, context, new FakeClock(Bed.Now), Bed.Notifier, Audit, Mapper,
+            new RetryScheduledMessageValidator());
+    }
+
+    public DiscardScheduledMessageHandler DiscardHandler(bool canManage = true)
+    {
+        var (membership, context) = ManagementContext(canManage, member: true);
+        return new DiscardScheduledMessageHandler(
+            Scheduled, Bed.Conversations, membership, Bed.TenantModules, context, new FakeClock(Bed.Now), Bed.Notifier, Audit, Bed.Store,
+            new DiscardScheduledMessageValidator());
     }
 
     public GetScheduledMessageHandler GetHandler(Guid? tenantId = null, params string[] permissions) =>

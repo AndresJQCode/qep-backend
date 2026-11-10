@@ -71,6 +71,21 @@ public sealed class CreateScheduledMessageHandlerTests
         Assert.Empty(test.Bed.Meta.StreamUploads);
     }
 
+    [Fact]
+    public async Task AnInsertIsAudited()
+    {
+        var test = new ScheduledMessageTestBed();
+        var conversation = test.Bed.OpenConversation(lastInboundHoursAgo: 1);
+
+        var result = await test.CreateHandler().HandleAsync(TextCommand(test, conversation), Ct);
+
+        var audit = Assert.Single(test.Audit.ScheduledMessages);
+        Assert.Equal(("messaging.scheduled_message.created", result.Body.Id, false), (audit.Action, audit.ScheduledMessageId, audit.BySystem));
+        // El mismo clientId devuelve la fila guardada y no vuelve a auditar.
+        await test.CreateHandler().HandleAsync(TextCommand(test, conversation), Ct);
+        Assert.Single(test.Audit.ScheduledMessages);
+    }
+
     [Theory]
     [InlineData(ScheduledMessageStatus.Scheduled)]
     [InlineData(ScheduledMessageStatus.Failed)]
