@@ -3244,6 +3244,27 @@ Configuración: `Messaging:Workers:ScheduledPollSeconds` (5) es el tick del work
 **Despliegue.** Backend primero: la migración `AddScheduledMessages` crea `messaging.scheduled_messages` y agrega
 `retry_disabled` a `messaging.messages`; el frontend sale después.
 
+**Bucket privado (`Storage:R2:Bucket`), antes de desplegar.** No hay nada que crear: lo que se revisa es que ninguna regla
+existente borre los adjuntos programados. Los limpia el código (al terminar cada fila y con el barrido de
+`PurgeIntervalHours`, 24 h por defecto); el bucket no tiene que hacerlo.
+
+1. **Ninguna regla de lifecycle cubre `messaging/scheduled/`.** Ni una propia ni una más amplia: una regla sobre
+   `messaging/` o sin prefijo también la alcanza. Si por política se quiere una red de seguridad, que expire a **más de 2
+   días** (un programado espera hasta 24 h; antes de eso el envío falla con `messaging.scheduled.media_missing`).
+2. **La regla de `messaging/staging/` sigue con su prefijo exacto** (`expire-messaging-staging`, 1 día; ver «Pendientes del
+   owner antes de producción: imágenes y documentos del asesor»). El adjunto se sube a staging y se copia a
+   `messaging/scheduled/` al programar, así que esa regla no lo toca después.
+3. **El CORS del bucket privado** es el mismo de los adjuntos del asesor ([`ops/r2-cors.aws.json`](ops/r2-cors.aws.json)): la
+   subida usa la misma sesión de staging. No cambia nada.
+
+Para verificar, en PowerShell (wrangler pide su propio login):
+
+```powershell
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+En la salida, ningún prefijo puede ser `messaging/scheduled/`, `messaging/` ni vacío, salvo con más de 2 días.
+
 #### Secretos en local
 
 ```powershell
