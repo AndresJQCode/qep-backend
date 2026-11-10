@@ -419,6 +419,9 @@ Integración (Store, Testcontainers; un proyecto a la vez, `-- xUnit.MaxParallel
   mismo `clientRequestId` devuelve el mismo `id`; `createAccount` emite el evento con `OrderId`; moneda sin
   cuenta → 422 `currency_not_in_store`; variante inactiva → 422 `line_unavailable` y **cero filas nuevas**
   en `customers.customers` y `quotations.orders`.
+  Nota de implementación (2026-11-10): el caso «moneda sin cuenta → 422 `currency_not_in_store`» es inalcanzable por
+  la ruta pública, porque `RequireCurrency` rechaza antes la moneda que la tienda no vende; la comprobación queda como
+  defensa y sólo la cubre la fila existente de `StoreErrorMappingApiTests`.
 - `StoreSettingsApiTests`: guardar y leer `advisorMembershipId` + `advisorName`.
 - `StoreInboxApiTests`, `StoreTakeApiTests`, `StoreInboxRig`, `StoreOrderDetailApiTests` (la parte de
   `storeRequest`), `DiscardOrderRequest*Tests`, `StoreInboxFilterTests`, `StoreOrderRequestTests`,
