@@ -122,7 +122,7 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
-    public async Task AForeignCustomerApprovesWithoutPersonType()
+    public async Task OnOrderApprovalRejectsAForeignCustomerWithoutPersonType()
     {
         var row = NewRow();
         var handler = NewHandler(
@@ -130,9 +130,9 @@ public sealed class ApproveOrderHandlerTests
             directory: Directory(PersonTypeRequirement.OnOrderApproval),
             customer: Customer(personType: null, country: "ES"));
 
-        var approved = await ApproveAsync(handler, row);
+        var error = await Assert.ThrowsAsync<BilledPersonTypeRequiredException>(() => ApproveAsync(handler, row));
 
-        Assert.Equal("Approved", approved.Status);
+        Assert.Equal("Customer", error.ProblemExtensions["missingOn"]);
     }
 
     [Fact]
@@ -164,18 +164,15 @@ public sealed class ApproveOrderHandlerTests
     }
 
     [Fact]
-    public async Task ANonColombianTenantWithOnOrderApprovalApprovesWithoutPersonType()
+    public async Task ANonColombianTenantWithOnOrderApprovalRequiresThePersonType()
     {
-        // El requisito guardado sólo cuenta si el tenant es colombiano: aquí el efectivo es Never.
         var row = NewRow();
         var handler = NewHandler(
             row,
             directory: Directory(PersonTypeRequirement.OnOrderApproval, tenantCountry: "ES"),
             customer: Customer(personType: null, country: null));
 
-        var approved = await ApproveAsync(handler, row);
-
-        Assert.Equal("Approved", approved.Status);
+        await Assert.ThrowsAsync<BilledPersonTypeRequiredException>(() => ApproveAsync(handler, row));
     }
 
     [Fact]

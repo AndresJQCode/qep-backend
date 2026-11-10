@@ -67,8 +67,8 @@ public sealed class Tenant
     public string Country { get; private set; } = "CO";
 
     /// <summary>
-    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado**: sólo manda
-    /// si <see cref="Country"/> es <c>CO</c>; quien lo consulta pasa por
+    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado** y manda en
+    /// todos los países; quien lo consulta pasa por
     /// <see cref="PersonTypeRequirementPolicy.Effective"/>. Arranca en <c>Never</c> y la migración
     /// rellena con lo mismo.
     /// </summary>

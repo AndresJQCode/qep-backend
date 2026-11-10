@@ -295,10 +295,9 @@ public sealed class AuthSessionApiTests
         Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
-    // Un tenant no colombiano guarda el valor pero la sesión publica Never: el cliente no tiene que
-    // repetir la regla del país.
+    // El requisito guardado se publica tal cual en cualquier país.
     [Fact]
-    public async Task ANonColombianTenantPublishesNever()
+    public async Task ANonColombianTenantPublishesTheStoredRequirement()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -308,7 +307,7 @@ public sealed class AuthSessionApiTests
         var tenant = await LoginAndGetSeededTenantAsync(factory);
 
         Assert.Equal("ES", tenant.GetProperty("country").GetString());
-        Assert.Equal("Never", tenant.GetProperty("personTypeRequirement").GetString());
+        Assert.Equal("OnOrderApproval", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
     // Spec de redondeo de precios (D9): el cajero no tiene `tenancy.settings.read`, así que la regla de

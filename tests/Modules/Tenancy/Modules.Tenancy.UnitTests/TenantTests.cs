@@ -142,23 +142,13 @@ public sealed class TenantTests
         Assert.Equal(["personTypeRequirement"], settingsUpdated.ChangedFields);
     }
 
-    // Lo guardado sólo cuenta si el tenant es colombiano (regla única del país, Global Constraints).
+    // El requisito guardado manda en todos los países.
     [Theory]
-    [InlineData("CO", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.OnCustomerSave)]
-    [InlineData("co", PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.OnOrderApproval)]
-    [InlineData("ES", PersonTypeRequirement.OnCustomerSave, PersonTypeRequirement.Never)]
-    [InlineData(null, PersonTypeRequirement.OnOrderApproval, PersonTypeRequirement.Never)]
-    public void EffectiveIsNeverOutsideColombia(
-        string? country, PersonTypeRequirement stored, PersonTypeRequirement expected) =>
-        Assert.Equal(expected, PersonTypeRequirementPolicy.Effective(country, stored));
-
-    [Theory]
-    [InlineData("co", true)]
-    [InlineData("CO", true)]
-    [InlineData("ES", false)]
-    [InlineData(null, false)]
-    public void IsColombianIgnoresCase(string? country, bool expected) =>
-        Assert.Equal(expected, PersonTypeRequirementPolicy.IsColombian(country));
+    [InlineData("CO", PersonTypeRequirement.OnCustomerSave)]
+    [InlineData("ES", PersonTypeRequirement.OnCustomerSave)]
+    [InlineData(null, PersonTypeRequirement.OnOrderApproval)]
+    public void EffectiveIsTheStoredRequirementInEveryCountry(string? country, PersonTypeRequirement stored) =>
+        Assert.Equal(stored, PersonTypeRequirementPolicy.Effective(country, stored));
 
     [Fact]
     public void UpdateSettingsWithoutChangesDoesNotRaiseEvent()

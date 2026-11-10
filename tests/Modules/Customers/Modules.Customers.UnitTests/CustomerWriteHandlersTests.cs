@@ -282,26 +282,29 @@ public sealed class CustomerWriteHandlersTests
     }
 
     [Fact]
-    public async Task AForeignCustomerOfAColombianTenantSavesWithoutPersonType()
+    public async Task OnCustomerSaveRejectsAForeignCustomerWithoutPersonType()
     {
         var customers = new FakeCustomerRepository();
         var command = CreateCommand() with { IdentificationType = "NIF", Country = "ES", CityId = null, CityName = "Madrid" };
 
-        await SaveIgnoringTheResponseAsync(() =>
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
             NewCreate(customers, new UnitOfWork(), OnSave()).HandleAsync(command, TestContext.Current.CancellationToken));
 
-        Assert.Null(Assert.Single(customers.Added).PersonType);
+        Assert.Equal(CustomersErrorCodes.PersonTypeRequired, failure.Code);
+        Assert.Equal(["PersonType"], failure.FieldErrors.Keys);
+        Assert.Empty(customers.Added);
     }
 
     [Fact]
-    public async Task ANonColombianTenantWithOnCustomerSaveCreatesWithoutPersonType()
+    public async Task ANonColombianTenantWithOnCustomerSaveRequiresThePersonType()
     {
         var customers = new FakeCustomerRepository();
 
-        await SaveIgnoringTheResponseAsync(() =>
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
             NewCreate(customers, new UnitOfWork(), OnSave("ES")).HandleAsync(CreateCommand(), TestContext.Current.CancellationToken));
 
-        Assert.Null(Assert.Single(customers.Added).PersonType);
+        Assert.Equal(CustomersErrorCodes.PersonTypeRequired, failure.Code);
+        Assert.Empty(customers.Added);
     }
 
     // La dirección propia del cliente es opcional. Sin calle no se siembra la libreta, cuya fila sí la exige

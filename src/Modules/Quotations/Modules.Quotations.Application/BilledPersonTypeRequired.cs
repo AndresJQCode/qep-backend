@@ -29,10 +29,8 @@ internal static class BilledPersonTypeRequired
     public const string MissingOnCustomer = "Customer";
 
     /// <summary>
-    /// Sólo con el requisito efectivo <c>OnOrderApproval</c> (el guardado vale únicamente si el tenant es
-    /// colombiano) y sólo si el país de a quien se factura es CO: el de la ficha del cliente, o el del tenant
-    /// si no lo trae; la fila «a otros datos» no tiene país propio y usa el del tenant. El consumidor final
-    /// está exento. Lo barato primero: no se lee el tenant para un consumidor final.
+    /// Sólo con el requisito efectivo <c>OnOrderApproval</c> (vale en todos los países). El
+    /// consumidor final está exento. Lo barato primero: no se lee el tenant para un consumidor final.
     /// </summary>
     public static async Task EnsureSatisfiedAsync(
         ITenantDirectory tenantDirectory,
@@ -56,7 +54,7 @@ internal static class BilledPersonTypeRequired
 
         if (source == BilledPartySource.BillingParty)
         {
-            if (PersonTypeRequirementPolicy.IsColombian(settings.Country) && billing!.PersonType is null)
+            if (billing!.PersonType is null)
             {
                 throw new BilledPersonTypeRequiredException(MissingOnBillingParty);
             }
@@ -67,9 +65,7 @@ internal static class BilledPersonTypeRequired
         // La ficha vigente, no una copia: el pedido sin fila de facturación factura a lo que el cliente
         // es hoy. Un cliente que ya no resuelve no se puede dar por bueno.
         var customer = await customerLookup.FindAsync(tenantId, order.ClientId, cancellationToken);
-        var country = customer?.Country is { } own && !string.IsNullOrWhiteSpace(own) ? own : settings.Country;
-        if (PersonTypeRequirementPolicy.IsColombian(country.Trim())
-            && string.IsNullOrWhiteSpace(customer?.PersonType))
+        if (string.IsNullOrWhiteSpace(customer?.PersonType))
         {
             throw new BilledPersonTypeRequiredException(MissingOnCustomer);
         }

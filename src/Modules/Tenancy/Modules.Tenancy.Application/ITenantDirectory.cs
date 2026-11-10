@@ -53,7 +53,7 @@ public sealed record TenantRegionalSettings(
     public CustomerFieldPolicy EffectiveCustomerFieldPolicy =>
         CustomerFieldPolicy ?? Domain.CustomerFieldPolicy.Default;
 
-    /// <summary>Lo guardado sólo manda si el tenant es colombiano; es lo que se publica.</summary>
+    /// <summary>Lo guardado manda en todos los países; es lo que se publica.</summary>
     public PersonTypeRequirement EffectivePersonTypeRequirement =>
         PersonTypeRequirementPolicy.Effective(Country, PersonTypeRequirement);
 }
