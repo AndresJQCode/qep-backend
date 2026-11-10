@@ -20,17 +20,26 @@ internal static class CustomerFieldPolicyRequirement
         Customer? current,
         CancellationToken cancellationToken)
     {
-        // Forma del par, siempre y sin leer el tenant: un tipo sin numero (o al reves) es un documento a medias, y la
-        // base lo rechaza (CK_customers_identification_pair), asi que mejor decirlo aca por campo.
+        // Forma del par, siempre y sin leer el tenant. Tipo sin numero conserva el codigo que ya daba el dominio
+        // (identification_number_required); numero sin tipo es un documento a medias. La base tambien lo rechaza
+        // (CK_customers_identification_pair), pero mejor decirlo aca por campo.
         var hasType = !string.IsNullOrWhiteSpace(command.IdentificationType);
         var hasNumber = !string.IsNullOrWhiteSpace(command.IdentificationNumber);
-        if (hasType != hasNumber)
+        if (hasType && !hasNumber)
         {
-            var field = hasType ? "IdentificationNumber" : "IdentificationType";
+            const string numberRequired = "customers.customer.identification_number_required";
+            throw new CustomersDomainException(
+                numberRequired,
+                "The identification number is required.",
+                new Dictionary<string, string[]> { ["IdentificationNumber"] = [numberRequired] });
+        }
+
+        if (hasNumber && !hasType)
+        {
             throw new CustomersDomainException(
                 CustomersErrorCodes.IdentificationIncomplete,
                 "The identification needs both its type and its number.",
-                new Dictionary<string, string[]> { [field] = [CustomersErrorCodes.IdentificationIncomplete] });
+                new Dictionary<string, string[]> { ["IdentificationType"] = [CustomersErrorCodes.IdentificationIncomplete] });
         }
 
         var evaluateAll = current is null || !current.IsComplete;
@@ -44,16 +53,16 @@ internal static class CustomerFieldPolicyRequirement
         var settings = await directory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
         var policy = settings?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
 
+        // Un solo error con los campos de documento y ciudad juntos, para que el formulario marque todo de una vez;
+        // el codigo es el del documento cuando falla, y el de la ciudad si solo falla ella.
+        var errors = new Dictionary<string, string[]>();
+        string? code = null;
+
         if (evaluateDocument && policy.Document.OnCustomerSave && !hasType)
         {
-            throw new CustomersDomainException(
-                CustomersErrorCodes.IdentificationRequired,
-                "The tenant requires the customer's identification.",
-                new Dictionary<string, string[]>
-                {
-                    ["IdentificationType"] = [CustomersErrorCodes.IdentificationRequired],
-                    ["IdentificationNumber"] = [CustomersErrorCodes.IdentificationRequired],
-                });
+            code = CustomersErrorCodes.IdentificationRequired;
+            errors["IdentificationType"] = [code];
+            errors["IdentificationNumber"] = [code];
         }
 
         if (evaluateCity && policy.City.OnCustomerSave)
@@ -62,19 +71,20 @@ internal static class CustomerFieldPolicyRequirement
             {
                 if (command.CityId is null)
                 {
-                    throw new CustomersDomainException(
-                        CustomersErrorCodes.CityRequired,
-                        "The tenant requires the customer's city.",
-                        new Dictionary<string, string[]> { ["CityId"] = [CustomersErrorCodes.CityRequired] });
+                    code ??= CustomersErrorCodes.CityRequired;
+                    errors["CityId"] = [CustomersErrorCodes.CityRequired];
                 }
             }
             else if (string.IsNullOrWhiteSpace(command.CityName))
             {
-                throw new CustomersDomainException(
-                    CustomersErrorCodes.CityNameRequired,
-                    "The tenant requires the customer's city.",
-                    new Dictionary<string, string[]> { ["CityName"] = [CustomersErrorCodes.CityNameRequired] });
+                code ??= CustomersErrorCodes.CityNameRequired;
+                errors["CityName"] = [CustomersErrorCodes.CityNameRequired];
             }
+        }
+
+        if (code is not null)
+        {
+            throw new CustomersDomainException(code, "The tenant requires fields the customer does not have.", errors);
         }
     }
 

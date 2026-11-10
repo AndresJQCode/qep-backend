@@ -7,6 +7,7 @@ namespace Modules.Customers.UnitTests;
 
 public sealed class CustomerFieldPolicyRequirementTests
 {
+    private const string NumberRequired = "customers.customer.identification_number_required";
     private static readonly Guid Tenant = CustomerWriteDoubles.Tenant;
     private static readonly CustomerFieldPolicy Relaxed = new(new(false, false), new(false, false));
     private static readonly CustomerFieldPolicy Strict = new(new(true, false), new(true, false));
@@ -81,13 +82,16 @@ public sealed class CustomerFieldPolicyRequirementTests
             CustomerId.New(), CustomerDomainFixtures.TenantId, "Verde", null, "3109352187", Now, new FakeNormalizer());
 
     [Fact]
-    public async Task ATypeWithoutNumberIsIncompleteOnTheNumberOnly()
+    public async Task ATypeWithoutNumberIsNumberRequiredOnTheNumberOnly()
     {
-        var failure = await Fails(Ensure(Command(number: null), Relaxed));
+        foreach (var blank in new string?[] { null, "", "  " })
+        {
+            var failure = await Fails(Ensure(Command(number: blank), Relaxed));
 
-        Assert.Equal(CustomersErrorCodes.IdentificationIncomplete, failure.Code);
-        Assert.Equal(["IdentificationNumber"], Keys(failure));
-        Assert.Equal([CustomersErrorCodes.IdentificationIncomplete], failure.FieldErrors["IdentificationNumber"]);
+            Assert.Equal(NumberRequired, failure.Code);
+            Assert.Equal(["IdentificationNumber"], Keys(failure));
+            Assert.Equal([NumberRequired], failure.FieldErrors["IdentificationNumber"]);
+        }
     }
 
     [Fact]
@@ -104,7 +108,25 @@ public sealed class CustomerFieldPolicyRequirementTests
     {
         var failure = await Fails(Ensure(Command(number: null), Relaxed));
 
-        Assert.Equal(CustomersErrorCodes.IdentificationIncomplete, failure.Code);
+        Assert.Equal(NumberRequired, failure.Code);
+    }
+
+    [Fact]
+    public async Task MissingDocumentAndCityReportsBothFields()
+    {
+        var co = await Fails(Ensure(Command(type: null, number: null), Strict));
+
+        Assert.Equal(CustomersErrorCodes.IdentificationRequired, co.Code);
+        Assert.Equal(["CityId", "IdentificationNumber", "IdentificationType"], Keys(co));
+        Assert.Equal([CustomersErrorCodes.CityRequired], co.FieldErrors["CityId"]);
+        Assert.Equal([CustomersErrorCodes.IdentificationRequired], co.FieldErrors["IdentificationType"]);
+        Assert.Equal([CustomersErrorCodes.IdentificationRequired], co.FieldErrors["IdentificationNumber"]);
+
+        var abroad = await Fails(Ensure(Command(type: null, number: null, country: "ES"), Strict));
+
+        Assert.Equal(CustomersErrorCodes.IdentificationRequired, abroad.Code);
+        Assert.Equal(["CityName", "IdentificationNumber", "IdentificationType"], Keys(abroad));
+        Assert.Equal([CustomersErrorCodes.CityNameRequired], abroad.FieldErrors["CityName"]);
     }
 
     [Fact]
