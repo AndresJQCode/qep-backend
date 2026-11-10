@@ -3,6 +3,7 @@ using BuildingBlocks.Domain.Identification;
 using FluentValidation;
 using Modules.Customers.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.Application;
 
@@ -42,8 +43,17 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
     /// </summary>
     public static IReadOnlyList<string> IdentificationTypes => DocumentTypesByCountry.AllowedFor("CO");
 
-    public ExcelCustomerRowRules()
+    /// <summary>Sin politica del tenant rige la de siempre: documento y ciudad obligatorios.</summary>
+    public ExcelCustomerRowRules() : this(CustomerFieldPolicy.Default)
     {
+    }
+
+    public ExcelCustomerRowRules(CustomerFieldPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        var documentRequired = policy.Document.OnCustomerSave;
+        var cityRequired = policy.City.OnCustomerSave;
+
         // Opcional a proposito: vacio significa "esta fila crea un cliente"; con un valor,
         // "esta fila actualiza el cliente con ese CUC" (ImportCustomersHandler resuelve cual).
         // El resto de las reglas de esta clase NO se condicionan por Cuc — una fila de
@@ -71,10 +81,20 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
         // ExcelCustomerRowRulesTests.AMissingIdentificationTypeFailsWithTheRequiredCodeAndNotTheFormatCode
         // (RED: con el tipo vacio, el resultado daba valido). Dos reglas independientes, cada una
         // con su propio When() cuando lo necesita, no dejan ambiguedad de alcance.
+        // El documento es un par (tipo, numero). Ambos vacios solo se rechaza si la politica del tenant lo pide al
+        // guardar; la mitad de un par nunca pasa. Tipo sin numero conserva identification_number_required (Ruling P2);
+        // numero sin tipo es identification_incomplete, reportado sobre el tipo, que es la celda que falta.
         RuleFor(row => row.IdentificationType)
-            .NotEmpty()
+            .Must(_ => false)
             .WithErrorCode("customers.import.row.identification_type_required")
-            .WithMessage("The identification type is required.");
+            .WithMessage("The identification type is required.")
+            .When(row => documentRequired && IsBlank(row.IdentificationType) && IsBlank(row.IdentificationNumber));
+
+        RuleFor(row => row.IdentificationType)
+            .Must(_ => false)
+            .WithErrorCode("customers.import.row.identification_incomplete")
+            .WithMessage("The identification needs both its type and its number.")
+            .When(row => IsBlank(row.IdentificationType) && !IsBlank(row.IdentificationNumber));
 
         RuleFor(row => row.IdentificationType)
             .Must(IsSupportedIdentificationType)
@@ -82,12 +102,16 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
             .WithMessage(
                 $"The identification type must be one of " +
                 $"{Join(IdentificationTypes)}.")
-            .When(row => !string.IsNullOrWhiteSpace(row.IdentificationType));
+            .When(row => !IsBlank(row.IdentificationType));
 
         RuleFor(row => row.IdentificationNumber)
-            .NotEmpty()
+            .Must(_ => false)
                 .WithErrorCode("customers.import.row.identification_number_required")
                 .WithMessage("The identification number is required.")
+            .When(row => IsBlank(row.IdentificationNumber) &&
+                (!IsBlank(row.IdentificationType) || documentRequired));
+
+        RuleFor(row => row.IdentificationNumber)
             .MaximumLength(CustomerIdentification.NumberMaxLength)
                 .WithErrorCode("customers.import.row.identification_number_too_long")
                 .WithMessage(
@@ -133,15 +157,19 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
         // Solo "no vacio" aca: si el departamento y la ciudad existen, y si la ciudad pertenece a
         // ese departamento, lo resuelve el handler contra Geography — este validador no tiene
         // acceso a la base ni la necesita para esto.
+        // Departamento y ciudad viajan como par (G9): los dos vacios solo se rechazan si la politica pide la ciudad al
+        // guardar; uno sin el otro siempre conserva su codigo.
         RuleFor(row => row.Department)
-            .NotEmpty()
+            .Must(_ => false)
                 .WithErrorCode("customers.import.row.department_required")
-                .WithMessage("The department is required.");
+                .WithMessage("The department is required.")
+            .When(row => IsBlank(row.Department) && (!IsBlank(row.City) || cityRequired));
 
         RuleFor(row => row.City)
-            .NotEmpty()
+            .Must(_ => false)
                 .WithErrorCode("customers.import.row.city_required")
-                .WithMessage("The city is required.");
+                .WithMessage("The city is required.")
+            .When(row => IsBlank(row.City) && (!IsBlank(row.Department) || cityRequired));
 
         RuleFor(row => row.WithRetention)
             .Must(BeSiOrNoOrEmpty)
@@ -153,6 +181,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.vat_surplus_invalid")
                 .WithMessage("The 'Excedente Iva' column must be 'Si', 'No' or empty.");
     }
+
+    private static bool IsBlank(string? value) => string.IsNullOrWhiteSpace(value);
 
     private static bool IsSupportedIdentificationType(string? value) =>
         value is not null && IdentificationTypes.Contains(value.Trim(), StringComparer.OrdinalIgnoreCase);
@@ -174,7 +204,7 @@ public sealed class ImportCustomersHandler(
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<ExcelCustomerRow> rowValidator,
+    ITenantDirectory tenantDirectory,
     IPhoneNumberNormalizer phoneNormalizer)
     : ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>
 {
@@ -279,6 +309,10 @@ public sealed class ImportCustomersHandler(
 
         // Primera pasada: solo campos, sin tocar la base. Separa las filas con formato valido de
         // las que no, sin abortar el archivo por una fila mala.
+        // La politica del tenant se lee una sola vez por archivo, no por fila.
+        var settings = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
+        var rowValidator = new ExcelCustomerRowRules(settings?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default);
+
         var fieldValidRows = new List<ExcelCustomerRow>();
         foreach (var row in rows)
         {
@@ -315,12 +349,19 @@ public sealed class ImportCustomersHandler(
         // por eso queda separada de la particion pura de arriba.
         foreach (var row in firstOccurrences)
         {
-            var type = IdentificationTypeParser.Parse(row.IdentificationType);
-            var number = row.IdentificationNumber!.Trim();
+            // Sin documento (politica relajada) la fila no lleva par; las reglas ya descartaron las mitades.
+            var hasDocument = !string.IsNullOrWhiteSpace(row.IdentificationType)
+                && !string.IsNullOrWhiteSpace(row.IdentificationNumber);
+            IdentificationType? type = hasDocument ? IdentificationTypeParser.Parse(row.IdentificationType) : null;
+            var number = hasDocument ? row.IdentificationNumber!.Trim() : null;
 
-            var city = await geographyLookup.FindCityByNameAsync(
-                row.Department!.Trim(), row.City!.Trim(), cancellationToken);
-            if (city is null)
+            // Departamento y ciudad vacios son una fila sin ciudad (las reglas ya exigieron el par completo).
+            var hasCity = !string.IsNullOrWhiteSpace(row.Department) && !string.IsNullOrWhiteSpace(row.City);
+            var city = hasCity
+                ? await geographyLookup.FindCityByNameAsync(
+                    row.Department!.Trim(), row.City!.Trim(), cancellationToken)
+                : null;
+            if (hasCity && city is null)
             {
                 errors.Add(new ImportRowError(
                     row.RowNumber,
@@ -481,10 +522,18 @@ public sealed class ImportCustomersHandler(
             return candidates;
         }
 
+        // Las filas sin documento no chocan con nadie: no se consultan.
+        var withDocument = candidates
+            .Where(candidate => candidate.Type is not null && candidate.Number is not null)
+            .Select(candidate => (candidate.Type!.Value, candidate.Number!))
+            .ToArray();
+        if (withDocument.Length == 0)
+        {
+            return candidates;
+        }
+
         var existing = await customerRepository.FindExistingIdentificationsAsync(
-            tenantId,
-            candidates.Select(candidate => (candidate.Type, candidate.Number)).ToArray(),
-            cancellationToken);
+            tenantId, withDocument, cancellationToken);
         if (existing.Count == 0)
         {
             return candidates;
@@ -497,7 +546,8 @@ public sealed class ImportCustomersHandler(
             // el dueno existente y el objetivo de esta fila (TargetId) son el mismo cliente. Para
             // una fila de creacion, TargetId siempre es null, asi que cualquier dueno encontrado
             // cuenta como "otro" — mismo comportamiento que antes.
-            if (existing.TryGetValue((candidate.Type, candidate.Number), out var ownerId) &&
+            if (candidate.Type is { } type && candidate.Number is { } number &&
+                existing.TryGetValue((type, number), out var ownerId) &&
                 ownerId != candidate.TargetId)
             {
                 errors.Add(new ImportRowError(
@@ -569,7 +619,7 @@ public sealed class ImportCustomersHandler(
 
                 // Una jurídica se identifica con NIT: Update lanzaría la excepción de dominio y, como arriba,
                 // no hay try/catch por fila — se adelanta para reportar sólo esa fila (spec 2026-10-26).
-                if (customer.PersonType == PersonType.Juridica && candidate.Type != IdentificationType.Nit)
+                if (customer.PersonType == PersonType.Juridica && candidate.Type is { } rowType && rowType != IdentificationType.Nit)
                 {
                     errors.Add(new ImportRowError(
                         candidate.RowNumber,
@@ -596,7 +646,7 @@ public sealed class ImportCustomersHandler(
                 customer.Update(
                     candidate.Name,
                     candidate.BusinessName,
-                    new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                    ToIdentification(candidate),
                     // La planilla no trae tipo de persona: reimportar no borra el que ya tenía (spec 2026-10-26).
                     customer.PersonType,
                     // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
@@ -609,7 +659,7 @@ public sealed class ImportCustomersHandler(
                         Email = candidate.Email,
                         Address = candidate.Address ?? string.Empty,
                         Country = Customer.ColombiaCountryCode,
-                        CityId = candidate.City.CityId
+                        CityId = candidate.City?.CityId
                     },
                     new CustomerCommercialInfo
                     {
@@ -630,7 +680,9 @@ public sealed class ImportCustomersHandler(
             var sequence = nextSequence;
             nextSequence++;
             var cuc = CucFormatter.Build(
-                candidate.Classification?.Prefix, candidate.City.DepartmentDivipolaCode, sequence);
+                candidate.Classification?.Prefix,
+                candidate.City?.DepartmentDivipolaCode ?? CucFormatter.ForeignDepartmentCode,
+                sequence);
 
             var newCustomer = Customer.Create(
                 CustomerId.New(),
@@ -638,14 +690,9 @@ public sealed class ImportCustomersHandler(
                 cuc,
                 candidate.Name,
                 candidate.BusinessName,
-                new CustomerAddressDetails
-                {
-                    Name = candidate.Name,
-                    Address = candidate.Address ?? string.Empty,
-                    CityId = candidate.City.CityId,
-                    Phone = candidate.Phone
-                },
-                new CustomerIdentification { Type = candidate.Type, Number = candidate.Number },
+                // Sin ciudad no hay libreta: nace sin primera direccion, como en el formulario.
+                CustomerMapping.ToFirstAddress(candidate.Name, candidate.Address, candidate.City, candidate.Phone),
+                ToIdentification(candidate),
                 // La planilla no trae tipo de persona (spec 2026-10-26).
                 null,
                 // Solo colombiana, por lo mismo que la rama de actualizacion de arriba.
@@ -655,7 +702,7 @@ public sealed class ImportCustomersHandler(
                     Email = candidate.Email,
                     Address = candidate.Address ?? string.Empty,
                     Country = Customer.ColombiaCountryCode,
-                    CityId = candidate.City.CityId
+                    CityId = candidate.City?.CityId
                 },
                 new CustomerCommercialInfo
                 {
@@ -672,6 +719,11 @@ public sealed class ImportCustomersHandler(
 
         return imported;
     }
+
+    private static CustomerIdentification? ToIdentification(CandidateRow candidate) =>
+        candidate.Type is { } type && candidate.Number is { } number
+            ? new CustomerIdentification { Type = type, Number = number }
+            : null;
 
     // "Si" es si; cualquier otra cosa —incluida la celda vacia— es no. Lo mismo para las dos
     // columnas booleanas: el validador ya rechazo todo lo que no sea Si/No/vacio, asi que aca no
@@ -750,12 +802,12 @@ public sealed class ImportCustomersHandler(
         string? Cuc,
         string Name,
         string? BusinessName,
-        IdentificationType Type,
-        string Number,
+        IdentificationType? Type,
+        string? Number,
         string? Phone,
         string? Email,
         string? Address,
-        CustomerCityRef City,
+        CustomerCityRef? City,
         ClientClassification? Classification,
         bool WithRetention,
         bool VatSurplus,
@@ -789,8 +841,16 @@ public static class ExcelCustomerRowDeduplicator
 
         foreach (var row in fieldValidRows)
         {
+            // Sin documento no hay nada que duplicar: dos filas sin documento conviven.
+            if (string.IsNullOrWhiteSpace(row.IdentificationType)
+                || string.IsNullOrWhiteSpace(row.IdentificationNumber))
+            {
+                firstOccurrences.Add(row);
+                continue;
+            }
+
             var type = IdentificationTypeParser.Parse(row.IdentificationType);
-            var number = row.IdentificationNumber!.Trim();
+            var number = row.IdentificationNumber.Trim();
 
             if (seen.Add((type, number)))
             {

@@ -241,6 +241,48 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// Review Focus 3: con documento y ciudad opcionales al guardar, dos filas sin documento ni ciudad en el mismo
+    /// archivo conviven (sin <c>duplicate_in_file</c>) y nacen con CUC de departamento <c>00</c>.
+    /// </summary>
+    [Fact]
+    public async Task AnImportWithTwoRowsWithoutDocumentCreatesBothWhenAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateImporter(factory);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Documento Uno",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null),
+                new ExcelRowInput(
+                    Name: "Sin Documento Dos",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(2, result.ImportedCount);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("00000001", result.Imported[0].Cuc);
+        Assert.Equal("00000002", result.Imported[1].Cuc);
+    }
+
+    /// <summary>
     /// La clasificacion es opcional (decision 2026-10-19, <c>Customer.cs</c>): una fila sin ella
     /// crea el cliente con un CUC sin prefijo (departamento + consecutivo) y sin clasificacion.
     /// </summary>

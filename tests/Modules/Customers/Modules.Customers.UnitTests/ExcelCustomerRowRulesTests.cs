@@ -1,5 +1,6 @@
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.UnitTests;
 
@@ -29,6 +30,79 @@ public sealed class ExcelCustomerRowRulesTests
         new(2, cuc, name, null, identificationType, identificationNumber, phone,
             email, address,
             department, city, classification, withRetention, vatSurplus);
+
+    private static readonly CustomerFieldPolicy Relaxed =
+        new(new FieldRequirement(false, true), new FieldRequirement(false, true));
+
+    [Fact]
+    public void ARowWithoutDocumentIsValidWhenTheDocumentIsOptional()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: null, identificationNumber: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ARowWithOnlyATypeKeepsTheNumberRequiredCode()
+    {
+        // Ruling P2: un tipo sin numero conserva identification_number_required, aun con el documento opcional.
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: "NIT", identificationNumber: null));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_number_required" &&
+            error.PropertyName == nameof(ExcelCustomerRow.IdentificationNumber));
+    }
+
+    [Fact]
+    public void ARowWithOnlyANumberIsIncomplete()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(
+            ValidRow(identificationType: null, identificationNumber: "123"));
+
+        Assert.Contains(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_incomplete" &&
+            error.PropertyName == nameof(ExcelCustomerRow.IdentificationType));
+        Assert.DoesNotContain(result.Errors, error =>
+            error.ErrorCode == "customers.import.row.identification_type_required");
+    }
+
+    [Fact]
+    public void ARowWithoutDepartmentAndCityIsValidWhenTheCityIsOptional()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: null, city: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ARowWithACityButNoDepartmentIsStillRejected()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: null, city: "Medellin"));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.department_required");
+    }
+
+    [Fact]
+    public void ARowWithADepartmentButNoCityIsStillRejected()
+    {
+        var result = new ExcelCustomerRowRules(Relaxed).Validate(ValidRow(department: "Antioquia", city: null));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
+    }
+
+    [Fact]
+    public void TheDefaultPolicyKeepsTodaysRequiredCodes()
+    {
+        var result = new ExcelCustomerRowRules().Validate(
+            ValidRow(identificationType: null, identificationNumber: null, department: null, city: null));
+
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_type_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.identification_number_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.department_required");
+        Assert.Contains(result.Errors, error => error.ErrorCode == "customers.import.row.city_required");
+    }
 
     [Fact]
     public void AValidRowPassesEveryRule()
@@ -114,7 +188,7 @@ public sealed class ExcelCustomerRowRulesTests
     [Fact]
     public void AMissingIdentificationTypeFailsWithTheRequiredCodeAndNotTheFormatCode()
     {
-        var result = validator.Validate(ValidRow(identificationType: null));
+        var result = validator.Validate(ValidRow(identificationType: null, identificationNumber: null));
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, error =>
