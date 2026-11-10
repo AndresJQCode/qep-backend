@@ -29,9 +29,7 @@ public static class StoreInfrastructureExtensions
 
         services.AddScoped<IOnlineStoreRepository, OnlineStoreRepository>();
         services.AddScoped<IStoreDomainRepository, StoreDomainRepository>();
-        services.AddScoped<IStoreOrderRequestRepository, StoreOrderRequestRepository>();
         services.AddScoped<IStoreOrderConsents, StoreOrderConsentRepository>();
-        services.AddScoped<IStoreRequestNumberGenerator, StoreRequestNumberGenerator>();
         services.AddScoped<IStoreUnitOfWork, StoreUnitOfWork>();
         services.AddScoped<IStoreAuditPublisher, StoreAuditPublisher>();
         services.AddScoped<IStoreOutbox, StoreOutboxWriter>();

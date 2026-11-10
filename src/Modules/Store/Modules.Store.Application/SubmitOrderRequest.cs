@@ -72,6 +72,9 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
 
     public const int AddressMaxLength = 200;
 
+    // La nota viaja a Notes del pedido; el tope es el que tenía la solicitud de la tienda.
+    public const int NoteMaxLength = 1000;
+
     // Copia de BuyerPasswordRules (Store no ve Buyers); BuyerParityTests (Bootstrapper.UnitTests) las ata.
     public const int BuyerPasswordMinLength = 10;
 
@@ -81,7 +84,7 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
     {
         RuleFor(body => body.ClientRequestId).NotEqual(Guid.Empty);
         RuleFor(body => body.TurnstileToken).NotEmpty().MaximumLength(TokenMaxLength);
-        RuleFor(body => body.Note).MaximumLength(StoreOrderRequest.NoteMaxLength);
+        RuleFor(body => body.Note).MaximumLength(NoteMaxLength);
 
         RuleFor(body => body.Billing).NotNull();
         RuleFor(body => body.Billing).SetValidator(new BillingValidator()).When(body => body.Billing is not null);
@@ -295,8 +298,8 @@ public sealed partial class SubmitOrderRequestHandler(
             advisor,
             store.PricingMode == StorePricingMode.RetailOnly,
             account,
-            StoreOrderRequestParties.BillingParty(billing),
-            StoreOrderRequestParties.ShippingParty(billing, shipping),
+            StoreCheckoutParties.BillingParty(billing),
+            StoreCheckoutParties.ShippingParty(billing, shipping),
             customer.WithRetention,
             customer.VatSurplus,
             quote.Lines.Select(line => new StoreOrderLineInput(line.VariantId, line.Quantity)).ToList(),
@@ -344,7 +347,7 @@ public sealed partial class SubmitOrderRequestHandler(
     // sin documento y el pedido sigue: el asesor lo fusiona después.
     private async Task<StoreCustomerRef> ResolveCustomerAsync(Guid tenantId, StoreRequestBilling billing, CancellationToken cancellationToken)
     {
-        var data = StoreOrderRequestParties.BillingData(billing, classificationId: null);
+        var data = StoreCheckoutParties.BillingData(billing, classificationId: null);
         var found = await customers.FindByDocumentAsync(tenantId, billing.IdentificationType, billing.IdentificationNumber, cancellationToken);
         if (found is not null)
         {
@@ -382,7 +385,7 @@ public sealed partial class SubmitOrderRequestHandler(
         CancellationToken cancellationToken)
     {
         var outcomes = await customers.EnsureAddressesAsync(
-            tenantId, customer.Id, StoreOrderRequestParties.AddressInputs(billing, shipping), cancellationToken);
+            tenantId, customer.Id, StoreCheckoutParties.AddressInputs(billing, shipping), cancellationToken);
         if (outcomes.Contains(StoreAddressOutcome.Skipped))
         {
             LogAddressesSkipped(logger, customer.Id, tenantId);

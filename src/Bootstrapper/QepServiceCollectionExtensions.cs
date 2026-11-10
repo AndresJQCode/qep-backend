@@ -1381,7 +1381,6 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
         services.AddScoped<Modules.Store.Application.IStoreCustomerDirectory, StoreCustomerDirectory>();
         services.AddScoped<Modules.Store.Application.IStoreMemberDirectory, StoreMemberDirectory>();
-        services.AddScoped<Modules.Store.Application.OrderRequestRowComposer>();
         services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
         services.AddScoped<Modules.Store.Application.StorefrontResolver>();
         services.AddScoped<Modules.Store.Application.PublicCartPricing>();
@@ -1409,24 +1408,6 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.ListPublicCitiesQuery, Modules.Store.Application.PublicGeoListDto>,
             Modules.Store.Application.ListPublicCitiesHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.ListOrderRequestsQuery, Modules.Store.Application.StoreOrderRequestPageDto>,
-            Modules.Store.Application.ListOrderRequestsHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestSummaryQuery, Modules.Store.Application.StoreInboxSummaryDto>,
-            Modules.Store.Application.GetOrderRequestSummaryHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestQuery, Modules.Store.Application.StoreOrderRequestDetailDto>,
-            Modules.Store.Application.GetOrderRequestHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetCustomerCandidatesQuery, Modules.Store.Application.StoreCustomerCandidatesDto>,
-            Modules.Store.Application.GetCustomerCandidatesHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.TakeOrderRequestCommand, Modules.Store.Application.StoreTakeResultDto>,
-            Modules.Store.Application.TakeOrderRequestHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.DiscardOrderRequestCommand, Modules.Store.Application.StoreOrderRequestRowDto>,
-            Modules.Store.Application.DiscardOrderRequestHandler>();
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
             Modules.Store.Application.GetStoreSettingsHandler>();

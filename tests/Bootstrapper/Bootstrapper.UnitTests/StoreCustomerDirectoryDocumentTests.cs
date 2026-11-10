@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Store.Application;
@@ -5,8 +6,8 @@ using Modules.Store.Application;
 namespace Bootstrapper.UnitTests;
 
 /// <summary>
-/// Customers → Store. Un cliente cuyo documento es un NIF español se encuentra por documento: la llave del candidato
-/// acepta los siete códigos, no sólo los cuatro colombianos.
+/// Customers → Store. Un cliente cuyo documento es un NIF español se encuentra por documento: la llave acepta los siete códigos,
+/// no sólo los cuatro colombianos. El alta y el completado dicen con su resultado lo que no alcanza; el resto sube tal cual.
 /// </summary>
 public sealed class StoreCustomerDirectoryDocumentTests
 {
@@ -27,35 +28,6 @@ public sealed class StoreCustomerDirectoryDocumentTests
                 CityName = "Madrid"
             },
             new CustomerCommercialInfo(), Now);
-
-    [Fact]
-    public async Task ACandidateWithANifIsFoundByItsDocument()
-    {
-        var customer = Spaniard();
-        var customers = new FakeCustomerRepository(customer);
-        customers.Identifications[(IdentificationType.Nif, "12345678Z")] = customer.Id;
-        var directory = new StoreCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning());
-
-        var found = await directory.FindCandidatesAsync(TenantId, "+34600111222", "nif", " 12345678Z ", Ct);
-
-        var candidate = Assert.Single(found);
-        Assert.Equal(customer.Id.Value, candidate.Id);
-        Assert.Equal("NIF", candidate.IdentificationType);
-        Assert.Equal(["Document"], candidate.MatchedBy);
-    }
-
-    [Fact]
-    public async Task AKnownKeyWithANifMatchesByDocument()
-    {
-        var customer = Spaniard();
-        var customers = new FakeCustomerRepository(customer);
-        customers.Identifications[(IdentificationType.Nif, "12345678Z")] = customer.Id;
-        var directory = new StoreCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning());
-
-        var known = await directory.KnownAsync(TenantId, [("+34600111222", "NIF", "12345678Z"), ("+34600333444", "NIF", "99999999R")], Ct);
-
-        Assert.Equal([0], known.ToArray());
-    }
 
     private static StoreNewCustomer Billing() =>
         new("Lucía Gómez", "NIF", "12345678Z", "+34 600 111 222", "lucia@example.es", "Calle Gran Via 28", "ES", null, "Madrid", null);
@@ -254,5 +226,42 @@ public sealed class StoreCustomerDirectoryDocumentTests
         var outcomes = await directory.EnsureAddressesAsync(TenantId, customer.Id.Value, [address, address], Ct);
 
         Assert.Equal([StoreAddressOutcome.Skipped, StoreAddressOutcome.Skipped], outcomes);
+    }
+
+    [Fact]
+    public async Task CompletePropagatesAConcurrencyConflict()
+    {
+        // Sin bandeja no hay «reintentar» que ofrecer: el choque sube tal cual y lo traduce el manejador central.
+        var customer = Incomplete();
+        var (directory, _, provisioning) = Directory(customer);
+        provisioning.CompleteFromStoreThrows = new RequestConcurrencyException("concurrency.conflict", "Changed.");
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => directory.CompleteAsync(TenantId, null, customer.Id.Value, Billing(), Ct));
+    }
+
+    [Fact]
+    public async Task EnsureAddressesPropagatesAConcurrencyConflict()
+    {
+        var customer = Spaniard();
+        var (directory, _, provisioning) = Directory(customer);
+        provisioning.EnsureAddressesThrows = new RequestConcurrencyException("concurrency.conflict", "Changed.");
+        StoreAddressInput address = new("Lucía", "Calle Gran Via 28", null, "ES", null, "Madrid");
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(
+            () => directory.EnsureAddressesAsync(TenantId, customer.Id.Value, [address], Ct));
+    }
+
+    [Fact]
+    public async Task EnsureAddressesOfACustomerThatVanishedIsABug()
+    {
+        // El checkout acaba de resolver o crear al cliente: que no exista un instante después no es un dato del visitante.
+        var customer = Spaniard();
+        var (directory, _, provisioning) = Directory(customer);
+        provisioning.EnsureAddressesThrows = new ResourceNotFoundException("customers.customer.not_found", "Gone.");
+        StoreAddressInput address = new("Lucía", "Calle Gran Via 28", null, "ES", null, "Madrid");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => directory.EnsureAddressesAsync(TenantId, customer.Id.Value, [address], Ct));
     }
 }

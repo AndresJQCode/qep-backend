@@ -86,11 +86,6 @@ internal sealed class FakeUnitOfWork(CallLog log) : IStoreUnitOfWork
         log.Entries.Add("uow.save");
         return Task.CompletedTask;
     }
-
-    public Task<IStoreTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public void DiscardPendingChanges() => throw new NotSupportedException();
 }
 
 internal sealed class FakeAudit(CallLog? log = null) : IStoreAuditPublisher
@@ -212,7 +207,7 @@ internal sealed class FakeTenants : IStoreTenantLookup
             new StoreRegionalFormat("America/Bogota", "yyyy-MM-dd", "es-CO", "COP", "CO")));
 }
 
-/// <summary>El directorio de miembros sembrado: quién está activo, cómo se llama y quién es el owner; resolver a quien llama no es de ajustes.</summary>
+/// <summary>El directorio de miembros sembrado: quién está activo, cómo se llama y quién es el owner.</summary>
 internal sealed class FakeMembers : IStoreMemberDirectory
 {
     public HashSet<Guid> Active { get; } = [];
@@ -221,9 +216,6 @@ internal sealed class FakeMembers : IStoreMemberDirectory
     public Guid Owner { get; set; }
 
     public Dictionary<Guid, string> Names { get; } = [];
-
-    public Task<(Guid MembershipId, Guid UserId)> ResolveCallerAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
 
     public Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>

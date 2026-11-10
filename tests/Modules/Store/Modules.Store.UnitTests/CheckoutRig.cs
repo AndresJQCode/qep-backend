@@ -181,17 +181,6 @@ internal sealed class FakeCustomers(CallLog log) : IStoreCustomerDirectory
             : addresses.Select(_ => StoreAddressOutcome.Added).ToList();
         return Task.FromResult(outcomes);
     }
-
-    public Task<IReadOnlyList<StoreCustomerCandidate>> FindCandidatesAsync(
-        Guid tenantId, string phoneE164, string? identificationType, string? identificationNumber, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<IReadOnlySet<int>> KnownAsync(
-        Guid tenantId, IReadOnlyCollection<(string PhoneE164, string? Type, string? Number)> keys, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<StoreCustomerRef?> FindEligibleAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
 }
 
 internal sealed class FakeConsents(CallLog log) : IStoreOrderConsents

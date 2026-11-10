@@ -31,6 +31,27 @@ public sealed class StoreOrderDetailApiTests
         Assert.Empty(manual["items"]!.AsArray());
     }
 
+    [Fact]
+    public async Task TheStoreOrderDetailCarriesNoStoreRequest()
+    {
+        // La bandeja se quitó (spec 2026-11-09): el detalle de un pedido de la tienda es el de cualquier pedido.
+        await using var fixture = await PublicStoreFixture.OpenAsync(configureServices: services =>
+        {
+            services.RemoveAll<ICaptchaVerifier>();
+            services.AddSingleton<ICaptchaVerifier>(new FakeCaptchaVerifier());
+        });
+        var orderId = await SubmitAsync(fixture);
+        using var reader = fixture.Settings.ClientFor(TenantId, "quotations.order.read");
+
+        var response = await reader.GetAsync(
+            $"/api/v1/tenants/{TenantId}/orders/{orderId}", TestContext.Current.CancellationToken);
+        var detail = (await PublicStoreFixture.JsonAsync(response)).AsObject();
+
+        Assert.True(response.IsSuccessStatusCode, detail.ToJsonString());
+        Assert.Equal("Store", (string)detail["order"]!["source"]!);
+        Assert.False(detail.ContainsKey("storeRequest"));
+    }
+
     // Un envío público mínimo: la primera ciudad sembrada de DIVIPOLA y un producto visible.
     private static async Task<Guid> SubmitAsync(PublicStoreFixture fixture)
     {

@@ -6,7 +6,7 @@ namespace Modules.Store.Application;
 /// Del bloque de facturación y el de envío del checkout a lo que piden los vecinos: el cliente (Customers), su libreta y las partes del
 /// pedido (Quotations). Una ciudad de Colombia va sólo con su id; afuera, sólo con el texto.
 /// </summary>
-internal static class StoreOrderRequestParties
+internal static class StoreCheckoutParties
 {
     public static StoreNewCustomer BillingData(StoreRequestBilling billing, Guid? classificationId)
     {

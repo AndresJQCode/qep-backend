@@ -3,28 +3,23 @@ using FluentValidation;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Store.Application;
-using Modules.Store.Domain;
 
 namespace Bootstrapper;
 
 /// <summary>
 /// Customers → Store. Mismo trato que <see cref="ServiceContractsCustomerProvisioning"/>: lecturas por <see cref="ICustomerRepository"/>
 /// y altas por <see cref="ICustomerProvisioning"/>. El alta y el completado no lanzan por datos que no alcanzan ni por un documento
-/// ajeno: lo dicen con su resultado (P4, P5). El resto de los errores de Customers sube tal cual.
+/// ajeno: lo dicen con su resultado (P4, P5). El resto de los errores de Customers sube tal cual, incluido el choque de concurrencia
+/// (<see cref="RequestConcurrencyException"/>), que el manejador central traduce.
 /// </summary>
 internal sealed class StoreCustomerDirectory(
     ICustomerRepository customers, ICustomerMergeStore mergeStore, ICustomerProvisioning provisioning) : IStoreCustomerDirectory
 {
-    // Un teléfono compartido por varios clientes no debe inundar el diálogo.
-    private const int MaxPhoneMatches = 10;
-
-    private const string Phone = "Phone";
-
-    private const string Document = "Document";
-
     private const string StoreSource = "store";
 
     private const string IncompleteCode = "customers.customer.incomplete";
+
+    private const string NotFoundCode = "customers.customer.not_found";
 
     // Los mismos tres de ShopifyCustomerDirectory.NotCompletableCodes: los de Customers que dicen «no alcanza para completo».
     private static readonly HashSet<string> NotCompletableCodes =
@@ -34,75 +29,6 @@ internal sealed class StoreCustomerDirectory(
             CustomersErrorCodes.CityNotFound,
             CustomersErrorCodes.DocumentTypeNotAllowed
         };
-
-    public async Task<IReadOnlyList<StoreCustomerCandidate>> FindCandidatesAsync(
-        Guid tenantId, string phoneE164, string? identificationType, string? identificationNumber, CancellationToken cancellationToken)
-    {
-        var matches = new Dictionary<Guid, (Customer Customer, List<string> By)>();
-        foreach (var byPhone in await customers.ListByPhoneE164Async(tenantId, phoneE164, MaxPhoneMatches, cancellationToken))
-        {
-            matches[byPhone.Id.Value] = (byPhone, [Phone]);
-        }
-
-        if (TryKey(identificationType, identificationNumber) is { } key
-            && (await customers.FindExistingIdentificationsAsync(tenantId, [key], cancellationToken)).TryGetValue(key, out var ownerId)
-            && await customers.FindAsync(tenantId, ownerId, cancellationToken) is { IsActive: true, IsMerged: false } byDocument)
-        {
-            if (matches.TryGetValue(byDocument.Id.Value, out var already))
-            {
-                already.By.Add(Document);
-            }
-            else
-            {
-                matches[byDocument.Id.Value] = (byDocument, [Document]);
-            }
-        }
-
-        return matches.Values
-            .Select(match => new StoreCustomerCandidate(
-                match.Customer.Id.Value,
-                match.Customer.Name,
-                match.Customer.PhoneE164,
-                match.Customer.IdentificationType?.ToWireValue(),
-                match.Customer.IdentificationNumber,
-                match.Customer.IsComplete,
-                match.By))
-            .ToList();
-    }
-
-    public async Task<IReadOnlySet<int>> KnownAsync(
-        Guid tenantId,
-        IReadOnlyCollection<(string PhoneE164, string? Type, string? Number)> keys,
-        CancellationToken cancellationToken)
-    {
-        var list = keys.ToList();
-        var phones = await customers.FindExistingPhonesE164Async(
-            tenantId, list.Select(key => key.PhoneE164).Distinct(StringComparer.Ordinal).ToList(), cancellationToken);
-
-        var documentKeys = list.Select(key => TryKey(key.Type, key.Number)).OfType<(IdentificationType, string)>().Distinct().ToList();
-        var documents = documentKeys.Count == 0
-            ? new Dictionary<(IdentificationType Type, string Number), CustomerId>()
-            : (await customers.FindExistingIdentificationsAsync(tenantId, documentKeys, cancellationToken))
-                .ToDictionary(pair => pair.Key, pair => pair.Value);
-
-        var known = new HashSet<int>();
-        for (var index = 0; index < list.Count; index++)
-        {
-            if (phones.Contains(list[index].PhoneE164)
-                || (TryKey(list[index].Type, list[index].Number) is { } key && documents.ContainsKey(key)))
-            {
-                known.Add(index);
-            }
-        }
-
-        return known;
-    }
-
-    public async Task<StoreCustomerRef?> FindEligibleAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
-    {
-        var customer = await customers.FindAsync(tenantId, new CustomerId(customerId), cancellationToken);
-        return customer is { IsActive: true, IsMerged: false } ? ToRef(customer) : null;
-    }
 
     public async Task<StoreCustomerRef?> FindByDocumentAsync(
         Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken) =>
@@ -166,7 +92,7 @@ internal sealed class StoreCustomerDirectory(
         {
             await provisioning.CompleteFromStoreAsync(tenantId, customerId, ToData(billing), actorUserId, cancellationToken);
         }
-        catch (ResourceNotFoundException exception) when (exception.Code == "customers.customer.not_found")
+        catch (ResourceNotFoundException exception) when (exception.Code == NotFoundCode)
         {
             // El llamador lo encontró activo un instante antes: que desaparezca en medio es un bug o una carrera, no un dato.
             throw new InvalidOperationException("The customer to complete was found a moment ago and is gone now.", exception);
@@ -185,13 +111,6 @@ internal sealed class StoreCustomerDirectory(
             // P5: el documento ya es de otro cliente; si ése está activo, el pedido va a él. Si no, el incompleto queda como está.
             return await DocumentOwnerOrUnchangedAsync(tenantId, customerId, billing, cancellationToken);
         }
-        catch (RequestConcurrencyException exception)
-        {
-            // Lo mismo que en EnsureAddressesAsync: no hay If-Match, así que no es un 412 sino un conflicto que se reintenta.
-            throw new ResourceConflictException(
-                StoreErrorCodes.OrderRequestConflict, "The customer changed while it was being completed.", exception);
-        }
-
         return await ReadBackAsync(tenantId, customerId, cancellationToken);
     }
 
@@ -211,20 +130,12 @@ internal sealed class StoreCustomerDirectory(
             // P6: un incompleto no tiene libreta que tocar; el pedido lleva las direcciones igual.
             return addresses.Select(_ => StoreAddressOutcome.Skipped).ToList();
         }
-        catch (ResourceNotFoundException exception) when (exception.Code == "customers.customer.not_found")
+        catch (ResourceNotFoundException exception) when (exception.Code == NotFoundCode)
         {
-            throw NotFound();
-        }
-        catch (RequestConcurrencyException exception)
-        {
-            // El cliente cambió mientras se agregaban sus direcciones: la bandeja pide reintentar.
-            throw new ResourceConflictException(
-                StoreErrorCodes.OrderRequestConflict, "The customer changed while its addresses were being added.", exception);
+            // El checkout acaba de resolver o crear al cliente: que no exista un instante después es un bug, no un dato del visitante.
+            throw new InvalidOperationException("The customer whose addresses were being ensured is gone.", exception);
         }
     }
-
-    private static StoreDomainException NotFound() =>
-        new(StoreErrorCodes.CustomerNotFound, "The customer does not exist, is inactive or was merged.");
 
     private async Task<StoreCustomerRef> ReadBackAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
     {
