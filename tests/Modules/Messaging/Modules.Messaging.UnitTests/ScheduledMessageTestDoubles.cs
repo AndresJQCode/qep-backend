@@ -88,6 +88,64 @@ internal sealed class InMemoryScheduledMessageRepository : IScheduledMessageRepo
         new(MessagingErrorCodes.ScheduledAlreadyExists, "The conversation already has a scheduled message.");
 }
 
+internal sealed record CompletedSent(Guid Id, int Attempts, Guid SentMessageId);
+
+internal sealed record CompletedFailed(Guid Id, int Attempts, string Code);
+
+/// <summary>El SQL del worker en memoria: anota cada cierre. <see cref="CompleteSucceeds"/> en <c>false</c> simula el CAS que no toca filas
+/// (el lease venció y otro lo recuperó).</summary>
+internal sealed class FakeScheduledMessageStore : IScheduledMessageStore
+{
+    public Queue<IReadOnlyList<ClaimedScheduledMessage>> Due { get; } = new();
+
+    public Queue<IReadOnlyList<ClaimedScheduledMessage>> Expired { get; } = new();
+
+    public List<PurgeableScheduledMedia> Purgeable { get; } = [];
+
+    public List<CompletedSent> Sent { get; } = [];
+
+    public List<CompletedFailed> Failed { get; } = [];
+
+    public List<(Guid TenantId, Guid Id)> ClearedMediaKeys { get; } = [];
+
+    public bool CompleteSucceeds { get; set; } = true;
+
+    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimDueAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken) =>
+        Task.FromResult(Due.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+
+    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimExpiredAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken) =>
+        Task.FromResult(Expired.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+
+    public Task<bool> CompleteSentAsync(ClaimedScheduledMessage message, Guid sentMessageId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (CompleteSucceeds)
+        {
+            Sent.Add(new CompletedSent(message.Id, message.Attempts, sentMessageId));
+        }
+
+        return Task.FromResult(CompleteSucceeds);
+    }
+
+    public Task<bool> CompleteFailedAsync(ClaimedScheduledMessage message, string failureCode, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (CompleteSucceeds)
+        {
+            Failed.Add(new CompletedFailed(message.Id, message.Attempts, failureCode));
+        }
+
+        return Task.FromResult(CompleteSucceeds);
+    }
+
+    public Task<IReadOnlyList<PurgeableScheduledMedia>> ListPurgeableAsync(int take, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<PurgeableScheduledMedia>>(Purgeable.Take(take).ToList());
+
+    public Task ClearMediaKeyAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
+    {
+        ClearedMediaKeys.Add((tenantId, id));
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>Un tenant, un miembro y los dobles de siempre más el repositorio de programados y la auditoría que anota.</summary>
 internal sealed class ScheduledMessageTestBed
 {

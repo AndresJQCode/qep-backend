@@ -21,6 +21,42 @@ public interface IScheduledMessageRepository
     Task AddAsync(ScheduledMessage message, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-09 «Worker y ejecución»: un programado que el worker pasó a <c>Sending</c> con su lease. <c>Attempts</c> es el valor
+/// tras el reclamo: el cierre lo usa como compare-and-set, así que un lease vencido y recuperado por otro no se pisa.
+/// <c>MediaSizeBytes</c> y <c>MediaMimeType</c> son los del objeto guardado (la imagen ya comprimida).</summary>
+public sealed record ClaimedScheduledMessage(
+    Guid Id, Guid TenantId, Guid ConversationId, Guid ClientId, MessageKind Kind, bool IsVoiceNote, string? Text, string? Caption,
+    string? MediaStorageKey, string? MediaMimeType, string? MediaFileName, long? MediaSizeBytes, string? MediaSha256, Guid AuthorMemberId,
+    int Attempts);
+
+/// <summary>Un objeto de <c>messaging/scheduled/</c> de una fila terminal que no se pudo borrar al transicionar.</summary>
+public sealed record PurgeableScheduledMedia(Guid TenantId, Guid Id, string StorageKey);
+
+/// <summary>
+/// Spec 2026-11-09: el SQL del worker de programados, cross-tenant y sin tracking. Los reclamos usan <c>FOR UPDATE SKIP LOCKED</c>, ponen
+/// <c>Sending</c> con <c>locked_until = now + lease</c> y suben <c>attempts</c>. Los cierres son compare-and-set por
+/// <c>(id, status = 'Sending', attempts)</c> y escriben la auditoría <c>.sent</c> / <c>.failed</c> (<c>bySystem</c>) en la misma
+/// transacción; <c>false</c> = el CAS no tocó filas y no se escribió nada.
+/// </summary>
+public interface IScheduledMessageStore
+{
+    Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimDueAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken);
+
+    /// <summary>Los <c>Sending</c> con el lease vencido (D9), con un lease nuevo.</summary>
+    Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimExpiredAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken);
+
+    Task<bool> CompleteSentAsync(ClaimedScheduledMessage message, Guid sentMessageId, DateTimeOffset now, CancellationToken cancellationToken);
+
+    /// <summary><paramref name="failureCode"/> es el código de texto del programado (<c>messaging.…</c>), nunca el número de Meta que guarda
+    /// <c>messages.failure_code</c>.</summary>
+    Task<bool> CompleteFailedAsync(ClaimedScheduledMessage message, string failureCode, DateTimeOffset now, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<PurgeableScheduledMedia>> ListPurgeableAsync(int take, CancellationToken cancellationToken);
+
+    /// <summary>Pone <c>media_storage_key</c> en <c>null</c> después de borrar el objeto.</summary>
+    Task ClearMediaKeyAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+}
+
 /// <summary>La fila de un programado bloqueada dentro de una transacción, con la misma forma que <see cref="IOutboundClaim"/>.</summary>
 public interface IScheduledMessageLock : IAsyncDisposable
 {

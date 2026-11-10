@@ -21,10 +21,12 @@ internal sealed class OutboundSettlement(
     /// y el reintento con el mismo clientId lo mandaría dos veces. <paramref name="afterRollback"/> corre después de un
     /// rollback por credencial (la nota de voz borra ahí lo que subió a R2). <paramref name="seen"/> es el <c>unread_count</c> que
     /// tenía la conversación al cargarla en este request: lo que el asesor tenía a la vista al responder (spec 2026-10-16 §3.1).
+    /// <paramref name="acknowledge"/> en <c>false</c> nunca manda el acuse de lectura, aunque el contador quede en 0: el envío de un
+    /// programado sale horas después y nadie leyó lo que el cliente escribió desde entonces (spec 2026-11-09, anti-metas).
     /// </summary>
     public async Task SettleAsync(
         Guid tenantId, Guid connectionId, IOutboundClaim claim, SendResult result, DateTimeOffset answeredAt, string? metaMediaId, Func<Task>? afterRollback,
-        int seen)
+        int seen, bool acknowledge = true)
     {
         ArgumentNullException.ThrowIfNull(claim);
         ArgumentNullException.ThrowIfNull(result);
@@ -37,7 +39,7 @@ internal sealed class OutboundSettlement(
                 await NotifyConsolidatedAsync(tenantId, claim.ConversationId);
                 // Sólo con el contador en 0: si entró algo durante el envío, el acuse de WhatsApp sobre el último wamid lo marcaría
                 // leído también, y en Instagram mark_seen es por persona. Se manda cuando alguien quite la marca después.
-                if (replied is { RemainingUnread: 0 })
+                if (acknowledge && replied is { RemainingUnread: 0 })
                 {
                     await receipts.SendAsync(tenantId, claim.ConversationId, replied.Receipt, clock.UtcNow, CancellationToken.None);
                 }
