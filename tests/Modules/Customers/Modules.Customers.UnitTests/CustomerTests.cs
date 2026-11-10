@@ -525,12 +525,12 @@ public sealed class CustomerTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void AForeignCustomerRequiresTheCityInWriting(string? cityName)
+    public void AForeignCustomerWithoutCityNameHasNoCity(string? cityName)
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => CreateForeign(cityName: cityName));
+        var customer = CreateForeign(cityName: cityName);
 
-        Assert.Equal("customers.customer.city_name_required", exception.Code);
+        Assert.Null(customer.CityId);
+        Assert.Null(customer.CityName);
     }
 
     // Sin ciudad DIVIPOLA no hay departamento, y sin departamento no hay los dos digitos que el
@@ -558,12 +558,68 @@ public sealed class CustomerTests
     }
 
     [Fact]
-    public void AColombianCustomerStillRequiresItsCityId()
+    public void AColombianCustomerWithoutCityIdHasNoCity()
     {
-        var exception = Assert.Throws<CustomersDomainException>(
-            () => Create(contact: ValidContact() with { CityId = null }));
+        var customer = Create(contact: ValidContact() with { CityId = null });
 
-        Assert.Equal("customers.customer.city_required", exception.Code);
+        Assert.Null(customer.CityId);
+        Assert.Null(customer.CityName);
+    }
+
+    [Fact]
+    public void CreateWithoutIdentificationLeavesBothFieldsNullAndIsComplete()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000142", "Verde Esencial", null, null,
+            null, null, ValidContact(), Commercial(), Now);
+
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+        Assert.Null(customer.Identification);
+        Assert.Equal(CustomerCompleteness.Complete, customer.Completeness);
+        Assert.True(customer.IsComplete);
+    }
+
+    [Fact]
+    public void AJuridicaWithoutIdentificationIsAccepted()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000142", "Verde Esencial", null, null,
+            null, PersonType.Juridica, ValidContact(), Commercial(), Now);
+
+        Assert.Equal(PersonType.Juridica, customer.PersonType);
+        Assert.Null(customer.Identification);
+    }
+
+    [Fact]
+    public void UpdateWithoutIdentificationClearsADocumentItHad()
+    {
+        var customer = Create();
+        Assert.NotNull(customer.Identification);
+
+        customer.Update(
+            customer.Name,
+            businessName: null,
+            identification: null,
+            null,
+            ValidContact(),
+            Commercial(),
+            ClassificationPrefix,
+            Now.AddMinutes(5));
+
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+    }
+
+    [Fact]
+    public void CreateFromRegisterWithoutIdentificationIsIncompleteWithoutDocument()
+    {
+        var customer = Customer.CreateFromRegister(
+            CustomerId.New(), TenantId, "Laura Perez", null, "3001234567", Now, new CustomerDomainFixtures.FakeNormalizer());
+
+        Assert.Equal(CustomerCompleteness.Incomplete, customer.Completeness);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
     }
 
     // La libreta de envios es DIVIPOLA (CustomerAddress.CityId es una FK a geography.cities), asi

@@ -112,6 +112,30 @@ internal static class CustomersApiHarness
             TestContext.Current.CancellationToken);
     }
 
+    // Politica de campos del cliente del tenant sembrado (document/city x al guardar/al facturar). Va despues de SeedTenantAsync.
+    public static async Task SetTenantCustomerFieldPolicyAsync(
+        QepApiFactory factory,
+        bool documentOnSave,
+        bool documentOnBilling,
+        bool cityOnSave,
+        bool cityOnBilling,
+        string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var id = Guid.Parse(tenantId);
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = {documentOnSave},
+                customer_document_required_on_billing = {documentOnBilling},
+                customer_city_required_on_save = {cityOnSave},
+                customer_city_required_on_billing = {cityOnBilling}
+            WHERE id = {id}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     // El stub de desarrollo concede solo los defaults de tenancy cuando X-Permissions no esta
     // (DevelopmentAuthenticationHandler.ResolvePermissions), asi que un permiso de customers hay
     // que pedirlo explicitamente. Pasarlo por prueba mantiene cada 403 atribuible: sin esto, una

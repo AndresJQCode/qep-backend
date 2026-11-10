@@ -54,11 +54,12 @@ public sealed class CustomerSelectableSearchTests
             createdAt,
             normalizer);
 
-    private static async Task<IReadOnlyList<Customer>> SearchAsync(QepApiFactory factory, string? search, int take)
+    private static async Task<IReadOnlyList<Customer>> SearchAsync(
+        QepApiFactory factory, string? search, int take, bool includeIncompleteWithoutDocument = false)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         return await scope.ServiceProvider.GetRequiredService<ICustomerRepository>()
-            .SearchSelectableAsync(Tenant, search, take, TestContext.Current.CancellationToken);
+            .SearchSelectableAsync(Tenant, search, take, includeIncompleteWithoutDocument, TestContext.Current.CancellationToken);
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql)
@@ -84,6 +85,23 @@ public sealed class CustomerSelectableSearchTests
         var found = await SearchAsync(factory, null, 20);
 
         Assert.Equal("Cliente Viejo", Assert.Single(found).Name);
+    }
+
+    // Spec 2026-11-09 (final review): un tenant que no exige el documento al facturar tambien elige incompletos sin
+    // documento; sin la bandera, como antes.
+    [Fact]
+    public async Task SelectableSearchIncludesIncompleteWithoutDocumentOnlyWhenAsked()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await AddAsync(factory, normalizer => [WithoutDocument(normalizer, "Laura Sin Documento", 1, Base)]);
+
+        var relaxed = await SearchAsync(factory, "Laura", 20, includeIncompleteWithoutDocument: true);
+        var byDefault = await SearchAsync(factory, "Laura", 20);
+
+        Assert.Equal("Laura Sin Documento", Assert.Single(relaxed).Name);
+        Assert.Empty(byDefault);
     }
 
     [Fact]

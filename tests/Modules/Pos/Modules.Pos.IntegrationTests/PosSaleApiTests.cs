@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Pos.Application;
 using Modules.Pos.Infrastructure.Persistence;
@@ -552,6 +553,103 @@ public sealed class PosSaleApiTests
                 database,
                 "SELECT count(*) FROM pos.sales WHERE id = @id AND price_rounding_decimals = 2 AND price_rounding_mode = 'Up'",
                 ("id", id)));
+    }
+
+    // Spec 2026-11-09: un cliente sin documento (nació por WhatsApp) se vende sólo si el tenant no lo exige al facturar.
+    [Fact]
+    public async Task ASaleToACustomerWithoutDocumentFollowsThePolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        var customerId = await SeedCustomerWithoutDocumentAsync(database, world.Tenant.TenantId, "Laura de WhatsApp");
+        var session = await world.OpenSessionAsync(world.Admin);
+        var strictId = Guid.CreateVersion7();
+        var relaxedId = Guid.CreateVersion7();
+
+        var strict = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales", SaleToCustomer(world, session.Id, strictId, customerId), TestContext.Current.CancellationToken);
+        await SetTenantCustomerFieldPolicyAsync(database, world.Tenant.TenantId, false, false, false, false);
+        var relaxed = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales", SaleToCustomer(world, session.Id, relaxedId, customerId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, strict.StatusCode);
+        Assert.Equal(0, await SalesWithIdAsync(database, strictId));
+        Assert.Equal(HttpStatusCode.Created, relaxed.StatusCode);
+        var customer = (await relaxed.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("customer");
+        Assert.Equal("Laura de WhatsApp", customer.GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, customer.GetProperty("identificationNumber").ValueKind);
+        Assert.Equal(
+            1,
+            await CountAsync(
+                database,
+                "SELECT count(*) FROM pos.sales WHERE id = @id AND customer_id = @customerId AND customer_identification_number IS NULL",
+                ("id", relaxedId),
+                ("customerId", customerId)));
+        var read = await world.Admin.GetAsync($"{world.Url}/sales/{relaxedId}", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+    }
+
+    // Review Focus 4: una venta sin número no rompe ni entra al filtro por documento.
+    [Fact]
+    public async Task FilteringSalesByDocumentIgnoresSalesWithoutOne()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var world = await PosWorld.ArrangeAsync(factory, database);
+        await SetTenantCustomerFieldPolicyAsync(database, world.Tenant.TenantId, false, false, false, false);
+        var customerId = await SeedCustomerWithoutDocumentAsync(database, world.Tenant.TenantId, "Laura de WhatsApp");
+        var session = await world.OpenSessionAsync(world.Admin);
+        var withoutId = Guid.CreateVersion7();
+        var identifiedId = Guid.CreateVersion7();
+        var withoutDocument = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales", SaleToCustomer(world, session.Id, withoutId, customerId), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, withoutDocument.StatusCode);
+        var identified = await world.Admin.PostAsJsonAsync(
+            $"{world.Url}/sales", SaleToCustomer(world, session.Id, identifiedId, null), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, identified.StatusCode);
+        await ExecuteSqlAsync(
+            database,
+            "UPDATE pos.sales SET customer_identification_number = '1020304050' WHERE id = @id",
+            ("id", identifiedId));
+
+        var filtered = await world.Admin.GetAsync($"{world.Url}/sales?customerDocument=20304", TestContext.Current.CancellationToken);
+        var all = await world.Admin.GetAsync($"{world.Url}/sales", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, filtered.StatusCode);
+        var items = (await filtered.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("items");
+        Assert.Equal(identifiedId, Assert.Single(items.EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.OK, all.StatusCode);
+        Assert.Equal(
+            2,
+            (await all.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken)).GetProperty("items").GetArrayLength());
+    }
+
+    private static object SaleToCustomer(PosWorld world, Guid sessionId, Guid saleId, Guid? customerId) =>
+        new
+        {
+            id = saleId,
+            cashSessionId = sessionId,
+            lines = world.PlainLine(),
+            payments = PosWorld.CashPayment(20_000m),
+            customerId,
+        };
+
+    // Un cliente que nació por WhatsApp: sin documento, incompleto (mismo SQL que PosCustomerApiTests).
+    private static async Task<Guid> SeedCustomerWithoutDocumentAsync(
+        Testcontainers.PostgreSql.PostgreSqlContainer database, Guid tenantId, string name)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteSqlAsync(
+            database,
+            """
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, true, 'Incomplete', 'CO.1', false, false, 1, now(), now())
+            """,
+            ("id", id),
+            ("tenantId", tenantId),
+            ("name", name));
+        return id;
     }
 
     private static Task<HttpResponseMessage> PutRuleAsync(HttpClient client, Guid tenantId, string usdMode) =>

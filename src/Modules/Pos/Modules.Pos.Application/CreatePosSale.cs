@@ -4,6 +4,7 @@ using BuildingBlocks.Domain.Pricing;
 using FluentValidation;
 using Modules.Pos.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Pos.Application;
 
@@ -87,6 +88,7 @@ public sealed class CreatePosSaleHandler(
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
     IPosCustomerLookup customers,
+    ITenantDirectory tenantDirectory,
     ITenantPriceRounding priceRounding,
     IExecutionContext executionContext,
     IClock clock,
@@ -162,10 +164,18 @@ public sealed class CreatePosSaleHandler(
                     throw new PosDomainException("pos.sale.customer_inactive", "The customer is inactive.");
                 }
 
+                // Spec 2026-11-09: sin documento sólo se vende si el tenant no lo exige al facturar. La política
+                // se lee sólo cuando falta el documento, y un tenant sin fila rige por el default (todo exigido).
                 if (found.IdentificationType is null || found.IdentificationNumber is null)
                 {
-                    throw new PosDomainException(
-                        "pos.sale.customer_identification_missing", "The customer has no identification document.");
+                    var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                        new TenantId(command.TenantId), cancellationToken);
+                    var policy = regional?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
+                    if (policy.Document.OnBilling)
+                    {
+                        throw new PosDomainException(
+                            "pos.sale.customer_identification_missing", "The customer has no identification document.");
+                    }
                 }
 
                 customer = new PosSaleCustomer(found.Id, found.Name, found.IdentificationType, found.IdentificationNumber);

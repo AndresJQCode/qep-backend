@@ -151,7 +151,8 @@ public static class TenantSettingsEndpoints
                 request.Country,
                 expectedVersion,
                 httpContext.TraceIdentifier,
-                request.PersonTypeRequirement),
+                request.PersonTypeRequirement,
+                request.CustomerFieldPolicy),
             cancellationToken);
         return SettingsResult(settings, httpContext);
     }
@@ -202,7 +203,8 @@ public static class TenantSettingsEndpoints
             settings.Country,
             settings.Version,
             settings.Logo is { } logo ? new TenantLogoResponse(logo.FileId, logo.Url) : null,
-            settings.PersonTypeRequirement));
+            settings.PersonTypeRequirement,
+            CustomerFieldPolicyResponse.From(settings.CustomerFieldPolicy)));
     }
 }
 
@@ -214,7 +216,8 @@ public sealed record UpdateTenantSettingsRequest(
     string? DefaultCurrency,
     string? NumberFormat,
     string? Country,
-    string? PersonTypeRequirement = null);
+    string? PersonTypeRequirement = null,
+    CustomerFieldPolicyInput? CustomerFieldPolicy = null);
 
 public sealed record SetTenantLogoRequest(Guid FileId);
 
@@ -258,4 +261,18 @@ public sealed record TenantSettingsResponse(
     TenantLogoResponse? Logo,
     /// <summary>`Never` | `OnCustomerSave` | `OnOrderApproval`: lo guardado, no lo efectivo
     /// (`/auth/me` publica el efectivo). Spec 2026-10-26.</summary>
-    string PersonTypeRequirement);
+    string PersonTypeRequirement,
+    CustomerFieldPolicyResponse CustomerFieldPolicy);
+
+/// <summary>Qué datos del cliente exige el tenant y cuándo (spec 2026-11-09).</summary>
+public sealed record CustomerFieldPolicyResponse(FieldRequirementResponse Document, FieldRequirementResponse City)
+{
+    public static CustomerFieldPolicyResponse From(CustomerFieldPolicy policy) =>
+        new(FieldRequirementResponse.From(policy.Document), FieldRequirementResponse.From(policy.City));
+}
+
+public sealed record FieldRequirementResponse(bool OnCustomerSave, bool OnBilling)
+{
+    public static FieldRequirementResponse From(FieldRequirement requirement) =>
+        new(requirement.OnCustomerSave, requirement.OnBilling);
+}

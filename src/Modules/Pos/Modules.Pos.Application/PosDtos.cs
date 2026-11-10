@@ -176,7 +176,7 @@ public sealed record PosPaymentRequest(string Method, decimal? Amount, decimal? 
 
 public sealed record PosIssuerResponse(string Name, string TaxId, string DocumentType, string? Address, string? Phone);
 
-public sealed record PosCustomerResponse(string Name, string? IdentificationType, string IdentificationNumber);
+public sealed record PosCustomerResponse(string Name, string? IdentificationType, string? IdentificationNumber);
 
 /// <summary>
 /// El selector de la caja (spec «Endpoints nuevos»): sin teléfono, correo, dirección ni clasificación, porque el
@@ -184,7 +184,7 @@ public sealed record PosCustomerResponse(string Name, string? IdentificationType
 /// no puede elegir a un inactivo; en la búsqueda siempre es true.
 /// </summary>
 public sealed record PosCustomerOptionResponse(
-    Guid Id, string Name, string IdentificationType, string IdentificationNumber, bool IsComplete, bool IsActive);
+    Guid Id, string Name, string? IdentificationType, string? IdentificationNumber, bool IsComplete, bool IsActive);
 
 /// <summary>Un selector, no una lista paginada: siempre hasta 20, sin total.</summary>
 public sealed record PosCustomerOptionsResponse(IReadOnlyList<PosCustomerOptionResponse> Items);

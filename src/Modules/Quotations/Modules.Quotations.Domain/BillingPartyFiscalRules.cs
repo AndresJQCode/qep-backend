@@ -6,8 +6,8 @@ namespace Modules.Quotations.Domain;
 /// </summary>
 public static class BillingPartyFiscalRules
 {
-    // Misma comparación que PersonTypeRequirementPolicy.IsColombian (Tenancy): ordinal, sin
-    // distinguir mayúsculas. Duplicada porque Quotations.Domain no referencia Tenancy.
+    // Comparación del país: ordinal, sin distinguir mayúsculas. El tipo de persona se exige en
+    // todos los países, pero esta regla NIT sigue siendo sólo colombiana.
     private const string ColombiaCountryCode = "CO";
 
     public const string BillingIdentificationTypeKey = "Parties.Billing.IdentificationType";

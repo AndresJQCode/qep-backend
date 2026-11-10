@@ -22,4 +22,16 @@ public static class CustomersErrorCodes
 
     /// <summary>Spec 2026-10-26: el tenant exige el tipo de persona y el cliente no lo trae.</summary>
     public const string PersonTypeRequired = "customers.customer.person_type_required";
+
+    /// <summary>Politica de campos del cliente: el tenant exige el documento al guardar y no viene.</summary>
+    public const string IdentificationRequired = "customers.customer.identification_required";
+
+    /// <summary>El documento viene a medias: el tipo sin el numero, o el numero sin el tipo.</summary>
+    public const string IdentificationIncomplete = "customers.customer.identification_incomplete";
+
+    /// <summary>Politica de campos del cliente: el tenant exige la ciudad (DIVIPOLA) de un cliente colombiano.</summary>
+    public const string CityRequired = "customers.customer.city_required";
+
+    /// <summary>Politica de campos del cliente: el tenant exige la ciudad escrita de un cliente de afuera.</summary>
+    public const string CityNameRequired = "customers.customer.city_name_required";
 }

@@ -262,7 +262,6 @@ namespace Modules.Pos.Infrastructure.Persistence.Migrations
                         .HasColumnName("customer_id");
 
                     b.Property<string>("CustomerIdentificationNumber")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)")
                         .HasColumnName("customer_identification_number");

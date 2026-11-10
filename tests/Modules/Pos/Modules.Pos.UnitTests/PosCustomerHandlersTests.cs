@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Pos.Application;
+using FieldRequirement = Modules.Tenancy.Domain.FieldRequirement;
+using PolicyOfCustomerFields = Modules.Tenancy.Domain.CustomerFieldPolicy;
 using static Modules.Pos.UnitTests.PosFixtures;
 
 namespace Modules.Pos.UnitTests;
@@ -10,10 +12,10 @@ public sealed class PosCustomerHandlersTests
     private static readonly string[] Customer = [PosPermissions.SaleCustomer];
 
     private static SearchPosCustomersHandler Search(PosTestBed bed, params string[] permissions) =>
-        new(bed.Customers, bed.Context(permissions), new SearchPosCustomersValidator());
+        new(bed.Customers, bed.TenantDirectory, bed.Context(permissions), new SearchPosCustomersValidator());
 
     private static CreatePosCustomerHandler Create(PosTestBed bed, params string[] permissions) =>
-        new(bed.Customers, bed.Context(permissions), new CreatePosCustomerValidator());
+        new(bed.Customers, bed.TenantDirectory, bed.Context(permissions), new CreatePosCustomerValidator());
 
     private static CreatePosCustomerCommand Valid() =>
         new(TenantId, "Laura Gómez", "CC", "1020304050", null);
@@ -42,6 +44,29 @@ public sealed class PosCustomerHandlersTests
         await Search(bed, Customer).HandleAsync(new SearchPosCustomersQuery(TenantId, "   "), TestContext.Current.CancellationToken);
 
         Assert.Equal(["Search:Laura:20", "Search::20"], bed.Customers.Calls);
+    }
+
+    // Spec 2026-11-09 (final review): el selector lista a los incompletos sin documento sólo si el tenant no exige el
+    // documento al facturar; sin fila regional rige la política por defecto.
+    [Fact]
+    public async Task SearchIncludesIncompleteWithoutDocumentOnlyWhenTheDocumentIsNotBilled()
+    {
+        var notBilled = new PosTestBed();
+        notBilled.TenantDirectory.Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56",
+            CustomerFieldPolicy: new PolicyOfCustomerFields(new FieldRequirement(false, false), FieldRequirement.Always));
+        var billed = new PosTestBed();
+        billed.TenantDirectory.Regional = WithDocumentOnSave(false);
+        var noRegional = new PosTestBed();
+        noRegional.TenantDirectory.Regional = null;
+
+        foreach (var bed in new[] { notBilled, billed, noRegional })
+        {
+            await Search(bed, Customer).HandleAsync(new SearchPosCustomersQuery(TenantId, "Laura"), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal([true], notBilled.Customers.SearchIncludedIncompleteWithoutDocument);
+        Assert.Equal([false], billed.Customers.SearchIncludedIncompleteWithoutDocument);
+        Assert.Equal([false], noRegional.Customers.SearchIncludedIncompleteWithoutDocument);
     }
 
     [Fact]
@@ -120,5 +145,82 @@ public sealed class PosCustomerHandlersTests
 
         Assert.Contains(error.Errors, failure => failure.PropertyName == field);
         Assert.Empty(bed.Customers.Calls);
+    }
+
+    private static Modules.Tenancy.Application.TenantRegionalSettings WithDocumentOnSave(bool onSave) =>
+        new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56",
+            CustomerFieldPolicy: new PolicyOfCustomerFields(new FieldRequirement(onSave, true), FieldRequirement.Always));
+
+    [Fact]
+    public async Task QuickCreateWithoutDocumentPassesWhenTheDocumentIsOptionalOnSave()
+    {
+        var bed = new PosTestBed();
+        bed.TenantDirectory.Regional = WithDocumentOnSave(false);
+
+        var created = await Create(bed, Customer).HandleAsync(
+            Valid() with { IdentificationType = null, IdentificationNumber = null }, TestContext.Current.CancellationToken);
+
+        Assert.Null(created.IdentificationType);
+        Assert.Null(created.IdentificationNumber);
+        Assert.Equal(["Create::"], bed.Customers.Calls);
+    }
+
+    [Fact]
+    public async Task QuickCreateWithoutDocumentIsRequiredByDefault()
+    {
+        var bed = new PosTestBed();
+        bed.TenantDirectory.Regional = null;
+
+        var error = await Assert.ThrowsAsync<PosCustomerIdentificationException>(() =>
+            Create(bed, Customer).HandleAsync(
+                Valid() with { IdentificationType = null, IdentificationNumber = " " }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.identification_required", error.Code);
+        Assert.Equal(["IdentificationNumber", "IdentificationType"], error.FieldErrors.Keys.Order(StringComparer.Ordinal));
+        Assert.All(error.FieldErrors.Values, codes => Assert.Equal(["customers.customer.identification_required"], codes));
+        Assert.Empty(bed.Customers.Calls);
+    }
+
+    [Fact]
+    public async Task QuickCreateWithATypeButNoNumberNamesTheNumber()
+    {
+        var bed = new PosTestBed();
+        bed.TenantDirectory.Regional = WithDocumentOnSave(false);
+
+        var error = await Assert.ThrowsAsync<PosCustomerIdentificationException>(() =>
+            Create(bed, Customer).HandleAsync(Valid() with { IdentificationNumber = null }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.identification_number_required", error.Code);
+        var field = Assert.Single(error.FieldErrors);
+        Assert.Equal("IdentificationNumber", field.Key);
+        Assert.Equal(["customers.customer.identification_number_required"], field.Value);
+        Assert.Equal(0, bed.TenantDirectory.Reads);
+        Assert.Empty(bed.Customers.Calls);
+    }
+
+    [Fact]
+    public async Task QuickCreateWithANumberButNoTypeIsIncomplete()
+    {
+        var bed = new PosTestBed();
+        bed.TenantDirectory.Regional = WithDocumentOnSave(false);
+
+        var error = await Assert.ThrowsAsync<PosCustomerIdentificationException>(() =>
+            Create(bed, Customer).HandleAsync(Valid() with { IdentificationType = null }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("customers.customer.identification_incomplete", error.Code);
+        var field = Assert.Single(error.FieldErrors);
+        Assert.Equal("IdentificationType", field.Key);
+        Assert.Equal(["customers.customer.identification_incomplete"], field.Value);
+        Assert.Empty(bed.Customers.Calls);
+    }
+
+    [Fact]
+    public async Task QuickCreateWithADocumentDoesNotReadThePolicy()
+    {
+        var bed = new PosTestBed();
+
+        await Create(bed, Customer).HandleAsync(Valid(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, bed.TenantDirectory.Reads);
     }
 }

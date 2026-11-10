@@ -52,6 +52,8 @@ public sealed class ApproveOrderHandler(
         {
             await BilledPersonTypeRequired.EnsureSatisfiedAsync(
                 tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
+            await BilledCustomerFieldsRequired.EnsureSatisfiedAsync(
+                tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
         }
 
         var now = clock.UtcNow;
