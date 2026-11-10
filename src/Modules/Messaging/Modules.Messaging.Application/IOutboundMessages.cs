@@ -29,11 +29,12 @@ public sealed record OutboundDraft(
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
 /// <c>media.url</c>. <c>DetailsJson</c> (spec 2026-10-11 §5.2): la plantilla de un mensaje <c>Template</c>, para devolver lo guardado.
-/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.</summary>
+/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.
+/// <c>RetryDisabled</c> (spec 2026-11-09 D8b): un <c>Failed</c> que el asesor descartó desde «Programados»; su clientId ya no se reenvía.</summary>
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
     MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null, Guid? SentByChatbotId = null,
-    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null);
+    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null, bool RetryDisabled = false);
 
 /// <summary>Spec 2026-10-30 §4.4: el mensaje de una clave de API con ese <c>clientId</c> en el tenant, para devolverlo al repetir el envío.
 /// <c>WaId</c> es el de la conversación; <c>FailureCode</c> distingue un <c>Failed</c> sin confirmar.</summary>

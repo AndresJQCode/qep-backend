@@ -166,4 +166,36 @@ public sealed class ScheduledMessagePersistenceTests
         Assert.True(await ScalarAsync<bool>(connectionString, "SELECT retry_disabled FROM messaging.messages WHERE id = @id", ("id", failedMessageId)));
         Assert.False(await ScalarAsync<bool>(connectionString, "SELECT retry_disabled FROM messaging.messages WHERE id = @id", ("id", otherMessageId)));
     }
+
+    [Fact]
+    public async Task RetryDisabledRoundTripsThroughTheClientIdLookupTheClaimAndTheThread()
+    {
+        await using var database = await StartDatabaseAsync();
+        var (factory, connectionString, tenantId, connectionId, conversationId) = await SeedAsync(database);
+        using var host = factory;
+        var clientId = Guid.CreateVersion7();
+        var messageId = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, text, client_id, failure_code, retry_disabled, created_at)
+            VALUES (@id, @conversationId, @tenantId, @connectionId, now(), 2, 1, 4, 'hola', @clientId, -1, true, now())
+            """,
+            ("id", messageId), ("conversationId", conversationId), ("tenantId", tenantId), ("connectionId", connectionId), ("clientId", clientId));
+
+        using var scope = factory.Services.CreateScope();
+        var outbound = scope.ServiceProvider.GetRequiredService<IOutboundMessages>();
+        var found = await outbound.FindByClientIdAsync(conversationId, clientId, TestContext.Current.CancellationToken);
+        Assert.Equal((MessageStatus.Failed, true), (found?.Status, found?.RetryDisabled));
+
+        var draft = new OutboundDraft(Guid.CreateVersion7(), conversationId, tenantId, connectionId, clientId, "hola", MemberId, Now);
+        await using (var claim = await outbound.ClaimAsync(draft, TestContext.Current.CancellationToken))
+        {
+            Assert.False(claim.Inserted);
+            Assert.True(claim.Existing?.RetryDisabled);
+        }
+
+        var thread = await scope.ServiceProvider.GetRequiredService<IMessageQueries>()
+            .ListThreadAsync(conversationId, null, 10, TestContext.Current.CancellationToken);
+        Assert.True(Assert.Single(thread, row => row.Id == messageId).RetryDisabled);
+    }
 }

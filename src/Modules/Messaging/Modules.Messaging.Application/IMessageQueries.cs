@@ -23,7 +23,8 @@ public sealed record MessageRow(
     DateTimeOffset CreatedAt = default,
     Guid? SentByApiKeyId = null,
     string? SentByApiKeyName = null,
-    bool Imported = false);
+    bool Imported = false,
+    bool RetryDisabled = false);
 
 public sealed record MessageMediaRow(string MimeType, string? FileName);
 
