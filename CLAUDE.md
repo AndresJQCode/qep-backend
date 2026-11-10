@@ -775,6 +775,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   ve a Buyers); `BuyerParityTests.TheBuyerSessionHeaderMatches` los ata. El BFF sólo borra la cookie con el código `store.buyer.session_invalid`: no devuelvas un 401 con
   sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
 
+- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Pending && PaymentStatus == PaymentPending` (D5); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
