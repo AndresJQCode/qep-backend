@@ -69,7 +69,7 @@ internal sealed class ScheduledMessageManager(
 
 internal sealed record ManagedScheduledMessage(ConversationRow Conversation, Guid Member, IScheduledMessageLock Lock);
 
-/// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>PUT …/scheduled-message/{id}</c>. Un campo omitido o <c>null</c> conserva lo guardado;
+/// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>PUT …/scheduled-messages/{id}</c>. Un campo omitido o <c>null</c> conserva lo guardado;
 /// <c>caption: ""</c> lo borra; <c>scheduledAt</c> es opcional y sólo se revalida si difiere de la guardada.</summary>
 public sealed record UpdateScheduledMessageCommand(
     Guid TenantId, Guid ConversationId, Guid ScheduledMessageId, long? ExpectedVersion, DateTimeOffset? ScheduledAt, string? Text, string? Caption)

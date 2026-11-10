@@ -3203,15 +3203,16 @@ elegida, mientras la ventana de 24 h siga abierta. Hay a lo sumo uno activo por 
 | `POST /scheduled-messages` | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada |
 | `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`) |
 | `PUT /scheduled-messages/{id}` | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled` |
-| `POST …/{id}/cancel` | Cancela (`204`). Sólo en `Scheduled` |
-| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Sólo en `Scheduled` |
-| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry` |
-| `POST …/{id}/discard` | Descarta un `Failed` (`204`) |
+| `POST …/{id}/cancel` | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
+| `POST …/{id}/discard` | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }` |
 | `GET …/{id}/media` | El adjunto, con `Range` |
 
 La versión viaja en el cuerpo (`expectedVersion`), no en `If-Match`, como las campañas: una versión vieja responde `412`.
 
-**Estados.** `Scheduled` → `Sending` (el worker lo reclama con un lease de 10 min) → `Sent` o `Failed`; `Cancelled` sale de
+**Estados.** `Scheduled` → `Sending` (el worker lo reclama con un lease de 10 min; al reclamar el mensaje vuelve a mirar que el
+lease siga siendo suyo y le queden al menos 30 s, y si no, no envía y deja la fila a la recuperación) → `Sent` o `Failed`; `Cancelled` sale de
 `Scheduled`. `Sent` y `Cancelled` son finales. `FailureCode` guarda el motivo, con los códigos de siempre de Mensajería
 (`messaging.window_closed`, contacto bloqueado, conexión no disponible, `messaging.message.rejected`…) más los propios de
 abajo.
@@ -3219,7 +3220,7 @@ abajo.
 **Errores propios.** `422 messaging.scheduled.too_soon` (la hora va a menos de 1 min) y `outside_window` (pasa de
 `último entrante + 24 h − 2 min`, o no hay entrante); `409 already_exists`, `not_editable` (editar, cancelar o «Enviar ya»
 fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed`); `404 not_found`. En la fila:
-`messaging.scheduled.media_missing` y `messaging.scheduled.unknown_outcome`.
+`messaging.scheduled.media_missing`, `messaging.scheduled.unknown_outcome` y `messaging.message.not_retriable` (D8b).
 
 **Decisiones que conviene no romper.**
 
@@ -3231,8 +3232,9 @@ fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed
   clave final. Una fila terminal borra el suyo; si no puede, el worker lo barre (cada `PurgeIntervalHours`). El bucket **no
   debe tener regla de expiración** sobre `messaging/scheduled/`, o una de más de 2 días: un programado puede esperar casi 24 h
   y borrarle el archivo antes lo deja en `media_missing`.
-- **D8b, `retry_disabled`.** Si el asesor descartó por el hilo el mensaje fallido de un programado, ese `clientId` queda
-  quemado: el ejecutor lo cierra como `messaging.message.not_retriable` y no lo reenvía.
+- **D8b, `retry_disabled`.** Descartar un programado `Failed` desde su tarjeta quema el `clientId` de su mensaje fallido: el
+  hilo ya no puede reenviarlo (`409 messaging.message.not_retriable`) y, si el ejecutor lo encuentra así, cierra el
+  programado con ese mismo código sin reenviar.
 - **D9, nunca reenvía solo.** Un `Sending` con el lease vencido (el pod murió) se **cierra**, no se reprograma: `Sent` si el
   mensaje ya salió, `message.rejected` si falló, y si no hay rastro `unknown_outcome`. Reenviar podría mandarlo dos veces.
   Lo reintenta una persona con `retry`.

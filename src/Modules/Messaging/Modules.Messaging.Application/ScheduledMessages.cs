@@ -357,7 +357,7 @@ internal sealed class ScheduledMessageWriter(
     }
 }
 
-/// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>POST …/scheduled-message/voice-note</c>, multipart con <c>file</c>. Una nota de voz nunca
+/// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>POST …/scheduled-messages/audio</c>, multipart con <c>file</c>. Una nota de voz nunca
 /// lleva pie de foto (decisión del owner) ni <c>replyTo</c>.</summary>
 public sealed record CreateScheduledVoiceNoteCommand(
     Guid TenantId, Guid ConversationId, Guid? ClientId, DateTimeOffset? ScheduledAt, byte[]? Audio) : ICommand<ScheduleMessageResult>;

@@ -274,8 +274,9 @@ cambia `author_member_id`. Semántica de los campos (decisión del orquestador, 
 | `validation.failed` | 422 | forma del cuerpo, con `errors` |
 
 `failure_code` de un `Failed`: `messaging.window_closed`, `messaging.contact.blocked`,
-`messaging.connection_unavailable`, `messaging.message.rejected` (existentes) y **NUEVOS**
-`messaging.scheduled.unknown_outcome`, `messaging.scheduled.media_missing`.
+`messaging.connection_unavailable`, `messaging.message.rejected`, `messaging.message.not_retriable` (existentes) y **NUEVOS**
+`messaging.scheduled.unknown_outcome`, `messaging.scheduled.media_missing`. `messaging.message.not_retriable` es la carrera de
+D8b: el reclamo encuentra el `clientId` quemado porque el mensaje `Failed` se descartó; es final y no pide nada a la persona.
 
 ## Worker y ejecución
 
