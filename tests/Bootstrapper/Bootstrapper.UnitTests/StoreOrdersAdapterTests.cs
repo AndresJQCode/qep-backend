@@ -56,6 +56,19 @@ public sealed class StoreOrdersAdapterTests
         Assert.DoesNotContain("Product is inactive", entry.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CreateHandsTheBuyerAccountToTheGateway()
+    {
+        var account = Guid.CreateVersion7();
+        var gateway = new RecordingGateway();
+        var adapter = Adapter(gateway, new RecordingLogger());
+
+        await adapter.CreateAsync(Draft() with { BuyerAccountId = account }, Ct);
+        await adapter.CreateAsync(Draft(), Ct);
+
+        Assert.Equal([account, null], gateway.Drafts.Select(draft => draft.BuyerAccountId));
+    }
+
     private static Modules.Store.Application.StoreOrderDraft Draft()
     {
         var party = new StoreOrderPartyInput(
@@ -88,6 +101,27 @@ public sealed class StoreOrdersAdapterTests
 
         public Task<StoreOrderResult> CreateAsync(Modules.Quotations.Application.StoreOrderDraft draft, CancellationToken cancellationToken) =>
             throw error;
+
+        public Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountStoreOrdersSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class RecordingGateway : IStoreOrderGateway
+    {
+        public List<Modules.Quotations.Application.StoreOrderDraft> Drafts { get; } = [];
+
+        public Task<StoreQuote> QuoteAsync(StoreQuoteRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoreOrderResult> CreateAsync(Modules.Quotations.Application.StoreOrderDraft draft, CancellationToken cancellationToken)
+        {
+            Drafts.Add(draft);
+            return Task.FromResult(new StoreOrderResult(
+                Guid.CreateVersion7(), "PED-0001", 1m, "COP", draft.ClientId, draft.AdvisorMembershipId, AlreadyExisted: false));
+        }
 
         public Task<StoreOrderResult?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

@@ -416,6 +416,9 @@ public sealed class PublicOrderBuyerAccountApiTests
         public Task<bool> ReplaceProfileAsync(
             string host, string? sessionToken, PublicBillingInput billing, PublicShippingInput? shipping, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("buyers down");
+
+        public Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("buyers down");
     }
 
     [Fact]
@@ -558,6 +561,68 @@ public sealed class PublicOrderBuyerAccountApiTests
 
         Assert.True((bool)receipt["buyerSessionRejected"]!);
         Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
+    }
+
+    // ---- La cuenta en el pedido (pedidos del comprador §4.2) ----------------------------------------------------------------
+
+    // ScalarTextAsync devuelve "" para un NULL de SQL (DBNull.ToString()).
+    private static async Task<string?> OrderBuyerAccountAsync(Rig rig, Guid orderId) =>
+        await rig.ScalarTextAsync($"SELECT buyer_account_id::text FROM quotations.orders WHERE id = '{orderId}'") is { Length: > 0 } id
+            ? id
+            : null;
+
+    private static async Task<JsonNode> BuyerOrdersAsync(Rig rig, string session)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, Url("/buyer/orders"));
+        request.Headers.Add("X-Qep-Visitor-Ip", NextIp());
+        request.Headers.Add("X-Qep-Buyer-Session", session);
+        var response = await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
+        var json = await JsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, json.ToJsonString());
+        return json;
+    }
+
+    private static async Task<string> AccountIdAsync(Rig rig, string email) =>
+        (await rig.ScalarTextAsync($"SELECT id::text FROM buyers.accounts WHERE email = '{email}'"))!;
+
+    [Fact]
+    public async Task ACheckoutWithAValidSessionStampsTheAccountWithoutUpdateProfile()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        var session = await LoginAsync(rig);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: session));
+
+        var orderId = (Guid)receipt["id"]!;
+        Assert.False((bool)receipt["buyerSessionRejected"]!);
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, orderId));
+        var listed = await BuyerOrdersAsync(rig, session);
+        Assert.Equal([orderId], listed["items"]!.AsArray().Select(item => (Guid)item!["id"]!));
+    }
+
+    [Fact]
+    public async Task ACheckoutWithASessionFromAnotherStoreIsAGuestOrder()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+        var session = await LoginAsync(rig);
+        var accountId = Guid.Parse(await AccountIdAsync(rig, "ana@test.co"));
+        string foreignSession;
+        await using (var scope = rig.Fixture.Settings.Factory.Services.CreateAsyncScope())
+        {
+            (foreignSession, _) = await scope.ServiceProvider.GetRequiredService<BuyerSessions>()
+                .IssueAsync(accountId, "otra-tienda.lulocrm.com", "203.0.113.5", TestContext.Current.CancellationToken);
+        }
+
+        var foreign = await CreatedAsync(await SubmitAsync(rig, Body(rig), session: foreignSession));
+        var anonymous = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        // Sin updateProfile la sesión que no sirve no marca el recibo: el pedido sale como invitado y nada más.
+        Assert.False((bool)foreign["buyerSessionRejected"]!);
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)foreign["id"]!));
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)anonymous["id"]!));
+        Assert.Empty((await BuyerOrdersAsync(rig, session))["items"]!.AsArray());
     }
 
     [Fact]

@@ -48,7 +48,8 @@ public sealed record StoreOrderParty(
 /// <summary>Lo que el checkout de la tienda entrega al motor de pedidos. <c>Shipping</c> nunca es null: la tienda
 /// pasa los datos de facturación cuando el visitante marcó «Usar los mismos datos». <c>ClientRequestId</c> es el id
 /// que el navegador genera por checkout: de él sale la clave de idempotencia. No hay persona detrás: el pedido lo
-/// crea el sistema.</summary>
+/// crea el sistema. <c>BuyerAccountId</c> es la cuenta de comprador de una sesión válida en el checkout; null =
+/// invitado.</summary>
 public sealed record StoreOrderDraft(
     Guid TenantId,
     Guid ClientRequestId,
@@ -61,7 +62,8 @@ public sealed record StoreOrderDraft(
     bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreQuoteLine> Lines,
-    string? Notes);
+    string? Notes,
+    Guid? BuyerAccountId = null);
 
 /// <summary>El pedido de la tienda. Con <c>AlreadyExisted</c> el resto describe el pedido que ya estaba (cliente y
 /// asesor incluidos), no lo que trajo la llamada repetida.</summary>
@@ -196,7 +198,7 @@ public sealed class StoreOrderGateway(
             {
                 var order = Order.CreateFromStore(
                     OrderId.New(), draft.TenantId, orderNumber, header, parties, billingAccount, lines, draft.Notes,
-                    advisor, now, externalKey);
+                    advisor, now, externalKey, draft.BuyerAccountId);
                 await OrderPricingRecalculation.ApplyAsync(
                     pricingLookup, settingsStore, priceRounding, draft.TenantId, order, now, cancellationToken);
                 return order;
