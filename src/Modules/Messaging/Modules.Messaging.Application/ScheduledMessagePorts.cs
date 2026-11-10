@@ -22,12 +22,14 @@ public interface IScheduledMessageRepository
 }
 
 /// <summary>Spec 2026-11-09 «Worker y ejecución»: un programado que el worker pasó a <c>Sending</c> con su lease. <c>Attempts</c> es el valor
-/// tras el reclamo: el cierre lo usa como compare-and-set, así que un lease vencido y recuperado por otro no se pisa.
+/// tras el reclamo: el cierre lo usa como compare-and-set, así que un lease vencido y recuperado por otro no se pisa. <c>LockedUntil</c> es el
+/// vencimiento de <b>este</b> lease: la recuperación lo renueva sin sumar intentos, así que el reclamo del mensaje lo compara con la fila para
+/// saber que el lease sigue siendo suyo (<see cref="ScheduledLease"/>).
 /// <c>MediaSizeBytes</c> y <c>MediaMimeType</c> son los del objeto guardado (la imagen ya comprimida).</summary>
 public sealed record ClaimedScheduledMessage(
     Guid Id, Guid TenantId, Guid ConversationId, Guid ClientId, MessageKind Kind, bool IsVoiceNote, string? Text, string? Caption,
     string? MediaStorageKey, string? MediaMimeType, string? MediaFileName, long? MediaSizeBytes, string? MediaSha256, Guid AuthorMemberId,
-    int Attempts);
+    int Attempts, DateTimeOffset LockedUntil);
 
 /// <summary>Un objeto de <c>messaging/scheduled/</c> de una fila terminal que no se pudo borrar al transicionar.</summary>
 public sealed record PurgeableScheduledMedia(Guid TenantId, Guid Id, string StorageKey);

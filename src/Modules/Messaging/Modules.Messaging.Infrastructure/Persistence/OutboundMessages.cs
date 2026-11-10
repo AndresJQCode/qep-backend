@@ -18,6 +18,43 @@ internal sealed class OutboundMessages(MessagingDbContext dbContext) : IOutbound
     {
         ArgumentNullException.ThrowIfNull(draft);
         var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    public async Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(lease);
+        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // FOR SHARE y no una lectura suelta: el cierre de la recuperación (un UPDATE con CAS) espera a que este reclamo termine, y su
+            // reclamo de vencidos (FOR UPDATE SKIP LOCKED) salta la fila. locked_until igual al de este lease: la recuperación lo renueva
+            // sin sumar intentos, así que el intento solo no distingue a un ejecutor tardío.
+            var held = await dbContext.Database.SqlQuery<Guid>(
+                $"""
+                SELECT id AS "Value" FROM messaging.scheduled_messages
+                 WHERE id = {lease.ScheduledMessageId} AND tenant_id = {lease.TenantId} AND status = 'Sending' AND attempts = {lease.Attempts}
+                   AND locked_until = {lease.LockedUntil} AND locked_until > {lease.ValidAfter}
+                   FOR SHARE
+                """).ToListAsync(cancellationToken);
+            if (held.Count == 0)
+            {
+                await transaction.DisposeAsync();
+                return null;
+            }
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+
+        return await ClaimInAsync(transaction, draft, cancellationToken);
+    }
+
+    private async Task<IOutboundClaim> ClaimInAsync(IDbContextTransaction transaction, OutboundDraft draft, CancellationToken cancellationToken)
+    {
         try
         {
             // Un segundo request con el mismo clientId espera acá hasta que el primero cierre su transacción.

@@ -17,7 +17,7 @@ public sealed class ScheduledMessageRecoveryTests
 
     private ClaimedScheduledMessage Expired(string? mediaKey = null, int attempts = 2) =>
         new(Guid.CreateVersion7(), _bed.TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), MessageKind.Text, false, "Hola", null, mediaKey, null,
-            null, null, null, Guid.CreateVersion7(), attempts);
+            null, null, null, Guid.CreateVersion7(), attempts, _bed.Now);
 
     private static ExistingOutbound Row(MessageStatus status) =>
         new(Guid.CreateVersion7(), status, DateTimeOffset.UnixEpoch, null, "Hola");

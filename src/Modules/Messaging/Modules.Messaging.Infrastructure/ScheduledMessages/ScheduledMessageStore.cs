@@ -30,7 +30,8 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
             RETURNING id AS "Id", tenant_id AS "TenantId", conversation_id AS "ConversationId", client_id AS "ClientId", kind AS "Kind",
                       is_voice_note AS "IsVoiceNote", text AS "Text", caption AS "Caption", media_storage_key AS "MediaStorageKey",
                       media_mime_type AS "MediaMimeType", media_file_name AS "MediaFileName", media_size_bytes AS "MediaSizeBytes",
-                      media_sha256 AS "MediaSha256", author_member_id AS "AuthorMemberId", attempts AS "Attempts"
+                      media_sha256 AS "MediaSha256", author_member_id AS "AuthorMemberId", attempts AS "Attempts",
+                      locked_until AS "LockedUntil"
             """).ToListAsync(cancellationToken);
         return [.. rows.Select(ToClaimed)];
     }
@@ -51,7 +52,8 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
             RETURNING id AS "Id", tenant_id AS "TenantId", conversation_id AS "ConversationId", client_id AS "ClientId", kind AS "Kind",
                       is_voice_note AS "IsVoiceNote", text AS "Text", caption AS "Caption", media_storage_key AS "MediaStorageKey",
                       media_mime_type AS "MediaMimeType", media_file_name AS "MediaFileName", media_size_bytes AS "MediaSizeBytes",
-                      media_sha256 AS "MediaSha256", author_member_id AS "AuthorMemberId", attempts AS "Attempts"
+                      media_sha256 AS "MediaSha256", author_member_id AS "AuthorMemberId", attempts AS "Attempts",
+                      locked_until AS "LockedUntil"
             """).ToListAsync(cancellationToken);
         return [.. rows.Select(ToClaimed)];
     }
@@ -125,7 +127,8 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
 
     private static ClaimedScheduledMessage ToClaimed(ClaimRow row) => new(
         row.Id, row.TenantId, row.ConversationId, row.ClientId, Enum.Parse<MessageKind>(row.Kind), row.IsVoiceNote, row.Text, row.Caption,
-        row.MediaStorageKey, row.MediaMimeType, row.MediaFileName, row.MediaSizeBytes, row.MediaSha256, row.AuthorMemberId, row.Attempts);
+        row.MediaStorageKey, row.MediaMimeType, row.MediaFileName, row.MediaSizeBytes, row.MediaSha256, row.AuthorMemberId, row.Attempts,
+        row.LockedUntil);
 
     private sealed class ClaimRow
     {
@@ -158,6 +161,8 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
         public Guid AuthorMemberId { get; set; }
 
         public int Attempts { get; set; }
+
+        public DateTimeOffset LockedUntil { get; set; }
     }
 
     private sealed class PurgeRow

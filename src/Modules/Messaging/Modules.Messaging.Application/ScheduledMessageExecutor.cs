@@ -8,7 +8,7 @@ namespace Modules.Messaging.Application;
 /// Spec 2026-11-09 «Ejecución» y «Fallas de almacenamiento»: envía un programado que el worker ya pasó a <c>Sending</c> con su lease. Sin
 /// <see cref="IExecutionContext"/>, como <see cref="BotOutbound"/>. No mira estado, asignación ni asistente (D4): no reabre, no asigna y
 /// liquida con <c>seen: 0</c>, sin acuse de lectura (preflight P17). Sí mira lo ya enviado con el <c>clientId</c> (D8b), bloqueo, ventana y
-/// conexión, antes de reclamar.
+/// conexión, antes de reclamar, y el reclamo vuelve a mirar el lease (<see cref="LeaseSafetyMargin"/>): perdido, no manda ni escribe.
 /// <para>
 /// El adjunto se copia a la clave final y se sube a Meta <b>antes</b> del reclamo: una falla ahí no dejó fila ni mandó nada y es
 /// <c>media_missing</c>, reintentable. Después del reclamo, una respuesta de Meta la liquida <see cref="OutboundSettlement"/> y cualquier
@@ -32,6 +32,10 @@ public sealed class ScheduledMessageExecutor(
     ITenantClock tenantClock,
     IClock clock)
 {
+    /// <summary>Revisión final: lo que el lease tiene que tener por delante al reclamar el mensaje. Con menos, la recuperación podría tomar la
+    /// fila a mitad del envío; el ejecutor no reclama y la deja a la recuperación.</summary>
+    public static readonly TimeSpan LeaseSafetyMargin = TimeSpan.FromSeconds(30);
+
     // Propiedad y no campo: meta y store también se usan en los métodos, y capturarlos para un campo es CS9124.
     private OutboundMediaPreparer Preparer => new(meta, store, compressor);
 
@@ -107,21 +111,34 @@ public sealed class ScheduledMessageExecutor(
             }
         }
 
-        // 6. El reclamo, con el autor del contenido (D4).
+        // 6. El reclamo, con el autor del contenido (D4), y sólo si el lease sigue siendo de esta ejecución: un ejecutor que esperó más que
+        // el lease no manda lo que la recuperación de otro pod ya cerró (y el asesor quizá descartó o reemplazó).
         var draft = new OutboundDraft(
             MessageId: messageId, ConversationId: conversation.Id, TenantId: message.TenantId, ConnectionId: conversation.ConnectionId,
             ClientId: message.ClientId, Text: text, SentByMemberId: message.AuthorMemberId, Now: clock.UtcNow, Kind: message.Kind,
             Media: media?.Media, Caption: caption);
-        IOutboundClaim claim;
+        var lease = new ScheduledLease(message.Id, message.TenantId, message.Attempts, message.LockedUntil, clock.UtcNow + LeaseSafetyMargin);
+        IOutboundClaim? claim;
         try
         {
-            claim = await outbound.ClaimAsync(draft, cancellationToken);
+            claim = await outbound.ClaimLeasedAsync(draft, lease, cancellationToken);
         }
         catch (Exception) when (media is not null && !rowExists)
         {
             // Sin reclamo no hay fila que sirva la copia.
             await DiscardAsync(MessagingMediaKeys.For(message.TenantId, messageId));
             throw;
+        }
+
+        if (claim is null)
+        {
+            // Lease perdido: no se escribe nada; la fila es de la recuperación, que la cierra con lo que encuentre.
+            if (media is not null && !rowExists)
+            {
+                await DiscardAsync(MessagingMediaKeys.For(message.TenantId, messageId));
+            }
+
+            return;
         }
 
         await using (claim)

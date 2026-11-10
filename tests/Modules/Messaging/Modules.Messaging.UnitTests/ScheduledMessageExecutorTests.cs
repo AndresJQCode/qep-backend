@@ -30,9 +30,12 @@ public sealed class ScheduledMessageExecutorTests
             _bed.Connections, _bed.Notifier, _bed.Receipts, _scheduled, tenantClock ?? new FakeTenantClock(new FakeClock(_bed.Now)),
             new FakeClock(_bed.Now));
 
+    /// <summary>El vencimiento del lease que devolvió el reclamo del worker.</summary>
+    private DateTimeOffset LockedUntil => _bed.Now + ScheduledMessageDispatcher.LeaseLength;
+
     private ClaimedScheduledMessage Text(ConversationRow conversation, string text = "Hola") =>
         new(Guid.CreateVersion7(), _bed.TenantId, conversation.Id, Guid.CreateVersion7(), MessageKind.Text, false, text, null, null, null, null, null, null,
-            _author, 1);
+            _author, 1, LockedUntil);
 
     private ClaimedScheduledMessage Media(
         ConversationRow conversation, MessageKind kind, string extension, byte[] bytes, string mimeType, string? fileName, string? caption = null,
@@ -43,7 +46,7 @@ public sealed class ScheduledMessageExecutorTests
         _bed.Store.Objects[key] = (bytes, mimeType);
         return new ClaimedScheduledMessage(
             id, _bed.TenantId, conversation.Id, Guid.CreateVersion7(), kind, voice, null, caption, key, mimeType, fileName, bytes.Length,
-            Convert.ToHexStringLower(SHA256.HashData(bytes)), _author, 1);
+            Convert.ToHexStringLower(SHA256.HashData(bytes)), _author, 1, LockedUntil);
     }
 
     private ClaimedScheduledMessage Image(ConversationRow conversation, string? caption = null) =>
@@ -619,6 +622,59 @@ public sealed class ScheduledMessageExecutorTests
         Assert.Equal("rolled-back", Assert.Single(_bed.Outbound.Claims).Outcome);
         Assert.Empty(_bed.Instagram.SentAttachments);
         Assert.Equal(MessagingErrorCodes.ScheduledUnknownOutcome, Assert.Single(_scheduled.Failed).Code);
+    }
+
+    // --- Lease (revisión final) ------------------------------------------------------------------------------------------------------
+
+    // El reclamo del mensaje vuelve a mirar el lease del programado: el mismo intento, el mismo vencimiento y al menos el margen por delante.
+    [Fact]
+    public async Task TheClaimChecksTheLeaseOfThisExecution()
+    {
+        var conversation = _bed.OpenConversation(lastInboundHoursAgo: 1);
+        var message = Text(conversation) with { Attempts = 3 };
+
+        await Executor().ExecuteAsync(message, Ct);
+
+        Assert.Equal(
+            new ScheduledLease(message.Id, _bed.TenantId, 3, LockedUntil, _bed.Now + ScheduledMessageExecutor.LeaseSafetyMargin),
+            Assert.Single(_bed.Outbound.Leases));
+        Assert.Equal(TimeSpan.FromSeconds(30), ScheduledMessageExecutor.LeaseSafetyMargin);
+        Assert.Single(_bed.Meta.Sends);
+    }
+
+    // Otro pod recuperó (y quizá cerró) la fila mientras ésta esperaba: no se manda, no se escribe nada y la fila queda para la recuperación.
+    [Fact]
+    public async Task ALeaseLostBeforeTheClaimSendsNothing()
+    {
+        var conversation = _bed.OpenConversation(lastInboundHoursAgo: 1);
+        var message = Text(conversation);
+        _bed.Outbound.LeaseLost = true;
+
+        await Executor().ExecuteAsync(message, Ct);
+
+        Assert.Single(_bed.Outbound.Leases);
+        Assert.Empty(_bed.Outbound.Claims);
+        Assert.Empty(_bed.Meta.Sends);
+        Assert.Empty(_scheduled.Sent);
+        Assert.Empty(_scheduled.Failed);
+        Assert.Empty(_bed.Notifier.Events);
+    }
+
+    // Con adjunto, la copia a la clave final ya se hizo antes del reclamo: si la fila era nueva, no la sirve nadie.
+    [Fact]
+    public async Task ALeaseLostBeforeTheClaimDiscardsTheNewCopy()
+    {
+        var conversation = _bed.OpenConversation(lastInboundHoursAgo: 1);
+        var message = Image(conversation);
+        _bed.Outbound.LeaseLost = true;
+
+        await Executor().ExecuteAsync(message, Ct);
+
+        Assert.Empty(_bed.Meta.ImageSends);
+        Assert.Empty(_scheduled.Failed);
+        // Sólo queda el objeto programado: la copia a la clave final se borró y la recuperación decide con la fila.
+        Assert.Equal(message.MediaStorageKey, Assert.Single(_bed.Store.Objects.Keys));
+        Assert.StartsWith($"messaging/{_bed.TenantId}/", Assert.Single(_bed.Store.Deleted), StringComparison.Ordinal);
     }
 
     // --- Cierre --------------------------------------------------------------------------------------------------------------------

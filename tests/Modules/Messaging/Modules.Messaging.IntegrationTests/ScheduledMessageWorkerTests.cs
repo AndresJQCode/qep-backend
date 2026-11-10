@@ -294,6 +294,83 @@ public sealed class ScheduledMessageWorkerTests
             ("id", scheduled.Id.ToString())));
     }
 
+    /// <summary>Revisión final: un ejecutor que llega tarde (su lease venció, la recuperación de otro pod lo renovó o cerró la fila) reclama
+    /// con el lease que tenía. El reclamo no se abre: nada sale a Meta, no queda fila de mensaje y la fila del programado no cambia.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ALateExecutorCannotSendAfterRecoveryTookTheRow(bool recoveryClosedIt)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var scheduled = await SeedDueTextAsync(f);
+        using var scope = f.Host.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>();
+        var late = Assert.Single(await store.ClaimDueAsync(20, DateTimeOffset.UtcNow, ScheduledMessageDispatcher.LeaseLength, Ct));
+        // El ejecutor se quedó esperando más que el lease; la recuperación de otro pod lo toma (renueva el lease, mismo intento).
+        await ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.scheduled_messages SET locked_until = now() - interval '1 minute' WHERE id = @id", ("id", scheduled.Id));
+        var recovered = Assert.Single(await store.ClaimExpiredAsync(20, DateTimeOffset.UtcNow, ScheduledMessageDispatcher.LeaseLength, Ct));
+        Assert.Equal(late.Attempts, recovered.Attempts);
+        if (recoveryClosedIt)
+        {
+            Assert.True(await store.CompleteFailedAsync(recovered, MessagingErrorCodes.ScheduledUnknownOutcome, DateTimeOffset.UtcNow, Ct));
+        }
+
+        var before = await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.scheduled_messages WHERE id = @id", ("id", scheduled.Id));
+
+        using (var executorScope = f.Host.Services.CreateScope())
+        {
+            await executorScope.ServiceProvider.GetRequiredService<ScheduledMessageExecutor>().ExecuteAsync(late, Ct);
+        }
+
+        Assert.Equal(0, MetaSends(f));
+        Assert.Equal(0, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.messages WHERE conversation_id = @c AND client_id = @client", ("c", f.ConversationId), ("client", scheduled.ClientId)));
+        Assert.Equal(recoveryClosedIt ? "Failed" : "Sending", await StatusAsync(f, scheduled.Id));
+        Assert.Equal(before, await ScalarAsync<long>(f.ConnectionString, "SELECT version FROM messaging.scheduled_messages WHERE id = @id", ("id", scheduled.Id)));
+    }
+
+    // Un lease a punto de vencer no alcanza para el envío: la recuperación lo tomaría a mitad de camino.
+    [Fact]
+    public async Task ALeaseAboutToExpireIsNotUsedToSend()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var scheduled = await SeedDueTextAsync(f);
+        using var scope = f.Host.Services.CreateScope();
+        var claimed = Assert.Single(await scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>()
+            .ClaimDueAsync(20, DateTimeOffset.UtcNow, ScheduledMessageExecutor.LeaseSafetyMargin / 2, Ct));
+
+        await scope.ServiceProvider.GetRequiredService<ScheduledMessageExecutor>().ExecuteAsync(claimed, Ct);
+
+        Assert.Equal(0, MetaSends(f));
+        Assert.Equal("Sending", await StatusAsync(f, scheduled.Id));
+    }
+
+    // Con el lease vigente, el mismo camino manda: la guarda no frena el caso normal.
+    [Fact]
+    public async Task AValidLeaseSends()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var scheduled = await SeedDueTextAsync(f);
+        using var scope = f.Host.Services.CreateScope();
+        var claimed = Assert.Single(await scope.ServiceProvider.GetRequiredService<IScheduledMessageStore>()
+            .ClaimDueAsync(20, DateTimeOffset.UtcNow, ScheduledMessageDispatcher.LeaseLength, Ct));
+
+        await scope.ServiceProvider.GetRequiredService<ScheduledMessageExecutor>().ExecuteAsync(claimed, Ct);
+
+        Assert.Equal(1, MetaSends(f));
+        Assert.Equal("Sent", await StatusAsync(f, scheduled.Id));
+    }
+
     [Fact]
     public async Task APurgeSweepClearsTerminalRowsAndRunsOncePerInterval()
     {
