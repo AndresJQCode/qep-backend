@@ -250,6 +250,7 @@ internal static class AutomationsApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Spec 2026-10-09 §9: las de Meta:App con los centinelas de MessagingApiHarness; el secreto valida la firma del webhook.
             builder.UseSetting("Meta:App:AppId", MetaAppId);

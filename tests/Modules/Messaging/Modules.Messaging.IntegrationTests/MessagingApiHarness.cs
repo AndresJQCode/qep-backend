@@ -288,6 +288,7 @@ internal static class MessagingApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Spec 2026-10-21 D-M1: prendido por defecto en el host desde que el motor existe; acá se fija siempre y sólo las pruebas de la
             // cola lo prenden, para que el resto no deje filas en automation_inbox.
@@ -719,6 +720,14 @@ internal static class MessagingApiHarness
     {
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Campaigns.CampaignDispatchWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Spec 2026-11-09: una pasada del worker de programados (recupera, reclama, ejecuta y, si toca, purga), como un tick suyo.</summary>
+    public static async Task DrainScheduledMessagesAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.ScheduledMessages.ScheduledMessageWorker>().Single();
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 

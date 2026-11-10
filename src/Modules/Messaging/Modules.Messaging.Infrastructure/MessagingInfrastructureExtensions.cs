@@ -10,6 +10,7 @@ using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Messaging.Infrastructure.Realtime;
+using Modules.Messaging.Infrastructure.ScheduledMessages;
 using Modules.Messaging.Infrastructure.Webhook;
 
 namespace Modules.Messaging.Infrastructure;
@@ -130,6 +131,12 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
         services.AddScoped<CampaignDispatcher>();
         services.AddHostedService<CampaignDispatchWorker>();
+        // Spec 2026-11-09 «Worker y ejecución»: el worker de mensajes programados. El SQL del reclamo y del cierre, el despachador
+        // (recuperación y purga) y el ejecutor, scoped: un scope por fila.
+        services.AddScoped<IScheduledMessageStore, ScheduledMessageStore>();
+        services.AddScoped<ScheduledMessageDispatcher>();
+        services.AddScoped<ScheduledMessageExecutor>();
+        services.AddHostedService<ScheduledMessageWorker>();
         // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
         services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
         services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
