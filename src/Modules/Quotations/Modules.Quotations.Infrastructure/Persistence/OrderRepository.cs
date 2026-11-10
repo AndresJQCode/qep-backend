@@ -134,6 +134,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         var total = await orders.CountAsync(cancellationToken);
         var items = await orders
             .Include(order => order.Items)
+            .Include(order => order.PaymentProofs)
             .OrderByDescending(order => order.CreatedAt)
             .ThenByDescending(order => order.OrderNumber)
             .Skip((page - 1) * pageSize)

@@ -1874,6 +1874,23 @@ public sealed class OrderTests
     }
 
     [Fact]
+    public void AnOrderWithARegisteredProofIsNotCancellableByTheBuyerEvenIfStillPaymentPending()
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = NewBuyerStoreOrder(buyer);
+        order.AddPaymentProofs(
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 50_000m)],
+            OrderPaymentStatus.PaymentPending,
+            null,
+            Advisor,
+            Now.AddMinutes(5));
+
+        Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
+        Assert.False(order.CanBeCancelledByBuyer);
+        AssertNotCancellableByBuyer(order, buyer);
+    }
+
+    [Fact]
     public void CancelByBuyerRejectsAnotherBuyer() =>
         AssertNotCancellableByBuyer(NewBuyerStoreOrder(Guid.CreateVersion7()), Guid.CreateVersion7());
 

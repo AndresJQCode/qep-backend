@@ -132,9 +132,12 @@ public sealed class Order
     /// <summary>La cuenta de comprador de la tienda que hizo el pedido; null en los pedidos que no vienen de una cuenta.</summary>
     public Guid? BuyerAccountId { get; private set; }
 
-    /// <summary>El comprador sólo anula lo que nadie ha tocado: pendiente y sin pago alguno.</summary>
+    /// <summary>El comprador sólo anula lo que nadie ha tocado: pendiente, con el pago en PaymentPending y sin
+    /// ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en PaymentPending).</summary>
     public bool CanBeCancelledByBuyer =>
-        Status == OrderStatus.Pending && PaymentStatus == OrderPaymentStatus.PaymentPending;
+        Status == OrderStatus.Pending
+        && PaymentStatus == OrderPaymentStatus.PaymentPending
+        && PaymentProofs.Count == 0;
 
     /// <summary>Cómo llamó la tienda al envío (<c>Envío estándar</c>). Sólo se muestra: no decide nada.</summary>
     public string? ExternalShippingTitle { get; private set; }

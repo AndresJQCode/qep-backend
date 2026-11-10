@@ -3,7 +3,9 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Buyers.Application;
+using Modules.Quotations.Application;
 using Npgsql;
 using static Modules.Store.IntegrationTests.PublicStoreFixture;
 using static Modules.Store.IntegrationTests.StoreApiHarness;
@@ -113,6 +115,39 @@ public sealed class PublicBuyerOrdersApiTests
 
     private static Task MarkPartiallyPaidAsync(StoreInboxRig rig, Guid orderId) =>
         rig.ExecuteAsync("UPDATE quotations.orders SET payment_status = 'PartialPaymentReceived' WHERE id = @order", ("order", orderId));
+
+    /// <summary>Un archivo de comprobante siempre disponible: la subida real a R2 no existe en esta suite, y lo que se prueba es el pedido.</summary>
+    private sealed class AvailableProofFileLookup : IQuotationFileLookup
+    {
+        public Task<QuotationFileRef?> FindAsync(Guid tenantId, Guid fileId, CancellationToken cancellationToken) =>
+            Task.FromResult<QuotationFileRef?>(new QuotationFileRef(fileId, tenantId, "application/pdf", 1024, IsAvailable: true));
+
+        public Task<string> CreateDownloadUrlAsync(Guid tenantId, Guid fileId, string downloadFileName, CancellationToken cancellationToken) =>
+            Task.FromResult($"https://files.test/{fileId}");
+    }
+
+    private static Task<StoreInboxRig> OpenWithProofFilesAsync() =>
+        StoreInboxRig.OpenAsync(configureServices: services =>
+        {
+            services.RemoveAll<IQuotationFileLookup>();
+            services.AddSingleton<IQuotationFileLookup>(new AvailableProofFileLookup());
+        });
+
+    /// <summary>Registra un comprobante por la ruta real de la consola, dejando el pago en PaymentPending (el asesor lo está verificando).</summary>
+    private static async Task AddProofKeepingPaymentPendingAsync(StoreInboxRig rig, Guid orderId)
+    {
+        using var console = CreateClient(rig.Factory, SubjectId, TenantId, "quotations.order.manage,quotations.order.read");
+        var response = await console.PostAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/orders/{orderId}/proofs",
+            new
+            {
+                paymentStatus = "PaymentPending",
+                paymentProofs = new[] { new { fileId = Guid.CreateVersion7(), amount = 5_000m } },
+            },
+            TestContext.Current.CancellationToken);
+        var json = await JsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, json.ToJsonString());
+    }
 
     private static async Task ApproveAsync(StoreInboxRig rig, Guid orderId)
     {
@@ -457,6 +492,31 @@ public sealed class PublicBuyerOrdersApiTests
         Assert.Null(detail["cancelledAt"]);
         Assert.Equal(0, await CancelledHistoryAsync(rig, orderId));
         Assert.Equal(0, await CancelledEventsAsync(rig, orderId));
+    }
+
+    [Fact]
+    public async Task AnOrderWithARegisteredProofIsNotCancellableEvenIfStillPaymentPending()
+    {
+        await using var rig = await OpenWithProofFilesAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var customer = await CustomerAsync(rig);
+        var withProof = await SeedBuyerOrderAsync(rig, customer, account);
+        var untouched = await SeedBuyerOrderAsync(rig, customer, account);
+        await AddProofKeepingPaymentPendingAsync(rig, withProof);
+
+        var response = await CancelAsync(rig, withProof, session);
+
+        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{withProof}", session));
+        Assert.Equal("Pending", (string)detail["status"]!);
+        Assert.Equal("PaymentPending", (string)detail["paymentStatus"]!);
+        Assert.False((bool)detail["canCancel"]!);
+        Assert.Equal(0, await CancelledHistoryAsync(rig, withProof));
+        Assert.Equal(0, await CancelledEventsAsync(rig, withProof));
+        var list = await OkAsync(await BuyerGetAsync(rig, "/orders", session));
+        var items = list["items"]!.AsArray().ToDictionary(item => (Guid)item!["id"]!, item => item!);
+        Assert.False((bool)items[withProof]["canCancel"]!);
+        Assert.True((bool)items[untouched]["canCancel"]!);
     }
 
     [Fact]

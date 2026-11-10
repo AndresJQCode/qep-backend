@@ -165,6 +165,33 @@ public sealed class BuyerOrderGatewayTests
         Assert.True(detail.CanCancel);
     }
 
+    private static Order StoreOrderWithProofStillPaymentPending()
+    {
+        var order = StoreOrder(Buyer);
+        order.AddPaymentProofs(
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m)],
+            OrderPaymentStatus.PaymentPending,
+            null,
+            Advisor,
+            Now.AddHours(-1));
+        return order;
+    }
+
+    [Fact]
+    public async Task ASummaryAndTheDetailReportCanCancelFalseWhenAProofIsRegisteredEvenIfStillPaymentPending()
+    {
+        var order = StoreOrderWithProofStillPaymentPending();
+        var orders = new StubOrderListRepository(order);
+
+        var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
+        var detail = await Gateway(orders).FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.Equal("PaymentPending", summary.PaymentStatus);
+        Assert.False(summary.CanCancel);
+        Assert.NotNull(detail);
+        Assert.False(detail.CanCancel);
+    }
+
     [Fact]
     public async Task FindReportsCanCancelFalseWhenAPaymentIsRegistered()
     {
