@@ -60,7 +60,7 @@ public sealed class BuyerOrderGatewayTests
         var at = createdAt ?? Now.AddDays(-1);
         var order = Order.CreateFromStore(
             id ?? OrderId.New(), tenantId ?? TenantId, number, Header(), Parties(), Account,
-            [Line("Aceite"), Line("Banano")], null, Advisor, at, "T-0001", $"store-request:{number}",
+            [Line("Aceite"), Line("Banano")], null, Advisor, at, $"store-checkout:{number}",
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {

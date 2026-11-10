@@ -1794,7 +1794,7 @@ public sealed class OrderTests
     private static Order NewBuyerStoreOrder(Guid? buyer, OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)
     {
         var order = Order.CreateFromStore(
-            OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], null, Advisor, Now, "T-0001", "store-request:abc", buyerAccountId: buyer);
+            OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], null, Advisor, Now, "store-checkout:abc", buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
             order.SyncExternalPaymentStatus(payment, Now);

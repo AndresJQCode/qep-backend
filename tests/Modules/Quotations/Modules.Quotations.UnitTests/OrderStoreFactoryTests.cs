@@ -55,7 +55,7 @@ public sealed class OrderStoreFactoryTests
         var buyer = Guid.CreateVersion7();
         var order = Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()], null, Advisor, Now,
-            "T-0001", "store-request:abc", buyerAccountId: buyer);
+            "store-checkout:abc", buyerAccountId: buyer);
         Assert.Equal(buyer, order.BuyerAccountId);
     }
 

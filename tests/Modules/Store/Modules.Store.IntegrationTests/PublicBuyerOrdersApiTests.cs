@@ -14,28 +14,25 @@ namespace Modules.Store.IntegrationTests;
 
 /// <summary>
 /// Los pedidos del comprador de punta a punta: la cuenta se registra, verifica e inicia sesión por las rutas reales, el pedido nace
-/// por «Tomar» y se enlaza a la cuenta por SQL (hasta que el checkout lo selle, D4). Con la API real y Postgres. Necesitan Docker.
+/// por el checkout real y se enlaza a la cuenta por SQL, para que estas pruebas no dependan del sellado. Con la API real y Postgres.
+/// Necesitan Docker.
 /// </summary>
 public sealed class PublicBuyerOrdersApiTests
 {
     private const string Password = "una-contrasena-larga";
     private const string BuyerCancellationReason = "Cancelado por el comprador desde la tienda";
 
-    private static int _ipCounter;
-
-    private static string NextIp() => $"192.0.2.{(Interlocked.Increment(ref _ipCounter) % 250) + 1}";
-
     // ---- Comprador ----------------------------------------------------------------------------------------------------------
 
-    private static async Task<HttpResponseMessage> PostBuyerJsonAsync(StoreInboxRig rig, string path, object body)
+    private static async Task<HttpResponseMessage> PostBuyerJsonAsync(BuyerOrdersRig rig, string path, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url($"/buyer{path}")) { Content = JsonContent.Create(body) };
-        request.Headers.Add("X-Qep-Visitor-Ip", NextIp());
+        request.Headers.Add("X-Qep-Visitor-Ip", BuyerOrdersRig.NextIp());
         return await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     /// <summary>Registra, verifica e inicia sesión por las rutas reales. Devuelve la cuenta y el token de sesión.</summary>
-    private static async Task<(Guid AccountId, string Session)> SignInAsync(StoreInboxRig rig, string email)
+    private static async Task<(Guid AccountId, string Session)> SignInAsync(BuyerOrdersRig rig, string email)
     {
         var registered = await PostBuyerJsonAsync(
             rig, "/register", new { email, password = Password, acceptsDataPolicy = true, turnstileToken = "ok", profile = (object?)null });
@@ -59,12 +56,12 @@ public sealed class PublicBuyerOrdersApiTests
     }
 
     private static async Task<HttpResponseMessage> BuyerGetAsync(
-        StoreInboxRig rig, string path, string? session, bool withIp = true, string host = Host)
+        BuyerOrdersRig rig, string path, string? session, bool withIp = true, string host = Host)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, Url($"/buyer{path}", host));
         if (withIp)
         {
-            request.Headers.Add("X-Qep-Visitor-Ip", NextIp());
+            request.Headers.Add("X-Qep-Visitor-Ip", BuyerOrdersRig.NextIp());
         }
 
         if (session is not null)
@@ -75,10 +72,10 @@ public sealed class PublicBuyerOrdersApiTests
         return await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
-    private static async Task<HttpResponseMessage> BuyerPostAsync(StoreInboxRig rig, string path, string session)
+    private static async Task<HttpResponseMessage> BuyerPostAsync(BuyerOrdersRig rig, string path, string session)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Url($"/buyer{path}"));
-        request.Headers.Add("X-Qep-Visitor-Ip", NextIp());
+        request.Headers.Add("X-Qep-Visitor-Ip", BuyerOrdersRig.NextIp());
         request.Headers.Add("X-Qep-Buyer-Session", session);
         return await rig.Fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
     }
@@ -90,18 +87,16 @@ public sealed class PublicBuyerOrdersApiTests
         return json;
     }
 
-    private static Task<HttpResponseMessage> CancelAsync(StoreInboxRig rig, Guid orderId, string session) =>
+    private static Task<HttpResponseMessage> CancelAsync(BuyerOrdersRig rig, Guid orderId, string session) =>
         BuyerPostAsync(rig, $"/orders/{orderId}/cancel", session);
 
     // ---- Pedidos ------------------------------------------------------------------------------------------------------------
 
-    /// <summary>Un pedido de la tienda por «Tomar» (2 × Camiseta a 10.000 COP, Pending, PaymentPending), enlazado a la cuenta si
-    /// se da una; sin cuenta queda como pedido de invitado.</summary>
-    private static async Task<Guid> SeedBuyerOrderAsync(StoreInboxRig rig, Guid customerId, Guid? accountId)
+    /// <summary>Un pedido por el checkout real (2 × Camiseta a 10.000 COP, Pending, PaymentPending), enlazado a la cuenta por SQL
+    /// si se da una; sin cuenta queda como pedido de invitado.</summary>
+    private static async Task<Guid> SeedBuyerOrderAsync(BuyerOrdersRig rig, Guid? accountId)
     {
-        var request = await rig.SubmitAsync();
-        var taken = await rig.TakeOkAsync(request, new { customerId });
-        var orderId = (Guid)taken["orderId"]!;
+        var orderId = (Guid)(await rig.CheckoutOkAsync())["id"]!;
         if (accountId is { } account)
         {
             await rig.ExecuteAsync(
@@ -111,9 +106,7 @@ public sealed class PublicBuyerOrdersApiTests
         return orderId;
     }
 
-    private static Task<Guid> CustomerAsync(StoreInboxRig rig) => rig.CreateCompleteCustomerAsync("Cliente Tienda", "777", "3105551111");
-
-    private static Task MarkPartiallyPaidAsync(StoreInboxRig rig, Guid orderId) =>
+    private static Task MarkPartiallyPaidAsync(BuyerOrdersRig rig, Guid orderId) =>
         rig.ExecuteAsync("UPDATE quotations.orders SET payment_status = 'PartialPaymentReceived' WHERE id = @order", ("order", orderId));
 
     /// <summary>Un archivo de comprobante siempre disponible: la subida real a R2 no existe en esta suite, y lo que se prueba es el pedido.</summary>
@@ -126,15 +119,15 @@ public sealed class PublicBuyerOrdersApiTests
             Task.FromResult($"https://files.test/{fileId}");
     }
 
-    private static Task<StoreInboxRig> OpenWithProofFilesAsync() =>
-        StoreInboxRig.OpenAsync(configureServices: services =>
+    private static Task<BuyerOrdersRig> OpenWithProofFilesAsync() =>
+        BuyerOrdersRig.OpenAsync(configureServices: services =>
         {
             services.RemoveAll<IQuotationFileLookup>();
             services.AddSingleton<IQuotationFileLookup>(new AvailableProofFileLookup());
         });
 
     /// <summary>Registra un comprobante por la ruta real de la consola, dejando el pago en PaymentPending (el asesor lo está verificando).</summary>
-    private static async Task AddProofKeepingPaymentPendingAsync(StoreInboxRig rig, Guid orderId)
+    private static async Task AddProofKeepingPaymentPendingAsync(BuyerOrdersRig rig, Guid orderId)
     {
         using var console = CreateClient(rig.Factory, SubjectId, TenantId, "quotations.order.manage,quotations.order.read");
         var response = await console.PostAsJsonAsync(
@@ -149,7 +142,7 @@ public sealed class PublicBuyerOrdersApiTests
         Assert.True(response.StatusCode == HttpStatusCode.OK, json.ToJsonString());
     }
 
-    private static async Task ApproveAsync(StoreInboxRig rig, Guid orderId)
+    private static async Task ApproveAsync(BuyerOrdersRig rig, Guid orderId)
     {
         using var console = CreateClient(rig.Factory, SubjectId, TenantId, "quotations.order.approve,quotations.order.read");
         var response = await console.PostAsync(
@@ -160,10 +153,10 @@ public sealed class PublicBuyerOrdersApiTests
 
     // ---- Base ---------------------------------------------------------------------------------------------------------------
 
-    private static string ConnectionString(StoreInboxRig rig) =>
+    private static string ConnectionString(BuyerOrdersRig rig) =>
         rig.Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("QepDatabase")!;
 
-    private static async Task<long> CountAsync(StoreInboxRig rig, string sql, params (string Name, object? Value)[] parameters)
+    private static async Task<long> CountAsync(BuyerOrdersRig rig, string sql, params (string Name, object? Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(ConnectionString(rig));
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -177,7 +170,7 @@ public sealed class PublicBuyerOrdersApiTests
     }
 
     private static async Task<IReadOnlyList<string>> TextsAsync(
-        StoreInboxRig rig, string sql, params (string Name, object? Value)[] parameters)
+        BuyerOrdersRig rig, string sql, params (string Name, object? Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(ConnectionString(rig));
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -197,13 +190,13 @@ public sealed class PublicBuyerOrdersApiTests
         return texts;
     }
 
-    private static Task<long> CancelledHistoryAsync(StoreInboxRig rig, Guid orderId) =>
+    private static Task<long> CancelledHistoryAsync(BuyerOrdersRig rig, Guid orderId) =>
         CountAsync(
             rig,
             "SELECT count(*) FROM quotations.order_history WHERE order_id = @id AND event_type = 'Cancelled' AND member_id IS NULL",
             ("id", orderId));
 
-    private static Task<long> CancelledEventsAsync(StoreInboxRig rig, Guid orderId) =>
+    private static Task<long> CancelledEventsAsync(BuyerOrdersRig rig, Guid orderId) =>
         CountAsync(
             rig,
             """
@@ -220,36 +213,35 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task WithoutASessionTheListIs401SessionInvalid()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
 
         var response = await BuyerGetAsync(rig, "/orders", session: null);
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.Unauthorized, "store.buyer.session_invalid");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.Unauthorized, "store.buyer.session_invalid");
     }
 
     [Fact]
     public async Task WithoutTheVisitorIpTheListIs422VisitorIpRequired()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (_, session) = await SignInAsync(rig, "ana@test.co");
 
         var response = await BuyerGetAsync(rig, "/orders", session, withIp: false);
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "store.public.visitor_ip_required");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "store.public.visitor_ip_required");
     }
 
     [Fact]
     public async Task TheListIsPagedNewestFirstAndOnlyShowsTheBuyerOrders()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
         var (other, _) = await SignInAsync(rig, "otro@test.co");
-        var customer = await CustomerAsync(rig);
-        var first = await SeedBuyerOrderAsync(rig, customer, account);
-        await SeedBuyerOrderAsync(rig, customer, other);
-        var second = await SeedBuyerOrderAsync(rig, customer, account);
-        await SeedBuyerOrderAsync(rig, customer, accountId: null);
-        var third = await SeedBuyerOrderAsync(rig, customer, account);
+        var first = await SeedBuyerOrderAsync(rig, account);
+        await SeedBuyerOrderAsync(rig, other);
+        var second = await SeedBuyerOrderAsync(rig, account);
+        await SeedBuyerOrderAsync(rig, accountId: null);
+        var third = await SeedBuyerOrderAsync(rig, account);
 
         var pageOne = await OkAsync(await BuyerGetAsync(rig, "/orders?page=1&pageSize=2", session));
         var pageTwo = await OkAsync(await BuyerGetAsync(rig, "/orders?page=2&pageSize=2", session));
@@ -283,12 +275,11 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task TheListReportsCanCancelPerOrder()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var customer = await CustomerAsync(rig);
-        var open = await SeedBuyerOrderAsync(rig, customer, account);
-        var paid = await SeedBuyerOrderAsync(rig, customer, account);
-        var approved = await SeedBuyerOrderAsync(rig, customer, account);
+        var open = await SeedBuyerOrderAsync(rig, account);
+        var paid = await SeedBuyerOrderAsync(rig, account);
+        var approved = await SeedBuyerOrderAsync(rig, account);
         await MarkPartiallyPaidAsync(rig, paid);
         await ApproveAsync(rig, approved);
 
@@ -316,7 +307,7 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task ListRejectsAnOutOfRangePageSize()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (_, session) = await SignInAsync(rig, "ana@test.co");
 
         var tooBig = await BuyerGetAsync(rig, "/orders?pageSize=51", session);
@@ -337,9 +328,9 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task TheDetailCarriesLinesAndCanCancel()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
 
         var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
 
@@ -363,25 +354,25 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task AnotherBuyersOrderIs404OrderNotFound()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (_, session) = await SignInAsync(rig, "ana@test.co");
         var (other, _) = await SignInAsync(rig, "otro@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), other);
+        var orderId = await SeedBuyerOrderAsync(rig, other);
 
         var detail = await BuyerGetAsync(rig, $"/orders/{orderId}", session);
         var cancel = await CancelAsync(rig, orderId, session);
 
-        await StoreInboxRig.AssertCodeAsync(detail, HttpStatusCode.NotFound, "order.order.not_found");
-        await StoreInboxRig.AssertCodeAsync(cancel, HttpStatusCode.NotFound, "order.order.not_found");
+        await BuyerOrdersRig.AssertCodeAsync(detail, HttpStatusCode.NotFound, "order.order.not_found");
+        await BuyerOrdersRig.AssertCodeAsync(cancel, HttpStatusCode.NotFound, "order.order.not_found");
         Assert.Equal("Pending", (string)(await rig.OrderAsync(orderId))["order"]!["status"]!);
     }
 
     [Fact]
     public async Task AnOrderOfTheSameBuyerInAnotherTenantIs404()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
         await SeedTenantAsync(rig.Factory, OtherTenantId);
         await rig.ExecuteAsync(
             "UPDATE quotations.orders SET tenant_id = @other WHERE id = @order", ("other", Guid.Parse(OtherTenantId)), ("order", orderId));
@@ -392,8 +383,8 @@ public sealed class PublicBuyerOrdersApiTests
 
         Assert.Equal(0, (int)list["total"]!);
         Assert.Empty(list["items"]!.AsArray());
-        await StoreInboxRig.AssertCodeAsync(detail, HttpStatusCode.NotFound, "order.order.not_found");
-        await StoreInboxRig.AssertCodeAsync(cancel, HttpStatusCode.NotFound, "order.order.not_found");
+        await BuyerOrdersRig.AssertCodeAsync(detail, HttpStatusCode.NotFound, "order.order.not_found");
+        await BuyerOrdersRig.AssertCodeAsync(cancel, HttpStatusCode.NotFound, "order.order.not_found");
         Assert.Equal(
             "Pending",
             await rig.TextAsync("SELECT status FROM quotations.orders WHERE id = @order", ("order", orderId)));
@@ -402,18 +393,18 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task AnUnknownHostIs404StorePublicNotFound()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (_, session) = await SignInAsync(rig, "ana@test.co");
 
         var response = await BuyerGetAsync(rig, "/orders", session, host: "no-existe.lulocrm.com");
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.NotFound, "store.public.not_found");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.NotFound, "store.public.not_found");
     }
 
     [Fact]
     public async Task ANonGuidOrderIdIs404ByRouting()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (_, session) = await SignInAsync(rig, "ana@test.co");
 
         var detail = await BuyerGetAsync(rig, "/orders/no-es-un-guid", session);
@@ -428,9 +419,9 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task CancelCancelsThePendingUnpaidOrder()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
 
         var cancelled = await OkAsync(await CancelAsync(rig, orderId, session));
 
@@ -454,9 +445,9 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task ASecondCancelIs409AndWritesNothing()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
         await OkAsync(await CancelAsync(rig, orderId, session));
         Assert.Equal(1, await CancelledHistoryAsync(rig, orderId));
         Assert.Equal(1, await CancelledEventsAsync(rig, orderId));
@@ -465,7 +456,7 @@ public sealed class PublicBuyerOrdersApiTests
 
         var second = await CancelAsync(rig, orderId, session);
 
-        await StoreInboxRig.AssertCodeAsync(second, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
+        await BuyerOrdersRig.AssertCodeAsync(second, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
         Assert.Equal(1, await CancelledHistoryAsync(rig, orderId));
         Assert.Equal(1, await CancelledEventsAsync(rig, orderId));
         Assert.Equal(historyBefore, await CountAsync(rig, "SELECT count(*) FROM quotations.order_history WHERE order_id = @id", ("id", orderId)));
@@ -477,14 +468,14 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task APendingOrderWithPaymentIsNotCancellable()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
         await MarkPartiallyPaidAsync(rig, orderId);
 
         var response = await CancelAsync(rig, orderId, session);
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
         var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
         Assert.Equal("Pending", (string)detail["status"]!);
         Assert.Equal("PartialPaymentReceived", (string)detail["paymentStatus"]!);
@@ -499,14 +490,13 @@ public sealed class PublicBuyerOrdersApiTests
     {
         await using var rig = await OpenWithProofFilesAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var customer = await CustomerAsync(rig);
-        var withProof = await SeedBuyerOrderAsync(rig, customer, account);
-        var untouched = await SeedBuyerOrderAsync(rig, customer, account);
+        var withProof = await SeedBuyerOrderAsync(rig, account);
+        var untouched = await SeedBuyerOrderAsync(rig, account);
         await AddProofKeepingPaymentPendingAsync(rig, withProof);
 
         var response = await CancelAsync(rig, withProof, session);
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
         var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{withProof}", session));
         Assert.Equal("Pending", (string)detail["status"]!);
         Assert.Equal("PaymentPending", (string)detail["paymentStatus"]!);
@@ -522,14 +512,14 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task AnApprovedOrderIsNotCancellable()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
         await ApproveAsync(rig, orderId);
 
         var response = await CancelAsync(rig, orderId, session);
 
-        await StoreInboxRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
+        await BuyerOrdersRig.AssertCodeAsync(response, HttpStatusCode.Conflict, "order.order.not_cancellable_by_buyer");
         Assert.NotEqual("Cancelled", (string)(await rig.OrderAsync(orderId))["order"]!["status"]!);
         Assert.Equal(0, await CancelledHistoryAsync(rig, orderId));
     }
@@ -537,9 +527,9 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task TheConsoleDetailShowsTheBuyerCancellation()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
-        var orderId = await SeedBuyerOrderAsync(rig, await CustomerAsync(rig), account);
+        var orderId = await SeedBuyerOrderAsync(rig, account);
         await OkAsync(await CancelAsync(rig, orderId, session));
 
         var console = await rig.OrderAsync(orderId);
@@ -556,12 +546,11 @@ public sealed class PublicBuyerOrdersApiTests
     [Fact]
     public async Task EveryBuyerOrderResponseIsNoStore()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
+        await using var rig = await BuyerOrdersRig.OpenAsync();
         var (account, session) = await SignInAsync(rig, "ana@test.co");
         var (other, _) = await SignInAsync(rig, "otro@test.co");
-        var customer = await CustomerAsync(rig);
-        var own = await SeedBuyerOrderAsync(rig, customer, account);
-        var foreign = await SeedBuyerOrderAsync(rig, customer, other);
+        var own = await SeedBuyerOrderAsync(rig, account);
+        var foreign = await SeedBuyerOrderAsync(rig, other);
         await MarkPartiallyPaidAsync(rig, own);
 
         var list = await BuyerGetAsync(rig, "/orders", session);
