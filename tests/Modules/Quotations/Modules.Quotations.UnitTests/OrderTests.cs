@@ -1772,4 +1772,120 @@ public sealed class OrderTests
         Assert.Equal(60_000m, corrected.Amount);
         Assert.Equal(paidOn, corrected.PaidOn);
     }
+
+    private static QuotationParties StoreParties()
+    {
+        var billing = new QuotationPartyDetails
+        {
+            Name = "Ana Pérez",
+            IdentificationNumber = "1020304050",
+            IdentificationType = PartyIdentificationType.Cc,
+            PersonType = PartyPersonType.Natural,
+            Phone = "+573001112233",
+            Email = "ana@example.com",
+            Address = "Calle 1 # 2-3",
+            DepartmentId = Guid.CreateVersion7(),
+            CityId = Guid.CreateVersion7(),
+        };
+        var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
+        return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
+    }
+
+    private static Order NewBuyerStoreOrder(Guid? buyer, OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)
+    {
+        var order = Order.CreateFromStore(
+            OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], null, Advisor, Now, "T-0001", "store-request:abc", buyerAccountId: buyer);
+        if (payment != OrderPaymentStatus.PaymentPending)
+        {
+            order.SyncExternalPaymentStatus(payment, Now);
+        }
+
+        return order;
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PaymentPending, true)]
+    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PartialPaymentReceived, false)]
+    [InlineData(OrderStatus.Pending, OrderPaymentStatus.FullPaymentReceived, false)]
+    [InlineData(OrderStatus.Approved, OrderPaymentStatus.PaymentPending, false)]
+    [InlineData(OrderStatus.Cancelled, OrderPaymentStatus.PaymentPending, false)]
+    [InlineData(OrderStatus.Invoiced, OrderPaymentStatus.PaymentPending, false)]
+    public void CanBeCancelledByBuyerCoversStatusByPayment(OrderStatus status, OrderPaymentStatus payment, bool expected)
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), payment);
+        MoveTo(order, status);
+        Assert.Equal(expected, order.CanBeCancelledByBuyer);
+    }
+
+    private static void MoveTo(Order order, OrderStatus status)
+    {
+        if (status is OrderStatus.Approved or OrderStatus.Invoiced)
+        {
+            order.Approve(Advisor, Now);
+        }
+
+        if (status == OrderStatus.Invoiced)
+        {
+            order.Invoice(Advisor, Now);
+        }
+
+        if (status == OrderStatus.Cancelled)
+        {
+            order.Cancel(Advisor, "Prueba", Now);
+        }
+    }
+
+    [Fact]
+    public void CancelByBuyerCancelsAPendingUnpaidOrderWithoutAMember()
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = NewBuyerStoreOrder(buyer);
+        var version = order.Version;
+
+        order.CancelByBuyer(buyer, Now.AddHours(1));
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Null(order.CancelledBy);
+        Assert.Equal(Now.AddHours(1), order.CancelledAt);
+        Assert.Equal(Now.AddHours(1), order.UpdatedAt);
+        Assert.Equal("Cancelado por el comprador desde la tienda", order.CancellationReason);
+        Assert.Equal(version + 1, order.Version);
+    }
+
+    [Theory]
+    [InlineData(OrderPaymentStatus.PartialPaymentReceived)]
+    [InlineData(OrderPaymentStatus.FullPaymentReceived)]
+    public void CancelByBuyerRejectsAPendingOrderWithPayment(OrderPaymentStatus payment)
+    {
+        var buyer = Guid.CreateVersion7();
+        AssertNotCancellableByBuyer(NewBuyerStoreOrder(buyer, payment), buyer);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Approved)]
+    [InlineData(OrderStatus.Cancelled)]
+    [InlineData(OrderStatus.Invoiced)]
+    public void CancelByBuyerRejectsAnOrderThatIsNoLongerPending(OrderStatus status)
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = NewBuyerStoreOrder(buyer);
+        MoveTo(order, status);
+        AssertNotCancellableByBuyer(order, buyer);
+    }
+
+    [Fact]
+    public void CancelByBuyerRejectsAnotherBuyer() =>
+        AssertNotCancellableByBuyer(NewBuyerStoreOrder(Guid.CreateVersion7()), Guid.CreateVersion7());
+
+    [Fact]
+    public void CancelByBuyerRejectsAnOrderWithoutBuyer() =>
+        AssertNotCancellableByBuyer(NewBuyerStoreOrder(null), Guid.CreateVersion7());
+
+    private static void AssertNotCancellableByBuyer(Order order, Guid buyer)
+    {
+        var status = order.Status;
+        var ex = Assert.Throws<QuotationsDomainException>(() => order.CancelByBuyer(buyer, Now.AddHours(1)));
+        Assert.Equal("order.order.not_cancellable_by_buyer", ex.Code);
+        Assert.Equal(status, order.Status);
+    }
 }

@@ -50,6 +50,20 @@ public sealed class OrderStoreFactoryTests
             "store-checkout:abc");
 
     [Fact]
+    public void CreateFromStoreKeepsTheBuyerAccount()
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = Order.CreateFromStore(
+            OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()], null, Advisor, Now,
+            "T-0001", "store-request:abc", buyerAccountId: buyer);
+        Assert.Equal(buyer, order.BuyerAccountId);
+    }
+
+    [Fact]
+    public void CreateFromStoreWithoutABuyerLeavesItNull() =>
+        Assert.Null(NewStoreOrder(Parties()).BuyerAccountId);
+
+    [Fact]
     public void AStoreOrderKeepsAForeignTaxId()
     {
         var billing = Billing() with
