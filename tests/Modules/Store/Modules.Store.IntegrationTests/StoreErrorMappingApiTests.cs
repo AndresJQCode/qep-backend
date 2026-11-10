@@ -32,6 +32,8 @@ public sealed class StoreErrorMappingApiTests
             (new StoreDomainException(StoreErrorCodes.CurrencyNotInStore, "currency"), StoreErrorCodes.CurrencyNotInStore, HttpStatusCode.UnprocessableEntity),
             // UpdateStoreSettings.cs: el asesor de la tienda no es un miembro activo del tenant.
             (new StoreDomainException(StoreErrorCodes.AdvisorNotFound, "advisor"), StoreErrorCodes.AdvisorNotFound, HttpStatusCode.UnprocessableEntity),
+            // SubmitOrderRequest.cs: el tope diario de pedidos de la tienda.
+            (new RequestRateLimitedException(StoreErrorCodes.DailyCap, "cap", retryAfter: null), StoreErrorCodes.DailyCap, HttpStatusCode.TooManyRequests),
             // CloudflareTurnstileVerifier.cs:148.
             (new ServiceUnavailableException(StoreErrorCodes.CaptchaUnavailable, "down"), StoreErrorCodes.CaptchaUnavailable, HttpStatusCode.ServiceUnavailable),
         ];
