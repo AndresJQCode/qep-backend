@@ -2160,7 +2160,7 @@ el spec del slice; esta tabla es el inventario.
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
-| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento o CUC |
+| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento, CUC o teléfono (desde 7 dígitos, sin importar el formato) |
 | `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing` |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
