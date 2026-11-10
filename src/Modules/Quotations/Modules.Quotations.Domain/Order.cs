@@ -940,6 +940,20 @@ public sealed class Order
         Version++;
     }
 
+    /// <summary>Enlaza el pedido a una cuenta de comprador sólo si todavía no tiene una. Devuelve <c>false</c> sin
+    /// cambiar nada cuando ya estaba enlazado. No toca el estado ni la versión: el enlace no es una edición del
+    /// pedido.</summary>
+    public bool LinkBuyerAccount(Guid buyerAccountId)
+    {
+        if (BuyerAccountId is not null)
+        {
+            return false;
+        }
+
+        BuyerAccountId = buyerAccountId;
+        return true;
+    }
+
     public void CancelByBuyer(Guid buyerAccountId, DateTimeOffset occurredAt)
     {
         if (BuyerAccountId != buyerAccountId || !CanBeCancelledByBuyer)

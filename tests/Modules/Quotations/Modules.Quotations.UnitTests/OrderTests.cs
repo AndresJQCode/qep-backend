@@ -1881,6 +1881,30 @@ public sealed class OrderTests
     public void CancelByBuyerRejectsAnOrderWithoutBuyer() =>
         AssertNotCancellableByBuyer(NewBuyerStoreOrder(null), Guid.CreateVersion7());
 
+    [Fact]
+    public void LinkBuyerAccountFillsAnEmptyBuyerWithoutTouchingVersionOrState()
+    {
+        var order = NewBuyerStoreOrder(null);
+        var (version, updatedAt, status) = (order.Version, order.UpdatedAt, order.Status);
+        var buyer = Guid.CreateVersion7();
+
+        Assert.True(order.LinkBuyerAccount(buyer));
+
+        Assert.Equal(buyer, order.BuyerAccountId);
+        Assert.Equal((version, updatedAt, status), (order.Version, order.UpdatedAt, order.Status));
+    }
+
+    [Fact]
+    public void LinkBuyerAccountNeverReplacesAnExistingBuyer()
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = NewBuyerStoreOrder(buyer);
+
+        Assert.False(order.LinkBuyerAccount(Guid.CreateVersion7()));
+        Assert.False(order.LinkBuyerAccount(buyer));
+        Assert.Equal(buyer, order.BuyerAccountId);
+    }
+
     private static void AssertNotCancellableByBuyer(Order order, Guid buyer)
     {
         var status = order.Status;

@@ -976,10 +976,26 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         return Task.FromResult((items, matching.Count));
     }
 
+    private readonly Queue<Order> _buyerReads = new();
+
+    /// <summary>Instancias que <see cref="FindByBuyerAsync"/> entrega en orden, una por llamada, antes de volver a las
+    /// filas sembradas. Con dos, la relectura después de perder una carrera ve un agregado nuevo, como lo vería el
+    /// repositorio real después de <c>DiscardPendingChanges</c>.</summary>
+    public void QueueBuyerReads(params Order[] instances)
+    {
+        foreach (var instance in instances)
+        {
+            _buyerReads.Enqueue(instance);
+        }
+    }
+
     public Task<Order?> FindByBuyerAsync(
-        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row =>
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken)
+    {
+        IEnumerable<Order> candidates = _buyerReads.Count > 0 ? [_buyerReads.Dequeue()] : rows;
+        return Task.FromResult(candidates.FirstOrDefault(row =>
             row.TenantId == tenantId && row.BuyerAccountId == buyerAccountId && row.Id == orderId));
+    }
 
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
     // cliente termine en "no hay pedidos". El resto de los filtros son SQL y los cubre integración.
