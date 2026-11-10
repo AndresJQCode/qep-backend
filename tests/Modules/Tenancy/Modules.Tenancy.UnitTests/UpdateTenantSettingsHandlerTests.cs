@@ -93,11 +93,85 @@ public sealed class UpdateTenantSettingsHandlerTests
         Assert.Equal("OnOrderApproval", result.PersonTypeRequirement);
     }
 
+    private static readonly CustomerFieldPolicyInput RelaxedInput = new(
+        new FieldRequirementInput(false, true), new FieldRequirementInput(false, false));
+
+    [Fact]
+    public async Task APresentPolicyIsSavedAndReturned()
+    {
+        var result = await Handler().HandleAsync(
+            Command(customerFieldPolicy: RelaxedInput), TestContext.Current.CancellationToken);
+
+        Assert.Equal(RelaxedInput.ToDomain(), result.CustomerFieldPolicy);
+        Assert.Equal(2, result.Version);
+    }
+
+    [Fact]
+    public async Task AnAbsentPolicyKeepsTheStoredOne()
+    {
+        await Handler().HandleAsync(
+            Command(customerFieldPolicy: RelaxedInput), TestContext.Current.CancellationToken);
+
+        var result = await Handler().HandleAsync(
+            Command(customerFieldPolicy: null, expectedVersion: 2), TestContext.Current.CancellationToken);
+
+        Assert.Equal(RelaxedInput.ToDomain(), result.CustomerFieldPolicy);
+        Assert.Equal(2, result.Version);
+    }
+
+    [Fact]
+    public async Task APolicyWithAMissingFlagIsAValidationFailure()
+    {
+        var policy = new CustomerFieldPolicyInput(
+            new FieldRequirementInput(true, true), new FieldRequirementInput(true, null));
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            Handler().HandleAsync(Command(customerFieldPolicy: policy), TestContext.Current.CancellationToken));
+
+        Assert.Contains(exception.Errors, error => error.PropertyName == "CustomerFieldPolicy.City.OnBilling");
+    }
+
+    [Fact]
+    public async Task APolicyWithANullDocumentIsAValidationFailure()
+    {
+        var policy = new CustomerFieldPolicyInput(null, new FieldRequirementInput(true, true));
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            Handler().HandleAsync(Command(customerFieldPolicy: policy), TestContext.Current.CancellationToken));
+
+        Assert.Contains(exception.Errors, error => error.PropertyName == "CustomerFieldPolicy.Document");
+    }
+
+    [Fact]
+    public async Task APolicyWithANullCityIsAValidationFailure()
+    {
+        var policy = new CustomerFieldPolicyInput(new FieldRequirementInput(true, true), null);
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() =>
+            Handler().HandleAsync(Command(customerFieldPolicy: policy), TestContext.Current.CancellationToken));
+
+        Assert.Contains(exception.Errors, error => error.PropertyName == "CustomerFieldPolicy.City");
+    }
+
+    [Fact]
+    public async Task AnInconsistentPolicyIsTheDomainCode()
+    {
+        var policy = new CustomerFieldPolicyInput(
+            new FieldRequirementInput(true, true), new FieldRequirementInput(true, false));
+
+        var exception = await Assert.ThrowsAsync<TenantDomainException>(() =>
+            Handler().HandleAsync(Command(customerFieldPolicy: policy), TestContext.Current.CancellationToken));
+
+        Assert.Equal("tenancy.settings.customer_field_policy.invalid", exception.Code);
+    }
+
     private UpdateTenantSettingsCommand Command(
         string defaultCurrency = "COP", string numberFormat = "1.234,56", string? country = "CO",
-        string? personTypeRequirement = null, long expectedVersion = 1) =>
+        string? personTypeRequirement = null, long expectedVersion = 1,
+        CustomerFieldPolicyInput? customerFieldPolicy = null) =>
         new(_tenant.Id, "QCode Demo", "es-CO", "America/Bogota", "yyyy-MM-dd",
-            defaultCurrency, numberFormat, country, expectedVersion, "corr-1", personTypeRequirement);
+            defaultCurrency, numberFormat, country, expectedVersion, "corr-1", personTypeRequirement,
+            customerFieldPolicy);
 
     private UpdateTenantSettingsHandler Handler() =>
         new(

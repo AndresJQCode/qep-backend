@@ -75,6 +75,12 @@ public sealed class Tenant
     public PersonTypeRequirement PersonTypeRequirement { get; private set; } = PersonTypeRequirement.Never;
 
     /// <summary>
+    /// Qué datos del cliente (documento, ciudad) exige el tenant al guardar la ficha y al facturar.
+    /// Arranca exigiéndolo todo, como era antes de que fuera configurable.
+    /// </summary>
+    public CustomerFieldPolicy CustomerFieldPolicy { get; private set; } = CustomerFieldPolicy.Default;
+
+    /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
     /// arma al leer con <see cref="LogoPublicKey"/> y la base pública configurada (decisión 3 del
     /// spec 2026-09-19) — igual que <c>FileResourceDto.PublicUrl</c>. `Tenant` no conoce
@@ -162,9 +168,18 @@ public sealed class Tenant
         string numberFormat,
         string country,
         PersonTypeRequirement personTypeRequirement,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        CustomerFieldPolicy? customerFieldPolicy = null)
     {
         EnsureActive();
+
+        var validatedPolicy = customerFieldPolicy ?? CustomerFieldPolicy;
+        if (!validatedPolicy.IsConsistent)
+        {
+            throw new TenantDomainException(
+                CustomerFieldPolicy.InvalidCode,
+                "A field required on customer save must also be required on billing.");
+        }
 
         var validatedDisplayName = ValidateDisplayName(displayName);
         var validatedCulture = ValidateCulture(defaultCulture);
@@ -187,6 +202,11 @@ public sealed class Tenant
             PersonTypeRequirement.ToString(),
             personTypeRequirement.ToString(),
             changedFields);
+        TrackChange(
+            nameof(CustomerFieldPolicy),
+            CustomerFieldPolicy.ToString(),
+            validatedPolicy.ToString(),
+            changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -201,6 +221,7 @@ public sealed class Tenant
         NumberFormat = validatedNumberFormat;
         Country = validatedCountry;
         PersonTypeRequirement = personTypeRequirement;
+        CustomerFieldPolicy = validatedPolicy;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(
