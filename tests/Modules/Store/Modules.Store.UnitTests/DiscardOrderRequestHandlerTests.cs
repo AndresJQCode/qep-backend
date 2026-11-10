@@ -138,12 +138,20 @@ public sealed class DiscardOrderRequestHandlerTests
         public Task<StoreCustomerRef?> FindEligibleAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<(StoreCustomerRef Customer, bool Created)> CreateAsync(
-            Guid tenantId, Guid actorUserId, StoreNewCustomer data, CancellationToken cancellationToken) =>
+        public Task<StoreCustomerRef?> FindByDocumentAsync(
+            Guid tenantId, string identificationType, string identificationNumber, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoreCustomerCreation> CreateAsync(
+            Guid tenantId, Guid? actorUserId, StoreNewCustomer data, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StoreCustomerRef> CreateIncompleteAsync(
+            Guid tenantId, string name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<StoreCustomerRef> CompleteAsync(
-            Guid tenantId, Guid actorUserId, Guid customerId, StoreNewCustomer billing, CancellationToken cancellationToken) =>
+            Guid tenantId, Guid? actorUserId, Guid customerId, StoreNewCustomer billing, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<StoreAddressOutcome>> EnsureAddressesAsync(
