@@ -198,7 +198,23 @@ public sealed record MessageDto(
     /// <c>SentByChatbot</c>.</summary>
     ApiKeyRefDto? SentByApiKey = null,
     /// <summary>Spec 2026-11-09 D8b: un <c>Failed</c> descartado desde «Programados»; el SPA oculta «Reintentar». Un backend viejo no lo manda.</summary>
-    bool RetryDisabled = false);
+    bool RetryDisabled = false,
+    /// <summary>Las tarjetas de un <c>Contacts</c> (la persona compartió contactos de su agenda); <c>null</c> en todo otro kind o si el
+    /// <c>details</c> guardado no se puede leer.</summary>
+    IReadOnlyList<SharedContactDto>? Contacts = null);
+
+/// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
+/// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.
+/// <c>Phones</c> y <c>Emails</c> viajan siempre, vacíos si no hay: la burbuja no tiene que distinguir ausente de vacío.</summary>
+public sealed record SharedContactDto(
+    string? Name, string? Organization, IReadOnlyList<SharedContactPhoneDto> Phones, IReadOnlyList<SharedContactEmailDto> Emails);
+
+/// <summary>Un teléfono de la tarjeta. Meta puede mandar <c>phone</c> sin <c>wa_id</c> (el número no tiene WhatsApp) o al revés;
+/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.</summary>
+public sealed record SharedContactPhoneDto(string? Phone, string? WaId, string? Type);
+
+/// <summary>Un correo de la tarjeta; <c>Type</c> es el de Meta (<c>HOME</c>, <c>WORK</c>), tal cual.</summary>
+public sealed record SharedContactEmailDto(string Email, string? Type);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
 public sealed record ApiKeyRefDto(Guid Id, string Name);
