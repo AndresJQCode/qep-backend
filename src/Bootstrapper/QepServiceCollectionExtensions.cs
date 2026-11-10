@@ -1430,6 +1430,7 @@ public static class QepServiceCollectionExtensions
         // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
         // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrders, BuyerOrdersAdapter>();
         services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
         services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
         services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
