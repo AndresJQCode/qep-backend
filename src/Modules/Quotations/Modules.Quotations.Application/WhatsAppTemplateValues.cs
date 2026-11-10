@@ -27,4 +27,7 @@ public static class WhatsAppTemplateValues
 
     /// <summary>El nombre con el que el cliente recibe el PDF: <c>"Cotizacion-COT-000123.pdf"</c>.</summary>
     public static string DocumentFileName(string quotationNumber) => $"Cotizacion-{quotationNumber}.pdf";
+
+    /// <summary>El del pedido (spec 2026-11-09 D9): <c>"Pedido-PED-000123.pdf"</c>, como lo nombra el PDF del pedido.</summary>
+    public static string OrderDocumentFileName(string orderNumber) => $"Pedido-{orderNumber}.pdf";
 }

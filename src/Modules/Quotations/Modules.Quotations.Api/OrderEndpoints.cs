@@ -290,7 +290,7 @@ public static class OrderEndpoints
         SendOrderRequest? request = null)
     {
         var detail = await dispatcher.SendAsync(
-            new SendOrderCommand(tenantId, orderId, request?.Recipient),
+            new SendOrderCommand(tenantId, orderId, request?.Recipient, request?.ConnectionId),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

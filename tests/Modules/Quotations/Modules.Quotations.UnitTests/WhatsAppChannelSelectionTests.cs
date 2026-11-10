@@ -18,6 +18,27 @@ public sealed class WhatsAppChannelSelectionTests
         Assert.Equal("quotation.whatsapp.no_channel", error.Code);
     }
 
+    // Spec 2026-11-09 D7: las mismas reglas para el pedido, con sus propios códigos.
+    [Fact]
+    public void TheOrderDocumentNamesItsCodes()
+    {
+        var first = WhatsAppChannels.Any();
+        var second = WhatsAppChannels.Meta();
+
+        Assert.Equal("order.whatsapp.no_channel", Assert.Throws<QuotationsDomainException>(() =>
+            WhatsAppChannelSelection.Resolve([], saved: null, requested: null, WhatsAppDocument.Order)).Code);
+        Assert.Equal("order.whatsapp.channel_required", Assert.Throws<QuotationsDomainException>(() =>
+            WhatsAppChannelSelection.Resolve([first, second], saved: null, requested: null, WhatsAppDocument.Order)).Code);
+        Assert.Equal("order.whatsapp.channel_already_set", Assert.Throws<QuotationsDomainException>(() =>
+            WhatsAppChannelSelection.Resolve([first, second], first.ConnectionId, second.ConnectionId, WhatsAppDocument.Order)).Code);
+        Assert.Equal("order.whatsapp.channel_unavailable", Assert.Throws<QuotationsDomainException>(() =>
+            WhatsAppChannelSelection.Resolve([first], saved: null, Guid.CreateVersion7(), WhatsAppDocument.Order)).Code);
+
+        var resolved = WhatsAppChannelSelection.Resolve([first, second], saved: null, second.ConnectionId, WhatsAppDocument.Order);
+        Assert.Same(second, resolved.Channel);
+        Assert.True(resolved.Remember);
+    }
+
     [Fact]
     public void AValidChoiceIsUsed()
     {

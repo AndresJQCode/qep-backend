@@ -106,8 +106,9 @@ internal sealed partial class ZenviaWhatsAppSender(
     public async Task SendOrderAsync(
         ZenviaWhatsAppChannel channel, WhatsAppOrderMessage message, CancellationToken cancellationToken)
     {
-        // Defensa: `SendOrderHandler` ya lo rechaza al elegir el canal, antes del PDF. Va antes que el
-        // teléfono porque decir "falta el teléfono" mandaría a corregir un dato que no destraba nada.
+        // Defensa: el directorio de canales ya deja fuera de los pedidos una Zenvia sin plantilla de pedido
+        // (spec 2026-11-09 D6), así que acá no debería llegar. Va antes que el teléfono porque decir "falta el
+        // teléfono" mandaría a corregir un dato que no destraba nada.
         if (string.IsNullOrWhiteSpace(channel.OrderTemplateId))
         {
             throw new QuotationsDomainException(

@@ -80,17 +80,35 @@ public sealed class WhatsAppSenderRouterTests
         Assert.Same(channel, sent.Channel);
     }
 
-    // Los pedidos no salen por Meta (D12): `ForOrder` ya los descartó, así que llegar aquí es un error de programación.
+    // Spec 2026-11-09 D9: el pedido también sale por Meta, con el teléfono ya normalizado.
     [Fact]
-    public async Task AnOrderOnAMetaChannelIsAProgrammingError()
+    public async Task AnOrderOnAMetaChannelGoesToMetaWithTheNormalizedPhone()
     {
         var (router, zenvia, meta) = NewRouter();
+        var channel = WhatsAppChannels.Meta();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            router.SendOrderAsync(WhatsAppChannels.Meta(), OrderMessage, TestContext.Current.CancellationToken));
+        await router.SendOrderAsync(channel, OrderMessage with { ToPhone = "300 123 4567" }, TestContext.Current.CancellationToken);
 
+        var sent = Assert.Single(meta.Orders);
+        Assert.Same(channel, sent.Channel);
+        Assert.Equal("573001234567", sent.WaId);
         Assert.Empty(zenvia.Orders);
-        Assert.Empty(meta.Quotations);
+    }
+
+    [Theory]
+    [InlineData("zenvia")]
+    [InlineData("meta")]
+    public async Task AnOrderWithoutPhoneIsRecipientMissingOnEitherProvider(string provider)
+    {
+        var (router, zenvia, meta) = NewRouter();
+        WhatsAppChannel channel = provider == "zenvia" ? WhatsAppChannels.Any() : WhatsAppChannels.Meta();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            router.SendOrderAsync(channel, OrderMessage with { ToPhone = " " }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.recipient_missing", error.Code);
+        Assert.Empty(zenvia.Orders);
+        Assert.Empty(meta.Orders);
     }
 
     private static (WhatsAppSenderRouter Router, RecordingZenviaSender Zenvia, RecordingMetaSender Meta) NewRouter()

@@ -983,6 +983,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
         services.AddScoped<IQueryHandler<GetQuotationTemplateDraftQuery, SystemTemplateDraftDto>, GetQuotationTemplateDraftHandler>();
         services.AddScoped<IQueryHandler<GetBillingTemplatesDraftQuery, BillingTemplatesDraftDto>, GetBillingTemplatesDraftHandler>();
+        // Messaging (spec 2026-11-09 D3): la plantilla de pedido, calcada de la de cotización; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<ProvisionOrderTemplateCommand, ManagedTemplateDto>, ProvisionOrderTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetOrderTemplateDraftQuery, SystemTemplateDraftDto>, GetOrderTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -2625,15 +2628,16 @@ public static class QepServiceCollectionExtensions
                     policy.RequireClaim(
                         QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
                 })
-            // Leer los canales de WhatsApp: gestionar cotizaciones o actualizar la configuración (decisión del owner
-            // 2026-10-25). RequireClaim con varios valores deja pasar a quien tenga cualquiera.
+            // Leer los canales de WhatsApp: gestionar cotizaciones o pedidos (spec 2026-11-09 D8: quien manda pedidos pregunta por el
+            // canal) o actualizar la configuración (decisión del owner 2026-10-25). RequireClaim con varios valores deja pasar a quien
+            // tenga cualquiera.
             .AddPolicy(
                 QuotationsPolicies.WhatsAppChannelsRead,
                 policy =>
                 {
                     policy.RequireAuthenticatedUser();
                     policy.RequireClaim(
-                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, TenancyPermissions.SettingsUpdate);
+                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, OrdersPermissions.OrderManage, TenancyPermissions.SettingsUpdate);
                 })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que

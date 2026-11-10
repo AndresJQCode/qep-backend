@@ -38,19 +38,8 @@ public interface IQuotationTemplateOutbound
 
 /// <summary>
 /// Spec 2026-10-21 D16, D16a, D16b y D16c: la plantilla de cotización, con el PDF como encabezado de documento, al hilo del número en
-/// esa conexión. No usa <see cref="OutboundGuards"/> a propósito: esas son las guardas de la bandeja (membresía y permiso de Mensajería
-/// de quien envía, conversación <c>Open</c>, enviar es tomarla), y D16a pide lo contrario: el envío lo autoriza
-/// <c>quotations.quotation.manage</c> en Quotations, no se rechaza si la conversación está resuelta o asignada a otra persona y no cambia
-/// su estado ni su asignación. Tampoco resta el no leído (<c>seen: 0</c>): nadie leyó el hilo para enviar.
-/// <para>
-/// Comparte con el asesor lo que no es guarda: la subida a Meta antes de reclamar (como <see cref="SendMediaMessageHandler"/>), el
-/// reclamo con el medio y la tabla de respuestas (<see cref="OutboundSettlement"/>). El PDF queda en el R2 de Mensajería con la clave del
-/// mensaje (D16c), no como la URL pública de Quotations, que el lifecycle del bucket borra.
-/// </para>
-/// <para>
-/// Una falla tardía (la escritura en R2, o Meta rechazando la credencial al enviar) puede dejar una conversación nueva vacía, como
-/// en <see cref="StartConversationHandler"/>: la conversación se abre antes del reclamo.
-/// </para>
+/// esa conexión. Spec 2026-11-09 D5: el procedimiento vive en <see cref="DocumentTemplateOutbound"/>, compartido con el pedido; acá sólo
+/// se arma el mapa de valores por clave (<c>nombre_contacto</c>, <c>numero_cotizacion</c>, <c>valor_total</c>, <c>vigencia</c>).
 /// </summary>
 public sealed class QuotationTemplateOutbound(
     IConversationQueries conversations,
@@ -70,12 +59,72 @@ public sealed class QuotationTemplateOutbound(
     private const string TotalKey = "valor_total";
     private const string ValidUntilKey = "vigencia";
 
+    private readonly DocumentTemplateOutbound core = new(conversations, repository, outbound, meta, connections, notifier, receipts, clock, opener, store, senderValues);
+
+    public Task<QuotationTemplateSendResult> SendAsync(QuotationTemplateSend send, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [SystemTemplateVariables.ContactName] = send.FullName,
+            [QuotationNumberKey] = send.OrderNumber,
+            [TotalKey] = send.Total,
+            [ValidUntilKey] = send.ValidUntil,
+        };
+        return core.SendAsync(
+            new DocumentTemplateSend(
+                send.TenantId, send.ConnectionId, send.SentByMemberId, send.WaId, send.CustomerId, send.RecipientName, send.Template, values,
+                send.Document, send.DocumentFileName),
+            cancellationToken);
+    }
+}
+
+/// <summary>Lo que una plantilla de documento del sistema necesita para salir: el destino, la fila aprobada, los valores ya formateados por
+/// clave nueva y el PDF. Spec 2026-11-09 D5: la generalización de <see cref="QuotationTemplateSend"/> por mapa de claves.</summary>
+internal sealed record DocumentTemplateSend(
+    Guid TenantId, Guid ConnectionId, Guid SentByMemberId,
+    string WaId,
+    Guid? CustomerId,
+    string RecipientName,
+    ApprovedTemplate Template,
+    IReadOnlyDictionary<string, string> Values,
+    ReadOnlyMemory<byte> Document, string DocumentFileName);
+
+/// <summary>
+/// Spec 2026-10-21 D16, D16a, D16b y D16c: una plantilla del sistema con el PDF como encabezado de documento, al hilo del número en esa
+/// conexión. No usa <see cref="OutboundGuards"/> a propósito: esas son las guardas de la bandeja (membresía y permiso de Mensajería de quien
+/// envía, conversación <c>Open</c>, enviar es tomarla), y D16a pide lo contrario: el envío lo autoriza el permiso de Quotations, no se
+/// rechaza si la conversación está resuelta o asignada a otra persona y no cambia su estado ni su asignación. Tampoco resta el no leído
+/// (<c>seen: 0</c>): nadie leyó el hilo para enviar.
+/// <para>
+/// Comparte con el asesor lo que no es guarda: la subida a Meta antes de reclamar (como <see cref="SendMediaMessageHandler"/>), el
+/// reclamo con el medio y la tabla de respuestas (<see cref="OutboundSettlement"/>). El PDF queda en el R2 de Mensajería con la clave del
+/// mensaje (D16c), no como la URL pública de Quotations, que el lifecycle del bucket borra.
+/// </para>
+/// <para>
+/// Una falla tardía (la escritura en R2, o Meta rechazando la credencial al enviar) puede dejar una conversación nueva vacía, como
+/// en <see cref="StartConversationHandler"/>: la conversación se abre antes del reclamo.
+/// </para>
+/// </summary>
+internal sealed class DocumentTemplateOutbound(
+    IConversationQueries conversations,
+    IConversationRepository repository,
+    IOutboundMessages outbound,
+    IWhatsAppCloudClient meta,
+    IMessagingConnectionDirectory connections,
+    IMessagingNotifier notifier,
+    ReadReceipts receipts,
+    IClock clock,
+    IConversationOpener opener,
+    IMessagingMediaStore store,
+    TemplateSenderValues senderValues)
+{
     private const string PdfMimeType = "application/pdf";
 
     // El multipart lleva un nombre genérico ASCII; el que ve el cliente viaja en el encabezado de la plantilla.
     private const string GenericDocumentName = "document.pdf";
 
-    public async Task<QuotationTemplateSendResult> SendAsync(QuotationTemplateSend send, CancellationToken cancellationToken)
+    public async Task<QuotationTemplateSendResult> SendAsync(DocumentTemplateSend send, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(send);
 
@@ -86,13 +135,7 @@ public sealed class QuotationTemplateOutbound(
             return new QuotationTemplateSendResult.Failed(MessagingErrorCodes.MessageRejected);
         }
 
-        var values = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            [SystemTemplateVariables.ContactName] = send.FullName,
-            [QuotationNumberKey] = send.OrderNumber,
-            [TotalKey] = send.Total,
-            [ValidUntilKey] = send.ValidUntil,
-        };
+        var values = new Dictionary<string, string>(send.Values, StringComparer.Ordinal);
         await senderValues.AddAsync(send.TenantId, send.SentByMemberId, SystemTemplateSend.VariablesOf(send.Template), values, cancellationToken);
         if (SystemTemplateSend.Build(send.Template, values) is not { } built)
         {
@@ -133,7 +176,7 @@ public sealed class QuotationTemplateOutbound(
         var conversation = await conversations.FindAsync(send.TenantId, opened.ConversationId, cancellationToken)
             ?? throw new InvalidOperationException("The conversation that was just opened could not be read.");
 
-        // 5. Un clientId nuevo: cada envío de la cotización es un mensaje propio, no un reintento.
+        // 5. Un clientId nuevo: cada envío del documento es un mensaje propio, no un reintento.
         var draft = new OutboundDraft(
             Guid.CreateVersion7(), conversation.Id, send.TenantId, send.ConnectionId, Guid.CreateVersion7(), built.Text,
             send.SentByMemberId, now, Kind: MessageKind.Template,
@@ -188,7 +231,7 @@ public sealed class QuotationTemplateOutbound(
         return new QuotationTemplateSendResult.Sent(claim.MessageId, conversation.Id);
     }
 
-    private static bool IsAcceptable(QuotationTemplateSend send) =>
+    private static bool IsAcceptable(DocumentTemplateSend send) =>
         // El teléfono es la clave de la conversación: con otra forma, el opener no podría usarlo.
         send.WaId is { Length: > 0 and <= Conversation.WaIdMaxLength } waId && waId.All(char.IsAsciiDigit);
 

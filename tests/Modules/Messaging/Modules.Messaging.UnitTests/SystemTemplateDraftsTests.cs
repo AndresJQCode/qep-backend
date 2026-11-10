@@ -22,6 +22,10 @@ public sealed class SystemTemplateDraftsTests
             new GetQuotationTemplateDraftHandler(Repository, Bed.Connections, Bed.TenantModules, Context)
                 .HandleAsync(new GetQuotationTemplateDraftQuery(Bed.TenantId, Bed.ConnectionId), Ct);
 
+        public Task<SystemTemplateDraftDto> OrderAsync() =>
+            new GetOrderTemplateDraftHandler(Repository, Bed.Connections, Bed.TenantModules, Context)
+                .HandleAsync(new GetOrderTemplateDraftQuery(Bed.TenantId, Bed.ConnectionId), Ct);
+
         public Task<BillingTemplatesDraftDto> BillingAsync() =>
             new GetBillingTemplatesDraftHandler(Repository, Bed.Connections, Bed.TenantModules, Context)
                 .HandleAsync(new GetBillingTemplatesDraftQuery(Bed.TenantId, Bed.ConnectionId), Ct);
@@ -41,9 +45,9 @@ public sealed class SystemTemplateDraftsTests
             return row;
         }
 
-        public void External(string components, string status = MessageTemplateStatuses.Approved) =>
+        public void External(string components, string status = MessageTemplateStatuses.Approved, string name = QuotationTemplateDefinition.Name) =>
             Repository.Rows.Add(MessageTemplate.Mirrored(
-                Bed.TenantId, Bed.ConnectionId, "900", QuotationTemplateDefinition.Name, "es", "UTILITY", "NAMED", status, null, components, Bed.Now.AddDays(-2)));
+                Bed.TenantId, Bed.ConnectionId, "900", name, "es", "UTILITY", "NAMED", status, null, components, Bed.Now.AddDays(-2)));
     }
 
     [Fact]
@@ -165,5 +169,41 @@ public sealed class SystemTemplateDraftsTests
         var error = await Assert.ThrowsAsync<BuildingBlocks.Application.RequestForbiddenException>(() => rig.BillingAsync());
 
         Assert.Equal("tenancy.module_not_enabled", error.Code);
+    }
+
+    // Spec 2026-11-09 D3: el borrador del pedido, con su texto base y sus seis variables.
+    [Fact]
+    public async Task WithoutRowsTheOrderDraftIsTheBaseTextWithItsList()
+    {
+        var draft = await new Rig().OrderAsync();
+
+        Assert.Equal(OrderTemplateDefinition.BaseBody, draft.Body);
+        Assert.False(draft.Locked);
+        Assert.Equal(["nombre_contacto", "asesor", "empresa", "saludo", "numero_pedido", "valor_total"], draft.Variables.Select(variable => variable.Key));
+    }
+
+    // El predicado de adoptabilidad es el de cada plantilla: una externa qep_pedido con la forma de la cotización (vigencia) no presta su texto.
+    [Fact]
+    public async Task AnExternalOrderIsAdoptableOnlyByTheOrderPredicate()
+    {
+        var compatible = new Rig();
+        compatible.External("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Tu pedido {{numero_pedido}}."}]""", name: OrderTemplateDefinition.Name);
+        Assert.Equal("Tu pedido {{numero_pedido}}.", (await compatible.OrderAsync()).Body);
+
+        var quotationShaped = new Rig();
+        quotationShaped.External("""[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Vigente hasta {{vigencia}}."}]""", name: OrderTemplateDefinition.Name);
+        Assert.Equal(OrderTemplateDefinition.BaseBody, (await quotationShaped.OrderAsync()).Body);
+    }
+
+    [Fact]
+    public async Task ALiveOrderRowIsLockedWithItsBody()
+    {
+        var rig = new Rig();
+        rig.Row(MessageTemplateKind.Order, "qep_pedido", "NAMED", "Hola {{nombre_contacto}}, tu pedido.", MessageTemplateStatuses.Approved);
+
+        var draft = await rig.OrderAsync();
+
+        Assert.True(draft.Locked);
+        Assert.Equal("Hola {{nombre_contacto}}, tu pedido.", draft.Body);
     }
 }
