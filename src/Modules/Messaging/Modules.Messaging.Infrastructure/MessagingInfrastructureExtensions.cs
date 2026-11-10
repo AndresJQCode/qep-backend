@@ -94,6 +94,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessageTemplates, MirroredTemplateCatalog>();
         // Spec 2026-10-11 §6: las campañas. El agregado con tracking, las lecturas con sus contadores y el armado de los DTO.
         services.AddScoped<ICampaignRepository, CampaignRepository>();
+        // Spec 2026-11-09: los mensajes programados, con tracking.
+        services.AddScoped<IScheduledMessageRepository, ScheduledMessageRepository>();
         services.AddScoped<ICampaignQueries, CampaignQueries>();
         services.AddScoped<CampaignMapper>();
         // Spec 2026-10-12 §3.1: las respuestas rápidas, con tracking; el atajo repetido lo traduce MessagingUnitOfWork.
