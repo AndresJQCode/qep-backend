@@ -74,11 +74,6 @@ public sealed class SendMediaMessageHandler(
     IValidator<SendMediaMessageCommand> validator)
     : ICommandHandler<SendMediaMessageCommand, MessageDto>
 {
-    // Toda imagen sale como JPEG (R12); el multipart lleva un nombre genérico ASCII y el real viaja en document.filename (el de un
-    // video o un audio no viaja: WhatsApp no lo muestra, queda en QEP).
-    private const string ImageMimeType = "image/jpeg";
-    private const string GenericImageName = "image.jpg";
-
     /// <summary>Spec 2026-10-14 decisión 12 y §11: cuánto vive la URL firmada con la que Meta descarga el adjunto de Instagram. Más
     /// que los 10 s del envío, por si Meta la baja después de responder.</summary>
     public static readonly TimeSpan InstagramDownloadLifetime = TimeSpan.FromMinutes(10);
@@ -87,10 +82,8 @@ public sealed class SendMediaMessageHandler(
     private readonly OutboundGuards _guards = new(
         conversations, repository, messages, outbound, connections, memberNames, membershipDirectory, tenantModules, executionContext, clock, notifier, receipts, chatbotNames);
 
-    /// <summary>Lo que quedó de la preparación: el medio ya subido (o la falla de la subida) y los bytes finales si es una imagen.</summary>
-    /// <paramref name="Upload"/> es <c>null</c> en Instagram: Meta descarga el adjunto desde R2 (decisión 12), no hay subida previa.</summary>
-    private sealed record Prepared(
-        string MimeType, string FileName, long SizeBytes, string? Sha256Hex, byte[]? Compressed, MessagingGraphResult<string>? Upload);
+    // Propiedad y no campo: meta y store también se usan en los métodos, y capturarlos para un campo es CS9124.
+    private OutboundMediaPreparer Preparer => new(meta, store, compressor);
 
     public async Task<MessageDto> HandleAsync(SendMediaMessageCommand command, CancellationToken cancellationToken)
     {
@@ -131,7 +124,7 @@ public sealed class SendMediaMessageHandler(
             // Dos requests con el mismo clientId: el primero ya envió y consumió el staging. Gana la idempotencia, no el 422.
             return await _guards.FindAlreadySentAsync(conversation.Id, clientId, cancellationToken) is { } done
                 ? await _guards.ToDtoAsync(command.TenantId, OutboundGuards.ExistingRow(conversation.Id, done, clientId), cancellationToken)
-                : throw UploadNotFound();
+                : throw OutboundMediaPreparer.UploadNotFound();
         }
 
         // R10: el PUT prefirmado no impone tope; el stat sobre el objeto real manda. IsAllowed ya garantizó el tope del canal.
@@ -153,7 +146,8 @@ public sealed class SendMediaMessageHandler(
             sender = await _guards.ResolveSenderAsync(command.TenantId, conversation.ConnectionId, cancellationToken);
         }
 
-        var prepared = await PrepareAsync(sender, stagingKey, staged, fileName, extension, cancellationToken);
+        var prepared = await Preparer.PrepareAsync(
+            sender, stagingKey, staged.SizeBytes, fileName, extension, () => DiscardAsync(stagingKey), cancellationToken);
 
         var caption = string.IsNullOrWhiteSpace(command.Caption) ? null : command.Caption.Trim();
         // Spec 2026-10-20 D3: el kind sale de la tabla. Un audio adjunto guarda su nombre: así se distingue de la nota de voz (null).
@@ -176,7 +170,7 @@ public sealed class SendMediaMessageHandler(
             if (prepared.Compressed is { } bytes)
             {
                 using var content = new MemoryStream(bytes, writable: false);
-                await store.UploadAsync(finalKey, content, bytes.Length, ImageMimeType, cancellationToken);
+                await store.UploadAsync(finalKey, content, bytes.Length, OutboundMediaPreparer.ImageMimeType, cancellationToken);
             }
             else
             {
@@ -260,67 +254,6 @@ public sealed class SendMediaMessageHandler(
 
         return await instagram.SendAttachmentAsync(sender, recipientId, attachmentType, url, CancellationToken.None);
     }
-
-    /// <summary>Un solo GET del staging: la cabecera decide el formato (R9) y el resto sigue por el mismo stream. La imagen se
-    /// comprime y sube desde memoria (≤ 1600 px, unos cientos de KB); el documento va de R2 a Meta sin pasar por memoria, con el
-    /// SHA-256 calculado al pasar (<c>null</c> si Meta cortó antes de leerlo entero). Con <paramref name="sender"/> en <c>null</c>
-    /// (Instagram) no hay subida a Meta: el documento sólo se verifica y se mide.</summary>
-    private async Task<Prepared> PrepareAsync(
-        MessagingSender? sender, string stagingKey, StagedUpload staged, string fileName, string extension, CancellationToken cancellationToken)
-    {
-        var opened = await store.OpenReadAsync(stagingKey, cancellationToken) ?? throw UploadNotFound();
-        await using var source = opened.Content;
-        var header = new byte[OutboundMediaSniffer.HeaderLength];
-        var read = await source.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, cancellationToken);
-        if (OutboundMediaSniffer.Detect(header.AsSpan(0, read), extension) is not { } format)
-        {
-            await DiscardAsync(stagingKey);
-            throw new MessagingDomainException(MessagingErrorCodes.MediaUnsupportedFormat, "The file content does not match its type.");
-        }
-
-        await using var whole = new PrefixedHashingStream(header.AsMemory(0, read), source);
-        if (!OutboundMediaPolicy.IsImage(format))
-        {
-            var mimeType = OutboundMediaPolicy.MimeTypeOf(format);
-            if (sender is null)
-            {
-                // Instagram: el documento se promueve en R2 tal cual; el hash no hace falta para enviar y no se lee entero acá.
-                return new Prepared(mimeType, fileName, staged.SizeBytes, null, null, null);
-            }
-
-            var upload = await meta.UploadMediaAsync(sender, whole, staged.SizeBytes, mimeType, GenericNameOf(format) + extension, cancellationToken);
-            return new Prepared(mimeType, fileName, staged.SizeBytes, whole.BytesRead == staged.SizeBytes ? whole.FinishHex() : null, null, upload);
-        }
-
-        var compressed = await compressor.CompressAsync(whole, cancellationToken);
-        if (compressed is null)
-        {
-            await DiscardAsync(stagingKey);
-            throw new MessagingDomainException(MessagingErrorCodes.MediaInvalidImage, "The image could not be read.");
-        }
-
-        MessagingGraphResult<string>? uploaded = null;
-        if (sender is not null)
-        {
-            using var content = new MemoryStream(compressed.Content, writable: false);
-            uploaded = await meta.UploadMediaAsync(sender, content, compressed.Content.Length, ImageMimeType, GenericImageName, cancellationToken);
-        }
-
-        // Se guarda con el nombre base y .jpg: lo que viaja y lo que se guarda es la comprimida (R12).
-        return new Prepared(
-            ImageMimeType, Path.GetFileNameWithoutExtension(fileName) + ".jpg", compressed.Content.Length,
-            Convert.ToHexStringLower(SHA256.HashData(compressed.Content)), compressed.Content, uploaded);
-    }
-
-    private static string GenericNameOf(OutboundMediaFormat format) => OutboundMediaPolicy.KindOf(format) switch
-    {
-        MessageKind.Video => "video",
-        MessageKind.Audio => "audio",
-        _ => "document",
-    };
-
-    private static MessagingDomainException UploadNotFound() =>
-        new(MessagingErrorCodes.MediaUploadNotFound, "The upload does not exist, expired or was already used.");
 
     // Best effort: si borrar falla queda un objeto en el bucket privado que nadie puede pedir (el GET de media va por la fila) y el
     // lifecycle de messaging/staging/ lo limpia al día. No vale cambiar la respuesta por eso.
