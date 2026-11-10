@@ -22,7 +22,7 @@ public interface IStoreBuyerAccounts
 
     /// <summary>
     /// La cuenta de la sesión del comprador, para dejarla en el pedido. <c>null</c> si la sesión no sirve en ese host: ausente,
-    /// vencida, de otro host o de una cuenta borrada. No escribe nada.
+    /// vencida, de otro host o de una cuenta borrada. No escribe nada en el pedido; en Buyers puede refrescar la sesión.
     /// </summary>
     /// <param name="host">El host de la tienda ya normalizado.</param>
     Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken);
