@@ -14,8 +14,8 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
-    public static string CreatedFromStore(string requestNumber) =>
-        Trim($"Creado desde la tienda (solicitud {requestNumber}).");
+    // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
+    public static string CreatedFromStore() => "Creado desde la tienda.";
 
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         QuotationChangeSummary.ItemAdded(productName, quantity, format);

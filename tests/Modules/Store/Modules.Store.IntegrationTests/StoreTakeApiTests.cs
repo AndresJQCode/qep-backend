@@ -44,7 +44,8 @@ public sealed class StoreTakeApiTests
         Assert.Equal("Store", (string)order["order"]!["source"]!);
         Assert.Equal(rig.CallerMembershipId, (Guid)order["order"]!["advisorId"]!);
         Assert.False((bool)order["order"]!["isStorePickup"]!);
-        Assert.Equal("T-0001", (string)order["order"]!["externalReference"]!);
+        // El pedido de la tienda ya no lleva el número de la solicitud como referencia.
+        Assert.Null(order["order"]!["externalReference"]);
         Assert.Equal(customer, (Guid)order["order"]!["clientId"]!);
         Assert.False((bool)taken["customerCreated"]!);
         Assert.False((bool)taken["customerCompleted"]!);
@@ -171,7 +172,7 @@ public sealed class StoreTakeApiTests
         // El pedido falla después de agregar la dirección de envío (paso 8).
         await rig.DeactivateVariantAsync();
         await StoreInboxRig.AssertCodeAsync(
-            await rig.TakeAsync(request, ExistingBody(customer)), HttpStatusCode.UnprocessableEntity, "quotation.item.product_inactive");
+            await rig.TakeAsync(request, ExistingBody(customer)), HttpStatusCode.UnprocessableEntity, "store.order_request.line_unavailable");
         Assert.Equal(2, (await rig.AddressesAsync(customer)).Count);
         await rig.ExecuteAsync("UPDATE catalog.product_variants SET is_active = true WHERE id = @id", ("id", rig.Variant));
 
@@ -528,13 +529,14 @@ public sealed class StoreTakeApiTests
     {
         await using var scope = rig.Factory.Services.CreateAsyncScope();
         var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
+        // La clave del pedido sale del clientRequestId del checkout, no del id de la solicitud.
+        var clientRequestId = (await rig.StateAsync(request)).ClientRequestId;
         var party = new StoreOrderParty(
             "Ana Pérez", "3001234567", "ana@test.co", "Calle 1 # 2-3", "CO", rig.Department, rig.City, null, "CC", "123456");
         await gateway.CreateAsync(
             new Modules.Quotations.Application.StoreOrderDraft(
                 StoreSettingsFixture.Tenant,
-                request,
-                "T-0001",
+                clientRequestId,
                 customer,
                 rig.CallerMembershipId,
                 true,
@@ -548,8 +550,7 @@ public sealed class StoreTakeApiTests
                 false,
                 false,
                 [new StoreQuoteLine(rig.Variant, 2)],
-                null,
-                Guid.Parse(SubjectId)),
+                null),
             TestContext.Current.CancellationToken);
     }
 
@@ -601,7 +602,7 @@ public sealed class StoreTakeApiTests
         await rig.DeactivateVariantAsync();
 
         await StoreInboxRig.AssertCodeAsync(
-            await rig.TakeAsync(request, NewCustomerBody), HttpStatusCode.UnprocessableEntity, "quotation.item.product_inactive");
+            await rig.TakeAsync(request, NewCustomerBody), HttpStatusCode.UnprocessableEntity, "store.order_request.line_unavailable");
 
         var state = await rig.StateAsync(request);
         Assert.Equal(StoreOrderRequestStatus.New, state.Status);

@@ -923,6 +923,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
         Task.FromResult(rows.FirstOrDefault(row => row.Source == source && row.ExternalKey == externalKey));
 
+    public Task<int> CountBySourceSinceAsync(
+        Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.Count(row => row.Source == source && row.ConvertedAt >= since));
+
     public Task<IReadOnlyDictionary<Guid, Order>> FindByQuotationIdsAsync(
         Guid tenantId,
         IReadOnlyCollection<QuotationId> quotationIds,

@@ -71,47 +71,70 @@ internal sealed partial class StoreOrdersAdapter(IServiceScopeFactory scopes, IL
         Message = "The quotation engine rejected a public store quote for tenant {TenantId} in {Currency} with code {Code}")]
     private static partial void LogQuoteRejected(ILogger logger, Guid tenantId, string currency, string code);
 
-    public async Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken)
+    [LoggerMessage(
+        EventId = 6002,
+        Level = LogLevel.Warning,
+        Message = "The quotation engine rejected a public store order for tenant {TenantId} in {Currency} with code {Code}")]
+    private static partial void LogCreateRejected(ILogger logger, Guid tenantId, string currency, string code);
+
+    public async Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken)
     {
         await using var scope = scopes.CreateAsyncScope();
         var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
-        return await gateway.FindExistingAsync(tenantId, requestId, cancellationToken) is { } existing ? ToCreated(existing) : null;
+        return await gateway.FindExistingAsync(tenantId, clientRequestId, cancellationToken) is { } existing ? ToCreated(existing) : null;
     }
 
-    // A diferencia de la cotización, acá los errores del motor NO se esconden: quien toma la solicitud es un asesor, y
-    // quotation.item.product_inactive o product_price_unavailable le dicen qué arreglar.
+    public async Task<int> CountCreatedSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
+        return await gateway.CountStoreOrdersSinceAsync(tenantId, since, cancellationToken);
+    }
+
+    // Como en la cotización, el pedido lo crea el checkout del visitante anónimo: un rechazo del motor sale como línea no
+    // disponible, con el código original en el log y la excepción como interna.
     public async Task<StoreOrderCreated> CreateAsync(StoreOrderDraft draft, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(draft);
 
         await using var scope = scopes.CreateAsyncScope();
         var gateway = scope.ServiceProvider.GetRequiredService<IStoreOrderGateway>();
-        var result = await gateway.CreateAsync(
-            new Modules.Quotations.Application.StoreOrderDraft(
-                draft.TenantId,
-                draft.RequestId,
-                draft.RequestNumber,
-                draft.ClientId,
-                draft.AdvisorMembershipId,
-                draft.IsRetail,
-                new QuotationBillingAccountRequest(
-                    draft.BillingAccount.CompanyId,
-                    draft.BillingAccount.BankName,
-                    draft.BillingAccount.AccountNumber,
-                    draft.BillingAccount.Currency),
-                ToParty(draft.Billing),
-                ToParty(draft.Shipping),
-                draft.BillingWithRetention,
-                draft.BillingVatSurplus,
-                draft.Lines.Select(line => new StoreQuoteLine(line.VariantId, line.Quantity)).ToList(),
-                draft.Notes,
-                draft.TakerUserId),
-            cancellationToken);
-        return ToCreated(result);
+        try
+        {
+            var result = await gateway.CreateAsync(ToGatewayDraft(draft), cancellationToken);
+            return ToCreated(result);
+        }
+        catch (QuotationsDomainException exception)
+        {
+            LogCreateRejected(logger, draft.TenantId, draft.BillingAccount.Currency, exception.Code);
+            throw new StoreDomainException(
+                StoreErrorCodes.LineUnavailable, "A line of the order cannot be sold.", exception);
+        }
     }
 
+    private static Modules.Quotations.Application.StoreOrderDraft ToGatewayDraft(StoreOrderDraft draft) =>
+        new(
+            draft.TenantId,
+            draft.ClientRequestId,
+            draft.ClientId,
+            draft.AdvisorMembershipId,
+            draft.IsRetail,
+            new QuotationBillingAccountRequest(
+                draft.BillingAccount.CompanyId,
+                draft.BillingAccount.BankName,
+                draft.BillingAccount.AccountNumber,
+                draft.BillingAccount.Currency),
+            ToParty(draft.Billing),
+            ToParty(draft.Shipping),
+            draft.BillingWithRetention,
+            draft.BillingVatSurplus,
+            draft.Lines.Select(line => new StoreQuoteLine(line.VariantId, line.Quantity)).ToList(),
+            draft.Notes);
+
     private static StoreOrderCreated ToCreated(StoreOrderResult result) =>
-        new(result.OrderId, result.OrderNumber, result.Total, result.ClientId, result.AdvisorMembershipId, result.AlreadyExisted);
+        new(
+            result.OrderId, result.OrderNumber, result.Total, result.Currency, result.ClientId, result.AdvisorMembershipId,
+            result.AlreadyExisted);
 
     private static StoreOrderParty ToParty(StoreOrderPartyInput party) =>
         new(

@@ -29,19 +29,18 @@ public sealed class StoreOrderGatewayTests
         Guid tenantId,
         Guid clientId,
         Guid advisorId,
-        Guid takerUserId,
         (Guid CompanyId, string BankName, string AccountNumber, string Currency) account,
         Guid variantId,
         StoreOrderParty billing,
         StoreOrderParty? shipping = null,
-        Guid? requestId = null,
+        Guid? clientRequestId = null,
         decimal quantity = 2m,
         bool withRetention = false) =>
         new(
-            tenantId, requestId ?? Guid.CreateVersion7(), "T-0001", clientId, advisorId, IsRetail: true,
+            tenantId, clientRequestId ?? Guid.CreateVersion7(), clientId, advisorId, IsRetail: true,
             new QuotationBillingAccountRequest(account.CompanyId, account.BankName, account.AccountNumber, account.Currency),
             billing, shipping ?? billing, withRetention, BillingVatSurplus: false,
-            [new StoreQuoteLine(variantId, quantity)], "Entregar en portería", takerUserId);
+            [new StoreQuoteLine(variantId, quantity)], "Entregar en portería");
 
     private static async Task<Guid> AdvisorAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
     {
@@ -90,7 +89,7 @@ public sealed class StoreOrderGatewayTests
         var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
 
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, ColombianParty(city, "CC", "1020304050")),
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050")),
             TestContext.Current.CancellationToken));
 
         Assert.False(result.AlreadyExisted);
@@ -101,9 +100,9 @@ public sealed class StoreOrderGatewayTests
             ("Store", false, "PaymentPending", advisorId, customerId),
             (detail.Order.Source, detail.Order.IsStorePickup, detail.Order.PaymentStatus, detail.Order.AdvisorId, result.ClientId));
         var created = Assert.Single(detail.History, entry => entry.EventType == "Created");
-        Assert.Equal("Creado desde la tienda (solicitud T-0001).", created.Details);
-        // El que toma la solicitud es el asesor: la entrada no puede quedar sin autor.
-        Assert.Equal(advisorId, created.MemberId);
+        Assert.Equal("Creado desde la tienda.", created.Details);
+        // Lo crea el sistema desde la tienda: ninguna persona lo firmó.
+        Assert.Null(created.MemberId);
     }
 
     [Fact]
@@ -122,7 +121,7 @@ public sealed class StoreOrderGatewayTests
         var shipping = ColombianParty(second) with { Name = "Portería", Address = "Carrera 9 # 8-7" };
 
         var draft = Draft(
-            tenantId, customerId, advisorId, ownerUserId, account, variantId, billing, shipping, withRetention: true) with
+            tenantId, customerId, advisorId, account, variantId, billing, shipping, withRetention: true) with
         {
             BillingVatSurplus = true,
         };
@@ -155,7 +154,7 @@ public sealed class StoreOrderGatewayTests
 
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
             Draft(
-                tenantId, customerId, advisorId, ownerUserId, account, variantId,
+                tenantId, customerId, advisorId, account, variantId,
                 ColombianParty(city, "CC", "1020304050"), ForeignParty()),
             TestContext.Current.CancellationToken));
 
@@ -183,7 +182,7 @@ public sealed class StoreOrderGatewayTests
                 TestContext.Current.CancellationToken);
             var created = await gateway.CreateAsync(
                 Draft(
-                    tenantId, customerId, advisorId, ownerUserId, account, variantId,
+                    tenantId, customerId, advisorId, account, variantId,
                     ColombianParty(city, "CC", "1020304050"), quantity: 10m, withRetention: true),
                 TestContext.Current.CancellationToken);
             return (quoted, created);
@@ -215,7 +214,7 @@ public sealed class StoreOrderGatewayTests
         };
 
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            Draft(tenantId, customerId, advisorId, account, variantId, billing),
             TestContext.Current.CancellationToken));
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
@@ -238,7 +237,7 @@ public sealed class StoreOrderGatewayTests
         var billing = ForeignParty() with { IdentificationType = "CC", IdentificationNumber = "1020304050" };
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            Draft(tenantId, customerId, advisorId, account, variantId, billing),
             TestContext.Current.CancellationToken)));
 
         Assert.Equal("quotations.party.document_type_not_allowed", error.Code);
@@ -260,7 +259,7 @@ public sealed class StoreOrderGatewayTests
         var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
         var billing = ForeignParty() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z" };
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, billing),
+            Draft(tenantId, customerId, advisorId, account, variantId, billing),
             TestContext.Current.CancellationToken));
         await using (var connection = new NpgsqlConnection(database.GetConnectionString()))
         {
@@ -282,7 +281,7 @@ public sealed class StoreOrderGatewayTests
     }
 
     [Fact]
-    public async Task CreateIsIdempotentByRequest()
+    public async Task CreateIsIdempotentByClientRequestId()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -294,7 +293,7 @@ public sealed class StoreOrderGatewayTests
         var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
         var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
         var draft = Draft(
-            tenantId, customerId, advisorId, ownerUserId, account, variantId, ColombianParty(city, "CC", "1020304050"));
+            tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"));
 
         var first = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(draft, TestContext.Current.CancellationToken));
         // El reintento llega con otro cliente y otro asesor: devuelve los del pedido que ya existe (R5).
@@ -310,7 +309,7 @@ public sealed class StoreOrderGatewayTests
         Assert.Equal(1, await OrderRowsAsync(database.GetConnectionString(), tenantId));
         // Un solo número gastado: el siguiente pedido es el consecutivo inmediato.
         var next = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            draft with { RequestId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken));
+            draft with { ClientRequestId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken));
         Assert.EndsWith("0002", next.OrderNumber, StringComparison.Ordinal);
     }
 
@@ -333,7 +332,7 @@ public sealed class StoreOrderGatewayTests
                 new StoreQuoteRequest(tenantId, "COP", true, [new StoreQuoteLine(variantId, 2m)]),
                 TestContext.Current.CancellationToken);
             var created = await gateway.CreateAsync(
-                Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, ColombianParty(city, "CC", "1020304050")),
+                Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050")),
                 TestContext.Current.CancellationToken);
             return (quoted, created);
         });
@@ -355,19 +354,115 @@ public sealed class StoreOrderGatewayTests
         var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
 
         await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, ColombianParty(city, "CC", "1020304050")),
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050")),
             TestContext.Current.CancellationToken));
 
         var created = Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.created.v1"));
         using var payload = JsonDocument.Parse(created.PayloadJson);
         Assert.Equal("Store", payload.RootElement.GetProperty("source").GetString());
-        // La auditoría la firma la persona que tomó la solicitud, no una integración.
+        // Nadie toma el pedido: la auditoría la firma el sistema como integración, sin persona detrás.
         var audit = Assert.Single(
             await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"),
             message => message.PayloadJson.Contains("quotation.order.created", StringComparison.Ordinal));
         using var auditPayload = JsonDocument.Parse(audit.PayloadJson);
-        Assert.NotEqual("Integration", auditPayload.RootElement.GetProperty("actorType").GetString());
-        Assert.Contains(ownerUserId.ToString(), audit.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Integration", auditPayload.RootElement.GetProperty("actorType").GetString());
+        Assert.DoesNotContain(ownerUserId.ToString(), audit.PayloadJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TheExternalKeyCarriesTheClientRequestId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var clientRequestId = Guid.CreateVersion7();
+
+        var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(
+                tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"),
+                clientRequestId: clientRequestId),
+            TestContext.Current.CancellationToken));
+
+        var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
+        // El pedido no nace de una solicitud: no hay número que mostrar como referencia.
+        Assert.Equal($"store-checkout:{clientRequestId}", order.ExternalKey);
+        Assert.Null(order.ExternalReference);
+    }
+
+    [Fact]
+    public async Task FindExistingFindsByClientRequestId()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var clientRequestId = Guid.CreateVersion7();
+        var created = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(
+                tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"),
+                clientRequestId: clientRequestId),
+            TestContext.Current.CancellationToken));
+
+        var found = await WithGatewayAsync(factory, gateway => gateway.FindExistingAsync(
+            tenantId, clientRequestId, TestContext.Current.CancellationToken));
+        var missing = await WithGatewayAsync(factory, gateway => gateway.FindExistingAsync(
+            tenantId, Guid.CreateVersion7(), TestContext.Current.CancellationToken));
+
+        Assert.NotNull(found);
+        Assert.Equal((created.OrderId, true), (found.OrderId, found.AlreadyExisted));
+        Assert.Null(missing);
+    }
+
+    // El tope diario cuenta todo pedido de la tienda que entró, también el anulado: anular no devuelve el cupo.
+    [Fact]
+    public async Task CountBySourceSinceCountsCancelledStoreOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, OrdersPermissions.OrderCancel]);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var draft = Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050"));
+        await WithGatewayAsync(factory, gateway => gateway.CreateAsync(draft, TestContext.Current.CancellationToken));
+        var cancelled = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            draft with { ClientRequestId = Guid.CreateVersion7() }, TestContext.Current.CancellationToken));
+        var cancel = await client.PostAsJsonAsync(
+            $"{OrdersUrl(tenantId)}/{cancelled.OrderId}/cancel",
+            new CancelOrderRequest("El cliente desistió"),
+            TestContext.Current.CancellationToken);
+        cancel.EnsureSuccessStatusCode();
+        var manual = await client.PostAsJsonAsync(
+            OrdersUrl(tenantId),
+            new CreateOrderRequest(
+                customerId, null, null, false, null, null,
+                new QuotationBillingAccountRequest(account.CompanyId, account.BankName, account.AccountNumber, account.Currency),
+                [new OrderEditItemRequest(variantId, 1m)], "PaymentPending", []),
+            TestContext.Current.CancellationToken);
+        manual.EnsureSuccessStatusCode();
+        var now = DateTimeOffset.UtcNow;
+
+        var sinceYesterday = await WithGatewayAsync(factory, gateway => gateway.CountStoreOrdersSinceAsync(
+            tenantId, now.AddDays(-1), TestContext.Current.CancellationToken));
+        var sinceTomorrow = await WithGatewayAsync(factory, gateway => gateway.CountStoreOrdersSinceAsync(
+            tenantId, now.AddDays(1), TestContext.Current.CancellationToken));
+
+        Assert.Equal((2, 0), (sinceYesterday, sinceTomorrow));
     }
 
     [Fact]
@@ -385,7 +480,7 @@ public sealed class StoreOrderGatewayTests
         var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
 
         var result = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
-            Draft(tenantId, customerId, advisorId, ownerUserId, account, variantId, ColombianParty(city, "CC", "1020304050")),
+            Draft(tenantId, customerId, advisorId, account, variantId, ColombianParty(city, "CC", "1020304050")),
             TestContext.Current.CancellationToken));
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
