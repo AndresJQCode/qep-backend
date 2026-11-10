@@ -110,11 +110,27 @@ internal sealed class FakeScheduledMessageStore : IScheduledMessageStore
 
     public bool CompleteSucceeds { get; set; } = true;
 
-    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimDueAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken) =>
-        Task.FromResult(Due.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+    public int LastDueTake { get; private set; }
 
-    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimExpiredAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken) =>
-        Task.FromResult(Expired.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+    public DateTimeOffset LastDueNow { get; private set; }
+
+    public TimeSpan LastDueLease { get; private set; }
+
+    public int LastExpiredTake { get; private set; }
+
+    public TimeSpan LastExpiredLease { get; private set; }
+
+    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimDueAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken)
+    {
+        (LastDueTake, LastDueNow, LastDueLease) = (take, now, lease);
+        return Task.FromResult(Due.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+    }
+
+    public Task<IReadOnlyList<ClaimedScheduledMessage>> ClaimExpiredAsync(int take, DateTimeOffset now, TimeSpan lease, CancellationToken cancellationToken)
+    {
+        (LastExpiredTake, LastExpiredLease) = (take, lease);
+        return Task.FromResult(Expired.TryDequeue(out var batch) ? batch : (IReadOnlyList<ClaimedScheduledMessage>)[]);
+    }
 
     public Task<bool> CompleteSentAsync(ClaimedScheduledMessage message, Guid sentMessageId, DateTimeOffset now, CancellationToken cancellationToken)
     {
