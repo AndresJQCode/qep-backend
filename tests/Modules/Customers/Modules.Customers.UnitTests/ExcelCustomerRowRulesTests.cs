@@ -105,6 +105,39 @@ public sealed class ExcelCustomerRowRulesTests
     }
 
     [Fact]
+    public void AnUpdateRowWithBlankDocumentIsValidUnderTheDefaultPolicy()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI08000037", identificationType: null, identificationNumber: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AnUpdateRowWithBlankDepartmentAndCityIsValidUnderTheDefaultPolicy()
+    {
+        var result = validator.Validate(ValidRow(cuc: "CLI08000037", department: null, city: null));
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AnUpdateRowWithHalfAPairStillFails()
+    {
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", identificationType: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.identification_incomplete");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", identificationNumber: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.identification_number_required");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", department: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.department_required");
+        Assert.Contains(
+            validator.Validate(ValidRow(cuc: "CLI08000037", city: null)).Errors,
+            error => error.ErrorCode == "customers.import.row.city_required");
+    }
+
+    [Fact]
     public void AValidRowPassesEveryRule()
     {
         var result = validator.Validate(ValidRow());

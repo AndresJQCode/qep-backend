@@ -88,7 +88,7 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
             .Must(_ => false)
             .WithErrorCode("customers.import.row.identification_type_required")
             .WithMessage("The identification type is required.")
-            .When(row => documentRequired && IsBlank(row.IdentificationType) && IsBlank(row.IdentificationNumber));
+            .When(row => !IsUpdate(row) && documentRequired && IsBlank(row.IdentificationType) && IsBlank(row.IdentificationNumber));
 
         RuleFor(row => row.IdentificationType)
             .Must(_ => false)
@@ -109,7 +109,7 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.identification_number_required")
                 .WithMessage("The identification number is required.")
             .When(row => IsBlank(row.IdentificationNumber) &&
-                (!IsBlank(row.IdentificationType) || documentRequired));
+                (!IsBlank(row.IdentificationType) || (!IsUpdate(row) && documentRequired)));
 
         RuleFor(row => row.IdentificationNumber)
             .MaximumLength(CustomerIdentification.NumberMaxLength)
@@ -157,19 +157,21 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
         // Solo "no vacio" aca: si el departamento y la ciudad existen, y si la ciudad pertenece a
         // ese departamento, lo resuelve el handler contra Geography — este validador no tiene
         // acceso a la base ni la necesita para esto.
+        // En una fila de actualizacion (Cuc lleno) las celdas vacias significan "no se envia" y conservan lo guardado,
+        // asi que "vacio los dos" nunca se exige ahi; las mitades de un par si siguen fallando.
         // Departamento y ciudad viajan como par (G9): los dos vacios solo se rechazan si la politica pide la ciudad al
         // guardar; uno sin el otro siempre conserva su codigo.
         RuleFor(row => row.Department)
             .Must(_ => false)
                 .WithErrorCode("customers.import.row.department_required")
                 .WithMessage("The department is required.")
-            .When(row => IsBlank(row.Department) && (!IsBlank(row.City) || cityRequired));
+            .When(row => IsBlank(row.Department) && (!IsBlank(row.City) || (!IsUpdate(row) && cityRequired)));
 
         RuleFor(row => row.City)
             .Must(_ => false)
                 .WithErrorCode("customers.import.row.city_required")
                 .WithMessage("The city is required.")
-            .When(row => IsBlank(row.City) && (!IsBlank(row.Department) || cityRequired));
+            .When(row => IsBlank(row.City) && (!IsBlank(row.Department) || (!IsUpdate(row) && cityRequired)));
 
         RuleFor(row => row.WithRetention)
             .Must(BeSiOrNoOrEmpty)
@@ -181,6 +183,8 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithErrorCode("customers.import.row.vat_surplus_invalid")
                 .WithMessage("The 'Excedente Iva' column must be 'Si', 'No' or empty.");
     }
+
+    private static bool IsUpdate(ExcelCustomerRow row) => !string.IsNullOrWhiteSpace(row.Cuc);
 
     private static bool IsBlank(string? value) => string.IsNullOrWhiteSpace(value);
 
@@ -619,7 +623,7 @@ public sealed class ImportCustomersHandler(
 
                 // Una jurídica se identifica con NIT: Update lanzaría la excepción de dominio y, como arriba,
                 // no hay try/catch por fila — se adelanta para reportar sólo esa fila (spec 2026-10-26).
-                if (customer.PersonType == PersonType.Juridica && candidate.Type is { } rowType && rowType != IdentificationType.Nit)
+                if (customer.PersonType == PersonType.Juridica && (candidate.Type ?? customer.IdentificationType) is { } rowType && rowType != IdentificationType.Nit)
                 {
                     errors.Add(new ImportRowError(
                         candidate.RowNumber,
@@ -646,7 +650,11 @@ public sealed class ImportCustomersHandler(
                 customer.Update(
                     candidate.Name,
                     candidate.BusinessName,
-                    ToIdentification(candidate),
+                    // Documento vacio en una actualizacion = no enviado: conserva el guardado (ni lo borra ni lo exige).
+                    ToIdentification(candidate)
+                        ?? (customer is { IdentificationType: { } storedType, IdentificationNumber: { } storedNumber }
+                            ? new CustomerIdentification { Type = storedType, Number = storedNumber }
+                            : null),
                     // La planilla no trae tipo de persona: reimportar no borra el que ya tenía (spec 2026-10-26).
                     customer.PersonType,
                     // La importacion masiva es **solo colombiana**: sus columnas son Departamento y
@@ -658,8 +666,10 @@ public sealed class ImportCustomersHandler(
                         Phone = candidate.Phone,
                         Email = candidate.Email,
                         Address = candidate.Address ?? string.Empty,
-                        Country = Customer.ColombiaCountryCode,
-                        CityId = candidate.City?.CityId
+                        // Sin departamento ni ciudad en la fila se conserva el carril de ciudad guardado (pais, CityId, CityName).
+                        Country = candidate.City is null ? customer.Country ?? Customer.ColombiaCountryCode : Customer.ColombiaCountryCode,
+                        CityId = candidate.City is null ? customer.CityId : candidate.City.CityId,
+                        CityName = candidate.City is null ? customer.CityName : null
                     },
                     new CustomerCommercialInfo
                     {
