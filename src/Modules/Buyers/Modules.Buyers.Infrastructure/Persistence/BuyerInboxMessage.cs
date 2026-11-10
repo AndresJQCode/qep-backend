@@ -20,7 +20,7 @@ internal sealed class BuyerInboxMessage
 /// </summary>
 internal sealed class BuyerProcessedSignup
 {
-    public Guid OrderRequestId { get; init; }
+    public Guid OrderId { get; init; }
 
     public DateTimeOffset ProcessedAt { get; init; }
 }

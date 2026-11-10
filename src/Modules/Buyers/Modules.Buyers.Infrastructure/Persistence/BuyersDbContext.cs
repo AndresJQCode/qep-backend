@@ -162,8 +162,8 @@ public sealed class BuyersDbContext(DbContextOptions<BuyersDbContext> options) :
     {
         var processed = modelBuilder.Entity<BuyerProcessedSignup>();
         processed.ToTable("processed_signups", Schema);
-        processed.HasKey(value => value.OrderRequestId).HasName(ProcessedSignupsKey);
-        processed.Property(value => value.OrderRequestId).HasColumnName("order_request_id").ValueGeneratedNever();
+        processed.HasKey(value => value.OrderId).HasName(ProcessedSignupsKey);
+        processed.Property(value => value.OrderId).HasColumnName("order_id").ValueGeneratedNever();
         processed.Property(value => value.ProcessedAt).HasColumnName("processed_at");
     }
 

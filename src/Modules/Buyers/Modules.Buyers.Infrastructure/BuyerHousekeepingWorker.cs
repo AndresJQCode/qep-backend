@@ -173,7 +173,7 @@ internal sealed partial class BuyerHousekeepingWorker(
                 && !dbContext.Outbox.Any(record => record.Id == entry.MessageId))
             .ExecuteDeleteAsync(cancellationToken));
 
-        // processed_signups (por orderRequestId) es la segunda línea contra un alta repetida; la primera es la fila del inbox de
+        // processed_signups (por OrderId) es la segunda línea contra un alta repetida; la primera es la fila del inbox de
         // arriba, que sigue viva mientras su mensaje exista. Por eso basta la edad.
         var signups = await StepAsync("processed-signups", () => dbContext.ProcessedSignups
             .Where(signup => signup.ProcessedAt < inboxLimit)
