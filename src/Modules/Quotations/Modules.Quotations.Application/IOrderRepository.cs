@@ -66,6 +66,14 @@ public interface IOrderRepository
         int pageSize,
         CancellationToken cancellationToken);
 
+    /// <summary>Los pedidos de un comprador de la tienda, del más reciente al más viejo, sin tracking.</summary>
+    Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken);
+
+    /// <summary>Un pedido del comprador, con tracking y con sus comprobantes, para poder cancelarlo.</summary>
+    Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken);
+
     Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,

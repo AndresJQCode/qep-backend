@@ -793,6 +793,8 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
+        services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
         // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
         // Bootstrapper dentro de la transacción de Catalog; nadie más referencia Modules.Quotations.Application.
         services.AddScoped<IQuotationVariantDeletion, QuotationVariantDeletion>();
@@ -1428,6 +1430,8 @@ public static class QepServiceCollectionExtensions
         // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
         // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrders, BuyerOrdersAdapter>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrderLinker, BuyerOrderLinker>();
         services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
         services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
         services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
@@ -1448,6 +1452,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Buyers.Application.GetBuyerSessionQuery, Modules.Buyers.Application.BuyerDto>,
             Modules.Buyers.Application.GetBuyerSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.ListBuyerOrdersQuery, Modules.Buyers.Application.BuyerOrderPageDto>,
+            Modules.Buyers.Application.ListBuyerOrdersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerOrderQuery, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.GetBuyerOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.CancelBuyerOrderCommand, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.CancelBuyerOrderHandler>();
         services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.LogoutBuyerCommand, bool>,
             Modules.Buyers.Application.LogoutBuyerHandler>();

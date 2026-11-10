@@ -53,7 +53,8 @@ public sealed record PublicOrderRequestReceiptDto(
     Guid Id, string Number, decimal Total, string Currency, bool BuyerSessionRejected = false);
 
 /// <param name="VisitorIp">La IP que declaró el storefront con su clave; es la del consentimiento, nunca la del par directo.</param>
-/// <param name="BuyerSessionToken">El token crudo del header de sesión de comprador; sólo se usa con <c>updateProfile</c>.</param>
+/// <param name="BuyerSessionToken">El token crudo del header de sesión de comprador: con una sesión válida la cuenta queda en el pedido,
+/// y con <c>updateProfile</c> además se reemplaza su perfil.</param>
 public sealed record SubmitOrderRequestCommand(
     string Host, string VisitorIp, PublicOrderRequestBody Body, string? BuyerSessionToken = null)
     : ICommand<(PublicOrderRequestReceiptDto Receipt, bool Created)>;
@@ -290,6 +291,7 @@ public sealed partial class SubmitOrderRequestHandler(
         var advisor = await ResolveAdvisorAsync(store, cancellationToken);
         var customer = await ResolveCustomerAsync(store.TenantId, billing, cancellationToken);
         await EnsureAddressesAsync(store.TenantId, customer, billing, shipping, cancellationToken);
+        var buyerAccountId = await ResolveBuyerAccountAsync(hostname, command.BuyerSessionToken, cancellationToken);
 
         var draft = new StoreOrderDraft(
             store.TenantId,
@@ -303,7 +305,8 @@ public sealed partial class SubmitOrderRequestHandler(
             customer.WithRetention,
             customer.VatSurplus,
             quote.Lines.Select(line => new StoreOrderLineInput(line.VariantId, line.Quantity)).ToList(),
-            body.Note);
+            body.Note,
+            buyerAccountId);
         var order = await orders.CreateAsync(draft, cancellationToken);
         if (order.AlreadyExisted)
         {
@@ -456,6 +459,27 @@ public sealed partial class SubmitOrderRequestHandler(
         }
     }
 
+    // Pedidos del comprador §4.2(1): con sesión, la cuenta va en el pedido. Se mira siempre, no sólo con updateProfile, y antes de
+    // crearlo. Una sesión que no sirve deja un pedido de invitado sin marcar el recibo (eso sigue siendo cosa de updateProfile), y una
+    // falla de Buyers sólo se registra: la cuenta nunca hace fallar el pedido.
+    private async Task<Guid?> ResolveBuyerAccountAsync(string storeHost, string? sessionToken, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionToken))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await buyers.ResolveAccountIdAsync(storeHost, sessionToken, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogBuyerAccountLookupFailed(logger, exception.GetType().Name);
+            return null;
+        }
+    }
+
     // Después de guardar: el pedido ya está aceptado y nada de esto lo cambia. Sólo una sesión que no sirve marca el recibo; un error
     // se registra (sin email ni token) y el recibo queda intacto.
     private async Task<bool> ProfileUpdateRejectedAsync(
@@ -499,6 +523,11 @@ public sealed partial class SubmitOrderRequestHandler(
     [LoggerMessage(Level = LogLevel.Error,
         Message = "Updating the buyer profile after store order {OrderId} failed with {ExceptionType}; the order stands.")]
     private static partial void LogProfileUpdateFailed(ILogger logger, Guid orderId, string exceptionType);
+
+    // Sólo el tipo de la excepción: ni el token ni el mensaje, que podría arrastrarlo.
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Resolving the buyer account of the checkout session failed with {ExceptionType}; the order goes out as a guest order.")]
+    private static partial void LogBuyerAccountLookupFailed(ILogger logger, string exceptionType);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Checkout buyer signup skipped: the billing email does not normalize.")]
     private static partial void LogSignupSkippedInvalidEmail(ILogger logger);

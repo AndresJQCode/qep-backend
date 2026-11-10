@@ -48,6 +48,10 @@ internal sealed partial class BuyerSignupRequestedWorker(
         Message = "Buyer signup message {MessageId} carries an email that does not normalize; it is closed without an account.")]
     private static partial void LogInvalidEmail(ILogger logger, Guid messageId);
 
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Linking store order {OrderId} to its new buyer account failed; the account stands and the order stays unlinked.")]
+    private static partial void LogLinkFailed(ILogger logger, Guid orderId, Exception exception);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(PollInterval);
@@ -153,9 +157,10 @@ internal sealed partial class BuyerSignupRequestedWorker(
         var profile = new BuyerProfileDto(message.Billing, message.Shipping, message.Shipping is null);
         var request = new BuyerSignupRequest(
             message.StoreHost, message.StoreName, message.VisitorIp, message.Email, message.PasswordHash, profile);
+        Guid? accountId;
         try
         {
-            await services.GetRequiredService<BuyerSignup>().SignUpAsync(
+            accountId = await services.GetRequiredService<BuyerSignup>().SignUpAsync(
                 request,
                 stoppingToken,
                 beforeSave: () => MarkProcessed(dbContext, record.Id, message.OrderId, clock.UtcNow));
@@ -165,6 +170,32 @@ internal sealed partial class BuyerSignupRequestedWorker(
             // Otra réplica aplicó el mismo pedido primero: lo pendiente de ésta se descarta y el mensaje queda como procesado.
             dbContext.ChangeTracker.Clear();
             await CloseAsync(dbContext, record.Id, clock.UtcNow);
+            return;
+        }
+
+        if (accountId is { } created)
+        {
+            await LinkOrderAsync(services, message, created, stoppingToken);
+        }
+    }
+
+    // Pedidos del comprador §4.2(2): la cuenta creada o reactivada se pone en el pedido que la pidió, después del commit del alta y
+    // fuera de él. Si falla, el alta ya está y el mensaje ya se cerró: queda un aviso y el pedido sin cuenta, sin reintento.
+    private async Task LinkOrderAsync(
+        IServiceProvider services, BuyerSignupRequestedMessage message, Guid accountId, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await services.GetRequiredService<IBuyerOrderLinker>()
+                .LinkAsync(message.TenantId, message.OrderId, accountId, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            LogLinkFailed(logger, message.OrderId, exception);
         }
     }
 

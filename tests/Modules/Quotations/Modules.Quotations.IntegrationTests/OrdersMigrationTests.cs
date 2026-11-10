@@ -324,6 +324,34 @@ public sealed class OrdersMigrationTests
         Assert.Contains("WHERE (external_key IS NOT NULL)", definition, StringComparison.Ordinal);
     }
 
+    private const string LastMigrationBeforeBuyerAccount = "20261104000725_AddStoreOrderSource";
+
+    [Fact]
+    public async Task AddOrderBuyerAccountAddsTheColumnAndTheIndex()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using var context = NewContext(connectionString);
+        var migrator = context.GetService<IMigrator>();
+        const string columnSql = """
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_schema = 'quotations' AND table_name = 'orders' AND column_name = 'buyer_account_id'
+            """;
+        const string indexSql = """
+            SELECT indexname FROM pg_indexes
+            WHERE schemaname = 'quotations' AND indexname = 'IX_orders_tenant_buyer_created'
+            """;
+        await migrator.MigrateAsync(LastMigrationBeforeBuyerAccount, TestContext.Current.CancellationToken);
+        Assert.Empty(await ListAsync(connectionString, columnSql));
+
+        await migrator.MigrateAsync(MigrationId(context, "_AddOrderBuyerAccount"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["YES"], await ListAsync(connectionString, columnSql));
+        Assert.Equal(["IX_orders_tenant_buyer_created"], await ListAsync(connectionString, indexSql));
+        // Deja la base en la última migración (gotcha de CLAUDE.md).
+        await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
+    }
+
     private static QuotationsDbContext NewContext(string connectionString) =>
         new(new DbContextOptionsBuilder<QuotationsDbContext>()
             .UseNpgsql(

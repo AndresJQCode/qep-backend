@@ -171,7 +171,8 @@ public sealed class QuotationsDbContextMappingTests
         Assert.Equal("order_number", order.FindProperty(nameof(Order.OrderNumber))!.GetColumnName());
         Assert.Equal("PK_orders", order.FindPrimaryKey()!.GetName());
         Assert.Equal(
-            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_client",
+            ["IX_orders_quotation", "IX_orders_tenant", "IX_orders_tenant_advisor", "IX_orders_tenant_buyer_created",
+             "IX_orders_tenant_client",
              "IX_orders_tenant_converted_at_number", "IX_orders_tenant_external_key", "IX_orders_tenant_number",
              "IX_orders_tenant_source"],
             order.GetIndexes().Select(index => index.GetDatabaseName()!).Order(StringComparer.Ordinal));
@@ -593,6 +594,17 @@ public sealed class QuotationsDbContextMappingTests
             entity.GetCheckConstraints(),
             check => check.Name == "CK_tenant_quotation_settings_default_freight_charge_mode"
                 && check.Sql.Contains("'Charged'") && check.Sql.Contains("disabled_freight_charge_modes"));
+    }
+
+    [Fact]
+    public void TheOrderBuyerAccountMapsToItsColumnAndFilteredIndex()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var entity = context.Model.FindEntityType(typeof(Order))!;
+        Assert.Equal("buyer_account_id", entity.FindProperty(nameof(Order.BuyerAccountId))!.GetColumnName());
+        var index = Assert.Single(entity.GetIndexes(), i => i.GetDatabaseName() == "IX_orders_tenant_buyer_created");
+        Assert.Equal(["TenantId", "BuyerAccountId", "CreatedAt"], index.Properties.Select(p => p.Name).ToArray());
+        Assert.Equal("buyer_account_id IS NOT NULL", index.GetFilter());
     }
 
     /// <summary>

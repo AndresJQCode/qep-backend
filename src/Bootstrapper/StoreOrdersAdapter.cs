@@ -129,7 +129,8 @@ internal sealed partial class StoreOrdersAdapter(IServiceScopeFactory scopes, IL
             draft.BillingWithRetention,
             draft.BillingVatSurplus,
             draft.Lines.Select(line => new StoreQuoteLine(line.VariantId, line.Quantity)).ToList(),
-            draft.Notes);
+            draft.Notes,
+            draft.BuyerAccountId);
 
     private static StoreOrderCreated ToCreated(StoreOrderResult result) =>
         new(

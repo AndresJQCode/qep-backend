@@ -323,4 +323,63 @@ public sealed class SubmitOrderRequestHandlerTests
         Assert.Equal(new PublicOrderRequestReceiptDto(FakeOrders.OrderId, "PED-0001", 21_000m, "COP"), receipt);
         Assert.True(created);
     }
+
+    // ---- La cuenta del comprador en el pedido (pedidos del comprador §4.2(1)) -------------------------------------------------
+
+    [Fact]
+    public async Task AValidSessionStampsTheBuyerAccountEvenWithoutUpdateProfile()
+    {
+        var rig = new CheckoutRig();
+        var account = Guid.Parse("a0000000-0000-0000-0000-00000000000a");
+        rig.Buyers.ResolvedAccountId = account;
+
+        var (receipt, created) = await rig.SubmitAsync(CheckoutRig.Body(), session: "token-de-sesion");
+
+        Assert.True(created);
+        Assert.Equal(account, Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        Assert.Equal((CheckoutRig.Host, "token-de-sesion"), Assert.Single(rig.Buyers.ResolveCalls));
+        Assert.True(
+            rig.Log.Entries.IndexOf("buyers.resolve") < rig.Log.Entries.IndexOf("orders.create"),
+            "The session is resolved before the order is created.");
+        Assert.False(receipt.BuyerSessionRejected);
+    }
+
+    [Fact]
+    public async Task ASessionThatDoesNotResolveLeavesAGuestOrder()
+    {
+        var rig = new CheckoutRig();
+
+        var (_, created) = await rig.SubmitAsync(CheckoutRig.Body(), session: "token-vencido");
+
+        Assert.True(created);
+        Assert.Null(Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        Assert.Single(rig.Buyers.ResolveCalls);
+    }
+
+    [Fact]
+    public async Task WithoutASessionTheBuyerAccountsAreNotAsked()
+    {
+        var rig = new CheckoutRig();
+        rig.Buyers.ResolvedAccountId = Guid.CreateVersion7();
+
+        await rig.SubmitAsync(CheckoutRig.Body());
+
+        Assert.Null(Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        Assert.Empty(rig.Buyers.ResolveCalls);
+    }
+
+    [Fact]
+    public async Task AFailingAccountLookupLogsAWarningAndTheOrderIsStillCreated()
+    {
+        var rig = new CheckoutRig();
+        rig.Buyers.ResolveThrows = new InvalidOperationException("buyers down: token-de-sesion");
+
+        var (_, created) = await rig.SubmitAsync(CheckoutRig.Body(), session: "token-de-sesion");
+
+        Assert.True(created);
+        Assert.Null(Assert.Single(rig.Orders.Drafts).BuyerAccountId);
+        var warning = Assert.Single(rig.Logger.At(LogLevel.Warning));
+        Assert.Contains(nameof(InvalidOperationException), warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("token-de-sesion", warning, StringComparison.Ordinal);
+    }
 }

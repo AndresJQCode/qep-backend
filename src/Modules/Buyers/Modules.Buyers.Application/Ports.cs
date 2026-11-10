@@ -13,6 +13,15 @@ public interface IBuyerAccountRepository
     void Remove(BuyerAccount account);
 }
 
+/// <summary>
+/// Buyers → Quotations para el alta diferida del checkout (pedidos del comprador §4.2(2)): pone la cuenta en el pedido sólo si el
+/// pedido no tiene una. El adaptador vive en Bootstrapper.
+/// </summary>
+public interface IBuyerOrderLinker
+{
+    Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken);
+}
+
 public interface IBuyerProfileRepository
 {
     Task<BuyerProfile?> FindAsync(Guid accountId, CancellationToken cancellationToken);
@@ -107,7 +116,7 @@ public interface IBuyerPasswordHasher
 }
 
 /// <summary>La tienda que atiende el host de la ruta: <paramref name="Host"/> normalizado y el nombre que ve el comprador.</summary>
-public sealed record BuyerStorefront(string Host, string Name);
+public sealed record BuyerStorefront(string Host, string Name, Guid TenantId);
 
 /// <summary>Resuelve el host de la ruta con las reglas de Store. Un host que no es de una tienda publicada lanza el 404 tal cual.</summary>
 public interface IBuyerStorefronts

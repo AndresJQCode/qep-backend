@@ -48,7 +48,8 @@ public sealed record StoreOrderPartyInput(
 public sealed record StoreOrderLineInput(Guid VariantId, decimal Quantity);
 
 /// <summary><c>ClientRequestId</c> es el id que el navegador genera por checkout: hace idempotente el pedido. No hay persona detrás:
-/// el pedido lo crea el sistema.</summary>
+/// el pedido lo crea el sistema. <c>BuyerAccountId</c> es la cuenta de comprador de una sesión válida en el checkout; null =
+/// invitado.</summary>
 public sealed record StoreOrderDraft(
     Guid TenantId,
     Guid ClientRequestId,
@@ -61,7 +62,8 @@ public sealed record StoreOrderDraft(
     bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreOrderLineInput> Lines,
-    string? Notes);
+    string? Notes,
+    Guid? BuyerAccountId = null);
 
 /// <summary>Con <c>AlreadyExisted</c> el resto describe el pedido que ya estaba (cliente y asesor incluidos).</summary>
 public sealed record StoreOrderCreated(

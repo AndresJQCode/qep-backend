@@ -129,6 +129,16 @@ public sealed class Order
     /// cotización y manuales.</summary>
     public string? ExternalKey { get; private set; }
 
+    /// <summary>La cuenta de comprador de la tienda que hizo el pedido; null en los pedidos que no vienen de una cuenta.</summary>
+    public Guid? BuyerAccountId { get; private set; }
+
+    /// <summary>El comprador sólo anula lo que nadie ha tocado: pendiente, con el pago en PaymentPending y sin
+    /// ningún comprobante registrado (un asesor puede dejar un comprobante con el pago aún en PaymentPending).</summary>
+    public bool CanBeCancelledByBuyer =>
+        Status == OrderStatus.Pending
+        && PaymentStatus == OrderPaymentStatus.PaymentPending
+        && PaymentProofs.Count == 0;
+
     /// <summary>Cómo llamó la tienda al envío (<c>Envío estándar</c>). Sólo se muestra: no decide nada.</summary>
     public string? ExternalShippingTitle { get; private set; }
 
@@ -483,7 +493,8 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
-        string externalKey)
+        string externalKey,
+        Guid? buyerAccountId = null)
     {
         ArgumentNullException.ThrowIfNull(billingAccount);
         var key = NormalizeExternalKey(externalKey);
@@ -491,6 +502,7 @@ public sealed class Order
             id, tenantId, orderNumber, OrderSource.Store, externalReference: null, header, parties, billingAccount,
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
         order.ExternalKey = key;
+        order.BuyerAccountId = buyerAccountId;
         return order;
     }
 
@@ -927,6 +939,37 @@ public sealed class Order
         CancelledBy = cancelledBy;
         CancelledAt = occurredAt;
         CancellationReason = normalizedReason;
+        UpdatedAt = occurredAt;
+        Version++;
+    }
+
+    /// <summary>Enlaza el pedido a una cuenta de comprador sólo si todavía no tiene una. Devuelve <c>false</c> sin
+    /// cambiar nada cuando ya estaba enlazado. No toca el estado ni la versión: el enlace no es una edición del
+    /// pedido.</summary>
+    public bool LinkBuyerAccount(Guid buyerAccountId)
+    {
+        if (BuyerAccountId is not null)
+        {
+            return false;
+        }
+
+        BuyerAccountId = buyerAccountId;
+        return true;
+    }
+
+    public void CancelByBuyer(Guid buyerAccountId, DateTimeOffset occurredAt)
+    {
+        if (BuyerAccountId != buyerAccountId || !CanBeCancelledByBuyer)
+        {
+            throw new QuotationsDomainException(
+                BuyerOrderErrors.NotCancellableByBuyer,
+                "The order cannot be cancelled by this buyer.");
+        }
+
+        Status = OrderStatus.Cancelled;
+        CancelledBy = null;
+        CancelledAt = occurredAt;
+        CancellationReason = BuyerOrderErrors.CancellationReason;
         UpdatedAt = occurredAt;
         Version++;
     }

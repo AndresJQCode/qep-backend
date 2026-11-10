@@ -293,12 +293,14 @@ internal static class BuyersApiHarness
 /// </summary>
 internal sealed class FakeBuyerStorefronts : IBuyerStorefronts
 {
+    public static readonly Guid TenantId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
     public const string MissingHost = "no-existe.lulocrm.com";
 
     public Task<BuyerStorefront> ResolveAsync(string host, CancellationToken cancellationToken) =>
         string.Equals(host.Trim(), MissingHost, StringComparison.OrdinalIgnoreCase)
             ? throw new ResourceNotFoundException(BuyerErrorCodes.StoreNotFound, "The store was not found.")
-            : Task.FromResult(new BuyerStorefront(host.Trim().ToLowerInvariant(), "Tienda Demo"));
+            : Task.FromResult(new BuyerStorefront(host.Trim().ToLowerInvariant(), "Tienda Demo", TenantId));
 }
 
 /// <summary>El desafío controlable por prueba: nunca sale a Cloudflare.</summary>

@@ -59,6 +59,17 @@ public sealed class BuyersLayerTests
     }
 
     [Fact]
+    public void NoBuyersLayerReferencesQuotations()
+    {
+        foreach (var layer in AllLayers())
+        {
+            Assert.DoesNotContain(ReferenceNamesOf(layer), name =>
+                name is not null &&
+                name.StartsWith("Modules.Quotations", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public void ApplicationAndInfrastructureReferenceNoOtherBusinessModule()
     {
         Assembly[] layers =

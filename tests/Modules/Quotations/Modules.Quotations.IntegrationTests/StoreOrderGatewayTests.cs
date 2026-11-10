@@ -105,6 +105,32 @@ public sealed class StoreOrderGatewayTests
         Assert.Null(created.MemberId);
     }
 
+    // Pedidos del comprador §4.2(1): el checkout con sesión válida deja la cuenta en el pedido; sin ella queda vacía.
+    [Fact]
+    public async Task CreateKeepsTheBuyerAccountOfTheDraft()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId);
+        var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var buyer = Guid.CreateVersion7();
+        var party = ColombianParty(city, "CC", "1020304050");
+
+        var withBuyer = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, party) with { BuyerAccountId = buyer },
+            TestContext.Current.CancellationToken));
+        var guest = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, account, variantId, party), TestContext.Current.CancellationToken));
+
+        Assert.Equal(buyer, (await LoadOrderAsync(factory, tenantId, withBuyer.OrderId)).BuyerAccountId);
+        Assert.Null((await LoadOrderAsync(factory, tenantId, guest.OrderId)).BuyerAccountId);
+    }
+
     [Fact]
     public async Task CreateStoresTheBillingAndShippingParties()
     {

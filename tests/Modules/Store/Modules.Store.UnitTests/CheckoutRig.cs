@@ -208,13 +208,32 @@ internal sealed class FakeOutbox(CallLog log) : IStoreOutbox
     }
 }
 
-internal sealed class FakeBuyers : IStoreBuyerAccounts
+/// <summary>Las cuentas de comprador: la sesión resuelve a <see cref="ResolvedAccountId"/> (o lanza <see cref="ResolveThrows"/>).</summary>
+internal sealed class FakeBuyers(CallLog log) : IStoreBuyerAccounts
 {
+    public Guid? ResolvedAccountId { get; set; }
+
+    public Exception? ResolveThrows { get; set; }
+
+    public List<(string Host, string? SessionToken)> ResolveCalls { get; } = [];
+
     public string HashPassword(string password) => "hash";
 
     public Task<bool> ReplaceProfileAsync(
         string host, string? sessionToken, PublicBillingInput billing, PublicShippingInput? shipping, CancellationToken cancellationToken) =>
         Task.FromResult(true);
+
+    public Task<Guid?> ResolveAccountIdAsync(string host, string? sessionToken, CancellationToken cancellationToken)
+    {
+        log.Entries.Add("buyers.resolve");
+        ResolveCalls.Add((host, sessionToken));
+        if (ResolveThrows is not null)
+        {
+            throw ResolveThrows;
+        }
+
+        return Task.FromResult(ResolvedAccountId);
+    }
 }
 
 /// <summary>Guarda en memoria lo que se loguea, para afirmar el nivel y que el mensaje no lleve datos del visitante.</summary>
@@ -264,6 +283,7 @@ internal sealed class CheckoutRig
         Audit = new FakeAudit(Log);
         Outbox = new FakeOutbox(Log);
         UnitOfWork = new FakeUnitOfWork(Log);
+        Buyers = new FakeBuyers(Log);
         Members.Owner = OtherMember;
     }
 
@@ -293,6 +313,8 @@ internal sealed class CheckoutRig
 
     public FakeUnitOfWork UnitOfWork { get; }
 
+    public FakeBuyers Buyers { get; }
+
     public StoreOptions Options { get; } = new() { RootDomain = "lulocrm.com" };
 
     public RecordingLogger<SubmitOrderRequestHandler> Logger { get; } = new();
@@ -313,12 +335,12 @@ internal sealed class CheckoutRig
             new FixedClock(Now),
             Options,
             new PublicOrderRequestBodyValidator(),
-            new FakeBuyers(),
+            Buyers,
             Outbox,
             Logger);
 
-    public Task<(PublicOrderRequestReceiptDto Receipt, bool Created)> SubmitAsync(PublicOrderRequestBody body) =>
-        Handler().HandleAsync(new SubmitOrderRequestCommand(Host, VisitorIp, body), TestContext.Current.CancellationToken);
+    public Task<(PublicOrderRequestReceiptDto Receipt, bool Created)> SubmitAsync(PublicOrderRequestBody body, string? session = null) =>
+        Handler().HandleAsync(new SubmitOrderRequestCommand(Host, VisitorIp, body, session), TestContext.Current.CancellationToken);
 
     public static PublicBillingInput Billing() =>
         new("Ana Pérez", "CC", "123456", "300 123 4567", "ana@test.co", "Calle 1 # 2-3", "CO", DepartmentId, CityId, null);

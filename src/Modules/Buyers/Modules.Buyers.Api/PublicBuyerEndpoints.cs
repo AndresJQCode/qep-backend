@@ -152,7 +152,67 @@ public static class PublicBuyerEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapGet("/orders", ListOrdersAsync)
+            .Produces<BuyerOrderPageDto>()
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapGet("/orders/{orderId:guid}", GetOrderAsync)
+            .Produces<BuyerOrderDetailDto>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        group.MapPost("/orders/{orderId:guid}/cancel", CancelOrderAsync)
+            .Produces<BuyerOrderDetailDto>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         return endpoints;
+    }
+
+    // Los pedidos del comprador de la sesión en el tenant de la tienda. Página 1 y 20 por defecto; fuera de rango es 422.
+    private static async Task<IResult> ListOrdersAsync(
+        string host,
+        int? page,
+        int? pageSize,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        RequireVisitorIp(httpContext);
+        return Results.Ok(await dispatcher.QueryAsync(
+            new ListBuyerOrdersQuery(host, SessionToken(httpContext), page ?? 1, pageSize ?? 20), cancellationToken));
+    }
+
+    private static async Task<IResult> GetOrderAsync(
+        string host,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        RequireVisitorIp(httpContext);
+        return Results.Ok(await dispatcher.QueryAsync(
+            new GetBuyerOrderQuery(host, SessionToken(httpContext), orderId), cancellationToken));
+    }
+
+    // Sin cuerpo. 409 si el pedido ya no es anulable desde la tienda.
+    private static async Task<IResult> CancelOrderAsync(
+        string host,
+        Guid orderId,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        RequireVisitorIp(httpContext);
+        return Results.Ok(await dispatcher.SendAsync(
+            new CancelBuyerOrderCommand(host, SessionToken(httpContext), orderId), cancellationToken));
     }
 
     // Reemplaza el perfil guardado; no valida país ni ciudad contra la tienda (lo hace el pedido).
