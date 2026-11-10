@@ -255,10 +255,12 @@ internal sealed class RehashingHasher : IBuyerPasswordHasher
 
 internal sealed class FakeStorefronts : IBuyerStorefronts
 {
+    public static readonly Guid TenantId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
     public Task<BuyerStorefront> ResolveAsync(string host, CancellationToken cancellationToken) =>
         host == "no-existe.lulocrm.com"
             ? throw new ResourceNotFoundException(BuyerErrorCodes.StoreNotFound, "The store was not found.")
-            : Task.FromResult(new BuyerStorefront(host.Trim().ToLowerInvariant(), "Tienda Demo"));
+            : Task.FromResult(new BuyerStorefront(host.Trim().ToLowerInvariant(), "Tienda Demo", TenantId));
 }
 
 internal sealed class FakeCaptcha : IBuyerCaptcha

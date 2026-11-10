@@ -1451,6 +1451,15 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Buyers.Application.GetBuyerSessionQuery, Modules.Buyers.Application.BuyerDto>,
             Modules.Buyers.Application.GetBuyerSessionHandler>();
         services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.ListBuyerOrdersQuery, Modules.Buyers.Application.BuyerOrderPageDto>,
+            Modules.Buyers.Application.ListBuyerOrdersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerOrderQuery, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.GetBuyerOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.CancelBuyerOrderCommand, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.CancelBuyerOrderHandler>();
+        services.AddScoped<
             ICommandHandler<Modules.Buyers.Application.LogoutBuyerCommand, bool>,
             Modules.Buyers.Application.LogoutBuyerHandler>();
         services.AddScoped<

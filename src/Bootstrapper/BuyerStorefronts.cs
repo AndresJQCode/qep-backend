@@ -13,6 +13,6 @@ internal sealed class BuyerStorefronts(StorefrontResolver resolver) : IBuyerStor
     public async Task<BuyerStorefront> ResolveAsync(string host, CancellationToken cancellationToken)
     {
         var (store, tenant) = await resolver.ResolveAsync(host, cancellationToken);
-        return new BuyerStorefront(host.Trim().ToLowerInvariant(), store.Name ?? tenant.DisplayName);
+        return new BuyerStorefront(host.Trim().ToLowerInvariant(), store.Name ?? tenant.DisplayName, store.TenantId);
     }
 }
