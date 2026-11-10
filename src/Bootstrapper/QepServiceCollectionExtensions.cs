@@ -952,6 +952,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
         services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
         services.AddScoped<ICommandHandler<RetryCampaignCommand, CampaignDetailDto>, RetryCampaignHandler>();
+        // Messaging (spec 2026-11-09): el mensaje programado de una conversación. Cada handler a mano: sin registro, 500 (lo cubre
+        // ScheduledMessageApiTests.EveryRouteIsRegisteredAndAnswersItsStatus). Los validadores entran con AddValidatorsFromAssemblyContaining
+        // de arriba. Los cinco de gestión arman a mano su ScheduledMessageManager (es internal de Application): no se registra.
+        services.AddScoped<ScheduledMessageMapper>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageQuery, ScheduledMessageEnvelopeDto>, GetScheduledMessageHandler>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageMediaQuery, MediaStreamDto?>, GetScheduledMessageMediaHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledMessageCommand, ScheduleMessageResult>, CreateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledVoiceNoteCommand, ScheduleMessageResult>, CreateScheduledVoiceNoteHandler>();
+        services.AddScoped<ICommandHandler<UpdateScheduledMessageCommand, ScheduledMessageDto>, UpdateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CancelScheduledMessageCommand, bool>, CancelScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<SendScheduledMessageNowCommand, ScheduledMessageDto>, SendScheduledMessageNowHandler>();
+        services.AddScoped<ICommandHandler<RetryScheduledMessageCommand, ScheduledMessageDto>, RetryScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<DiscardScheduledMessageCommand, bool>, DiscardScheduledMessageHandler>();
         // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();

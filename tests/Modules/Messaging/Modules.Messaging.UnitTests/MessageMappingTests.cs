@@ -19,6 +19,15 @@ public sealed class MessageMappingTests
             DateTimeOffset.UnixEpoch, null, null, null, replyTo, Imported: imported);
 
     [Fact]
+    public void RetryDisabledTravelsInTheDto()
+    {
+        var row = Row(MessageDirection.Outbound, MessageKind.Text, "hola") with { Status = MessageStatus.Failed, RetryDisabled = true };
+
+        Assert.True(MessageMapping.ToDto(row, TenantId, Names, NoTargets).RetryDisabled);
+        Assert.False(MessageMapping.ToDto(row with { RetryDisabled = false }, TenantId, Names, NoTargets).RetryDisabled);
+    }
+
+    [Fact]
     public void AnEventCarriesItsMembersAndNothingElse()
     {
         var details = ConversationEventJson.Serialize(new ConversationEvent(ConversationEventType.Transferred, Actor: Andres, Target: Gone));

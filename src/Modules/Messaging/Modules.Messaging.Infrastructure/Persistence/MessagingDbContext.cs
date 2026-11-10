@@ -126,6 +126,16 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// primeros llenados de la misma conexión chocan acá y la unidad de trabajo lo traduce a <c>concurrency.conflict</c>.</summary>
     public const string TemplateMirrorSyncPrimaryKey = "PK_template_mirror_syncs";
 
+    /// <summary>Spec 2026-11-09 «Modelo de datos»: a lo sumo un programado activo (<c>Scheduled</c>, <c>Sending</c> o <c>Failed</c>) por
+    /// conversación. <c>MessagingSaveChanges</c> lo traduce por nombre a <c>scheduled.already_exists</c>.</summary>
+    public const string ScheduledActiveConversationIndex = "UX_scheduled_messages_active_conversation";
+
+    /// <summary>Un <c>clientId</c> sale una sola vez por conversación: el reintento del mismo POST choca acá y el handler relee la fila.</summary>
+    public const string ScheduledConversationClientIndex = "UX_scheduled_messages_conversation_client";
+
+    /// <summary>El worker barre sólo los <c>Scheduled</c> que ya vencieron.</summary>
+    public const string ScheduledDueIndex = "IX_scheduled_messages_due";
+
     public DbSet<Conversation> Conversations => Set<Conversation>();
 
     internal DbSet<MessageRecord> Messages => Set<MessageRecord>();
@@ -141,6 +151,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 
     /// <summary>Spec 2026-10-12 §3.1: el agregado de la respuesta rápida.</summary>
     public DbSet<QuickReply> QuickReplies => Set<QuickReply>();
+
+    /// <summary>Spec 2026-11-09: los mensajes programados.</summary>
+    public DbSet<ScheduledMessage> ScheduledMessages => Set<ScheduledMessage>();
 
     /// <summary>Spec 2026-10-29: el orden personal de las respuestas rápidas.</summary>
     internal DbSet<QuickReplyOrderRecord> QuickReplyOrders => Set<QuickReplyOrderRecord>();
@@ -180,6 +193,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureSendBudget(modelBuilder);
         ConfigureCampaign(modelBuilder);
         ConfigureCampaignRecipient(modelBuilder);
+        ConfigureScheduledMessage(modelBuilder);
         ConfigureQuickReply(modelBuilder);
         ConfigureQuickReplyOrder(modelBuilder);
         ConfigureResolutionReason(modelBuilder);
@@ -357,6 +371,8 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // Decisión del owner del 2026-10-30: el mensaje llegó por la importación del historial; su created_at es la hora de la
         // importación, no la de llegada, y el reporte lo deja fuera de sesiones y respuestas (MessagingReportSource).
         message.Property(value => value.Imported).HasColumnName("imported").HasDefaultValue(false).HasSentinel(false);
+        // Spec 2026-11-09 D8b: descartar un programado fallido quema el reintento de su mensaje Failed (mismo clientId).
+        message.Property(value => value.RetryDisabled).HasColumnName("retry_disabled").HasDefaultValue(false).HasSentinel(false);
         // §7.3: generada y almacenada; EF la lee pero nunca la escribe.
         message.Property<NpgsqlTsVector>("SearchVector").HasColumnName("search_vector")
             .HasComputedColumnSql(SearchVectorSql, stored: true);
@@ -447,6 +463,60 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         // El worker busca las programadas que ya vencieron y las que están enviándose; ninguna de las dos es la mayoría de la tabla.
         campaign.HasIndex(value => value.ScheduledAt, "IX_campaigns_scheduled").HasFilter("status = 'Scheduled'");
         campaign.HasIndex(value => value.Status, "IX_campaigns_sending").HasFilter("status = 'Sending'");
+    }
+
+    private static void ConfigureScheduledMessage(ModelBuilder modelBuilder)
+    {
+        var scheduled = modelBuilder.Entity<ScheduledMessage>();
+        scheduled.ToTable("scheduled_messages", Schema, table =>
+        {
+            table.HasCheckConstraint("CK_scheduled_messages_status", "status IN ('Scheduled','Sending','Sent','Failed','Cancelled')");
+            // La forma por tipo: un texto lleva texto y ningún adjunto; todo lo demás lleva adjunto. Partida en dos para que cada una
+            // diga qué rompió.
+            table.HasCheckConstraint("CK_scheduled_messages_text_shape", "kind <> 'Text' OR (text IS NOT NULL AND media_mime_type IS NULL)");
+            table.HasCheckConstraint("CK_scheduled_messages_media_shape", "kind = 'Text' OR media_mime_type IS NOT NULL");
+            table.HasCheckConstraint("CK_scheduled_messages_voice_note", "NOT is_voice_note OR kind = 'Audio'");
+        });
+        scheduled.HasKey(value => value.Id);
+        scheduled.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        scheduled.Property(value => value.TenantId).HasColumnName("tenant_id");
+        scheduled.Property(value => value.ConversationId).HasColumnName("conversation_id");
+        scheduled.Property(value => value.ClientId).HasColumnName("client_id");
+        scheduled.Property(value => value.Kind).HasColumnName("kind").HasConversion<string>().HasMaxLength(16);
+        scheduled.Property(value => value.IsVoiceNote).HasColumnName("is_voice_note");
+        scheduled.Property(value => value.Text).HasColumnName("text").HasMaxLength(4096);
+        scheduled.Property(value => value.Caption).HasColumnName("caption").HasMaxLength(1024);
+        scheduled.Property(value => value.MediaStorageKey).HasColumnName("media_storage_key").HasMaxLength(512);
+        scheduled.Property(value => value.MediaMimeType).HasColumnName("media_mime_type").HasMaxLength(128);
+        scheduled.Property(value => value.MediaFileName).HasColumnName("media_file_name").HasMaxLength(256);
+        scheduled.Property(value => value.MediaSizeBytes).HasColumnName("media_size_bytes");
+        scheduled.Property(value => value.MediaSha256).HasColumnName("media_sha256").HasMaxLength(64);
+        scheduled.Property(value => value.ScheduledAt).HasColumnName("scheduled_at");
+        scheduled.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(16);
+        scheduled.Property(value => value.AuthorMemberId).HasColumnName("author_member_id");
+        scheduled.Property(value => value.CreatedByMemberId).HasColumnName("created_by_member_id");
+        scheduled.Property(value => value.CreatedAt).HasColumnName("created_at");
+        scheduled.Property(value => value.UpdatedByMemberId).HasColumnName("updated_by_member_id");
+        scheduled.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        scheduled.Property(value => value.CancelledByMemberId).HasColumnName("cancelled_by_member_id");
+        scheduled.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
+        scheduled.Property(value => value.SentMessageId).HasColumnName("sent_message_id");
+        scheduled.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(64);
+        scheduled.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        scheduled.Property(value => value.LockedUntil).HasColumnName("locked_until");
+        scheduled.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+        scheduled.Ignore(value => value.CanEdit);
+        scheduled.Ignore(value => value.CanCancel);
+        scheduled.Ignore(value => value.CanSendNow);
+        scheduled.Ignore(value => value.CanRetry);
+        scheduled.Ignore(value => value.CanDiscard);
+        scheduled.Ignore(value => value.IsActive);
+        scheduled.HasOne<Conversation>().WithMany().HasForeignKey(value => value.ConversationId)
+            .HasConstraintName("FK_scheduled_messages_conversation").OnDelete(DeleteBehavior.Cascade);
+        scheduled.HasIndex(value => value.ConversationId, ScheduledActiveConversationIndex).IsUnique()
+            .HasFilter("status IN ('Scheduled','Sending','Failed')");
+        scheduled.HasIndex(value => new { value.ConversationId, value.ClientId }, ScheduledConversationClientIndex).IsUnique();
+        scheduled.HasIndex(value => value.ScheduledAt, ScheduledDueIndex).HasFilter("status = 'Scheduled'");
     }
 
     private static void ConfigureCampaignRecipient(ModelBuilder modelBuilder)

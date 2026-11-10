@@ -143,4 +143,21 @@ internal sealed class MessagingAuditRecorder(MessagingDbContext dbContext) : IMe
             retriedTypes is { Count: > 0 } ? JsonSerializer.Serialize(retriedTypes) : NoChangedFields,
             Source,
             occurredAt));
+
+    // Spec 2026-11-09 «Auditoría»: lo que escribe el worker (enviado, fallido) no tiene una persona detrás: actor System y vacío, como
+    // RecordCampaign. changed_fields lleva sólo lo que una edición cambió de verdad.
+    public void RecordScheduledMessage(
+        Guid tenantId, Guid actorId, bool bySystem, string action, Guid scheduledMessageId, DateTimeOffset occurredAt,
+        IReadOnlyCollection<string>? changedFields = null) =>
+        dbContext.AuditEntries.Add(AuditEntry.Create(
+            tenantId,
+            actorId,
+            bySystem ? AuditActorType.System : AuditActorType.Human,
+            action,
+            MessagingAuditActions.ScheduledMessageResourceType,
+            scheduledMessageId.ToString(),
+            Outcome,
+            changedFields is { Count: > 0 } ? JsonSerializer.Serialize(changedFields) : NoChangedFields,
+            Source,
+            occurredAt));
 }

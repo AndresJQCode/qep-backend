@@ -237,4 +237,31 @@ public static class MessagingErrorCodes
 
     /// <summary>Spec 2026-10-29: la conexión no tiene importación del historial.</summary>
     public const string HistorySyncNotFound = "messaging.history_sync.not_found";
+
+    /// <summary>Spec 2026-11-09: la hora programada pasa de <c>LastInboundAt + 24 h − 2 min</c>, o la ventana ya cerró.</summary>
+    public const string ScheduledOutsideWindow = "messaging.scheduled.outside_window";
+
+    /// <summary>Spec 2026-11-09: la hora programada es anterior a <c>now + 1 min</c>.</summary>
+    public const string ScheduledTooSoon = "messaging.scheduled.too_soon";
+
+    /// <summary>Spec 2026-11-09: ya hay un mensaje programado activo en la conversación.</summary>
+    public const string ScheduledAlreadyExists = "messaging.scheduled.already_exists";
+
+    /// <summary>Spec 2026-11-09: el id no es de esta conversación del tenant.</summary>
+    public const string ScheduledNotFound = "messaging.scheduled.not_found";
+
+    /// <summary>Spec 2026-11-09: editar, cancelar o «Enviar ya» fuera de <c>Scheduled</c>.</summary>
+    public const string ScheduledNotEditable = "messaging.scheduled.not_editable";
+
+    /// <summary>Spec 2026-11-09: reintentar o descartar fuera de <c>Failed</c>.</summary>
+    public const string ScheduledNotRetriable = "messaging.scheduled.not_retriable";
+
+    /// <summary>Spec 2026-11-09: el reintento de un mensaje de hilo que ya no se puede reintentar.</summary>
+    public const string MessageNotRetriable = "messaging.message.not_retriable";
+
+    /// <summary>Spec 2026-11-09: el envío quedó sin resultado conocido; nunca se reenvía solo.</summary>
+    public const string ScheduledUnknownOutcome = "messaging.scheduled.unknown_outcome";
+
+    /// <summary>Spec 2026-11-09: el archivo del mensaje programado ya no está o no se pudo preparar.</summary>
+    public const string ScheduledMediaMissing = "messaging.scheduled.media_missing";
 }

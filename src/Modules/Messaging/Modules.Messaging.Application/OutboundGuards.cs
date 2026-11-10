@@ -48,9 +48,21 @@ internal sealed class OutboundGuards(
     }
 
     /// <summary>Paso 5: lo que ya salió, ya salió, antes de mirar estado, ventana o dueño (sin candado). Un
-    /// <c>Failed</c> no cuenta: se reenvía.</summary>
-    public async Task<ExistingOutbound?> FindAlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken) =>
-        await outbound.FindByClientIdAsync(conversationId, clientId, cancellationToken) is { Status: not MessageStatus.Failed } sent ? sent : null;
+    /// <c>Failed</c> no cuenta: se reenvía, salvo que el asesor lo haya descartado (spec 2026-11-09 D8b): entonces es 409
+    /// <c>messaging.message.not_retriable</c>, antes de admitir y de llamar a Meta.</summary>
+    public async Task<ExistingOutbound?> FindAlreadySentAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var found = await outbound.FindByClientIdAsync(conversationId, clientId, cancellationToken);
+        if (found is { Status: MessageStatus.Failed, RetryDisabled: true })
+        {
+            throw NotRetriable();
+        }
+
+        return found is { Status: not MessageStatus.Failed } ? found : null;
+    }
+
+    private static ResourceConflictException NotRetriable() =>
+        new(MessagingErrorCodes.MessageNotRetriable, "The message was discarded from the scheduled list and cannot be resent.");
 
     /// <summary>Pasos 6 a 9: status Open → ventana → el citado → dueño. Todo lo que puede fallar por validación va antes
     /// de la autoasignación: un request inválido no cambia estado.</summary>
@@ -128,6 +140,13 @@ internal sealed class OutboundGuards(
     public static async Task<ExistingOutbound?> TakeInFlightAsync(IOutboundClaim claim)
     {
         ArgumentNullException.ThrowIfNull(claim);
+        // Spec 2026-11-09 D8b: el descarte pudo llegar entre la consulta sin candado y el reclamo.
+        if (!claim.Inserted && claim.Existing is { Status: MessageStatus.Failed, RetryDisabled: true })
+        {
+            await claim.RollbackAsync(CancellationToken.None);
+            throw NotRetriable();
+        }
+
         if (!claim.Inserted && claim.Existing is { } existing && existing.Status != MessageStatus.Failed)
         {
             await claim.RollbackAsync(CancellationToken.None);

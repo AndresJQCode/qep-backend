@@ -19,19 +19,22 @@ public sealed class GetMediaHandler(
         ArgumentNullException.ThrowIfNull(query);
         await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
         var stored = await media.FindStoredAsync(query.TenantId, query.MessageId, cancellationToken);
-        if (stored is null)
-        {
-            return null;
-        }
+        return stored is null ? null : await OpenAsync(store, stored.StorageKey, stored.MimeType, stored.FileName, query.Range, cancellationToken);
+    }
 
-        if (MediaByteRange.Parse(query.Range) is not { } requested)
+    /// <summary>El objeto entero o el rango pedido, con el tipo y el nombre de la fila. Una sola copia para el medio de un mensaje y el de un
+    /// programado (spec 2026-11-09: «mismo manejo de rangos»).</summary>
+    internal static async Task<MediaStreamDto?> OpenAsync(
+        IMessagingMediaStore store, string storageKey, string mimeType, string? fileName, string? rangeHeader, CancellationToken cancellationToken)
+    {
+        if (MediaByteRange.Parse(rangeHeader) is not { } requested)
         {
-            var opened = await store.OpenReadAsync(stored.StorageKey, cancellationToken);
-            return opened is null ? null : opened with { ContentType = stored.MimeType, FileName = stored.FileName };
+            var opened = await store.OpenReadAsync(storageKey, cancellationToken);
+            return opened is null ? null : opened with { ContentType = mimeType, FileName = fileName };
         }
 
         // D10: el tamaño sale del objeto, no de la fila: es lo que de verdad hay para servir. Un 416 no abre nada.
-        if (await store.SizeOfAsync(stored.StorageKey, cancellationToken) is not { } total)
+        if (await store.SizeOfAsync(storageKey, cancellationToken) is not { } total)
         {
             return null;
         }
@@ -39,10 +42,10 @@ public sealed class GetMediaHandler(
         var range = MediaByteRange.Resolve(requested, total);
         if (!range.Satisfiable)
         {
-            return new MediaStreamDto(Stream.Null, stored.MimeType, 0, stored.FileName, range);
+            return new MediaStreamDto(Stream.Null, mimeType, 0, fileName, range);
         }
 
-        var slice = await store.OpenReadRangeAsync(stored.StorageKey, range.From, range.To, cancellationToken);
-        return slice is null ? null : slice with { ContentType = stored.MimeType, FileName = stored.FileName, Length = range.Length, Range = range };
+        var slice = await store.OpenReadRangeAsync(storageKey, range.From, range.To, cancellationToken);
+        return slice is null ? null : slice with { ContentType = mimeType, FileName = fileName, Length = range.Length, Range = range };
     }
 }

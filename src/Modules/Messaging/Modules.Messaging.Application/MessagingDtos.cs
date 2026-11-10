@@ -196,7 +196,9 @@ public sealed record MessageDto(
     string? MediaState = null,
     /// <summary>Spec 2026-10-30 §4.4: la clave de API que envió el saliente, con el nombre que tenía al enviar; excluyente con <c>SentBy</c> y
     /// <c>SentByChatbot</c>.</summary>
-    ApiKeyRefDto? SentByApiKey = null);
+    ApiKeyRefDto? SentByApiKey = null,
+    /// <summary>Spec 2026-11-09 D8b: un <c>Failed</c> descartado desde «Programados»; el SPA oculta «Reintentar». Un backend viejo no lo manda.</summary>
+    bool RetryDisabled = false);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
 public sealed record ApiKeyRefDto(Guid Id, string Name);

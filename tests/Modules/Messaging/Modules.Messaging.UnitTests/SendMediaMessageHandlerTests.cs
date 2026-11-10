@@ -454,6 +454,38 @@ public sealed class SendMediaMessageHandlerTests
         Assert.Equal([staged.StagingKey], bed.Store.Deleted);
     }
 
+    [Fact]
+    public async Task ADiscardedFailedClientIdIsNotRetriableAndMetaIsNotCalled()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "a.pdf", Pdf);
+        bed.Outbound.Committed = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now, bed.MemberId, string.Empty, null, MessageKind.Document, "application/pdf", null, "a.pdf", null,
+            RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "a.pdf"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Empty(bed.Outbound.Claims);
+        Assert.Empty(bed.Meta.DocumentSends);
+    }
+
+    [Fact]
+    public async Task ADiscardedClientIdSeenOnlyInsideTheClaimIsNotRetriable()
+    {
+        var bed = new MessagingTestBed();
+        var staged = Prepare(bed, "a.pdf", Pdf);
+        bed.Outbound.Existing = new ExistingOutbound(
+            Guid.CreateVersion7(), MessageStatus.Failed, bed.Now, bed.MemberId, string.Empty, null, MessageKind.Document, "application/pdf", null, "a.pdf", null,
+            RetryDisabled: true);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() => bed.SendMediaHandler().HandleAsync(Command(bed, staged, "a.pdf"), Ct));
+
+        Assert.Equal(MessagingErrorCodes.MessageNotRetriable, error.Code);
+        Assert.Equal("rolled-back", Assert.Single(bed.Outbound.Claims).Outcome);
+        Assert.Empty(bed.Meta.DocumentSends);
+    }
+
     // Borrar el staging es best effort y va con CancellationToken.None: ya se envió, no hay por qué cambiar la respuesta.
     [Fact]
     public async Task ADeleteFailureOfTheStagingAfterASendDoesNotChangeTheAnswer()

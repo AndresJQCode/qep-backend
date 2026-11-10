@@ -147,7 +147,7 @@ local y por variable de entorno en k8s
 | `Meta:App:WebhookOverrideCallbackUrl` | vacío | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia) |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `ScheduledPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas, mensajes programados y purga |
 | `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
 | `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
 | `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
@@ -3223,6 +3223,83 @@ en `true`.
 - **Eventos del sistema** (`direction: System`, `kind: Event`) en el hilo; no suben `unreadCount` ni cambian
   la foto de la lista.
 - **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.
+
+#### Mensajes programados (spec 2026-11-09)
+
+Un asesor deja **un** mensaje (texto, imagen, documento, video, audio o nota de voz) para que salga solo a la hora
+elegida, mientras la ventana de 24 h siga abierta. Hay a lo sumo uno activo por conversación (`Scheduled`, `Sending` o
+`Failed` ocupan el cupo). Rutas bajo `/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}`; leer pide
+`messaging.conversation.read` y el resto `messaging.conversation.manage`, por permiso (no por ser el asignado ni el autor):
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /scheduled-message` | `{ scheduledMessage }`: el activo o `null`. Trae `canRetry`, calculado por el backend |
+| `POST /scheduled-messages` | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada |
+| `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`) |
+| `PUT /scheduled-messages/{id}` | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled` |
+| `POST …/{id}/cancel` | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
+| `POST …/{id}/discard` | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }` |
+| `GET …/{id}/media` | El adjunto, con `Range` |
+
+La versión viaja en el cuerpo (`expectedVersion`), no en `If-Match`, como las campañas: una versión vieja responde `412`.
+
+**Estados.** `Scheduled` → `Sending` (el worker lo reclama con un lease de 10 min; al reclamar el mensaje vuelve a mirar que el
+lease siga siendo suyo y le queden al menos 30 s, y si no, no envía y deja la fila a la recuperación) → `Sent` o `Failed`; `Cancelled` sale de
+`Scheduled`. `Sent` y `Cancelled` son finales. `FailureCode` guarda el motivo, con los códigos de siempre de Mensajería
+(`messaging.window_closed`, contacto bloqueado, conexión no disponible, `messaging.message.rejected`…) más los propios de
+abajo.
+
+**Errores propios.** `422 messaging.scheduled.too_soon` (la hora va a menos de 1 min) y `outside_window` (pasa de
+`último entrante + 24 h − 2 min`, o no hay entrante); `409 already_exists`, `not_editable` (editar, cancelar o «Enviar ya»
+fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed`); `404 not_found`. En la fila:
+`messaging.scheduled.media_missing`, `messaging.scheduled.unknown_outcome` y `messaging.message.not_retriable` (D8b).
+
+**Decisiones que conviene no romper.**
+
+- **D4, no toca la conversación.** Enviar un programado no cambia el estado ni la asignación, ni apaga el asistente. El
+  mensaje queda con el autor del contenido y entra con `seen: 0` (sin el acuse de lectura que sí manda el envío directo).
+- **D5, `{saludo}`.** Se resuelve **al enviar**, con la hora del tenant en ese momento, en el texto o en el pie. Los topes
+  miden con el saludo más largo (13 caracteres).
+- **D6, adjuntos.** Viven en `messaging/scheduled/{tenantId}/{id}{ext}` hasta que sale el mensaje, que los promueve a su
+  clave final. Una fila terminal borra el suyo; si no puede, el worker lo barre (cada `PurgeIntervalHours`). El bucket **no
+  debe tener regla de expiración** sobre `messaging/scheduled/`, o una de más de 2 días: un programado puede esperar casi 24 h
+  y borrarle el archivo antes lo deja en `media_missing`.
+- **D8b, `retry_disabled`.** Descartar un programado `Failed` desde su tarjeta quema el `clientId` de su mensaje fallido: el
+  hilo ya no puede reenviarlo (`409 messaging.message.not_retriable`) y, si el ejecutor lo encuentra así, cierra el
+  programado con ese mismo código sin reenviar.
+- **D9, nunca reenvía solo.** Un `Sending` con el lease vencido (el pod murió) se **cierra**, no se reprograma: `Sent` si el
+  mensaje ya salió, `message.rejected` sólo si Meta lo rechazó (la fila `Failed` guarda su código), y `unknown_outcome` si no
+  hay rastro o la falla no la confirmó Meta (timeout, 5xx, red: `failure_code = -1`). Reenviar podría mandarlo dos veces.
+  El ejecutor sigue la misma regla: sin respuesta de Meta el programado es `unknown_outcome`, nunca `message.rejected`
+  (decisión del owner, 2026-11-10). Lo reintenta una persona con `retry`.
+
+Configuración: `Messaging:Workers:ScheduledPollSeconds` (5) es el tick del worker, y la purga usa `PurgeIntervalHours`.
+
+**Despliegue.** Backend primero: la migración `AddScheduledMessages` crea `messaging.scheduled_messages` y agrega
+`retry_disabled` a `messaging.messages`; el frontend sale después.
+
+**Bucket privado (`Storage:R2:Bucket`), antes de desplegar.** No hay nada que crear: lo que se revisa es que ninguna regla
+existente borre los adjuntos programados. Los limpia el código (al terminar cada fila y con el barrido de
+`PurgeIntervalHours`, 24 h por defecto); el bucket no tiene que hacerlo.
+
+1. **Ninguna regla de lifecycle cubre `messaging/scheduled/`.** Ni una propia ni una más amplia: una regla sobre
+   `messaging/` o sin prefijo también la alcanza. Si por política se quiere una red de seguridad, que expire a **más de 2
+   días** (un programado espera hasta 24 h; antes de eso el envío falla con `messaging.scheduled.media_missing`).
+2. **La regla de `messaging/staging/` sigue con su prefijo exacto** (`expire-messaging-staging`, 1 día; ver «Pendientes del
+   owner antes de producción: imágenes y documentos del asesor»). El adjunto se sube a staging y se copia a
+   `messaging/scheduled/` al programar, así que esa regla no lo toca después.
+3. **El CORS del bucket privado** es el mismo de los adjuntos del asesor ([`ops/r2-cors.aws.json`](ops/r2-cors.aws.json)): la
+   subida usa la misma sesión de staging. No cambia nada.
+
+Para verificar, en PowerShell (wrangler pide su propio login):
+
+```powershell
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+En la salida, ningún prefijo puede ser `messaging/scheduled/`, `messaging/` ni vacío, salvo con más de 2 días.
 
 #### Secretos en local
 
