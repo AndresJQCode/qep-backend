@@ -456,10 +456,14 @@ internal sealed class FakeCustomerLookup : IPosCustomerLookup
         return snapshot;
     }
 
+    /// <summary>El <c>includeIncompleteWithoutDocument</c> de cada búsqueda, en orden.</summary>
+    public List<bool> SearchIncludedIncompleteWithoutDocument { get; } = [];
+
     public Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken)
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken)
     {
         Calls.Add($"Search:{search}:{take}");
+        SearchIncludedIncompleteWithoutDocument.Add(includeIncompleteWithoutDocument);
         IReadOnlyList<PosCustomerRef> found = Refs
             .Where(entry => entry.TenantId == tenantId && entry.Customer.IsActive)
             .Select(entry => entry.Customer)

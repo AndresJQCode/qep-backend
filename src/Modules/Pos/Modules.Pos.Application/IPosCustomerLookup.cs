@@ -28,7 +28,10 @@ public sealed record NewPosCustomer(string Name, string? IdentificationType, str
 /// </summary>
 public interface IPosCustomerLookup
 {
-    Task<IReadOnlyList<PosCustomerRef>> SearchAsync(Guid tenantId, string? search, int take, CancellationToken cancellationToken);
+    /// <summary>Los que la caja puede elegir; con <paramref name="includeIncompleteWithoutDocument"/> también los incompletos sin
+    /// documento (el tenant no lo exige al facturar).</summary>
+    Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken);
 
     /// <summary>El cliente del tenant, activo o no; <c>null</c> si no existe en este tenant.</summary>
     Task<PosCustomerSnapshot?> FindAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);

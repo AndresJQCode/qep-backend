@@ -68,6 +68,7 @@ public sealed class CreatePosCustomerValidator : AbstractValidator<CreatePosCust
 
 public sealed class SearchPosCustomersHandler(
     IPosCustomerLookup customers,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IValidator<SearchPosCustomersQuery> validator)
     : IQueryHandler<SearchPosCustomersQuery, PosCustomerOptionsResponse>
@@ -79,7 +80,12 @@ public sealed class SearchPosCustomersHandler(
         await validator.ValidateAndThrowAsync(query, cancellationToken);
 
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
-        var found = await customers.SearchAsync(query.TenantId, search, PosCustomerRules.Take, cancellationToken);
+        // Spec 2026-11-09: si el tenant no exige el documento al facturar, la caja le vende a un incompleto sin documento
+        // (su propia alta rápida), y el selector tiene que listarlo. Con la política por defecto, como antes.
+        var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(query.TenantId), cancellationToken);
+        var policy = regional?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
+        var found = await customers.SearchAsync(
+            query.TenantId, search, PosCustomerRules.Take, !policy.Document.OnBilling, cancellationToken);
         return new PosCustomerOptionsResponse([.. found.Select(PosCustomerMapping.ToOption)]);
     }
 }

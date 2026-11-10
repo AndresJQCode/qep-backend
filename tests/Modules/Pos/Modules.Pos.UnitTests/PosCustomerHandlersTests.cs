@@ -12,7 +12,7 @@ public sealed class PosCustomerHandlersTests
     private static readonly string[] Customer = [PosPermissions.SaleCustomer];
 
     private static SearchPosCustomersHandler Search(PosTestBed bed, params string[] permissions) =>
-        new(bed.Customers, bed.Context(permissions), new SearchPosCustomersValidator());
+        new(bed.Customers, bed.TenantDirectory, bed.Context(permissions), new SearchPosCustomersValidator());
 
     private static CreatePosCustomerHandler Create(PosTestBed bed, params string[] permissions) =>
         new(bed.Customers, bed.TenantDirectory, bed.Context(permissions), new CreatePosCustomerValidator());
@@ -44,6 +44,29 @@ public sealed class PosCustomerHandlersTests
         await Search(bed, Customer).HandleAsync(new SearchPosCustomersQuery(TenantId, "   "), TestContext.Current.CancellationToken);
 
         Assert.Equal(["Search:Laura:20", "Search::20"], bed.Customers.Calls);
+    }
+
+    // Spec 2026-11-09 (final review): el selector lista a los incompletos sin documento sólo si el tenant no exige el
+    // documento al facturar; sin fila regional rige la política por defecto.
+    [Fact]
+    public async Task SearchIncludesIncompleteWithoutDocumentOnlyWhenTheDocumentIsNotBilled()
+    {
+        var notBilled = new PosTestBed();
+        notBilled.TenantDirectory.Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56",
+            CustomerFieldPolicy: new PolicyOfCustomerFields(new FieldRequirement(false, false), FieldRequirement.Always));
+        var billed = new PosTestBed();
+        billed.TenantDirectory.Regional = WithDocumentOnSave(false);
+        var noRegional = new PosTestBed();
+        noRegional.TenantDirectory.Regional = null;
+
+        foreach (var bed in new[] { notBilled, billed, noRegional })
+        {
+            await Search(bed, Customer).HandleAsync(new SearchPosCustomersQuery(TenantId, "Laura"), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal([true], notBilled.Customers.SearchIncludedIncompleteWithoutDocument);
+        Assert.Equal([false], billed.Customers.SearchIncludedIncompleteWithoutDocument);
+        Assert.Equal([false], noRegional.Customers.SearchIncludedIncompleteWithoutDocument);
     }
 
     [Fact]

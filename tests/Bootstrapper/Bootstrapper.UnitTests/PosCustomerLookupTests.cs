@@ -25,7 +25,7 @@ public sealed class PosCustomerLookupTests
         var customer = Registered("Laura Verde", IdentificationType.Cc, "1020304050");
         var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
 
-        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, Ct);
+        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, false, Ct);
 
         var item = Assert.Single(found);
         Assert.Equal(new PosCustomerRef(customer.Id.Value, "Laura Verde", "CC", "1020304050", false, true), item);
@@ -42,7 +42,7 @@ public sealed class PosCustomerLookupTests
             new PassThroughPhones());
         var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
 
-        var found = await lookup.SearchAsync(TenantId, null, PosCustomerRules.Take, Ct);
+        var found = await lookup.SearchAsync(TenantId, null, PosCustomerRules.Take, false, Ct);
 
         var item = Assert.Single(found);
         Assert.Equal(new PosCustomerRef(customer.Id.Value, "Verde Esencial", null, null, true, true), item);
@@ -215,7 +215,7 @@ public sealed class PosCustomerLookupTests
         public Dictionary<(IdentificationType Type, string Number), CustomerId> Identifications { get; } = [];
 
         public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
-            Guid tenantId, string? search, int take, CancellationToken cancellationToken) =>
+            Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Customer>>(
                 customers.Where(customer => customer.TenantId == tenantId && customer.IsActive).Take(take).ToList());
 

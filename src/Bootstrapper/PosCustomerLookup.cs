@@ -19,9 +19,10 @@ internal sealed class PosCustomerLookup(
     private const string Source = "pos";
 
     public async Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken)
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken)
     {
-        var found = await customers.SearchSelectableAsync(tenantId, search, take, cancellationToken);
+        var found = await customers.SearchSelectableAsync(
+            tenantId, search, take, includeIncompleteWithoutDocument, cancellationToken);
         return found.Select(ToRef).ToList();
     }
 

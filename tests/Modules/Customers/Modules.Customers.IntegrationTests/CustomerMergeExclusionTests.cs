@@ -90,8 +90,8 @@ public sealed class CustomerMergeExclusionTests
         var ct = TestContext.Current.CancellationToken;
 
         var exported = await repository.ListForExportAsync(Tenant, null, null, null, null, 0, 100, ct);
-        var selectable = await repository.SearchSelectableAsync(Tenant, null, 50, ct);
-        var selectableByName = await repository.SearchSelectableAsync(Tenant, "Fusionado", 50, ct);
+        var selectable = await repository.SearchSelectableAsync(Tenant, null, 50, false, ct);
+        var selectableByName = await repository.SearchSelectableAsync(Tenant, "Fusionado", 50, false, ct);
 
         Assert.Equal(pair.Survivor, Assert.Single(exported).Id.Value);
         Assert.Equal(pair.Survivor, Assert.Single(selectable).Id.Value);

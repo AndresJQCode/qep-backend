@@ -223,6 +223,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         Guid tenantId,
         string? search,
         int take,
+        bool includeIncompleteWithoutDocument,
         CancellationToken cancellationToken)
     {
         var searchPattern = LikePattern(search);
@@ -233,7 +234,11 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var query = FilteredQuery(tenantId, searchPattern, null, null, null)
             .Where(customer => customer.IsActive
                 && ((customer.IdentificationNumber != null && customer.IdentificationType != null)
-                    || customer.Completeness == CustomerCompleteness.Complete));
+                    || customer.Completeness == CustomerCompleteness.Complete
+                    // Un tenant que no exige el documento al facturar le vende tambien a un incompleto sin el (el alta
+                    // rapida de la caja lo deja asi): si no se lista, cada visita es otra alta. El costo, aceptado, es que
+                    // tambien aparecen los incompletos de WhatsApp o de la tienda.
+                    || (includeIncompleteWithoutDocument && customer.IdentificationNumber == null)));
 
         // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
         return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)
