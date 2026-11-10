@@ -111,6 +111,31 @@ internal static class PosApiHarness
             CreateClient(factory, registered.OwnerUserId, registered.TenantId, SeedPermissions));
     }
 
+    // Politica de campos del cliente del tenant (document/city x al guardar/al facturar); mismo SQL que
+    // CustomersApiHarness. Va despues de RegisterTenantAsync.
+    public static Task SetTenantCustomerFieldPolicyAsync(
+        PostgreSqlContainer database,
+        Guid tenantId,
+        bool documentOnSave,
+        bool documentOnBilling,
+        bool cityOnSave,
+        bool cityOnBilling) =>
+        ExecuteSqlAsync(
+            database,
+            """
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = @documentOnSave,
+                customer_document_required_on_billing = @documentOnBilling,
+                customer_city_required_on_save = @cityOnSave,
+                customer_city_required_on_billing = @cityOnBilling
+            WHERE id = @tenantId
+            """,
+            ("documentOnSave", documentOnSave),
+            ("documentOnBilling", documentOnBilling),
+            ("cityOnSave", cityOnSave),
+            ("cityOnBilling", cityOnBilling),
+            ("tenantId", tenantId));
+
     public static Task EnablePosAsync(PostgreSqlContainer database, Guid tenantId) =>
         ExecuteSqlAsync(
             database,

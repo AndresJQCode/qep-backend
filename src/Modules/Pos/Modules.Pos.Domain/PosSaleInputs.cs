@@ -29,4 +29,4 @@ public sealed record PosTaxBreakdownEntry(int TaxPercentage, decimal Base, decim
 /// La foto del cliente al vender (spec 2026-10-14, decisión 8): se copia a la venta y no hay FK, así que
 /// renombrar o desactivar al cliente después no cambia el ticket.
 /// </summary>
-public sealed record PosSaleCustomer(Guid Id, string Name, string IdentificationType, string IdentificationNumber);
+public sealed record PosSaleCustomer(Guid Id, string Name, string? IdentificationType, string? IdentificationNumber);

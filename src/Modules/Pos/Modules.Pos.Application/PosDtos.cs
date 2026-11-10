@@ -176,7 +176,7 @@ public sealed record PosPaymentRequest(string Method, decimal? Amount, decimal? 
 
 public sealed record PosIssuerResponse(string Name, string TaxId, string DocumentType, string? Address, string? Phone);
 
-public sealed record PosCustomerResponse(string Name, string? IdentificationType, string IdentificationNumber);
+public sealed record PosCustomerResponse(string Name, string? IdentificationType, string? IdentificationNumber);
 
 /// <summary>
 /// El selector de la caja (spec «Endpoints nuevos»): sin teléfono, correo, dirección ni clasificación, porque el

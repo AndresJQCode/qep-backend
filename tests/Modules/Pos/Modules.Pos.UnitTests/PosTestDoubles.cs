@@ -133,7 +133,7 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
             .Where(sale => filter.Status is not { } status || sale.Status == status)
             .Where(sale => filter.Number is null || sale.SaleNumber.Contains(filter.Number, StringComparison.OrdinalIgnoreCase))
             .Where(sale => filter.CustomerDocument is null
-                || sale.CustomerIdentificationNumber.Contains(filter.CustomerDocument, StringComparison.OrdinalIgnoreCase))
+                || (sale.CustomerIdentificationNumber?.Contains(filter.CustomerDocument, StringComparison.OrdinalIgnoreCase) ?? false))
             .OrderByDescending(sale => sale.CreatedAt)
             .ToList();
         var rows = matches
@@ -400,6 +400,34 @@ internal sealed class FakeCategoryLookup : IPosCategoryLookup
 /// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
 /// para que una prueba pueda afirmar que algo NO se llamó.
 /// </summary>
+/// <summary>El tenant que lee la venta para saber si exige el documento al facturar: sólo
+/// <see cref="Regional"/> responde; sin fijarlo (null) rige la política por defecto (todo exigido).</summary>
+internal sealed class FakeTenantDirectory : ITenantDirectory
+{
+    public TenantRegionalSettings? Regional { get; set; }
+
+    /// <summary>Cuántas veces se leyó la política.</summary>
+    public int Reads { get; private set; }
+
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        Reads++;
+        return Task.FromResult(Regional);
+    }
+
+    public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
 internal sealed class FakeCustomerLookup : IPosCustomerLookup
 {
     public List<(Guid TenantId, PosCustomerRef Customer)> Refs { get; } = [];
@@ -511,6 +539,8 @@ internal sealed class PosTestBed
     public FakeCategoryLookup Categories { get; } = new();
 
     public FakeCustomerLookup Customers { get; } = new();
+
+    public FakeTenantDirectory TenantDirectory { get; } = new();
 
     public FakeClock Clock { get; } = new(PosFixtures.Now);
 
