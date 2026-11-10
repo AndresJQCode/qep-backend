@@ -465,11 +465,12 @@ public sealed class Order
     }
 
     /// <summary>
-    /// El pedido que nace de una solicitud de la tienda pública al «Tomar» (spec de la tienda §5). Se guarda
-    /// con el cliente ya resuelto en <paramref name="header"/>, entregado (nunca recogida), con las dos partes,
-    /// pago pendiente y sin comprobantes. Pasa por <see cref="EnsureCreatable"/> sin cambios: el correo de la
-    /// tienda es obligatorio, así que la regla completa de partes aplica tal cual. La referencia y la clave son
-    /// las de la solicitud: la clave hace idempotente el reintento de «Tomar».
+    /// El pedido que nace directo del checkout de la tienda pública (spec 2026-11-09). Se guarda con el cliente
+    /// ya resuelto en <paramref name="header"/>, entregado (nunca recogida), con las dos partes, pago pendiente
+    /// y sin comprobantes. Pasa por <see cref="EnsureCreatable"/> sin cambios: el correo de la tienda es
+    /// obligatorio, así que la regla completa de partes aplica tal cual. No hay solicitud detrás, así que no
+    /// lleva referencia externa; la clave sale del <c>clientRequestId</c> del checkout y hace idempotente el
+    /// reintento del navegador.
     /// </summary>
     public static Order CreateFromStore(
         OrderId id,
@@ -482,14 +483,12 @@ public sealed class Order
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
-        string requestNumber,
         string externalKey)
     {
         ArgumentNullException.ThrowIfNull(billingAccount);
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestNumber);
         var key = NormalizeExternalKey(externalKey);
         var order = Build(
-            id, tenantId, orderNumber, OrderSource.Store, requestNumber, header, parties, billingAccount,
+            id, tenantId, orderNumber, OrderSource.Store, externalReference: null, header, parties, billingAccount,
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
         order.ExternalKey = key;
         return order;

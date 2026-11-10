@@ -36,7 +36,7 @@ public sealed class DiscardOrderRequestHandlerTests
     public async Task WhenTheOrderAlreadyExistsTheRequestIsConvertedNotDiscarded()
     {
         var rig = new DiscardRig();
-        var order = new StoreOrderCreated(Guid.NewGuid(), "P-9", 20000m, Guid.NewGuid(), OtherMember, AlreadyExisted: true);
+        var order = new StoreOrderCreated(Guid.NewGuid(), "P-9", 20000m, "COP", Guid.NewGuid(), OtherMember, AlreadyExisted: true);
         rig.Orders.Existing = order;
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(
@@ -91,7 +91,7 @@ public sealed class DiscardOrderRequestHandlerTests
 
         public int FindCalls { get; private set; }
 
-        public Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken)
+        public Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken)
         {
             FindCalls++;
             return Task.FromResult(Existing);
@@ -105,6 +105,9 @@ public sealed class DiscardOrderRequestHandlerTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<StoreOrderCreated> CreateAsync(StoreOrderDraft draft, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<int> CountCreatedSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

@@ -17,16 +17,19 @@ public interface IStoreOrders
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// El pedido que ya salió de esa solicitud, o <c>null</c>. «Tomar» lo mira antes de tocar al cliente: tras una caída entre crear el
-    /// pedido y marcar la solicitud, el reintento no crea ni completa nada.
+    /// El pedido que ya salió de ese checkout (<paramref name="clientRequestId"/>), o <c>null</c>. Se mira antes de tocar al cliente:
+    /// el reintento del navegador no crea ni completa nada.
     /// </summary>
-    Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid requestId, CancellationToken cancellationToken);
+    Task<StoreOrderCreated?> FindExistingAsync(Guid tenantId, Guid clientRequestId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Crea el pedido de la solicitud, idempotente por la solicitud. Los errores del motor (<c>quotation.item.product_inactive</c>,
-    /// <c>quotation.item.product_price_unavailable</c>) suben tal cual: aquí sí los ve el asesor.
+    /// Crea el pedido del checkout, idempotente por <c>ClientRequestId</c>. Los errores del motor se traducen: el visitante anónimo
+    /// nunca ve <c>quotation.*</c>, sólo <c>store.order_request.line_unavailable</c>.
     /// </summary>
     Task<StoreOrderCreated> CreateAsync(StoreOrderDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>Cuántos pedidos de la tienda entraron desde <paramref name="since"/>, anulados incluidos: el tope diario.</summary>
+    Task<int> CountCreatedSinceAsync(Guid tenantId, DateTimeOffset since, CancellationToken cancellationToken);
 }
 
 /// <summary>Una parte del pedido. En <c>CO</c> van los ids y <c>CityName</c> es null; afuera sólo <c>CityName</c>.</summary>
@@ -44,11 +47,11 @@ public sealed record StoreOrderPartyInput(
 
 public sealed record StoreOrderLineInput(Guid VariantId, decimal Quantity);
 
-/// <summary><c>TakerUserId</c> es la persona que toma la solicitud: firma la auditoría del pedido, que no tiene otro actor humano.</summary>
+/// <summary><c>ClientRequestId</c> es el id que el navegador genera por checkout: hace idempotente el pedido. No hay persona detrás:
+/// el pedido lo crea el sistema.</summary>
 public sealed record StoreOrderDraft(
     Guid TenantId,
-    Guid RequestId,
-    string RequestNumber,
+    Guid ClientRequestId,
     Guid ClientId,
     Guid AdvisorMembershipId,
     bool IsRetail,
@@ -58,14 +61,14 @@ public sealed record StoreOrderDraft(
     bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreOrderLineInput> Lines,
-    string? Notes,
-    Guid TakerUserId);
+    string? Notes);
 
 /// <summary>Con <c>AlreadyExisted</c> el resto describe el pedido que ya estaba (cliente y asesor incluidos).</summary>
 public sealed record StoreOrderCreated(
     Guid OrderId,
     string OrderNumber,
     decimal Total,
+    string Currency,
     Guid ClientId,
     Guid AdvisorMembershipId,
     bool AlreadyExisted);

@@ -111,7 +111,7 @@ public sealed partial class TakeOrderRequestHandler(
 
         // R5: un pedido que ya salió de esta solicitud (el proceso cayó antes de marcarla) se reconoce ANTES de tocar al cliente o su
         // libreta. Se marca con el cliente de ESE pedido, que puede no ser el que el segundo tomador eligió.
-        if (await orders.FindExistingAsync(tenantId, request.Id, cancellationToken) is { } existing)
+        if (await orders.FindExistingAsync(tenantId, request.ClientRequestId, cancellationToken) is { } existing)
         {
             await MarkConvertedAsync(request, existing, now, cancellationToken);
             // Este camino no mira la libreta: no hay resultado de direcciones que informar.
@@ -157,8 +157,7 @@ public sealed partial class TakeOrderRequestHandler(
 
         var draft = new StoreOrderDraft(
             tenantId,
-            request.Id,
-            request.DisplayNumber,
+            request.ClientRequestId,
             customer.Id,
             caller.MembershipId,
             // El modo de precios de la tienda AHORA, no el de la solicitud: el pedido se precia como la tienda vende hoy.
@@ -169,8 +168,7 @@ public sealed partial class TakeOrderRequestHandler(
             customer.WithRetention,
             customer.VatSurplus,
             request.Lines.OrderBy(line => line.Position).Select(line => new StoreOrderLineInput(line.VariantId, line.Quantity)).ToList(),
-            request.Note,
-            caller.UserId);
+            request.Note);
         var order = await orders.CreateAsync(draft, cancellationToken);
 
         await MarkConvertedAsync(request, order, now, cancellationToken);

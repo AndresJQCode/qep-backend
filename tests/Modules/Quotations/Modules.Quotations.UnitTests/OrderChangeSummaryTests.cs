@@ -33,6 +33,11 @@ public sealed class OrderChangeSummaryTests
     public void DescribesTheSendWithItsRecipient(QuotationRecipient recipient, string expected) =>
         Assert.Equal(expected, OrderChangeSummary.Sent(recipient));
 
+    // El pedido de la tienda no nace de una solicitud: el historial no nombra ninguna.
+    [Fact]
+    public void CreatedFromStoreNamesNoRequest() =>
+        Assert.Equal("Creado desde la tienda.", OrderChangeSummary.CreatedFromStore());
+
     [Fact]
     public void AnUnchangedShippingHasNoSummary() =>
         Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None, Colombian));

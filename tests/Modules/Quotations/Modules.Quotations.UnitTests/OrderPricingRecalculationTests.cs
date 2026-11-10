@@ -183,7 +183,7 @@ public sealed class OrderPricingRecalculationTests
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,
                 new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
-                lines, null, AdvisorId, Now, "T-0001", "store-request:1");
+                lines, null, AdvisorId, Now, "store-checkout:1");
         }
 
         return source == OrderSource.Manual

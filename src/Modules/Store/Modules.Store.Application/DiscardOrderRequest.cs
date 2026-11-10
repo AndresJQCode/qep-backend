@@ -63,7 +63,7 @@ public sealed class DiscardOrderRequestHandler(
 
             // The take may have created the order and failed before marking the request: discarding it would orphan
             // that order. It is marked converted instead (like a retried "Take") and the UI reloads on the 409.
-            if (await orders.FindExistingAsync(command.TenantId, request.Id, cancellationToken) is { } existing)
+            if (await orders.FindExistingAsync(command.TenantId, request.ClientRequestId, cancellationToken) is { } existing)
             {
                 request.MarkConverted(
                     existing.OrderId, existing.ClientId, existing.OrderNumber, existing.Total, existing.AdvisorMembershipId, now);
