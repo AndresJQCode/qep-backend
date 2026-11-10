@@ -55,7 +55,7 @@ El pedido no sabe hoy de qué cuenta de comprador vino: `Order` no tiene ningún
 | D2 | Construye sobre el spec de pedidos directos: lo que se lista es un `Order` real. No hay `StoreOrderRequest`. |
 | D3 | Los pedidos de la tienda que existen hoy son datos de prueba: no hay backfill. Sólo aparecen los pedidos creados cuando ya existe el vínculo con la cuenta. |
 | D4 | Este trabajo corre **en paralelo** con el de pedidos directos, en worktrees separados. Todo salvo el sellado de `BuyerAccountId` en el checkout (y su enlace con el alta diferida de `createAccount`) es independiente; ese paso se hace **al final**, después de que la rama de pedidos directos entre a `develop` y ésta se rebase sobre ella. Orden de merge: pedidos directos → esta feature, en los dos repos, backend primero. |
-| D5 | El comprador puede anular sólo si `Order.Status == Pending` **y** `Order.PaymentStatus == PaymentPending` (sin comprobante de pago registrado). Un pedido pendiente con pago parcial o total ya no se anula desde la tienda: lo resuelve el asesor. |
+| D5 | El comprador puede anular sólo si `Order.Status == Pending` **y** `Order.PaymentStatus == PaymentPending` **y** el pedido no tiene ningún comprobante de pago registrado (`PaymentProofs` vacío). El tercer requisito no es redundante: el asesor puede registrar un comprobante por `POST …/orders/{id}/proofs` dejando `paymentStatus: PaymentPending` (por ejemplo, «recibido, aún verificando»), y ese pedido ya tiene dinero registrado. Un pedido pendiente con pago parcial o total, o con cualquier comprobante, ya no se anula desde la tienda: lo resuelve el asesor. |
 
 ## 4. Diseño del backend
 
@@ -148,7 +148,7 @@ Buyers.Application no puede ver Quotations, así que declara el puerto `IBuyerOr
 ```text
 Task<BuyerOrderPage>   ListAsync(Guid tenantId, Guid accountId, int page, int pageSize, ct)
 Task<BuyerOrderDetail?> FindAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
-Task<BuyerOrderCancel>  CancelAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
+Task<BuyerOrderDetailDto?> CancelAsync(Guid tenantId, Guid accountId, Guid orderId, ct)
 ```
 
 El adaptador `Bootstrapper/BuyerOrdersAdapter.cs` resuelve en un scope propio (como `StoreOrdersAdapter`) un
@@ -161,19 +161,19 @@ que `GetBuyerSessionHandler`: `IBuyerStorefronts.ResolveAsync(host)` → `BuyerS
 
 ### 4.4 Anulación por el comprador
 
-- Sólo `OrderStatus.Pending` **y** `OrderPaymentStatus.PaymentPending` (D1, D5). `Approved` ya fue revisado
+- Sólo `OrderStatus.Pending`, `OrderPaymentStatus.PaymentPending` **y** sin comprobantes registrados (`PaymentProofs.Count == 0`) (D1, D5). `Approved` ya fue revisado
   por una persona y un pago registrado (`PartialPaymentReceived` / `FullPaymentReceived`) es dinero que el
   asesor tendría que devolver: ninguno de los dos se deshace desde la tienda (más estricto que `Order.Cancel`).
   La regla vive en el dominio (`CancelByBuyer`, abajo) y se expone como `Order.CanBeCancelledByBuyer` para
   que el gateway y el DTO la lean sin repetirla. Con `Approved`, `Cancelled`, `Invoiced` o cualquier
-  `PaymentStatus` distinto de `PaymentPending` responde `ResourceConflictException` con un código nuevo
+  `PaymentStatus` distinto de `PaymentPending`, o con un comprobante registrado, responde `409` (la `ResourceConflictException` la lanza el `BuyerOrderGateway` de Application) con un código nuevo
   `order.order.not_cancellable_by_buyer` (409) **[código nuevo; no existe hoy]**. No se reutiliza
   `order.order.not_pending`: hoy es `QuotationsDomainException` (422) y lo lanzan las ediciones; cambiarle el
   status tocaría la consola.
 - Actor: el comprador, que no es miembro. `Order.Cancel` exige `MemberId`; se agrega
   `CancelByBuyer(Guid buyerAccountId, DateTimeOffset occurredAt)` **[decisión del diseñador]** que exige
-  `Status == Pending && PaymentStatus == PaymentPending` (si no, lanza la `ResourceConflictException` de
-  arriba), deja `CancelledBy = null`, `CancelledAt`, `CancellationReason` con el texto fijo
+  `CanBeCancelledByBuyer` (`Status == Pending && PaymentStatus == PaymentPending && PaymentProofs.Count == 0`; si no, el dominio lanza `QuotationsDomainException` con `order.order.not_cancellable_by_buyer` y Application lo traduce al 409 de
+  arriba: el Domain no puede lanzar `ResourceConflictException`), deja `CancelledBy = null`, `CancelledAt`, `CancellationReason` con el texto fijo
   «Cancelado por el comprador desde la tienda» y sube `Version`. Exige `BuyerAccountId == buyerAccountId`
   (defensa en profundidad; el gateway ya filtró). Sin motivo libre: no hay campo de texto para el visitante.
 - Historial: `OrderHistoryEntry.Create(…, OrderHistoryEventType.Cancelled, memberId: null,
@@ -234,12 +234,12 @@ Unitarias:
 - Store.Application (al final, D4): el handler del checkout resuelve la cuenta con sesión válida y la pone en
   el draft; sesión inválida → `null` y el pedido sigue.
 Integración (Testcontainers; un proyecto a la vez, `-- xUnit.MaxParallelThreads=4`):
-- `PublicBuyerOrdersApiTests` (Buyers): 401 sin token; 404 `order.order.not_found` para pedido de otra cuenta y
+- `PublicBuyerOrdersApiTests` (en `Modules.Store.IntegrationTests`, que es quien tiene la API real con la tienda): 401 sin token; 404 `order.order.not_found` para pedido de otra cuenta y
   para pedido del mismo comprador en otro tenant; listado paginado; cancel → 200 con `status = "Cancelled"`,
   fila `order_history` con `member_id NULL`, evento `quotations.order.cancelled.v1` en el outbox; segundo
   cancel → 409; pedido `Pending` con comprobante (`POST …/proofs` de la consola) → 409 y sin cambios. Hasta el
   rebase (D4) los pedidos se siembran con `StoreOrderGateway.CreateAsync` y `BuyerAccountId` fijado directamente.
-- `QuotationsPersistenceTests`: columna `buyer_account_id` e índice; la migración aplica sobre la anterior.
+- `OrdersMigrationTests` (Quotations.IntegrationTests): columna `buyer_account_id` e índice; la migración aplica sobre la anterior.
 - `ArchitectureTests`: `BuyersLayerTests` y `QuotationsLayerTests` siguen en verde (Buyers no gana referencias
   a Quotations ni al revés); agregar una aserción nombrada de que `Modules.Buyers.*` no referencia
   `Modules.Quotations.*` **[decisión del diseñador]**.

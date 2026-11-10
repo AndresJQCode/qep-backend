@@ -1149,9 +1149,9 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 | 9 | `POST /buyer/password/forgot` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
 | 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
 | 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
-| 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
+| 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
 | 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
-| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está en `Pending` con pago `PaymentPending`, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
+| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está en `Pending` con pago `PaymentPending` y sin comprobantes, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
 
 Notas:
 
@@ -1170,8 +1170,8 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
 
 - `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status`, `paymentStatus`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`) y `cancelledAt`.
 - **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
-- **La anulación del comprador es más estricta que la del equipo** (D5): sólo si `Status == Pending` y `PaymentStatus == PaymentPending`, y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
-- Orden de chequeos: host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
+- **La anulación del comprador es más estricta que la del equipo** (D5): sólo si `Status == Pending`, `PaymentStatus == PaymentPending` **y** no hay ningún comprobante de pago registrado (un asesor puede registrar un comprobante dejando el pago en `PaymentPending`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
+- Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
 
 Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
