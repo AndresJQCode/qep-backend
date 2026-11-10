@@ -249,7 +249,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var hasher = rig.Fixture.Settings.Factory.Services.GetRequiredService<IBuyerPasswordHasher>();
         Assert.NotEqual(BuyerPasswordCheck.Failed, hasher.Verify(hash, Password));
 
-        foreach (var row in await rig.TextsAsync("SELECT row_to_json(t)::text FROM store.order_requests t"))
+        foreach (var row in await rig.TextsAsync("SELECT row_to_json(t)::text FROM store.order_consents t"))
         {
             Assert.DoesNotContain(Password, row, StringComparison.Ordinal);
         }
@@ -261,7 +261,7 @@ public sealed class PublicOrderBuyerAccountApiTests
     }
 
     [Fact]
-    public async Task TheSignupMessageCommitsWithTheOrderRequest()
+    public async Task TheSignupMessageCommitsWithTheOrder()
     {
         await using var rig = await OpenRigAsync();
         var body = WithAccount(rig, email: "  Ana.Perez@Test.CO ");
@@ -269,7 +269,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var receipt = await CreatedAsync(await SubmitAsync(rig, body, visitorIp: "203.0.113.77"));
 
         var payload = JsonNode.Parse(Assert.Single(await rig.SignupPayloadsAsync()))!;
-        Assert.Equal((Guid)receipt["id"]!, (Guid)payload["orderRequestId"]!);
+        Assert.Equal((Guid)receipt["id"]!, (Guid)payload["orderId"]!);
         Assert.Equal((Guid)body["clientRequestId"]!, (Guid)payload["clientRequestId"]!);
         Assert.Equal(Tenant, (Guid)payload["tenantId"]!);
         // Review Focus 2: el email de ingreso sale normalizado igual que en el registro.
@@ -380,7 +380,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var responses = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => SubmitAsync(rig, body)));
 
         Assert.All(responses, response => Assert.Equal(HttpStatusCode.Created, response.StatusCode));
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
         Assert.Single(await rig.SignupPayloadsAsync());
     }
 
@@ -397,7 +397,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         await AssertValidationAsync(shortPassword, "CreateAccount.Password");
         await AssertValidationAsync(noPolicy, "CreateAccount.AcceptsDataPolicy");
         await AssertValidationAsync(withSession, "CreateAccount");
-        Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
         Assert.Empty(await rig.SignupPayloadsAsync());
     }
 
@@ -431,12 +431,12 @@ public sealed class PublicOrderBuyerAccountApiTests
         var withAccount = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
         var withProfile = await CreatedAsync(await SubmitAsync(rig, Body(rig, body => body["updateProfile"] = true), session: "cualquier-token"));
 
-        Assert.Equal("T-0001", (string)withAccount["number"]!);
+        Assert.EndsWith("0001", (string)withAccount["number"]!, StringComparison.Ordinal);
         Assert.False((bool)withAccount["buyerSessionRejected"]!);
-        Assert.Equal("T-0002", (string)withProfile["number"]!);
+        Assert.EndsWith("0002", (string)withProfile["number"]!, StringComparison.Ordinal);
         Assert.False((bool)withProfile["buyerSessionRejected"]!);
         Assert.Empty(await rig.SignupPayloadsAsync());
-        Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(2, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
     private static async Task<string> LoginAsync(Rig rig, string email = "ana@test.co", string password = "una-contrasena-larga")
@@ -546,7 +546,7 @@ public sealed class PublicOrderBuyerAccountApiTests
 
         Assert.True((bool)receipt["buyerSessionRejected"]!);
         Assert.Equal(0, await rig.CountAsync("SELECT count(*) FROM buyers.profiles"));
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
     [Fact]
@@ -557,7 +557,7 @@ public sealed class PublicOrderBuyerAccountApiTests
         var receipt = await CreatedAsync(await SubmitAsync(rig, UpdatingProfile(rig)));
 
         Assert.True((bool)receipt["buyerSessionRejected"]!);
-        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM store.order_requests"));
+        Assert.Equal(1, await rig.CountAsync("SELECT count(*) FROM quotations.orders"));
     }
 
     [Fact]

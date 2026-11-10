@@ -1,48 +1,29 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Store.Application;
 using static Modules.Store.IntegrationTests.StoreApiHarness;
 
 namespace Modules.Store.IntegrationTests;
 
-/// <summary>
-/// El pedido que sale de «Tomar» en la pantalla de pedidos: su detalle trae la solicitud con el teléfono del visitante, y el listado
-/// lo filtra por origen. Necesitan Docker.
-/// </summary>
+/// <summary>El pedido que crea el checkout aparece en la pantalla de pedidos con su origen. Necesitan Docker.</summary>
 public sealed class StoreOrderDetailApiTests
 {
-    private static readonly object NewCustomerBody = new { newCustomer = new { classificationId = (Guid?)null } };
-
-    [Fact]
-    public async Task AStoreOrderDetailCarriesTheRequestPhone()
-    {
-        await using var rig = await StoreInboxRig.OpenAsync();
-        var request = await rig.SubmitAsync();
-        var taken = await rig.TakeOkAsync(request, NewCustomerBody);
-
-        var order = await rig.OrderAsync((Guid)taken["orderId"]!);
-
-        var storeRequest = order["storeRequest"]!;
-        var state = await rig.StateAsync(request);
-        Assert.Equal(request, (Guid)storeRequest["id"]!);
-        Assert.Equal("T-0001", (string)storeRequest["number"]!);
-        Assert.Equal((Guid)taken["customerId"]!, (Guid)storeRequest["customerId"]!);
-        Assert.Equal("Ana Pérez", (string)storeRequest["customerName"]!);
-        Assert.Equal("3001234567", (string)storeRequest["phone"]!);
-        Assert.Equal("+573001234567", (string)storeRequest["phoneE164"]!);
-        Assert.Equal("ana@test.co", (string)storeRequest["email"]!);
-        Assert.Equal(state.Total, (decimal)storeRequest["displayedTotal"]!);
-        Assert.Equal("COP", (string)storeRequest["currency"]!);
-        Assert.Equal(state.TotalDifference, (decimal?)storeRequest["totalDifference"]);
-    }
-
     [Fact]
     public async Task TheOrdersListFiltersByStoreSource()
     {
-        await using var rig = await StoreInboxRig.OpenAsync();
-        var request = await rig.SubmitAsync();
-        var orderId = (Guid)(await rig.TakeOkAsync(request, NewCustomerBody))["orderId"]!;
+        await using var fixture = await PublicStoreFixture.OpenAsync(configureServices: services =>
+        {
+            services.RemoveAll<ICaptchaVerifier>();
+            services.AddSingleton<ICaptchaVerifier>(new FakeCaptchaVerifier());
+        });
+        var orderId = await SubmitAsync(fixture);
+        using var reader = fixture.Settings.ClientFor(TenantId, "quotations.order.read");
 
-        var store = await ListAsync(rig, "Store");
-        var manual = await ListAsync(rig, "Manual");
+        var store = await ListAsync(reader, "Store");
+        var manual = await ListAsync(reader, "Manual");
 
         var item = Assert.Single(store["items"]!.AsArray())!;
         Assert.Equal(orderId, (Guid)item["id"]!);
@@ -50,9 +31,63 @@ public sealed class StoreOrderDetailApiTests
         Assert.Empty(manual["items"]!.AsArray());
     }
 
-    private static async Task<JsonNode> ListAsync(StoreInboxRig rig, string source)
+    // Un envío público mínimo: la primera ciudad sembrada de DIVIPOLA y un producto visible.
+    private static async Task<Guid> SubmitAsync(PublicStoreFixture fixture)
     {
-        var response = await rig.Inbox.GetAsync(
+        var (_, variant) = await fixture.CreateProductAsync("Camiseta", "CAM-S", PublicStoreFixture.Prices(10_000m));
+        var (department, city) = await FirstCityAsync(fixture);
+        using var request = new HttpRequestMessage(HttpMethod.Post, PublicStoreFixture.Url("/order-requests"))
+        {
+            Content = JsonContent.Create(new
+            {
+                clientRequestId = Guid.CreateVersion7(),
+                turnstileToken = "token",
+                currency = "COP",
+                billing = new
+                {
+                    name = "Ana Pérez",
+                    identificationType = "CC",
+                    identificationNumber = "123456",
+                    phone = "3001234567",
+                    email = "ana@test.co",
+                    address = "Calle 1 # 2-3",
+                    country = "CO",
+                    departmentId = department,
+                    cityId = city,
+                    cityName = (string?)null,
+                },
+                shipping = (object?)null,
+                note = (string?)null,
+                acceptsDataPolicy = true,
+                lines = new[] { new { variantId = variant, quantity = 1 } },
+            }),
+        };
+        request.Headers.Add("X-Qep-Visitor-Ip", "203.0.113.10");
+        var response = await fixture.Storefront.SendAsync(request, TestContext.Current.CancellationToken);
+        var json = await PublicStoreFixture.JsonAsync(response);
+        Assert.True(response.StatusCode == HttpStatusCode.Created, json.ToJsonString());
+        return (Guid)json["id"]!;
+    }
+
+    private static async Task<(Guid Department, Guid City)> FirstCityAsync(PublicStoreFixture fixture)
+    {
+        var departments = await fixture.GetJsonAsync("/geography/departments");
+        foreach (var department in departments["items"]!.AsArray())
+        {
+            var departmentId = (Guid)department!["id"]!;
+            var cities = await fixture.GetJsonAsync($"/geography/departments/{departmentId}/cities");
+            if (cities["items"]!.AsArray().FirstOrDefault() is { } first)
+            {
+                return (departmentId, (Guid)first["id"]!);
+            }
+        }
+
+        throw new InvalidOperationException("The geography seed has no city.");
+    }
+
+    private static async Task<JsonNode> ListAsync(HttpClient reader, string source)
+    {
+        var response = await reader.GetAsync(
             $"/api/v1/tenants/{TenantId}/orders?source={source}", TestContext.Current.CancellationToken);
         var json = await PublicStoreFixture.JsonAsync(response);
         Assert.True(response.IsSuccessStatusCode, json.ToJsonString());

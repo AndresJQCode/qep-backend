@@ -9,8 +9,6 @@ public static class StoreAuditActions
 
     public const string Unpublished = "store.settings.unpublished";
 
-    public const string RequestReceived = "store.order_request.received";
-
     public const string RequestConverted = "store.order_request.converted";
 
     public const string RequestDiscarded = "store.order_request.discarded";

@@ -86,14 +86,19 @@ internal static class StoreApiHarness
     /// Inserta en <c>customers.customers</c> lo mínimo para que el cliente exista; Store lo
     /// referencia por id suelto, así que las pruebas no necesitan pasar por el módulo Customers.
     /// </summary>
+    /// <param name="identificationType">Con <paramref name="identificationNumber"/> la ficha queda <c>Complete</c>, con CUC y país
+    /// <c>CO</c>: lo que exige CK_customers_complete_fields. Sin documento queda <c>Incomplete</c>.</param>
     public static async Task<Guid> SeedCustomerAsync(
         QepApiFactory factory,
         Guid tenantId,
         string name,
         string? phoneE164 = null,
-        string? email = null)
+        string? email = null,
+        string? identificationType = null,
+        string? identificationNumber = null)
     {
         var id = Guid.CreateVersion7();
+        var complete = identificationType is not null && identificationNumber is not null;
         var connectionString = factory.Services
             .GetRequiredService<IConfiguration>()
             .GetConnectionString("QepDatabase")!;
@@ -101,15 +106,20 @@ internal static class StoreApiHarness
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var insert = new NpgsqlCommand(
             """
-            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone_e164, email, completeness, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
-            VALUES (@id, @tenantId, @name, true, @phone, @email, 'Incomplete', @whatsAppUserId, false, false, 1, now(), now())
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, phone_e164, email, completeness, cuc, identification_type, identification_number, country, whatsapp_user_id, with_retention, vat_surplus, version, created_at, updated_at)
+            VALUES (@id, @tenantId, @name, true, @phone, @email, @completeness, @cuc, @identificationType, @identificationNumber, @country, @whatsAppUserId, false, false, 1, now(), now())
             """,
             connection);
         insert.Parameters.AddWithValue("id", id);
         insert.Parameters.AddWithValue("tenantId", tenantId);
         insert.Parameters.AddWithValue("name", name);
-        // 'Incomplete' porque CK_customers_complete_fields (CustomersDbContext.CompleteFieldsCheck) exige CUC, documento,
-        // y país a una ficha 'Complete'; Store sólo necesita nombre, teléfono y correo.
+        // 'Incomplete' sin documento porque CK_customers_complete_fields (CustomersDbContext.CompleteFieldsCheck) exige CUC,
+        // documento y país a una ficha 'Complete'.
+        insert.Parameters.AddWithValue("completeness", complete ? "Complete" : "Incomplete");
+        insert.Parameters.AddWithValue("cuc", complete ? $"SEED-{id.ToString("N")[..8]}" : (object)DBNull.Value);
+        insert.Parameters.AddWithValue("identificationType", (object?)identificationType ?? DBNull.Value);
+        insert.Parameters.AddWithValue("identificationNumber", (object?)identificationNumber ?? DBNull.Value);
+        insert.Parameters.AddWithValue("country", complete ? "CO" : (object)DBNull.Value);
         // Único por llamada: Customers puede exigir un whatsapp_user_id distinto por cliente.
         insert.Parameters.AddWithValue("whatsAppUserId", $"CO.{id:N}");
         insert.Parameters.AddWithValue("phone", (object?)phoneE164 ?? DBNull.Value);
@@ -169,6 +179,35 @@ internal static class StoreApiHarness
         await identity.SaveChangesAsync(ct);
         await tenancy.SaveChangesAsync(ct);
         return membership.Id.Value;
+    }
+
+    /// <summary>
+    /// La fila de la membresía owner del tenant: <see cref="SeedTenantAsync"/> sólo guarda su id en <c>Tenant.OwnerMembershipId</c>. El
+    /// checkout cae al owner cuando la tienda no tiene asesor activo, así que el pedido apunta a una membresía real (rol admin, activa).
+    /// Idempotente: si la fila ya existe no hace nada. Devuelve el id.
+    /// </summary>
+    public static async Task<Guid> SeedOwnerMembershipAsync(QepApiFactory factory, string tenantId = TenantId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var tenancy = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var ct = TestContext.Current.CancellationToken;
+        var tenant = await tenancy.Tenants.FindAsync([new Modules.Tenancy.Domain.TenantId(Guid.Parse(tenantId))], ct);
+        var ownerId = tenant!.OwnerMembershipId;
+        if (await tenancy.Memberships.AnyAsync(membership => membership.Id == ownerId, ct))
+        {
+            return ownerId.Value;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var user = User.CreateInvited(UserId.New(), $"owner-{tenantId[^2..]}@example.com", now);
+        identity.Users.Add(user);
+        var membership = Membership.CreateActive(ownerId, user.Id.Value, tenant.Id, ["admin"], "test", now);
+        membership.UpdateProfile("Owner de la tienda", null, now);
+        tenancy.Memberships.Add(membership);
+        await identity.SaveChangesAsync(ct);
+        await tenancy.SaveChangesAsync(ct);
+        return ownerId.Value;
     }
 
     /// <summary>
