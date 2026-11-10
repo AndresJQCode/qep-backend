@@ -14,8 +14,7 @@ public sealed class OrderResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup,
-    IOrderStoreRequestLookup storeRequestLookup)
+    IQuotationCompanyLookup companyLookup)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -38,10 +37,6 @@ public sealed class OrderResponseComposer(
             : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
-        // Sólo un pedido de la tienda tiene solicitud: los demás no pagan la consulta.
-        var storeRequest = order.Source == nameof(Domain.OrderSource.Store)
-            ? await storeRequestLookup.FindAsync(tenantId, order.Id, cancellationToken)
-            : null;
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -64,20 +59,7 @@ public sealed class OrderResponseComposer(
                     entry.MemberId is { } member ? members.GetValueOrDefault(member)?.Label : null,
                     entry.Details))
                 .ToArray(),
-            QuotationResponseComposer.AvailableFloors(order.Items, products),
-            storeRequest is null
-                ? null
-                : new OrderStoreRequestResponse(
-                    storeRequest.Id,
-                    storeRequest.Number,
-                    storeRequest.CustomerId,
-                    storeRequest.CustomerName,
-                    storeRequest.Phone,
-                    storeRequest.PhoneE164,
-                    storeRequest.Email,
-                    storeRequest.DisplayedTotal,
-                    storeRequest.Currency,
-                    storeRequest.TotalDifference));
+            QuotationResponseComposer.AvailableFloors(order.Items, products));
     }
 }
 

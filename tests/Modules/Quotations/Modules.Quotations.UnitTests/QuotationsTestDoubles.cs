@@ -1421,10 +1421,3 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
         return all;
     }
 }
-
-/// <summary>Ningún pedido de estas pruebas sale de la tienda: el compositor nunca encuentra una solicitud.</summary>
-internal sealed class NoOrderStoreRequestLookup : IOrderStoreRequestLookup
-{
-    public Task<OrderStoreRequestRef?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
-        Task.FromResult<OrderStoreRequestRef?>(null);
-}

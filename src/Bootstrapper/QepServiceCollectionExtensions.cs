@@ -1383,8 +1383,6 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreMemberDirectory, StoreMemberDirectory>();
         services.AddScoped<Modules.Store.Application.OrderRequestRowComposer>();
         services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
-        // Quotations → Store: el detalle de un pedido de la tienda muestra su solicitud (teléfono y total que vio el visitante).
-        services.AddScoped<IOrderStoreRequestLookup, OrderStoreRequestLookup>();
         services.AddScoped<Modules.Store.Application.StorefrontResolver>();
         services.AddScoped<Modules.Store.Application.PublicCartPricing>();
         services.AddScoped<
