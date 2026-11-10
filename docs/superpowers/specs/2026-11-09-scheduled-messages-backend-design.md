@@ -216,7 +216,7 @@ bloqueado. `displayName` sale de `IMessagingMemberNames`, como `sentBy`.
 | `GET /conversations/{id}/scheduled-message` | — | 200 `{ "scheduledMessage": ScheduledMessageDto \| null }` (sólo `Scheduled`, `Sending`, `Failed`) |
 | `POST /conversations/{id}/scheduled-messages` | JSON, ver abajo | 201 `ScheduledMessageDto` (200 si el `clientId` ya existía) |
 | `POST /conversations/{id}/scheduled-messages/audio` | multipart `clientId`, `scheduledAt`, `file` | 201 / 200 |
-| `PUT /conversations/{id}/scheduled-messages/{smId}` | `{ expectedVersion, scheduledAt, text?, caption? }` | 200 `ScheduledMessageDto` |
+| `PUT /conversations/{id}/scheduled-messages/{smId}` | `{ expectedVersion, scheduledAt?, text?, caption? }` (`scheduledAt` omitido conserva la hora guardada; `too_soon`/`outside_window` sólo si cambia; decisión del orquestador, revisable) | 200 `ScheduledMessageDto` |
 | `POST /conversations/{id}/scheduled-messages/{smId}/cancel` | `{ expectedVersion }` | 204 |
 | `POST /conversations/{id}/scheduled-messages/{smId}/send-now` | `{ expectedVersion }` | 202 `ScheduledMessageDto` |
 | `POST /conversations/{id}/scheduled-messages/{smId}/retry` | `{ expectedVersion }` | 202 `ScheduledMessageDto` |
@@ -269,6 +269,7 @@ cambia `author_member_id`. Semántica de los campos (decisión del orquestador, 
 | **NUEVO** `messaging.scheduled.not_retriable` | 409 | reintentar o descartar fuera de `Failed` |
 | **NUEVO** `messaging.message.not_retriable` | 409 | reenviar por el hilo un `clientId` cuyo mensaje `Failed` se descartó (D8b) |
 | `messaging.window_closed`, `messaging.conversation.not_open`, `messaging.conversation.assigned_to_other`, `messaging.contact.blocked` | 422 | crear (D2) |
+| `messaging.contact.blocked` | 422 | reintentar con el contacto bloqueado (decisión del orquestador, revisable) |
 | `messaging.media.upload_not_found`, `too_large`, `unsupported_format`, `invalid_image`, `upload_failed` | 422 | crear con adjunto |
 | `validation.failed` | 422 | forma del cuerpo, con `errors` |
 
@@ -312,7 +313,9 @@ cambia `author_member_id`. Semántica de los campos (decisión del orquestador, 
 - **Fallas de almacenamiento** (decisión del orquestador, revisable):
   - **Antes del reclamo**, una falla al leer, copiar o subir el adjunto (R2 o la subida a Meta) deja el
     programado `Failed` con `messaging.scheduled.media_missing`, reintentable (`canRetry` según D8): no hay
-    fila de mensaje nueva y nada salió. La copia parcial en la clave final se borra (best effort).
+    fila de mensaje nueva y nada salió. La copia parcial en la clave final se borra (best effort). Si la subida a Meta
+    falla por credencial (190 o 133010), la conexión se marca igual que en el envío de un adjunto
+    (`ConnectionRejection.ReportAsync`) y el programado queda igual `media_missing` (decisión del orquestador, revisable).
   - **Después de un reclamo exitoso**, cualquier falla que no sea una respuesta de Meta (excepción, R2,
     firma de la URL de Instagram, caída) deja el programado `Failed` con
     `messaging.scheduled.unknown_outcome`, nunca reenviado solo. La fila del mensaje sigue la regla del
