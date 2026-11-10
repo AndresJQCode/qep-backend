@@ -420,14 +420,18 @@ public sealed class CreateScheduledMessageHandlerTests
     }
 
     [Theory]
-    [InlineData(1, false, true)]
-    [InlineData(23, false, true)]
-    [InlineData(24, false, false)]
-    [InlineData(1, true, false)]
-    public async Task GetReturnsOnlyActiveRowsAndCanRetryFollowsTheWindow(int lastInboundHoursAgo, bool blocked, bool canRetry)
+    [InlineData(60, false, true)]
+    [InlineData(23 * 60, false, true)]
+    [InlineData(24 * 60 - 3, false, true)] // 23h57m: cabe con el margen de 2 min
+    [InlineData(24 * 60 - 1, false, false)] // 23h59m: la ventana de 24 h sigue abierta, pero el margen (D7) ya la cerró
+    [InlineData(24 * 60, false, false)]
+    [InlineData(60, true, false)]
+    public async Task GetReturnsOnlyActiveRowsAndCanRetryFollowsTheWindow(int lastInboundMinutesAgo, bool blocked, bool canRetry)
     {
         var test = new ScheduledMessageTestBed();
-        var conversation = test.Bed.OpenConversation(lastInboundHoursAgo, blocked: blocked);
+        var opened = test.Bed.OpenConversation(lastInboundHoursAgo: 1, blocked: blocked);
+        var conversation = opened with { LastInboundAt = test.Bed.Now.AddMinutes(-lastInboundMinutesAgo) };
+        test.Bed.Conversations.Rows[test.Bed.Conversations.Rows.IndexOf(opened)] = conversation;
         // Un terminal no cuenta: no hay activo todavía.
         RowIn(test, conversation, ScheduledMessageStatus.Sent, clientId: Guid.CreateVersion7());
         Assert.Null((await test.GetHandler().HandleAsync(new GetScheduledMessageQuery(test.Bed.TenantId, conversation.Id), Ct)).ScheduledMessage);
