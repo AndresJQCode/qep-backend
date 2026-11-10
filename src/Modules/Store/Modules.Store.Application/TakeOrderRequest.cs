@@ -135,19 +135,34 @@ public sealed partial class TakeOrderRequestHandler(
                 ?? throw CustomerNotFound();
             if (!customer.IsComplete)
             {
-                customer = await customers.CompleteAsync(tenantId, caller.UserId, customer.Id, billing, cancellationToken);
-                completed = true;
+                (customer, completed) = await CompleteAsync(tenantId, caller.UserId, customer, billing, cancellationToken);
             }
         }
         else
         {
-            (customer, created) = await customers.CreateAsync(tenantId, caller.UserId, billing, cancellationToken);
-            if (!created && !customer.IsComplete)
+            var creation = await customers.CreateAsync(tenantId, caller.UserId, billing, cancellationToken);
+            switch (creation.Outcome)
             {
-                // El documento ya era de otro cliente (la carrera con otra alta): se usa ése, y si estaba incompleto se completa
-                // como si la persona lo hubiera elegido.
-                customer = await customers.CompleteAsync(tenantId, caller.UserId, customer.Id, billing, cancellationToken);
-                completed = true;
+                case StoreCustomerCreationOutcome.Created:
+                    customer = creation.Customer!;
+                    created = true;
+                    break;
+                case StoreCustomerCreationOutcome.ExistingByDocument:
+                    // El documento ya era de otro cliente (la carrera con otra alta): se usa ése, y si estaba incompleto se completa
+                    // como si la persona lo hubiera elegido.
+                    customer = creation.Customer!;
+                    if (!customer.IsComplete)
+                    {
+                        (customer, completed) = await CompleteAsync(tenantId, caller.UserId, customer, billing, cancellationToken);
+                    }
+
+                    break;
+                case StoreCustomerCreationOutcome.DocumentOwnerUnavailable:
+                    // El documento es de un cliente inactivo o fusionado: el mismo 422 de siempre en «Tomar» (se borra en la Tarea 9).
+                    throw CustomerNotFound();
+                default:
+                    throw new StoreDomainException(
+                        StoreErrorCodes.ValidationFailed, "The billing block is not enough for a complete customer.");
             }
         }
 
@@ -234,6 +249,15 @@ public sealed partial class TakeOrderRequestHandler(
         Level = LogLevel.Warning,
         Message = "Could not release the take lease of store order request {RequestId} in tenant {TenantId}")]
     private static partial void LogReleaseFailed(ILogger logger, Guid requestId, Guid tenantId, Exception exception);
+
+    // P5: el completado puede devolver al cliente sin tocar (no se pudo completar) o al dueño del documento; sólo cuenta como
+    // completado si es el mismo cliente y quedó completo.
+    private async Task<(StoreCustomerRef Customer, bool Completed)> CompleteAsync(
+        Guid tenantId, Guid actorUserId, StoreCustomerRef customer, StoreNewCustomer billing, CancellationToken cancellationToken)
+    {
+        var result = await customers.CompleteAsync(tenantId, actorUserId, customer.Id, billing, cancellationToken);
+        return (result, result.Id == customer.Id && result.IsComplete);
+    }
 
     private static StoreDomainException CustomerNotFound() =>
         new(StoreErrorCodes.CustomerNotFound, "The customer does not exist, is inactive or was merged.");

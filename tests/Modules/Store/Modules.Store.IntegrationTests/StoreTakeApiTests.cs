@@ -284,21 +284,19 @@ public sealed class StoreTakeApiTests
     }
 
     [Fact]
-    public async Task ACompletionWhoseDocumentIsTakenIs409()
+    public async Task ACompletionWhoseDocumentIsTakenUsesTheDocumentOwner()
     {
+        // P5: el documento ya es de otro cliente activo; el pedido se cuelga de ése y el incompleto queda como estaba.
         await using var rig = await StoreInboxRig.OpenAsync();
-        await rig.CreateCompleteCustomerAsync("Dueño del documento", "123456", "3105559999");
+        var owner = await rig.CreateCompleteCustomerAsync("Dueño del documento", "123456", "3105559999");
         var whatsApp = await rig.SeedIncompleteAsync("Pedro WhatsApp", phone: "3101112233", phoneE164: "+573101112233");
         var request = await rig.SubmitAsync();
 
-        await StoreInboxRig.AssertCodeAsync(
-            await rig.TakeAsync(request, ExistingBody(whatsApp)),
-            HttpStatusCode.Conflict,
-            "store.order_request.customer_document_taken");
+        var taken = await rig.TakeOkAsync(request, ExistingBody(whatsApp));
 
+        Assert.Equal(owner, (Guid)taken["customerId"]!);
         var state = await rig.StateAsync(request);
-        Assert.Equal(StoreOrderRequestStatus.New, state.Status);
-        Assert.False(state.IsBeingTaken(rig.Clock.UtcNow));
+        Assert.Equal(StoreOrderRequestStatus.Converted, state.Status);
         Assert.Equal("Incomplete", (await rig.CustomerAsync(whatsApp)).Completeness);
     }
 
