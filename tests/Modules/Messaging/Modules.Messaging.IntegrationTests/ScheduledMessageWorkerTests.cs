@@ -279,6 +279,9 @@ public sealed class ScheduledMessageWorkerTests
         var claimed = Assert.Single(await store.ClaimDueAsync(20, DateTimeOffset.UtcNow, ScheduledMessageDispatcher.LeaseLength, Ct));
 
         var stale = await store.CompleteFailedAsync(claimed with { Attempts = claimed.Attempts - 1 }, MessagingErrorCodes.WindowClosed, DateTimeOffset.UtcNow, Ct);
+        // Defensa en profundidad: el mismo id y el mismo intento con otro tenant no cierran nada.
+        Assert.False(await store.CompleteSentAsync(claimed with { TenantId = Guid.CreateVersion7() }, Guid.CreateVersion7(), DateTimeOffset.UtcNow, Ct));
+        Assert.False(await store.CompleteFailedAsync(claimed with { TenantId = Guid.CreateVersion7() }, MessagingErrorCodes.WindowClosed, DateTimeOffset.UtcNow, Ct));
         var current = await store.CompleteFailedAsync(claimed, MessagingErrorCodes.WindowClosed, DateTimeOffset.UtcNow, Ct);
         var again = await store.CompleteSentAsync(claimed, Guid.CreateVersion7(), DateTimeOffset.UtcNow, Ct);
 
@@ -324,6 +327,32 @@ public sealed class ScheduledMessageWorkerTests
         Assert.False(f.Bucket.Objects.ContainsKey(sentKey));
         Assert.Equal(1, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM messaging.scheduled_messages WHERE id = @id AND media_storage_key IS NULL", ("id", sent.Id)));
+    }
+
+    [Fact]
+    public async Task OneSweepPurgesMoreThanOneBatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        using var __ = f.Host;
+        var keys = new List<string>();
+        for (var i = 0; i < ScheduledMessageDispatcher.BatchSize + 5; i++)
+        {
+            keys.Add((await SeedTerminalDocumentAsync(f)).Key);
+        }
+
+        var worker = new ScheduledMessageWorker(
+            f.Host.Services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new MessagingWorkerOptions { PurgeIntervalHours = 24 }),
+            new SteppedTimeProvider(),
+            NullLogger<ScheduledMessageWorker>.Instance);
+
+        await worker.DrainAsync(Ct);
+
+        Assert.DoesNotContain(keys, f.Bucket.Objects.ContainsKey);
+        Assert.Equal(0, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.scheduled_messages WHERE conversation_id = @c AND media_storage_key IS NOT NULL", ("c", f.ConversationId)));
     }
 
     [Fact]

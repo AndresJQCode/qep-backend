@@ -65,7 +65,7 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
             $"""
             UPDATE messaging.scheduled_messages
                SET status = 'Sent', sent_message_id = {sentMessageId}, failure_code = NULL, locked_until = NULL, version = version + 1
-             WHERE id = {message.Id} AND status = 'Sending' AND attempts = {message.Attempts}
+             WHERE id = {message.Id} AND tenant_id = {message.TenantId} AND status = 'Sending' AND attempts = {message.Attempts}
             """, cancellationToken);
         return await FinishAsync(transaction, updated, message, MessagingAuditActions.ScheduledMessageSent, now, cancellationToken);
     }
@@ -79,7 +79,7 @@ internal sealed class ScheduledMessageStore(MessagingDbContext dbContext, IMessa
             $"""
             UPDATE messaging.scheduled_messages
                SET status = 'Failed', failure_code = {failureCode}, locked_until = NULL, version = version + 1
-             WHERE id = {message.Id} AND status = 'Sending' AND attempts = {message.Attempts}
+             WHERE id = {message.Id} AND tenant_id = {message.TenantId} AND status = 'Sending' AND attempts = {message.Attempts}
             """, cancellationToken);
         return await FinishAsync(transaction, updated, message, MessagingAuditActions.ScheduledMessageFailed, now, cancellationToken);
     }

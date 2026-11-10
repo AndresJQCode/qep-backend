@@ -28,6 +28,9 @@ internal sealed partial class ScheduledMessageWorker(
     /// retrasaría al resto del lote.</summary>
     internal const int Parallelism = 4;
 
+    /// <summary>Tope de páginas por barrido (500 × 20 = 10 000 objetos): lo que quede lo toma el barrido siguiente.</summary>
+    internal const int MaxPurgePagesPerSweep = 500;
+
     private readonly Lock _purgeGate = new();
 
     // El timestamp de la última purga iniciada; null = nunca en este proceso, así que la primera pasada barre.
@@ -89,7 +92,21 @@ internal sealed partial class ScheduledMessageWorker(
 
         if (TryStartPurge())
         {
-            await RunPhaseAsync(dispatcher => dispatcher.PurgeAsync(cancellationToken), LogPurgeFailed, cancellationToken);
+            await RunPhaseAsync(dispatcher => PurgeAllAsync(dispatcher, cancellationToken), LogPurgeFailed, cancellationToken);
+        }
+    }
+
+    /// <summary>Página tras página mientras la anterior salió llena: con un barrido diario, una sola página de
+    /// <see cref="ScheduledMessageDispatcher.BatchSize"/> dejaría crecer el atraso. Cada página limpia sus claves, así que la siguiente lista
+    /// filas nuevas; el tope corta un barrido que no avanza en lugar de girar para siempre.</summary>
+    private static async Task PurgeAllAsync(ScheduledMessageDispatcher dispatcher, CancellationToken cancellationToken)
+    {
+        for (var page = 0; page < MaxPurgePagesPerSweep; page++)
+        {
+            if (await dispatcher.PurgeAsync(cancellationToken) < ScheduledMessageDispatcher.BatchSize)
+            {
+                return;
+            }
         }
     }
 
