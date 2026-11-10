@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.Text.Json.Serialization;
 using BuildingBlocks.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -138,15 +138,11 @@ internal static class ScheduledMessageEndpoints
             tenantId,
             conversationId,
             MessagingEndpoints.ParseClientId(form!["clientId"]),
-            ParseScheduledAt(form["scheduledAt"].ToString()),
+            ScheduledAtInput.Parse(form["scheduledAt"].ToString()),
             await MessagingEndpoints.ReadAudioAsync(form.Files.GetFile("file"), cancellationToken));
         var result = await dispatcher.SendAsync(command, cancellationToken);
         return result.Created ? Results.Created((string?)null, result.Body) : Results.Ok(result.Body);
     }
-
-    // Ausente o ilegible: null, y el validador lo marca en errors.scheduledAt en vez de adivinar una hora.
-    private static DateTimeOffset? ParseScheduledAt(string value) =>
-        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null;
 
     private static async Task<IResult> UpdateAsync(
         Guid tenantId, Guid conversationId, Guid scheduledMessageId, UpdateScheduledMessageRequest request, IRequestDispatcher dispatcher,
@@ -201,10 +197,12 @@ internal static class ScheduledMessageEndpoints
 
 /// <summary>Spec 2026-11-09 «Contrato HTTP»: <c>text</c> o <c>uploadId</c> con su <c>fileName</c>, nunca los dos ni ninguno. Sin
 /// <c>replyTo</c>: un programado no cita.</summary>
-public sealed record ScheduleMessageRequest(Guid? ClientId, DateTimeOffset? ScheduledAt, string? Text, Guid? UploadId, string? FileName, string? Caption);
+public sealed record ScheduleMessageRequest(
+    Guid? ClientId, [property: JsonConverter(typeof(ScheduledAtJsonConverter))] DateTimeOffset? ScheduledAt, string? Text, Guid? UploadId, string? FileName, string? Caption);
 
 /// <summary><c>scheduledAt</c>, <c>text</c> y <c>caption</c> omitidos o <c>null</c> conservan lo guardado; <c>caption: ""</c> borra el pie.</summary>
-public sealed record UpdateScheduledMessageRequest(long? ExpectedVersion, DateTimeOffset? ScheduledAt, string? Text, string? Caption);
+public sealed record UpdateScheduledMessageRequest(
+    long? ExpectedVersion, [property: JsonConverter(typeof(ScheduledAtJsonConverter))] DateTimeOffset? ScheduledAt, string? Text, string? Caption);
 
 /// <summary>El cuerpo de cancelar, «Enviar ya», reintentar y descartar: la versión que la pantalla estaba viendo.</summary>
 public sealed record ScheduledMessageVersionRequest(long? ExpectedVersion);
