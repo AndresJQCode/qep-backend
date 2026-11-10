@@ -3,6 +3,8 @@ using FluentValidation;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Phones;
+using CustomerFieldPolicy = Modules.Tenancy.Domain.CustomerFieldPolicy;
+using FieldRequirement = Modules.Tenancy.Domain.FieldRequirement;
 using static Modules.Customers.UnitTests.CustomerWriteDoubles;
 
 namespace Modules.Customers.UnitTests;
@@ -15,7 +17,11 @@ public sealed class CustomerProvisioningTests
     private sealed record Bed(
         CustomerProvisioning Provisioning, FakeCustomerRepository Customers, RecordingAudit Audit, List<string> Calls);
 
-    private static Bed NewBed(Customer? existing = null, Exception? saveFailure = null, IPhoneNumberNormalizer? phones = null)
+    private static Bed NewBed(
+        Customer? existing = null,
+        Exception? saveFailure = null,
+        IPhoneNumberNormalizer? phones = null,
+        TenantDirectory? tenants = null)
     {
         var calls = new List<string>();
         var customers = new FakeCustomerRepository { Existing = existing };
@@ -29,12 +35,87 @@ public sealed class CustomerProvisioningTests
             new Cucs(calls),
             new FixedClock(),
             new CreateCustomerValidator(),
-            phones ?? new PlusNormalizer());
+            phones ?? new PlusNormalizer(),
+            tenants ?? new TenantDirectory());
         return new Bed(provisioning, customers, audit, calls);
     }
 
     private static CompleteCustomerData Buyer(string? email = "Laura@Verde.co") =>
         new("Laura Pérez", "CC", "1020304050", "310 935 2187", email, "Calle 10 # 45-12", "CO", CityId, null, Classification.Id.Value);
+
+    // Spec 2026-11-09: con la política por defecto una venta externa sin ciudad sigue sin alcanzar para completo, como
+    // antes de la política; el llamador cae al incompleto.
+    [Fact]
+    public async Task ProvisioningCreateCompleteWithoutCityIsRejectedByDefault()
+    {
+        var bed = NewBed();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.Provisioning.CreateCompleteAsync(Tenant, Buyer() with { CityId = null }, TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "CityId");
+        Assert.Empty(bed.Calls);
+        Assert.Empty(bed.Customers.Added);
+    }
+
+    [Fact]
+    public async Task ProvisioningCreateCompleteAbroadWithoutCityNameIsRejectedByDefault()
+    {
+        var bed = NewBed();
+        var data = Buyer() with { IdentificationType = "NIF", IdentificationNumber = "12345678Z", Country = "ES", CityId = null, CityName = " " };
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() =>
+            bed.Provisioning.CreateCompleteAsync(Tenant, data, TestContext.Current.CancellationToken));
+
+        Assert.Contains(error.Errors, failure => failure.PropertyName == "CityName");
+        Assert.Empty(bed.Customers.Added);
+    }
+
+    [Fact]
+    public async Task ProvisioningCompleteExternalSaleWithoutCityIsNotCompletableByDefault()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = null }, [], TestContext.Current.CancellationToken);
+
+        Assert.Equal(new ExternalCustomerCityOutcome(ExternalCustomerCityOutcomeKind.NotCompletable, null, "validation.failed"), outcome);
+        Assert.Empty(bed.Calls);
+        Assert.False(customer.IsComplete);
+    }
+
+    private static readonly TenantDirectory CityNotRequired =
+        TenantDirectory.WithPolicy(new CustomerFieldPolicy(FieldRequirement.Always, new FieldRequirement(false, true)));
+
+    [Fact]
+    public async Task ProvisioningCreateCompleteWithoutCityIsCompleteWhenThePolicyAllowsIt()
+    {
+        var bed = NewBed(tenants: CityNotRequired);
+
+        var result = await bed.Provisioning.CreateCompleteAsync(
+            Tenant, Buyer() with { CityId = null }, TestContext.Current.CancellationToken);
+
+        var customer = Assert.Single(bed.Customers.Added);
+        Assert.True(result.IsComplete);
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.CityId);
+        Assert.DoesNotContain("city", bed.Calls);
+    }
+
+    [Fact]
+    public async Task ProvisioningCompleteExternalSaleWithoutCityIsAppliedWhenThePolicyAllowsIt()
+    {
+        var customer = NewIncomplete();
+        var bed = NewBed(customer, tenants: CityNotRequired);
+
+        var outcome = await bed.Provisioning.CompleteExternalSaleAsync(
+            Tenant, customer.Id.Value, 1, Buyer() with { CityId = null }, [], TestContext.Current.CancellationToken);
+
+        Assert.Equal(ExternalCustomerCityOutcomeKind.Applied, outcome.Kind);
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.CityId);
+    }
 
     [Fact]
     public async Task CreateCompleteCreatesASpanishCustomerWithANif()

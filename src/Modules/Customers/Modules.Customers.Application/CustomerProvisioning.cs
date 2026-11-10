@@ -1,6 +1,8 @@
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Customers.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Customers.Application;
 
@@ -55,7 +57,8 @@ public interface ICustomerProvisioning
     /// pedido entra igual.
     /// </summary>
     /// <exception cref="FluentValidation.ValidationException">Los datos no pasan <c>CustomerWriteRules</c>; por ejemplo,
-    /// falta el correo o el teléfono, el documento o el país no son válidos, o falta la ciudad que pide el país.</exception>
+    /// falta el correo o el teléfono, el documento o el país no son válidos, o falta la ciudad (la que pide el país) y la política
+    /// del tenant la exige al guardar.</exception>
     /// <exception cref="CustomersDomainException">Con <c>customers.customer.classification_not_found</c> si la
     /// clasificación no existe en el tenant, o con <c>customers.customer.city_not_found</c> si la ciudad DIVIPOLA no
     /// existe.</exception>
@@ -161,7 +164,8 @@ public sealed class CustomerProvisioning(
     ICucGenerator cucGenerator,
     IClock clock,
     IValidator<CreateCustomerCommand> validator,
-    IPhoneNumberNormalizer phoneNormalizer) : ICustomerProvisioning
+    IPhoneNumberNormalizer phoneNormalizer,
+    ITenantDirectory tenantDirectory) : ICustomerProvisioning
 {
     /// <summary>Spec de Shopify §6.2.1 paso 4: el nombre de un comprador que no trajo ninguno. Decisión del owner.</summary>
     public const string ExternalSaleFallbackName = "Cliente de Shopify";
@@ -185,6 +189,10 @@ public sealed class CustomerProvisioning(
         // trata como «no alcanza para completo».
         var command = ToCommand(tenantId, data);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        if (await MissingRequiredCityAsync(command, cancellationToken) is { } cityFailure)
+        {
+            throw new ValidationException([cityFailure]);
+        }
 
         var parts = await PrepareAsync(command, cancellationToken);
         var now = clock.UtcNow;
@@ -268,7 +276,7 @@ public sealed class CustomerProvisioning(
 
         var command = ToCommand(tenantId, data);
         var validation = await validator.ValidateAsync(command, cancellationToken);
-        if (!validation.IsValid)
+        if (!validation.IsValid || await MissingRequiredCityAsync(command, cancellationToken) is not null)
         {
             return new(ExternalCustomerCityOutcomeKind.NotCompletable, null, ValidationFailed);
         }
@@ -529,6 +537,29 @@ public sealed class CustomerProvisioning(
             WithRetention: false,
             VatSurplus: false);
 
+    // CustomerWriteRules ya no exige la ciudad (spec 2026-11-09): la exige la política del tenant. Una venta externa sin
+    // ciudad seguía cayendo al incompleto antes de la política, y con la política por defecto tiene que seguir así; sólo
+    // un tenant que no pide la ciudad al guardar la deja completa. Mismo carril que el POST: CityId en Colombia (o sin
+    // país), CityName afuera. El tenant se lee sólo cuando falta la ciudad.
+    private async Task<FluentValidation.Results.ValidationFailure?> MissingRequiredCityAsync(
+        CreateCustomerCommand command, CancellationToken cancellationToken)
+    {
+        var colombian = string.IsNullOrWhiteSpace(command.Country)
+            || string.Equals(command.Country.Trim(), Customer.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
+        var missing = colombian ? command.CityId is null : string.IsNullOrWhiteSpace(command.CityName);
+        if (!missing)
+        {
+            return null;
+        }
+
+        var settings = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(command.TenantId), cancellationToken);
+        var policy = settings?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
+        return policy.City.OnCustomerSave
+            ? new FluentValidation.Results.ValidationFailure(
+                colombian ? nameof(CreateCustomerCommand.CityId) : nameof(CreateCustomerCommand.CityName), "The city is required.")
+            : null;
+    }
+
     // Mismo orden que CreateCustomerHandler, y por lo mismo: clasificación y ciudad antes del CUC, para no quemar un
     // número del consecutivo por una referencia que no existe.
     private async Task<CompletionParts> PrepareAsync(CreateCustomerCommand command, CancellationToken cancellationToken)
@@ -537,8 +568,9 @@ public sealed class CustomerProvisioning(
             command.TenantId, command.ClassificationId, cancellationToken);
         var isColombian = string.Equals(
             command.Country.Trim(), Customer.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        // Sin CityId sólo se llega cuando la política del tenant no pide la ciudad (MissingRequiredCityAsync).
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(CustomersErrorCodes.CityNotFound, "The city was not found.")
             : null;
 
