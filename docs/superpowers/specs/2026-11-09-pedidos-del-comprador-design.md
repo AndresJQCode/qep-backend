@@ -54,7 +54,7 @@ El pedido no sabe hoy de qué cuenta de comprador vino: `Order` no tiene ningún
 | D1 | El comprador con sesión ve los pedidos que puso en esa tienda y puede anular los que siguen pendientes. |
 | D2 | Construye sobre el spec de pedidos directos: lo que se lista es un `Order` real. No hay `StoreOrderRequest`. |
 | D3 | Los pedidos de la tienda que existen hoy son datos de prueba: no hay backfill. Sólo aparecen los pedidos creados cuando ya existe el vínculo con la cuenta. |
-| D4 | Este trabajo corre **en paralelo** con el de pedidos directos, en worktrees separados. Todo salvo el sellado de `BuyerAccountId` en el checkout (y su enlace con el alta diferida de `createAccount`) es independiente; ese paso se hace **al final**, después de que la rama de pedidos directos entre a `develop` y ésta se rebase sobre ella. Orden de merge: pedidos directos → esta feature, en los dos repos, backend primero. |
+| D4 | Este trabajo corre **en paralelo** con el de pedidos directos, en worktrees separados. Todo salvo el sellado de `BuyerAccountId` en el checkout (y su enlace con el alta diferida de `createAccount`) es independiente; ese paso se hace **al final**, después de que la rama de pedidos directos entre a `develop` y ésta se rebase sobre ella. Orden de merge: pedidos directos → esta feature, en los dos repos, backend primero. **Hecho (backend, 2026-11-10):** la rama se rebasó sobre `develop` con pedidos directos y el sellado en el checkout y el enlace del alta diferida quedaron implementados. |
 | D5 | El comprador puede anular sólo si `Order.Status == Pending` **y** `Order.PaymentStatus == PaymentPending` **y** el pedido no tiene ningún comprobante de pago registrado (`PaymentProofs` vacío). El tercer requisito no es redundante: el asesor puede registrar un comprobante por `POST …/orders/{id}/proofs` dejando `paymentStatus: PaymentPending` (por ejemplo, «recibido, aún verificando»), y ese pedido ya tiene dinero registrado. Un pedido pendiente con pago parcial o total, o con cualquier comprobante, ya no se anula desde la tienda: lo resuelve el asesor. |
 
 ## 4. Diseño del backend
@@ -114,25 +114,23 @@ El pedido no sabe hoy de qué cuenta de comprador vino: `Order` no tiene ningún
      **antes** de crear el pedido por un método nuevo del puerto `IStoreBuyerAccounts`, p. ej.
      `Task<Guid?> ResolveAccountIdAsync(host, sessionToken, ct)` (adaptador en `StoreBuyerAccounts.cs` sobre
      `BuyerSessions.TryResolveAsync`). Una sesión que no sirve devuelve `null` y el pedido sigue como invitado
-     (regla del spec de cuentas: la cuenta nunca hace fallar el pedido). Hoy el token sólo se mira con
-     `updateProfile`; pasa a mirarse siempre. **Este punto depende del spec de pedidos directos (D4):** se
-     implementa al final, sobre el handler ya reescrito.
-  2. **En el alta diferida.** `BuyerSignupRequestedWorker` ya trabaja por `OrderId` (nombre nuevo del campo
-     según el spec de pedidos directos §4.7; hoy `OrderRequestId`). Cuando `SignUpAsync` **crea o reactiva**
+     (regla del spec de cuentas: la cuenta nunca hace fallar el pedido). El token se mira siempre que llega, no
+     sólo con `updateProfile`; una excepción del adaptador queda como `Warning` y el pedido sale como invitado.
+     Hecho después del rebase (D4), en `SubmitOrderRequestHandler`.
+  2. **En el alta diferida.** `BuyerSignupRequestedWorker` trabaja por `OrderId`. Cuando `SignUpAsync` **crea o reactiva**
      una cuenta (ramas `account is null` y «sin verificar» de `SignUpOnceAsync`), el worker vincula el pedido.
      Para eso: `SignUpAsync` pasa a devolver el `Guid?` de la cuenta afectada (`null` en la rama «ya tienes
      cuenta», donde no se toca nada), y Buyers declara un puerto `IBuyerOrderLinker`
-     (`Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, ct)`) cuyo adaptador en Bootstrapper llama a
-     un servicio nuevo de Quotations.Application (`LinkOrderToBuyerAccount`: carga el pedido por tenant e id,
-     asigna `BuyerAccountId` sólo si está vacío, guarda). El `TenantId` ya viaja en `BuyerSignupRequestedMessage`.
+     (`Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, ct)`) cuyo adaptador en Bootstrapper
+     (`BuyerOrderLinker`, scope propio) llama a `IBuyerOrderGateway.LinkAsync` de Quotations.Application: carga el
+     pedido por tenant e id, asigna `BuyerAccountId` sólo si está vacío y guarda; si pierde una carrera de
+     concurrencia relee y reintenta una vez. El `TenantId` ya viaja en `BuyerSignupRequestedMessage`.
      El vínculo se hace **después** del `SaveChanges` del alta, fuera de su transacción: si falla, queda un
      `Warning` y el pedido sigue sin vínculo (no se reintenta el alta por eso) **[decisión del diseñador]**.
      Un pedido anulado o aprobado entre medias se vincula igual: el vínculo no cambia el estado.
-     **También va en el paso posterior al rebase (D4)**: hoy `BuyerSignupRequestedMessage.OrderRequestId` es
-     el id de una solicitud, no de un pedido, hasta que pedidos directos lo renombre a `OrderId`
-     **[decisión del diseñador]**. Nota: `feat/store-orders-direct` en `qep-backend` tiene hoy sólo el commit
-     de documentación; mientras tanto, las pruebas de integración de esta rama siembran pedidos por el camino
-     existente (`StoreOrderGateway.CreateAsync` / «Tomar») y fijan `BuyerAccountId` directamente.
+     Hecho después del rebase (D4). Las pruebas de la lista, el detalle y la anulación siembran pedidos por el
+     checkout real y fijan `BuyerAccountId` por SQL, para no depender del sellado; el sellado y el enlace tienen
+     sus propias pruebas en `PublicOrderBuyerAccountApiTests`.
 - Con sesión **y** `createAccount` a la vez, el validador del checkout ya decide hoy qué pasa; la regla acá es
   que (1) gana porque ocurre primero, y (2) no pisa un id ya puesto.
 - Índice `IX_orders_tenant_buyer_created (TenantId, BuyerAccountId, CreatedAt)`, filtrado a
@@ -237,8 +235,11 @@ Integración (Testcontainers; un proyecto a la vez, `-- xUnit.MaxParallelThreads
 - `PublicBuyerOrdersApiTests` (en `Modules.Store.IntegrationTests`, que es quien tiene la API real con la tienda): 401 sin token; 404 `order.order.not_found` para pedido de otra cuenta y
   para pedido del mismo comprador en otro tenant; listado paginado; cancel → 200 con `status = "Cancelled"`,
   fila `order_history` con `member_id NULL`, evento `quotations.order.cancelled.v1` en el outbox; segundo
-  cancel → 409; pedido `Pending` con comprobante (`POST …/proofs` de la consola) → 409 y sin cambios. Hasta el
-  rebase (D4) los pedidos se siembran por SQL directo (sin `StoreOrderGateway`) con `BuyerAccountId` fijado.
+  cancel → 409; pedido `Pending` con comprobante (`POST …/proofs` de la consola) → 409 y sin cambios. Los
+  pedidos se crean por el checkout real (`BuyerOrdersRig`) y `BuyerAccountId` se fija por SQL.
+- `PublicOrderBuyerAccountApiTests`: checkout con sesión válida → `buyer_account_id` de la cuenta y el pedido en
+  `GET /buyer/orders`; sesión de otra tienda o sin sesión → `NULL`; alta diferida → enlace a la cuenta nueva;
+  alta con email ya verificado → `NULL`.
 - `OrdersMigrationTests` (Quotations.IntegrationTests): columna `buyer_account_id` e índice; la migración aplica sobre la anterior.
 - `ArchitectureTests`: `BuyersLayerTests` y `QuotationsLayerTests` siguen en verde (Buyers no gana referencias
   a Quotations ni al revés); agregar una aserción nombrada de que `Modules.Buyers.*` no referencia
@@ -251,7 +252,7 @@ Backend primero (trae la migración de Quotations). Orden de merge (D4): pedidos
 dos repos. Esta rama se construye en su propio worktree con la columna y la migración de §4.2, más §4.3, §4.4 y
 §4.5; **los dos caminos del vínculo** —el sellado en el checkout, §4.2(1), y el enlace del alta diferida,
 §4.2(2)— se escriben después del rebase sobre `develop` con pedidos directos ya mergeado, porque tocan el
-handler que ese spec reescribe y el mensaje cuyo campo renombra. El storefront viejo ignora las rutas nuevas. `docs/estado.md` se actualiza en
+handler que ese spec reescribe y el mensaje cuyo campo renombra (hecho el 2026-11-10). El storefront viejo ignora las rutas nuevas. `docs/estado.md` se actualiza en
 `develop` al mergear, no en la rama.
 
 ## 5. Storefront (resumen; detalle en el spec hermano)
