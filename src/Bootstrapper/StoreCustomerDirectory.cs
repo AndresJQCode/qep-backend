@@ -13,7 +13,7 @@ namespace Bootstrapper;
 /// ajeno: lo dicen con su resultado (P4, P5). El resto de los errores de Customers sube tal cual.
 /// </summary>
 internal sealed class StoreCustomerDirectory(
-    ICustomerRepository customers, ICustomerProvisioning provisioning) : IStoreCustomerDirectory
+    ICustomerRepository customers, ICustomerMergeStore mergeStore, ICustomerProvisioning provisioning) : IStoreCustomerDirectory
 {
     // Un teléfono compartido por varios clientes no debe inundar el diálogo.
     private const int MaxPhoneMatches = 10;
@@ -114,6 +114,13 @@ internal sealed class StoreCustomerDirectory(
     public async Task<StoreCustomerCreation> CreateAsync(
         Guid tenantId, Guid? actorUserId, StoreNewCustomer data, CancellationToken cancellationToken)
     {
+        // D8: IX_customers_tenant_identification no ve fusionados, así que un documento que sólo tiene un fusionado no choca y el alta
+        // crearía otro cliente con él. Como en ShopifyCustomerDirectory, se pregunta a la fusión antes de dar el alta.
+        if (await IsHeldOnlyByAMergedCustomerAsync(tenantId, data, cancellationToken))
+        {
+            return new StoreCustomerCreation(null, StoreCustomerCreationOutcome.DocumentOwnerUnavailable);
+        }
+
         ProvisionedCustomer provisioned;
         try
         {
@@ -240,6 +247,18 @@ internal sealed class StoreCustomerDirectory(
             && owner.Id != customer.Id
                 ? ToRef(owner)
                 : ToRef(customer);
+    }
+
+    // Sin dueño sin fusionar pero con un fusionado que lo conserva (F1). Un dueño sin fusionar lo resuelve el alta misma (Created = false).
+    private async Task<bool> IsHeldOnlyByAMergedCustomerAsync(Guid tenantId, StoreNewCustomer data, CancellationToken cancellationToken)
+    {
+        if (TryKey(data.IdentificationType, data.IdentificationNumber) is not { } key
+            || (await customers.FindExistingIdentificationsAsync(tenantId, [key], cancellationToken)).ContainsKey(key))
+        {
+            return false;
+        }
+
+        return await mergeStore.FindSurvivorIdByIdentificationAsync(tenantId, key.Type, key.Number, cancellationToken) is not null;
     }
 
     private async Task<Customer?> FindActiveOwnerAsync(

@@ -34,7 +34,7 @@ public sealed class StoreCustomerDirectoryDocumentTests
         var customer = Spaniard();
         var customers = new FakeCustomerRepository(customer);
         customers.Identifications[(IdentificationType.Nif, "12345678Z")] = customer.Id;
-        var directory = new StoreCustomerDirectory(customers, new FakeCustomerProvisioning());
+        var directory = new StoreCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning());
 
         var found = await directory.FindCandidatesAsync(TenantId, "+34600111222", "nif", " 12345678Z ", Ct);
 
@@ -50,7 +50,7 @@ public sealed class StoreCustomerDirectoryDocumentTests
         var customer = Spaniard();
         var customers = new FakeCustomerRepository(customer);
         customers.Identifications[(IdentificationType.Nif, "12345678Z")] = customer.Id;
-        var directory = new StoreCustomerDirectory(customers, new FakeCustomerProvisioning());
+        var directory = new StoreCustomerDirectory(customers, new FakeCustomerMergeStore(), new FakeCustomerProvisioning());
 
         var known = await directory.KnownAsync(TenantId, [("+34600111222", "NIF", "12345678Z"), ("+34600333444", "NIF", "99999999R")], Ct);
 
@@ -68,7 +68,67 @@ public sealed class StoreCustomerDirectoryDocumentTests
     {
         var customers = new FakeCustomerRepository(seeded);
         var provisioning = new FakeCustomerProvisioning();
-        return (new StoreCustomerDirectory(customers, provisioning), customers, provisioning);
+        return (new StoreCustomerDirectory(customers, new FakeCustomerMergeStore(), provisioning), customers, provisioning);
+    }
+
+    [Fact]
+    public async Task CreateReturnsDocumentOwnerUnavailableWhenOnlyAMergedCustomerHasTheDocument()
+    {
+        // D8: el índice único no ve fusionados, así que el alta crearía otro cliente con el mismo documento.
+        var merges = new FakeCustomerMergeStore();
+        merges.Survivors[(IdentificationType.Nif, "12345678Z")] = Guid.CreateVersion7();
+        var provisioning = new FakeCustomerProvisioning();
+        var directory = new StoreCustomerDirectory(new FakeCustomerRepository(), merges, provisioning);
+
+        var result = await directory.CreateAsync(TenantId, null, Billing(), Ct);
+
+        Assert.Equal(StoreCustomerCreationOutcome.DocumentOwnerUnavailable, result.Outcome);
+        Assert.Null(result.Customer);
+        Assert.Empty(provisioning.Completes);
+    }
+
+    [Fact]
+    public async Task CompleteReturnsTheActiveDocumentOwnerWhenTheDocumentIsTaken()
+    {
+        var customer = Incomplete();
+        var owner = Spaniard();
+        var (directory, customers, provisioning) = Directory(customer, owner);
+        customers.Identifications[(IdentificationType.Nif, "12345678Z")] = owner.Id;
+        provisioning.CompleteFromStoreThrows = new CustomersDomainException(CustomersErrorCodes.IdentificationTaken, "Taken.");
+
+        var result = await directory.CompleteAsync(TenantId, null, customer.Id.Value, Billing(), Ct);
+
+        Assert.Equal(owner.Id.Value, result.Id);
+        Assert.True(result.IsComplete);
+    }
+
+    [Fact]
+    public async Task CompleteReturnsTheCustomerUnchangedWhenTheDocumentOwnerIsInactive()
+    {
+        var customer = Incomplete();
+        var owner = Spaniard();
+        owner.Deactivate(Now);
+        var (directory, customers, provisioning) = Directory(customer, owner);
+        customers.Identifications[(IdentificationType.Nif, "12345678Z")] = owner.Id;
+        provisioning.CompleteFromStoreThrows = new CustomersDomainException(CustomersErrorCodes.IdentificationTaken, "Taken.");
+
+        var result = await directory.CompleteAsync(TenantId, null, customer.Id.Value, Billing(), Ct);
+
+        Assert.Equal(customer.Id.Value, result.Id);
+        Assert.False(result.IsComplete);
+    }
+
+    [Fact]
+    public async Task CompleteReturnsTheCustomerUnchangedOnAValidationFailure()
+    {
+        var customer = Incomplete();
+        var (directory, _, provisioning) = Directory(customer);
+        provisioning.CompleteFromStoreThrows = new FluentValidation.ValidationException("The merged data does not pass the rules.");
+
+        var result = await directory.CompleteAsync(TenantId, null, customer.Id.Value, Billing(), Ct);
+
+        Assert.Equal(customer.Id.Value, result.Id);
+        Assert.False(result.IsComplete);
     }
 
     [Fact]
