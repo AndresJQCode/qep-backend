@@ -116,6 +116,12 @@ public sealed class DiscardOrderRequestHandlerTests
         public Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
             Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, string>>(memberIds.ToDictionary(id => id, _ => "Asesor"));
+
+        public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeCustomers : IStoreCustomerDirectory

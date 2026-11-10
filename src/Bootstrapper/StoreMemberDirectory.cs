@@ -42,4 +42,27 @@ internal sealed class StoreMemberDirectory(
             membership => membership.Id.Value,
             membership => string.IsNullOrWhiteSpace(membership.DisplayName) ? NoName : membership.DisplayName);
     }
+
+    public async Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken)
+    {
+        var tenant = new TenantId(tenantId);
+        var id = new MembershipId(membershipId);
+        return await tenancy.Memberships.AsNoTracking()
+            .AnyAsync(
+                membership => membership.Id == id
+                    && membership.TenantId == tenant
+                    && membership.State == MembershipState.Active,
+                cancellationToken);
+    }
+
+    public async Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenant = new TenantId(tenantId);
+        var owner = await tenancy.Tenants.AsNoTracking()
+            .Where(row => row.Id == tenant)
+            .Select(row => (MembershipId?)row.OwnerMembershipId)
+            .SingleOrDefaultAsync(cancellationToken);
+        return owner?.Value
+            ?? throw new InvalidOperationException($"The tenant {tenantId} does not exist, so it has no owner membership.");
+    }
 }
