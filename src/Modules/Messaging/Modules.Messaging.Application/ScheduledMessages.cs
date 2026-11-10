@@ -491,3 +491,32 @@ public sealed class GetScheduledMessageHandler(
             active is null ? null : await mapper.ToDtoAsync(query.TenantId, active, conversation, clock.UtcNow, cancellationToken));
     }
 }
+
+/// <summary><c>GET …/scheduled-messages/{id}/media</c>: el archivo del programado, antes de que salga (el compositor lo muestra y lo reproduce).
+/// <c>null</c> = 404 sin código, como <see cref="GetMediaQuery"/>: un id ajeno, un texto o un objeto ya borrado no tienen nada que corregir.</summary>
+/// <param name="Range">El header <c>Range</c> tal cual llegó, o <c>null</c>.</param>
+public sealed record GetScheduledMessageMediaQuery(Guid TenantId, Guid ConversationId, Guid ScheduledMessageId, string? Range = null)
+    : IQuery<MediaStreamDto?>;
+
+/// <summary>Sólo el programado activo de la conversación tiene su archivo a la vista: al enviarse, cancelarse o descartarse el objeto se
+/// borra, y el hilo ya sirve el enviado por <c>GET /media/{messageId}</c>.</summary>
+public sealed class GetScheduledMessageMediaHandler(
+    IScheduledMessageRepository scheduled,
+    IMessagingMediaStore store,
+    ITenantModules tenantModules,
+    IExecutionContext executionContext)
+    : IQueryHandler<GetScheduledMessageMediaQuery, MediaStreamDto?>
+{
+    public async Task<MediaStreamDto?> HandleAsync(GetScheduledMessageMediaQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await MessagingAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, MessagingPermissions.ConversationRead, cancellationToken);
+        var active = await scheduled.FindActiveAsync(query.TenantId, query.ConversationId, cancellationToken);
+        if (active is not { MediaStorageKey: { } key, MediaMimeType: { } mimeType } || active.Id != query.ScheduledMessageId)
+        {
+            return null;
+        }
+
+        return await GetMediaHandler.OpenAsync(store, key, mimeType, active.MediaFileName, query.Range, cancellationToken);
+    }
+}
