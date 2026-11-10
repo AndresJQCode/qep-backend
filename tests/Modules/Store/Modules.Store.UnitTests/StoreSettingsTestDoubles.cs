@@ -62,8 +62,11 @@ internal sealed class FakeDomains(CallLog log) : IStoreDomainRepository
 {
     public List<(string? Slug, string RootDomain)> Replaced { get; } = [];
 
+    /// <summary>El dominio que resuelve la tienda pública; otro host no es de nadie.</summary>
+    public StoreDomain? Seeded { get; init; }
+
     public Task<StoreDomain?> FindByHostAsync(string hostname, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(Seeded is not null && Seeded.Hostname == hostname ? Seeded : null);
 
     public Task ReplaceSubdomainAsync(Guid tenantId, string? slug, string rootDomain, CancellationToken cancellationToken)
     {
@@ -90,9 +93,12 @@ internal sealed class FakeUnitOfWork(CallLog log) : IStoreUnitOfWork
     public void DiscardPendingChanges() => throw new NotSupportedException();
 }
 
-internal sealed class FakeAudit : IStoreAuditPublisher
+internal sealed class FakeAudit(CallLog? log = null) : IStoreAuditPublisher
 {
     public List<(string Action, IReadOnlyCollection<string> ChangedFields)> Entries { get; } = [];
+
+    /// <summary>Lo que audita el visitante de la tienda pública, sin actor.</summary>
+    public List<(string Action, string ResourceType, string ResourceId)> Anonymous { get; } = [];
 
     public void Publish(
         Guid tenantId,
@@ -104,8 +110,11 @@ internal sealed class FakeAudit : IStoreAuditPublisher
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt) => Entries.Add((action, changedFields));
 
-    public void PublishAnonymous(Guid tenantId, string action, string resourceType, string resourceId, DateTimeOffset at) =>
-        throw new NotSupportedException();
+    public void PublishAnonymous(Guid tenantId, string action, string resourceType, string resourceId, DateTimeOffset at)
+    {
+        log?.Entries.Add("audit.anonymous");
+        Anonymous.Add((action, resourceType, resourceId));
+    }
 }
 
 internal sealed class FakeCatalog : IStoreCatalogReader
@@ -143,9 +152,13 @@ internal sealed class FakeCatalog : IStoreCatalogReader
         Guid tenantId, Guid productId, string currency, bool includeScales, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Las variantes que la tienda vende; una que no está acá es una línea no disponible.</summary>
+    public Dictionary<Guid, StoreSellableVariant> Sellable { get; } = [];
+
     public Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyDictionary<Guid, StoreSellableVariant>>(
+            Sellable.Where(pair => variantIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
 
     public Task<IReadOnlyDictionary<Guid, string>> VariantNamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
@@ -199,10 +212,13 @@ internal sealed class FakeTenants : IStoreTenantLookup
             new StoreRegionalFormat("America/Bogota", "yyyy-MM-dd", "es-CO", "COP", "CO")));
 }
 
-/// <summary>El directorio de miembros sembrado: quién está activo y cómo se llama; resolver a quien llama y al owner no es de ajustes.</summary>
+/// <summary>El directorio de miembros sembrado: quién está activo, cómo se llama y quién es el owner; resolver a quien llama no es de ajustes.</summary>
 internal sealed class FakeMembers : IStoreMemberDirectory
 {
     public HashSet<Guid> Active { get; } = [];
+
+    /// <summary>La membresía owner del tenant, el asesor de respaldo del checkout.</summary>
+    public Guid Owner { get; set; }
 
     public Dictionary<Guid, string> Names { get; } = [];
 
@@ -217,8 +233,7 @@ internal sealed class FakeMembers : IStoreMemberDirectory
     public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
         Task.FromResult(Active.Contains(membershipId));
 
-    public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Owner);
 }
 
 internal sealed class KnownCountries : IStoreCountries
