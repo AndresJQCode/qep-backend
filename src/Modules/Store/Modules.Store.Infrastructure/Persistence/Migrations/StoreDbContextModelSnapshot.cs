@@ -235,6 +235,25 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                     b.ToTable("store_domains", "store");
                 });
 
+            modelBuilder.Entity("Modules.Store.Domain.StoreOrderConsent", b =>
+                {
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("OrderId")
+                        .HasName("PK_order_consents");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_order_consents_tenant");
+
+                    b.ToTable("order_consents", "store");
+                });
+
             modelBuilder.Entity("Modules.Store.Domain.StoreOrderRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -704,6 +723,44 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Currencies");
+                });
+
+            modelBuilder.Entity("Modules.Store.Domain.StoreOrderConsent", b =>
+                {
+                    b.OwnsOne("Modules.Store.Domain.StoreConsent", "Consent", b1 =>
+                        {
+                            b1.Property<Guid>("StoreOrderConsentOrderId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<DateTimeOffset>("At")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("accepted_at");
+
+                            b1.Property<string>("Ip")
+                                .IsRequired()
+                                .HasMaxLength(45)
+                                .HasColumnType("character varying(45)")
+                                .HasColumnName("visitor_ip");
+
+                            b1.Property<DateTimeOffset?>("PolicySetAt")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("policy_set_at");
+
+                            b1.Property<string>("PolicyUrl")
+                                .HasMaxLength(500)
+                                .HasColumnType("character varying(500)")
+                                .HasColumnName("policy_url");
+
+                            b1.HasKey("StoreOrderConsentOrderId");
+
+                            b1.ToTable("order_consents", "store");
+
+                            b1.WithOwner()
+                                .HasForeignKey("StoreOrderConsentOrderId");
+                        });
+
+                    b.Navigation("Consent")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Modules.Store.Domain.StoreOrderRequest", b =>

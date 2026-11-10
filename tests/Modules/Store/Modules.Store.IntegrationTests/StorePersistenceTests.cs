@@ -734,4 +734,71 @@ public sealed class StorePersistenceTests
 
         Assert.Equal(1, count);
     }
+
+    private static async Task SaveOrderConsentAsync(QepApiFactory factory, StoreOrderConsent consent)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<IStoreOrderConsents>().Add(consent);
+        await scope.ServiceProvider.GetRequiredService<IStoreUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    private static async Task<StoreOrderConsent?> FindOrderConsentAsync(QepApiFactory factory, Guid orderId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IStoreOrderConsents>().FindAsync(Tenant, orderId, Ct);
+    }
+
+    [Fact]
+    public async Task AnOrderConsentRoundTrips()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var consent = StoreOrderConsent.Create(
+            Guid.NewGuid(), Tenant, new StoreConsent(Now, "203.0.113.5", "https://acme.test/politica", Now.AddDays(-3)));
+        await SaveOrderConsentAsync(factory, consent);
+
+        var found = await FindOrderConsentAsync(factory, consent.OrderId);
+
+        Assert.NotNull(found);
+        Assert.Equal(consent.Consent, found.Consent);
+        Assert.Equal(Now.AddDays(-3), found.Consent.PolicySetAt);
+    }
+
+    [Fact]
+    public async Task AnOrderConsentWithoutPolicyRoundTripsWithNulls()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var consent = StoreOrderConsent.Create(Guid.NewGuid(), Tenant, new StoreConsent(Now, "203.0.113.5", null, null));
+        await SaveOrderConsentAsync(factory, consent);
+
+        var found = await FindOrderConsentAsync(factory, consent.OrderId);
+
+        Assert.NotNull(found);
+        Assert.Null(found.Consent.PolicyUrl);
+        Assert.Null(found.Consent.PolicySetAt);
+        Assert.Equal(consent.Consent, found.Consent);
+    }
+
+    [Fact]
+    public async Task TheOrderConsentIsUniquePerOrder()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var orderId = Guid.NewGuid();
+        var accepted = new StoreConsent(Now, "203.0.113.5", null, null);
+        await SaveOrderConsentAsync(factory, StoreOrderConsent.Create(orderId, Tenant, accepted));
+
+        // Segundo contexto: la base es la que rechaza el duplicado (en el mismo contexto EF fallaría antes, sin llegar a ella).
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(
+            () => SaveOrderConsentAsync(factory, StoreOrderConsent.Create(orderId, Tenant, accepted)));
+
+        Assert.True(UniqueViolation.Is(exception, "PK_order_consents"));
+    }
 }

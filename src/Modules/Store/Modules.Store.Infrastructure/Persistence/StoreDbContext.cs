@@ -22,6 +22,8 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
 
     public DbSet<StoreOrderRequest> OrderRequests => Set<StoreOrderRequest>();
 
+    public DbSet<StoreOrderConsent> OrderConsents => Set<StoreOrderConsent>();
+
     // Proyección de escritura de audit.entries (ExcludeFromMigrations): el módulo Audit es dueño de la tabla.
     internal DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
@@ -46,6 +48,7 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
         ConfigureStore(modelBuilder);
         ConfigureDomain(modelBuilder);
         ConfigureOrderRequest(modelBuilder);
+        ConfigureOrderConsent(modelBuilder);
         ConfigureRequestCounter(modelBuilder);
         ConfigureOutboxProjection(modelBuilder);
     }
@@ -319,6 +322,25 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             .HasDatabaseName("IX_order_requests_order");
 
         ConfigureLines(request);
+    }
+
+    private static void ConfigureOrderConsent(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<StoreOrderConsent>();
+        entity.ToTable("order_consents", Schema);
+        entity.HasKey(value => value.OrderId).HasName("PK_order_consents");
+        entity.Property(value => value.OrderId).HasColumnName("order_id").ValueGeneratedNever();
+        entity.Property(value => value.TenantId).HasColumnName("tenant_id");
+        entity.HasIndex(value => value.TenantId).HasDatabaseName("IX_order_consents_tenant");
+
+        entity.OwnsOne(value => value.Consent, consent =>
+        {
+            consent.Property(value => value.At).HasColumnName("accepted_at");
+            consent.Property(value => value.Ip).HasColumnName("visitor_ip").HasMaxLength(45);
+            consent.Property(value => value.PolicyUrl).HasColumnName("policy_url").HasMaxLength(500);
+            consent.Property(value => value.PolicySetAt).HasColumnName("policy_set_at");
+        });
+        entity.Navigation(value => value.Consent).IsRequired();
     }
 
     private static void ConfigurePlace(ComplexPropertyBuilder<StorePlace> place, string prefix)
