@@ -353,6 +353,54 @@ public sealed class BuyerOrderGatewayTests
         Assert.False(await gateway.LinkAsync(TenantId, Guid.CreateVersion7(), Buyer, CancellationToken.None));
     }
 
+    // El enlace no sube la versión, pero la versión es token de concurrencia: si otra escritura la subió entre la
+    // lectura y el guardado, se relee y se intenta una vez más, como en la anulación.
+    [Fact]
+    public async Task ALinkThatLosesTheRaceToAnEditRereadsAndLinksOnce()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(null, id: id);
+        var editedMeanwhile = StoreOrder(null, id: id);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueIdReads(loaded, editedMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+
+        Assert.True(await Gateway(orders, unitOfWork).LinkAsync(TenantId, id.Value, Buyer, CancellationToken.None));
+
+        Assert.Equal(Buyer, editedMeanwhile.BuyerAccountId);
+        Assert.Equal(2, unitOfWork.SaveCalls);
+    }
+
+    [Fact]
+    public async Task ALinkThatLosesTheRaceToAnotherBuyerDoesNotOverwriteIt()
+    {
+        var id = OrderId.New();
+        var other = Guid.CreateVersion7();
+        var loaded = StoreOrder(null, id: id);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueIdReads(loaded, StoreOrder(other, id: id));
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+
+        Assert.False(await Gateway(orders, unitOfWork).LinkAsync(TenantId, id.Value, Buyer, CancellationToken.None));
+
+        Assert.Equal(1, unitOfWork.SaveCalls);
+    }
+
+    [Fact]
+    public async Task ALinkThatLosesTheRaceTwiceLetsTheConcurrencyErrorThrough()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(null, id: id);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueIdReads(loaded, StoreOrder(null, id: id));
+        var unitOfWork = FailingUnitOfWork(orders, failures: 2);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() =>
+            Gateway(orders, unitOfWork).LinkAsync(TenantId, id.Value, Buyer, CancellationToken.None));
+
+        Assert.Equal(2, unitOfWork.SaveCalls);
+    }
+
     /// <summary>Lanza la excepción de concurrencia en los primeros <paramref name="failures"/> guardados y avisa cada
     /// descarte, para que la prueba limpie lo que el ChangeTracker real habría soltado.</summary>
     private sealed class ConcurrencyFailingUnitOfWork(int failures, Action onDiscard) : IQuotationsUnitOfWork

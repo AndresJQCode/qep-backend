@@ -626,6 +626,39 @@ public sealed class PublicOrderBuyerAccountApiTests
     }
 
     [Fact]
+    public async Task ADeferredSignupLinksTheOrderToTheNewAccount()
+    {
+        await using var rig = await OpenRigAsync();
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
+        var orderId = (Guid)receipt["id"]!;
+        Assert.Null(await OrderBuyerAccountAsync(rig, orderId));
+        await rig.DrainBuyerSignupsAsync();
+
+        Assert.Equal(await AccountIdAsync(rig, "ana@test.co"), await OrderBuyerAccountAsync(rig, orderId));
+        var token = (await rig.OutboxAsync(BuyerIntegrationEvents.EmailVerificationRequested))
+            .Select(payload => JsonNode.Parse(payload)!)
+            .Last(payload => (string?)payload["email"] == "ana@test.co")["token"]!.GetValue<string>();
+        Assert.Equal(HttpStatusCode.NoContent, (await rig.PostBuyerAsync("/email/verify", new { token })).StatusCode);
+        var session = await LoginAsync(rig, password: Password);
+        var listed = await BuyerOrdersAsync(rig, session);
+        Assert.Equal([orderId], listed["items"]!.AsArray().Select(item => (Guid)item!["id"]!));
+    }
+
+    [Fact]
+    public async Task ADeferredSignupForAVerifiedEmailDoesNotLinkTheOrder()
+    {
+        await using var rig = await OpenRigAsync();
+        await rig.RegisterVerifiedAsync("ana@test.co");
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, WithAccount(rig)));
+        await rig.DrainBuyerSignupsAsync();
+
+        Assert.Single(await rig.OutboxAsync(BuyerIntegrationEvents.ExistingAccountNotice));
+        Assert.Null(await OrderBuyerAccountAsync(rig, (Guid)receipt["id"]!));
+    }
+
+    [Fact]
     public async Task ARetryWithUpdateProfileReturnsTheFirstReceiptAndDoesNotTouchTheProfile()
     {
         await using var rig = await OpenRigAsync();

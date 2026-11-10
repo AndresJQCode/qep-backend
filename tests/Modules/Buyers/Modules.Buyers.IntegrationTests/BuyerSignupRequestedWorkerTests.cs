@@ -21,12 +21,13 @@ public sealed class BuyerSignupRequestedWorkerTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static string Payload(Guid orderId, string email = "ana@correo.com", string passwordHash = "hash-del-mensaje") =>
+    private static string Payload(
+        Guid orderId, string email = "ana@correo.com", string passwordHash = "hash-del-mensaje", Guid? tenantId = null) =>
         JsonSerializer.Serialize(
             new
             {
                 orderId,
-                tenantId = Guid.CreateVersion7(),
+                tenantId = tenantId ?? Guid.CreateVersion7(),
                 clientRequestId = Guid.CreateVersion7(),
                 storeHost = Host,
                 storeName = "Tienda Demo",
@@ -234,6 +235,98 @@ public sealed class BuyerSignupRequestedWorkerTests
         Assert.Equal("hash-del-checkout", await api.ScalarAsync<string>("SELECT password_hash FROM buyers.accounts"));
         Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.processed_signups WHERE order_id = $1", orderId));
         Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.inbox_messages WHERE processed_at IS NOT NULL"));
+    }
+
+    // ---- El enlace del pedido (pedidos del comprador §4.2(2)) ----------------------------------------------------------------
+
+    private sealed class RecordingLinker : IBuyerOrderLinker
+    {
+        public List<(Guid TenantId, Guid OrderId, Guid AccountId)> Calls { get; } = [];
+
+        public Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken)
+        {
+            lock (Calls)
+            {
+                Calls.Add((tenantId, orderId, accountId));
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ThrowingLinker : IBuyerOrderLinker
+    {
+        public Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("quotations down");
+    }
+
+    private static Task<BuyersApiHarness.BuyersApi> OpenWithLinkerAsync(IBuyerOrderLinker linker) =>
+        BuyersApiHarness.OpenAsync(services =>
+        {
+            services.RemoveAll<IBuyerOrderLinker>();
+            services.AddSingleton(linker);
+        });
+
+    [Fact]
+    public async Task ANewAccountLinksTheOrderOfTheMessage()
+    {
+        var linker = new RecordingLinker();
+        await using var api = await OpenWithLinkerAsync(linker);
+        var (orderId, tenantId) = (Guid.CreateVersion7(), Guid.CreateVersion7());
+        await SeedAsync(api, Payload(orderId, tenantId: tenantId));
+
+        await DrainAsync(api);
+
+        var accountId = Guid.Parse(await api.ScalarAsync<string>("SELECT id::text FROM buyers.accounts WHERE email = 'ana@correo.com'"));
+        Assert.Equal((tenantId, orderId, accountId), Assert.Single(linker.Calls));
+    }
+
+    [Fact]
+    public async Task AnUnverifiedAccountReplacedFromTheCheckoutLinksTheOrder()
+    {
+        var linker = new RecordingLinker();
+        await using var api = await OpenWithLinkerAsync(linker);
+        var registered = await api.PostAsync(
+            "/register",
+            new { email = "ana@correo.com", password = "una-contrasena-larga", acceptsDataPolicy = true, turnstileToken = "ok", profile = (object?)null });
+        registered.EnsureSuccessStatusCode();
+        var accountId = Guid.Parse(await api.ScalarAsync<string>("SELECT id::text FROM buyers.accounts"));
+        var orderId = Guid.CreateVersion7();
+        await SeedAsync(api, Payload(orderId));
+
+        await DrainAsync(api);
+
+        var call = Assert.Single(linker.Calls);
+        Assert.Equal((orderId, accountId), (call.OrderId, call.AccountId));
+    }
+
+    [Fact]
+    public async Task AVerifiedEmailDoesNotLinkTheOrder()
+    {
+        var linker = new RecordingLinker();
+        await using var api = await OpenWithLinkerAsync(linker);
+        await api.RegisterVerifiedAsync("ana@correo.com");
+        await SeedAsync(api, Payload(Guid.CreateVersion7()));
+
+        await DrainAsync(api);
+
+        Assert.Single(await api.OutboxPayloadsAsync("buyers.existing-account-notice.v1"));
+        Assert.Empty(linker.Calls);
+    }
+
+    [Fact]
+    public async Task AFailingLinkKeepsTheAccountAndClosesTheMessage()
+    {
+        await using var api = await OpenWithLinkerAsync(new ThrowingLinker());
+        await SeedAsync(api, Payload(Guid.CreateVersion7()));
+
+        await DrainAsync(api);
+        await DrainAsync(api);
+
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.accounts"));
+        Assert.Single(await api.OutboxPayloadsAsync(Verify));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.processed_signups"));
+        Assert.Equal(1, await CountAsync(api, "SELECT count(*) FROM buyers.inbox_messages WHERE processed_at IS NOT NULL AND attempts = 1"));
     }
 
     private sealed class BlindSwitch

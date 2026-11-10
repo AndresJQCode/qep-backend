@@ -13,6 +13,15 @@ public interface IBuyerAccountRepository
     void Remove(BuyerAccount account);
 }
 
+/// <summary>
+/// Buyers → Quotations para el alta diferida del checkout (pedidos del comprador §4.2(2)): pone la cuenta en el pedido sólo si el
+/// pedido no tiene una. El adaptador vive en Bootstrapper.
+/// </summary>
+public interface IBuyerOrderLinker
+{
+    Task LinkAsync(Guid tenantId, Guid orderId, Guid accountId, CancellationToken cancellationToken);
+}
+
 public interface IBuyerProfileRepository
 {
     Task<BuyerProfile?> FindAsync(Guid accountId, CancellationToken cancellationToken);

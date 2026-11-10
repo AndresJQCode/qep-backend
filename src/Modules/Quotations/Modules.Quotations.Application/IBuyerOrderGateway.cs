@@ -51,7 +51,9 @@ public interface IBuyerOrderGateway
     Task<BuyerOrderDetail?> CancelAsync(
         Guid tenantId, Guid buyerAccountId, Guid orderId, CancellationToken cancellationToken);
 
-    /// <summary>Pone el comprador sólo si el pedido no tiene uno. Devuelve <c>true</c> si escribió.</summary>
+    /// <summary>Pone el comprador sólo si el pedido no tiene uno. Devuelve <c>true</c> si escribió. Si pierde la
+    /// carrera contra otra edición relee y lo intenta una vez más; la segunda <see cref="RequestConcurrencyException"/>
+    /// sale tal cual.</summary>
     Task<bool> LinkAsync(Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken);
 }
 
@@ -118,6 +120,31 @@ public sealed class BuyerOrderGateway(
     }
 
     public async Task<bool> LinkAsync(
+        Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LinkAndSaveAsync(tenantId, orderId, buyerAccountId, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            // El enlace no sube la versión, pero la versión es token de concurrencia: otra escritura que la subió entre
+            // la lectura y el guardado gana. Se relee el pedido como quedó y se decide de nuevo (sólo si sigue vacío).
+            unitOfWork.DiscardPendingChanges();
+        }
+
+        try
+        {
+            return await LinkAndSaveAsync(tenantId, orderId, buyerAccountId, cancellationToken);
+        }
+        catch (RequestConcurrencyException)
+        {
+            unitOfWork.DiscardPendingChanges();
+            throw;
+        }
+    }
+
+    private async Task<bool> LinkAndSaveAsync(
         Guid tenantId, Guid orderId, Guid buyerAccountId, CancellationToken cancellationToken)
     {
         var order = await orders.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken);

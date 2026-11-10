@@ -1431,6 +1431,7 @@ public static class QepServiceCollectionExtensions
         // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
         services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
         services.AddScoped<Modules.Buyers.Application.IBuyerOrders, BuyerOrdersAdapter>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrderLinker, BuyerOrderLinker>();
         services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
         services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
         services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();

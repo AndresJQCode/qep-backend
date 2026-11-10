@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Modules.Buyers.Application;
-using Modules.Buyers.Infrastructure.Signup;
 using Modules.Store.Application;
 using Npgsql;
 using static Modules.Store.IntegrationTests.PublicStoreFixture;
@@ -16,7 +15,7 @@ namespace Modules.Store.IntegrationTests;
 
 /// <summary>
 /// La tienda publicada para los pedidos del comprador: un producto (Camiseta a 10.000 COP), una ciudad para la facturación, quien
-/// atiende en la consola y el checkout real para crear pedidos. Los workers de Buyers están apagados: las pruebas drenan a mano.
+/// atiende en la consola y el checkout real para crear pedidos. Los workers de Buyers están apagados.
 /// </summary>
 internal sealed class BuyerOrdersRig : IAsyncDisposable
 {
@@ -140,11 +139,6 @@ internal sealed class BuyerOrdersRig : IAsyncDisposable
         Assert.True(response.StatusCode == HttpStatusCode.Created, json.ToJsonString());
         return json;
     }
-
-    /// <summary>Corre una pasada del worker de Buyers que consume las altas diferidas.</summary>
-    public Task DrainBuyerSignupsAsync() =>
-        ActivatorUtilities.CreateInstance<BuyerSignupRequestedWorker>(Factory.Services)
-            .DrainAsync(TestContext.Current.CancellationToken);
 
     // ---- Consola ------------------------------------------------------------------------------------------------------------
 

@@ -916,8 +916,11 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
 
     public Task<Order?> FindByIdAsync(
-        Guid tenantId, OrderId orderId, CancellationToken cancellationToken) =>
-        Task.FromResult(rows.FirstOrDefault(row => row.Id == orderId));
+        Guid tenantId, OrderId orderId, CancellationToken cancellationToken)
+    {
+        IEnumerable<Order> candidates = _idReads.Count > 0 ? [_idReads.Dequeue()] : rows;
+        return Task.FromResult(candidates.FirstOrDefault(row => row.Id == orderId));
+    }
 
     public Task<Order?> FindByExternalKeyAsync(
         Guid tenantId, OrderSource source, string externalKey, CancellationToken cancellationToken) =>
@@ -977,6 +980,17 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     }
 
     private readonly Queue<Order> _buyerReads = new();
+
+    private readonly Queue<Order> _idReads = new();
+
+    /// <summary>Como <see cref="QueueBuyerReads"/>, para <see cref="FindByIdAsync"/>.</summary>
+    public void QueueIdReads(params Order[] instances)
+    {
+        foreach (var instance in instances)
+        {
+            _idReads.Enqueue(instance);
+        }
+    }
 
     /// <summary>Instancias que <see cref="FindByBuyerAsync"/> entrega en orden, una por llamada, antes de volver a las
     /// filas sembradas. Con dos, la relectura después de perder una carrera ve un agregado nuevo, como lo vería el
