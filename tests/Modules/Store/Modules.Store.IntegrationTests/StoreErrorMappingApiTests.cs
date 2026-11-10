@@ -32,6 +32,8 @@ public sealed class StoreErrorMappingApiTests
             (new StoreDomainException(StoreErrorCodes.PublicCurrencyInvalid, "currency"), StoreErrorCodes.PublicCurrencyInvalid, HttpStatusCode.UnprocessableEntity),
             // TakeOrderRequest.cs:71.
             (new StoreDomainException(StoreErrorCodes.CurrencyNotInStore, "currency"), StoreErrorCodes.CurrencyNotInStore, HttpStatusCode.UnprocessableEntity),
+            // UpdateStoreSettings.cs: el asesor de la tienda no es un miembro activo del tenant.
+            (new StoreDomainException(StoreErrorCodes.AdvisorNotFound, "advisor"), StoreErrorCodes.AdvisorNotFound, HttpStatusCode.UnprocessableEntity),
             // StoreNotFound.cs:11.
             (new ResourceNotFoundException(StoreErrorCodes.OrderRequestNotFound, "missing"), StoreErrorCodes.OrderRequestNotFound, HttpStatusCode.NotFound),
             // CloudflareTurnstileVerifier.cs:148.

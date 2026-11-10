@@ -199,6 +199,28 @@ internal sealed class FakeTenants : IStoreTenantLookup
             new StoreRegionalFormat("America/Bogota", "yyyy-MM-dd", "es-CO", "COP", "CO")));
 }
 
+/// <summary>El directorio de miembros sembrado: quién está activo y cómo se llama; resolver a quien llama y al owner no es de ajustes.</summary>
+internal sealed class FakeMembers : IStoreMemberDirectory
+{
+    public HashSet<Guid> Active { get; } = [];
+
+    public Dictionary<Guid, string> Names { get; } = [];
+
+    public Task<(Guid MembershipId, Guid UserId)> ResolveCallerAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            Names.Where(pair => memberIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+
+    public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
+        Task.FromResult(Active.Contains(membershipId));
+
+    public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+}
+
 internal sealed class KnownCountries : IStoreCountries
 {
     public bool IsKnown(string country) => country is "CO" or "ES" or "US";
@@ -223,6 +245,8 @@ internal sealed class SettingsRig
 
     public FakeFiles Files { get; } = new();
 
+    public FakeMembers Members { get; } = new();
+
     public StoreSettingsComposer Composer { get; }
 
     public IExecutionContext Context { get; }
@@ -240,7 +264,7 @@ internal sealed class SettingsRig
         UnitOfWork = new FakeUnitOfWork(Log);
         Context = new FakeExecutionContext(callerTenant ?? StoreTestData.TenantId, permissions ?? [StorePermissions.SettingsManage]);
         Modules = modules ?? FakeTenantModules.AllEnabled();
-        Composer = new StoreSettingsComposer(new FakeTenants(), Files, Catalog, new StoreOptions { RootDomain = "lulocrm.com" });
+        Composer = new StoreSettingsComposer(new FakeTenants(), Files, Catalog, Members, new StoreOptions { RootDomain = "lulocrm.com" });
     }
 
     public UpdateStoreSettingsHandler UpdateHandler() =>
@@ -252,6 +276,7 @@ internal sealed class SettingsRig
             Catalog,
             Accounts,
             Files,
+            Members,
             new KnownCountries(),
             UnitOfWork,
             Audit,
@@ -282,7 +307,8 @@ internal sealed class SettingsRig
         Guid? bannerFileId = null,
         string? name = null,
         string? dataPolicyUrl = "https://acme.test/politica",
-        string? instagramUrl = null) =>
+        string? instagramUrl = null,
+        Guid? advisorMembershipId = null) =>
         new(
             slug,
             name,
@@ -302,7 +328,8 @@ internal sealed class SettingsRig
             currencies ?? [Entry("COP", "A-111")],
             primaryCurrency,
             salesCountries ?? ["co", "es"],
-            featured ?? []);
+            featured ?? [],
+            advisorMembershipId);
 
     public static StoreCurrencyRequest Entry(string currency, string account, string? accountCurrency = null) =>
         new(currency, new StoreBillingAccountRequest(CompanyId, "Bancolombia", account, accountCurrency ?? currency));

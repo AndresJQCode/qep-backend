@@ -103,6 +103,10 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(7)")
                         .HasColumnName("accent_text_color");
 
+                    b.Property<Guid?>("AdvisorMembershipId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("advisor_membership_id");
+
                     b.Property<Guid?>("BannerFileId")
                         .HasColumnType("uuid")
                         .HasColumnName("banner_file_id");
@@ -527,6 +531,46 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_order_requests_shipping_lane", "shipping_country IS NULL OR ((shipping_country = 'CO') = (shipping_department_id IS NOT NULL AND shipping_city_id IS NOT NULL))");
 
                             t.HasCheckConstraint("CK_order_requests_status", "status IN ('New','Converted','Discarded')");
+                        });
+                });
+
+            modelBuilder.Entity("Modules.Store.Infrastructure.Persistence.OutboxRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("event_name");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("outbox_messages", "platform", t =>
+                        {
+                            t.ExcludeFromMigrations();
                         });
                 });
 

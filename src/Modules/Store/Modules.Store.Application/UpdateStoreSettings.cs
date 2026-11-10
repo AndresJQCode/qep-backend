@@ -107,6 +107,7 @@ public sealed class UpdateStoreSettingsHandler(
     IStoreCatalogReader catalog,
     IStoreBillingAccounts billingAccounts,
     IStoreFileLookup files,
+    IStoreMemberDirectory members,
     IStoreCountries countries,
     IStoreUnitOfWork unitOfWork,
     IStoreAuditPublisher auditPublisher,
@@ -160,6 +161,12 @@ public sealed class UpdateStoreSettingsHandler(
         var resolvedEntries = await ResolveCurrenciesAsync(command.TenantId, entries, cancellationToken);
         await EnsureBannerAsync(command.TenantId, body.BannerFileId, cancellationToken);
         await EnsureCategoriesAsync(command.TenantId, body.FeaturedCategoryIds!, cancellationToken);
+        if (body.AdvisorMembershipId is { } advisorId
+            && !await members.IsActiveMemberAsync(command.TenantId, advisorId, cancellationToken))
+        {
+            throw new StoreDomainException(
+                StoreErrorCodes.AdvisorNotFound, "El asesor no es un miembro activo de este tenant.");
+        }
 
         var input = new StoreSettingsInput(
             slug,
@@ -176,7 +183,7 @@ public sealed class UpdateStoreSettingsHandler(
             body.PrimaryCurrency,
             salesCountries,
             body.FeaturedCategoryIds!,
-            AdvisorMembershipId: null);
+            body.AdvisorMembershipId);
 
         var previousSlug = store.Slug;
         var before = Snapshot(store);
@@ -316,6 +323,7 @@ public sealed class UpdateStoreSettingsHandler(
         ["primaryCurrency"] = store.PrimaryCurrency,
         ["salesCountries"] = string.Join('|', store.SalesCountries),
         ["featuredCategoryIds"] = string.Join('|', store.FeaturedCategoryIds),
+        ["advisorMembershipId"] = store.AdvisorMembershipId?.ToString(),
     };
 
     private static List<string> Changed(Dictionary<string, string?> before, Dictionary<string, string?> after) =>

@@ -22,6 +22,7 @@ public static class StoreErrorCodes
     public const string SlugRequired = "store.settings.slug_required";
     public const string CurrencyRequired = "store.settings.currency_required";
     public const string SalesCountryRequired = "store.settings.sales_country_required";
+    public const string AdvisorNotFound = "store.settings.advisor_not_found";
 
     public const string PublicClientUnauthorized = "store.public.client_unauthorized";
     public const string PublicVisitorIpRequired = "store.public.visitor_ip_required";

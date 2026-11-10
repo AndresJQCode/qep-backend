@@ -119,6 +119,9 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             .HasMaxLength(16);
         store.Property(value => value.PrimaryCurrency).HasColumnName("primary_currency").HasMaxLength(3);
 
+        // Sin FK a tenancy: los módulos no se cruzan por clave foránea; Application valida que sea un miembro activo.
+        store.Property(value => value.AdvisorMembershipId).HasColumnName("advisor_membership_id");
+
         // Arreglos nativos de Postgres: el orden de la lista es el de la pantalla y un arreglo lo conserva sin columna extra.
         store.Property(value => value.SalesCountries)
             .HasColumnName("sales_countries")
