@@ -262,6 +262,46 @@ public sealed class CustomerExportApiTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // La exportacion comparte los filtros del listado: un `search` con el telefono exporta al
+    // mismo cliente que la grilla muestra, no a todo el padron.
+    [Fact]
+    public async Task ExportFiltersBySearchingThePhone()
+    {
+        await using var database = await StartDatabaseAsync();
+        var storage = new CapturingExportStorage();
+        using var factory = Factory(database, storage);
+        using var client = CreateManager(factory);
+        await SeedTenantAsync(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        foreach (var (name, identification, phone) in new[]
+                 {
+                     ("Verde Esencial S.A.S.", "900.123.456-1", "3001234567"),
+                     ("Azul Profundo Ltda.", "901.222.333-4", "3109352187"),
+                 })
+        {
+            var created = await client.PostAsJsonAsync(
+                CustomersUrl(),
+                NewCustomerBody(city.CityId, classification.Id, name: name, identificationNumber: identification, phone: phone),
+                TestContext.Current.CancellationToken);
+            created.EnsureSuccessStatusCode();
+        }
+
+        var response = await client.PostAsync(
+            $"{ExportUrl()}?search={Uri.EscapeDataString("+57 300 123 4567")}",
+            content: null,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ExportResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(body);
+        Assert.Equal(1, body.CustomerCount);
+        Assert.NotNull(storage.Content);
+        using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
+        Assert.Equal("Verde Esencial S.A.S.", workbook.Worksheets.First().Cell(2, 2).GetString());
+    }
+
     // Un tenant sin clientes no produce un Excel de una sola fila de cabeceras ni un correo con un
     // archivo vacio: falla legible, mismo criterio que el export de filas fallidas.
     [Fact]

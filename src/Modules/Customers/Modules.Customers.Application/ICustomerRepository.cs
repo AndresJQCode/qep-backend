@@ -14,7 +14,9 @@ public interface ICustomerRepository
     /// <c>name</c>/<c>identificationNumber</c>/<c>cuc</c> son tres filtros independientes
     /// (CLI-FILTROS-01): cada uno filtra su propia columna con ILIKE, y se combinan con AND
     /// cuando el llamador manda mas de uno. <c>search</c> es el criterio OR original —sobre los
-    /// mismos tres campos— que el combobox de clientes de <c>quotes</c> todavia necesita.
+    /// mismos tres campos y el telefono— que el combobox de clientes de <c>quotes</c> todavia
+    /// necesita. El telefono se compara solo por los digitos del termino contra <c>PhoneE164</c>,
+    /// y solo desde siete digitos: un fragmento mas corto aparece en casi cualquier numero.
     ///
     /// <c>cityIds</c> filtra por ciudad exacta (no ILIKE: son ids). <c>null</c> es "sin filtro";
     /// una coleccion vacia es "no matchear ninguna fila" — la usa <c>ListCustomersHandler</c>
@@ -40,7 +42,7 @@ public interface ICustomerRepository
     /// sin documento son los más nuevos y llenarían la página.
     /// Con <paramref name="includeIncompleteWithoutDocument"/> también los activos incompletos sin documento: el tenant no
     /// exige el documento al facturar, así que la caja les puede vender y tiene que poder volver a encontrarlos.
-    /// Un solo término contra nombre, documento y CUC, con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
+    /// Un solo término contra nombre, documento, CUC y teléfono (mismo criterio que <c>search</c> de <see cref="SearchAsync"/>), con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
     /// </summary>
     Task<IReadOnlyList<Customer>> SearchSelectableAsync(
         Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken);

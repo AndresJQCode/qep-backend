@@ -24,6 +24,20 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return string.IsNullOrEmpty(trimmed) ? null : $"%{EscapeLikeWildcards(trimmed)}%";
     }
 
+    // Menos digitos que esto aparecen en casi cualquier numero: el telefono dejaria de filtrar y el
+    // listado se llenaria de coincidencias que nadie busco.
+    private const int MinPhoneSearchDigits = 7;
+
+    // El telefono se compara solo por sus digitos: quien busca pega el numero como lo ve en un chat
+    // o una tarjeta (`+57 (300) 123-4567`), y `phone_e164` lo guarda sin formato (`+573001234567`).
+    // Sin escapar: los digitos no son comodines de LIKE. `null` por debajo del minimo, para que el
+    // llamador no agregue el criterio.
+    private static string? PhoneDigitsPattern(string? term)
+    {
+        var digits = new string((term ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+        return digits.Length >= MinPhoneSearchDigits ? $"%{digits}%" : null;
+    }
+
     // Los cuatro filtros del listado, aplicados una sola vez para los dos caminos que los usan
     // (la pagina del listado y el recorrido de la exportacion). Los bloques van repetidos y no
     // detras de un helper generico sobre un selector de propiedad: EF Core no traduce
@@ -32,6 +46,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
     private IQueryable<Customer> FilteredQuery(
         Guid tenantId,
         string? searchPattern,
+        string? phoneSearchPattern,
         string? namePattern,
         string? identificationPattern,
         string? cucPattern)
@@ -42,14 +57,19 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             // Un fusionado ya es otra ficha (spec 2026-10-24 §3.3): no se lista, ni se busca, ni se exporta, ni se elige en POS.
             .Where(customer => customer.TenantId == tenantId && customer.MergedIntoId == null);
 
-        // El criterio combinado original: un solo termino, OR entre los tres campos. Sigue
-        // vivo para el combobox de clientes de quotes, que necesita un unico cuadro de texto.
+        // El criterio combinado original: un solo termino, OR entre nombre, documento, CUC y
+        // telefono. Sigue vivo para el combobox de clientes de quotes, que necesita un unico
+        // cuadro de texto.
         if (searchPattern is not null)
         {
             // Un incompleto no tiene CUC, pero desde el alta rápida del POS (POSC-05) sí puede tener documento:
             // el filtro por número tiene que seguir alcanzándolo.
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
+                // Sólo `phone_e164`: es el teléfono propio del cliente ya normalizado. Los de las direcciones son
+                // de quien recibe, y la columna `phone` cruda conserva el formato con el que se escribió.
+                (phoneSearchPattern != null && customer.PhoneE164 != null &&
+                    EF.Functions.ILike(customer.PhoneE164, phoneSearchPattern, LikeEscapeCharacter)) ||
                 (customer.IdentificationNumber != null && EF.Functions.ILike(
                     customer.IdentificationNumber, searchPattern, LikeEscapeCharacter)) ||
                 (customer.Cuc != null && EF.Functions.ILike(customer.Cuc, searchPattern, LikeEscapeCharacter)) ||
@@ -104,6 +124,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         await FilteredQuery(
                 tenantId,
                 LikePattern(search),
+                PhoneDigitsPattern(search),
                 LikePattern(name),
                 LikePattern(identificationNumber),
                 LikePattern(cuc))
@@ -130,7 +151,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var identificationPattern = LikePattern(identificationNumber);
         var cucPattern = LikePattern(cuc);
         var query = FilteredQuery(
-            tenantId, searchPattern, namePattern, identificationPattern, cucPattern);
+            tenantId, searchPattern, PhoneDigitsPattern(search), namePattern, identificationPattern, cucPattern);
 
         // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
         // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
@@ -231,7 +252,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // Activo y, o con documento (numero Y tipo), o completo (spec 2026-11-09: un tenant que no exige el documento
         // tiene clientes completos sin el), en la consulta y no despues: los incompletos de WhatsApp sin documento son
         // los mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
-        var query = FilteredQuery(tenantId, searchPattern, null, null, null)
+        var query = FilteredQuery(tenantId, searchPattern, PhoneDigitsPattern(search), null, null, null)
             .Where(customer => customer.IsActive
                 && ((customer.IdentificationNumber != null && customer.IdentificationType != null)
                     || customer.Completeness == CustomerCompleteness.Complete

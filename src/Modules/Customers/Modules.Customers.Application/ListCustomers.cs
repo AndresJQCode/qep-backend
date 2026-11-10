@@ -9,10 +9,9 @@ namespace Modules.Customers.Application;
 /// <c>Name</c>/<c>IdentificationNumber</c>/<c>Cuc</c> son las tres cajas separadas del listado
 /// (CLI-FILTROS-01), cada una filtrando su propio campo con ILIKE — se combinan con AND cuando
 /// se llena mas de una. <c>Search</c> es el criterio combinado de un solo termino (OR entre
-/// identificacion y CUC, <b>sin</b> nombre): existe porque el combobox de clientes de
-/// <c>quotes</c> (<c>useQuoteCustomerOptions</c>) necesita un unico cuadro de texto libre, no
-/// tres — y ahi se busca por NIT o CUC a proposito, que es lo que quien cotiza tiene a mano y
-/// lo que distingue a un cliente de su homonimo. Los dos criterios son independientes y se
+/// nombre, identificacion, CUC y telefono; el telefono por sus digitos, desde siete): existe
+/// porque el combobox de clientes de <c>quotes</c> (<c>useQuoteCustomerOptions</c>) necesita un
+/// unico cuadro de texto libre, no tres. Los dos criterios son independientes y se
 /// pueden combinar (Search Y ademas Name/IdentificationNumber/Cuc), aunque en la practica cada
 /// consumidor usa solo uno de los dos.
 /// </summary>
