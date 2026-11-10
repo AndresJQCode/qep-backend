@@ -961,6 +961,26 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
 
+    public (Guid TenantId, Guid BuyerAccountId, int Page, int PageSize)? LastBuyerSearch { get; private set; }
+
+    public Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        LastBuyerSearch = (tenantId, buyerAccountId, page, pageSize);
+        var matching = rows
+            .Where(row => row.TenantId == tenantId && row.BuyerAccountId == buyerAccountId)
+            .OrderByDescending(row => row.CreatedAt)
+            .ThenByDescending(row => row.OrderNumber, StringComparer.Ordinal)
+            .ToList();
+        IReadOnlyList<Order> items = matching.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult((items, matching.Count));
+    }
+
+    public Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
+        Task.FromResult(rows.FirstOrDefault(row =>
+            row.TenantId == tenantId && row.BuyerAccountId == buyerAccountId && row.Id == orderId));
+
     // Honra el contrato de `clientIds` (vacío = ninguna fila): es lo que hace que un CUC sin
     // cliente termine en "no hay pedidos". El resto de los filtros son SQL y los cubre integración.
     public Task<bool> AnyForExportAsync(

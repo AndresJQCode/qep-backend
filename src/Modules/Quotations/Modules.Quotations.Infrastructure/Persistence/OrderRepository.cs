@@ -125,6 +125,32 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         return (items, total);
     }
 
+    public async Task<(IReadOnlyList<Order> Items, int Total)> SearchByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken)
+    {
+        var orders = dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.TenantId == tenantId && order.BuyerAccountId == buyerAccountId);
+        var total = await orders.CountAsync(cancellationToken);
+        var items = await orders
+            .Include(order => order.Items)
+            .OrderByDescending(order => order.CreatedAt)
+            .ThenByDescending(order => order.OrderNumber)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return (items, total);
+    }
+
+    public Task<Order?> FindByBuyerAsync(
+        Guid tenantId, Guid buyerAccountId, OrderId orderId, CancellationToken cancellationToken) =>
+        WithAggregate(dbContext.Orders)
+            .SingleOrDefaultAsync(
+                order => order.TenantId == tenantId
+                    && order.BuyerAccountId == buyerAccountId
+                    && order.Id == orderId,
+                cancellationToken);
+
     public Task<bool> AnyForExportAsync(
         Guid tenantId,
         Guid? clientId,

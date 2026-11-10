@@ -512,6 +512,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasConversion(
                 id => id.HasValue ? id.Value.Value : (Guid?)null,
                 value => value.HasValue ? new QuotationId(value.Value) : null);
+        order.Property(value => value.BuyerAccountId).HasColumnName("buyer_account_id");
         order.Property(value => value.Source)
             .HasColumnName("source")
             .HasConversion<string>()
@@ -640,6 +641,10 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.HasIndex(value => new { value.TenantId, value.ClientId }).HasDatabaseName("IX_orders_tenant_client");
         order.HasIndex(value => new { value.TenantId, value.AdvisorId }).HasDatabaseName("IX_orders_tenant_advisor");
         order.HasIndex(value => new { value.TenantId, value.Source }).HasDatabaseName("IX_orders_tenant_source");
+        // Los pedidos de un comprador de la tienda (spec 2026-11-09): sólo los que tienen cuenta.
+        order.HasIndex(value => new { value.TenantId, value.BuyerAccountId, value.CreatedAt })
+            .HasFilter("buyer_account_id IS NOT NULL")
+            .HasDatabaseName("IX_orders_tenant_buyer_created");
         // Spec de Shopify D-S23: la idempotencia del camino externo. Parcial, para que los pedidos sin clave
         // (cotización y manuales) no compitan entre sí; QuotationsUnitOfWork lo traduce por nombre.
         order.HasIndex(value => new { value.TenantId, value.Source, value.ExternalKey })
