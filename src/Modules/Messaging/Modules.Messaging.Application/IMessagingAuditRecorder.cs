@@ -41,6 +41,13 @@ public interface IMessagingAuditRecorder
     /// <c>changed_fields</c>. Siempre una persona.</summary>
     void RecordHistorySync(
         Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes);
+
+    /// <summary>Spec 2026-11-09 «Auditoría»: un mensaje programado, en la misma transacción que el cambio. Lo que cierra el worker
+    /// (enviado, fallido) no tiene una persona detrás: <paramref name="bySystem"/> y actor vacío. <paramref name="changedFields"/>
+    /// (<c>null</c> es <c>[]</c>) va a <c>changed_fields</c>.</summary>
+    void RecordScheduledMessage(
+        Guid tenantId, Guid actorId, bool bySystem, string action, Guid scheduledMessageId, DateTimeOffset occurredAt,
+        IReadOnlyCollection<string>? changedFields = null);
 }
 
 public static class MessagingAuditActions
@@ -121,4 +128,7 @@ public static class MessagingAuditActions
 
     public const string HistorySyncResourceType = "history_sync";
     public const string HistorySyncRetried = "messaging.history_sync.retried";
+
+    public const string ScheduledMessageResourceType = "scheduled_message";
+    public const string ScheduledMessageCreated = "messaging.scheduled_message.created";
 }

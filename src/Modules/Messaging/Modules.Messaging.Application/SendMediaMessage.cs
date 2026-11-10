@@ -15,7 +15,7 @@ public sealed record SendMediaMessageCommand(
 /// permitido y cuánto pesa lo decide el handler, con códigos de dominio.</summary>
 public sealed class SendMediaMessageValidator : AbstractValidator<SendMediaMessageCommand>
 {
-    private static bool IsAudio(string fileName) =>
+    internal static bool IsAudio(string fileName) =>
         OutboundMediaPolicy.FormatOf(OutboundMediaPolicy.ExtensionOf(fileName)) is { } format && !OutboundMediaPolicy.AcceptsCaption(format);
 
     /// <summary>El tope de Meta para el pie de una imagen o un documento, y <c>messages.caption</c> es varchar(1024).</summary>

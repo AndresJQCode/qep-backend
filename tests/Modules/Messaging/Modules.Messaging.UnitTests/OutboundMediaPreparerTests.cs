@@ -31,6 +31,25 @@ public sealed class OutboundMediaPreparerTests
         Assert.Equal(((long)bytes.Length, "application/pdf", "document.pdf"), (sent.DeclaredLength, sent.MimeType, sent.FileName));
     }
 
+    // Deferred from T4: the image branch names the multipart part image.jpg, whatever the original extension was.
+    [Fact]
+    public async Task UploadStoredOfAnImageUsesTheGenericJpegName()
+    {
+        var bed = new MessagingTestBed();
+        const string key = "messaging/scheduled/foto.jpg";
+        bed.Store.Objects[key] = (FakeImageCompressor.Output, "image/jpeg");
+        var preparer = new OutboundMediaPreparer(bed.Meta, bed.Store, bed.Compressor);
+        bed.Meta.NextUpload = new MessagingGraphResult<string>("media.img", null);
+
+        var (upload, sha256Hex) = await preparer.UploadStoredAsync(
+            new MessagingSender("111", "token"), key, FakeImageCompressor.Output.Length, "image/jpeg", MessageKind.Image, ".jpg", Ct);
+
+        Assert.Equal("media.img", upload.Value);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(FakeImageCompressor.Output)), sha256Hex);
+        var sent = Assert.Single(bed.Meta.StreamUploads);
+        Assert.Equal(((long)FakeImageCompressor.Output.Length, "image/jpeg", "image.jpg"), (sent.DeclaredLength, sent.MimeType, sent.FileName));
+    }
+
     [Fact]
     public async Task UploadStoredOfAMissingObjectIsMediaMissing()
     {
