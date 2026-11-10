@@ -283,6 +283,7 @@ facturación esté completa; cambiaría D-S7 y D-S15.
 
 ## Registro
 
+- 2026-11-10 — Mergeado a `develop` (`453bb3f9`, sin push) **las tarjetas de contacto compartidas** (`fix/contactos-compartidos`, `acd6af88`): `MessageDto.contacts` lleva nombre, organización, teléfonos y correos leídos del `details` de un `Contacts`; antes la burbuja sólo veía el nombre. Sin migración. Frontend `d83e294e` el mismo día. Queda fuera la búsqueda: `MessageHitDto` (`SearchMessages.cs`) no lleva `contacts`.
 - 2026-11-10 — Mergeado a `develop` (`67bd435b`, sin push) **pedidos del comprador** (`feature/pedidos-del-comprador`, hasta `fed1c8fc`): el comprador lista, abre y cancela sus pedidos desde la tienda; `buyer_account_id` sellado en el checkout y enlazado por el alta diferida. Migración Quotations `AddOrderBuyerAccount`. Storefront `362610c` el mismo día.
 - 2026-11-10 — Mergeado a `develop` (`1375946c`, sin push) **pedidos de la tienda directos** (`feat/store-orders-direct`, `6b9de915..6a5ebe5a`): el checkout crea
   el pedido real y la bandeja «Desde la tienda» desaparece (entidad, tablas, endpoints, permiso `store.order.manage`, `ConversionLease`). Asesor configurable
