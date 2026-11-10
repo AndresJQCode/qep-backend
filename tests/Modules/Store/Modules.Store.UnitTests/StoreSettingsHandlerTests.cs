@@ -46,6 +46,30 @@ public sealed class StoreSettingsHandlerTests
     }
 
     [Fact]
+    public async Task KeepingAnAdvisorThatIsNoLongerActiveSavesWithoutCheckingIt()
+    {
+        // El asesor guardado se desactivó después: el checkout ya cae al owner, y cualquier otro cambio de ajustes no debe trabarse.
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva", advisorMembershipId: Member), version: 1), Ct);
+
+        Assert.Equal(Member, saved.AdvisorMembershipId);
+        Assert.Empty(rig.Members.ActiveChecks);
+    }
+
+    [Fact]
+    public async Task ChangingToAnInactiveAdvisorIsStill422AdvisorNotFound()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        Assert.Equal(
+            StoreErrorCodes.AdvisorNotFound,
+            await CodeOfAsync(
+                () => rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: OtherMember), version: 1), Ct)));
+        Assert.Equal([OtherMember], rig.Members.ActiveChecks);
+    }
+
+    [Fact]
     public async Task ClearingTheAdvisorAuditsTheField()
     {
         var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));

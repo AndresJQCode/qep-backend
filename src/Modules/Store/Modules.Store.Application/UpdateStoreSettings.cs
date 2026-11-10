@@ -161,7 +161,10 @@ public sealed class UpdateStoreSettingsHandler(
         var resolvedEntries = await ResolveCurrenciesAsync(command.TenantId, entries, cancellationToken);
         await EnsureBannerAsync(command.TenantId, body.BannerFileId, cancellationToken);
         await EnsureCategoriesAsync(command.TenantId, body.FeaturedCategoryIds!, cancellationToken);
+        // Sólo un asesor nuevo se valida: si el guardado se desactivó, el checkout ya cae al owner y conservarlo no debe trabar
+        // cualquier otro cambio de los ajustes.
         if (body.AdvisorMembershipId is { } advisorId
+            && advisorId != store.AdvisorMembershipId
             && !await members.IsActiveMemberAsync(command.TenantId, advisorId, cancellationToken))
         {
             throw new StoreDomainException(

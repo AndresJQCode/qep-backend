@@ -217,13 +217,19 @@ internal sealed class FakeMembers : IStoreMemberDirectory
 
     public Dictionary<Guid, string> Names { get; } = [];
 
+    /// <summary>Cada membresía por la que se preguntó si está activa, en orden.</summary>
+    public List<Guid> ActiveChecks { get; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
         Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             Names.Where(pair => memberIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
 
-    public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken) =>
-        Task.FromResult(Active.Contains(membershipId));
+    public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken)
+    {
+        ActiveChecks.Add(membershipId);
+        return Task.FromResult(Active.Contains(membershipId));
+    }
 
     public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Owner);
 }
