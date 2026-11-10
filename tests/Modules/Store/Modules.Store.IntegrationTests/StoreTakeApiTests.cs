@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Quotations.Application;
 using Modules.Store.Domain;
@@ -200,6 +201,37 @@ public sealed class StoreTakeApiTests
         Assert.Equal("Calle 1 # 2-3", customer.Address);
         Assert.Equal(rig.City, customer.CityId);
         Assert.False(string.IsNullOrEmpty(customer.Cuc));
+    }
+
+    // Spec 2026-11-09 §10.2 (ruling P9): aprovisionar no pasa por la politica de campos del cliente. Un incompleto de
+    // WhatsApp se completa con los datos de la solicitud tanto si el tenant relaja el documento y la ciudad como si los exige.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TakingAnIncompleteCustomerCompletesItUnderAnyFieldPolicy(bool strict)
+    {
+        await using var rig = await StoreInboxRig.OpenAsync();
+        await using (var scope = rig.Factory.Services.CreateAsyncScope())
+        {
+            var tenancy = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Infrastructure.Persistence.TenancyDbContext>();
+            var id = Guid.Parse(TenantId);
+            await tenancy.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                UPDATE tenancy.tenants SET
+                    customer_document_required_on_save = {strict}, customer_document_required_on_billing = {strict},
+                    customer_city_required_on_save = {strict}, customer_city_required_on_billing = {strict}
+                WHERE id = {id}
+                """,
+                TestContext.Current.CancellationToken);
+        }
+
+        var customerId = await rig.SeedIncompleteAsync("Pedro WhatsApp", phone: "+57 310 111 2233", phoneE164: "+573101112233");
+        var request = await rig.SubmitAsync();
+
+        var taken = await rig.TakeOkAsync(request, ExistingBody(customerId));
+
+        Assert.True((bool)taken["customerCompleted"]!);
+        Assert.Equal("Complete", (await rig.CustomerAsync(customerId)).Completeness);
     }
 
     [Fact]

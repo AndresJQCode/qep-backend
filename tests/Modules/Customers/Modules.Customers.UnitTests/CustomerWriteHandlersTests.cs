@@ -405,4 +405,61 @@ public sealed class CustomerWriteHandlersTests
         Assert.Contains(onCreate.Errors, error => error.PropertyName == "Address");
         Assert.Contains(onUpdate.Errors, error => error.PropertyName == "Address");
     }
+
+    private static readonly CustomerFieldPolicy RelaxedPolicy = new(new(false, true), new(false, true));
+
+    [Fact]
+    public async Task ARelaxedTenantCreatesACustomerWithoutDocumentOrCity()
+    {
+        var customers = new FakeCustomerRepository();
+        var calls = new List<string>();
+        var command = CreateCommand() with { IdentificationType = null, IdentificationNumber = null, CityId = null };
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewCreate(customers, new UnitOfWork(), TenantDirectory.WithPolicy(RelaxedPolicy), calls)
+                .HandleAsync(command, TestContext.Current.CancellationToken));
+
+        var customer = Assert.Single(customers.Added);
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.IdentificationNumber);
+        Assert.Null(customer.CityId);
+        Assert.Matches("00[0-9]{6}$", customer.Cuc);
+        Assert.DoesNotContain("city", calls);
+    }
+
+    [Fact]
+    public async Task TheDefaultPolicyRejectsACreateWithoutDocumentBeforeTheCuc()
+    {
+        var customers = new FakeCustomerRepository();
+        var calls = new List<string>();
+        var command = CreateCommand() with { IdentificationType = null, IdentificationNumber = null };
+
+        var failure = await Assert.ThrowsAsync<CustomersDomainException>(() =>
+            NewCreate(customers, new UnitOfWork(), calls: calls).HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal(CustomersErrorCodes.IdentificationRequired, failure.Code);
+        Assert.Empty(customers.Added);
+        Assert.DoesNotContain("cuc", calls);
+    }
+
+    [Fact]
+    public async Task AnUpdateReadsTheCustomerBeforeThePolicy()
+    {
+        var target = Customer.Create(
+            CustomerId.New(), CustomerWriteDoubles.Tenant, "CLI08000001", "Verde Esencial", null, null,
+            null, null,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = CityId },
+            new CustomerCommercialInfo { ClassificationId = Classification.Id },
+            Now,
+            new PlusNormalizer());
+        var customers = new FakeCustomerRepository();
+        customers.Known.Add(target);
+        var command = UpdateCommand(target) with { Name = "Otro nombre", IdentificationType = null, IdentificationNumber = null };
+
+        await SaveIgnoringTheResponseAsync(() =>
+            NewUpdate(customers, new UnitOfWork(), TenantDirectory.WithPolicy(CustomerFieldPolicy.Default))
+                .HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Equal("Otro nombre", target.Name);
+    }
 }

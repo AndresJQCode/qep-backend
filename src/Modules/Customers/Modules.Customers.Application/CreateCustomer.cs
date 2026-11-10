@@ -57,6 +57,8 @@ public sealed class CreateCustomerHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
+        await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command, current: null, cancellationToken);
 
         // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
         // prefijo (si trae clasificacion) y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
@@ -72,8 +74,8 @@ public sealed class CreateCustomerHandler(
             command.Country.Trim(),
             Customer.ColombiaCountryCode,
             StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
                     "The city was not found.")

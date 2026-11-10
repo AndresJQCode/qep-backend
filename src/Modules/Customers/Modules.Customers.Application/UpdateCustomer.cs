@@ -64,6 +64,10 @@ public sealed class UpdateCustomerHandler(
         // Antes de pedir el CUC: Customer.Complete también rechaza, pero para entonces el consecutivo ya se quemó.
         customer.EnsureNotMerged();
 
+        // Despues de leer al cliente: la opcion B compara contra lo guardado (G14). Tambien antes del CUC.
+        await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command, customer, cancellationToken);
+
         // Se resuelven aca, no solo por la FK de base: la respuesta del PUT lleva la ciudad, el
         // departamento y la clasificacion resueltos, igual que el detalle. Ademas, si la
         // clasificacion cambia, su prefijo es lo que Customer.Update usa para reescribir el CUC —
@@ -80,8 +84,8 @@ public sealed class UpdateCustomerHandler(
             command.Country.Trim(),
             Customer.ColombiaCountryCode,
             StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
                     "The city was not found.")
