@@ -43,6 +43,14 @@ public sealed class CustomerPersonTypeTests
     }
 
     [Fact]
+    public void AForeignJuridicaWithANieIsAccepted()
+    {
+        var customer = Create(IdentificationType.Nie, PersonType.Juridica, Spanish());
+
+        Assert.Equal(PersonType.Juridica, customer.PersonType);
+    }
+
+    [Fact]
     public void AForeignJuridicaCustomerMayKeepANif()
     {
         var customer = Create(IdentificationType.Nif, PersonType.Juridica, Spanish());

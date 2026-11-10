@@ -1,5 +1,6 @@
 using BuildingBlocks.Domain.Pricing;
 using BuildingBlocks.Application;
+using Modules.Tenancy.Application;
 using FluentValidation;
 using Modules.Pos.Application;
 using Modules.Pos.Domain;
@@ -37,7 +38,7 @@ public sealed class CreatePosSaleHandlerTests
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
         new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Cashiers,
-            bed.Memberships, bed.Customers, bed.PriceRounding, bed.Context(permissions), bed.Clock, bed.TenantClock,
+            bed.Memberships, bed.Customers, bed.TenantDirectory, bed.PriceRounding, bed.Context(permissions), bed.Clock, bed.TenantClock,
             new CreatePosSaleValidator());
 
     // La venta "del otro request" que el choque deja en la base: mismo id, mismo cajero, misma huella.
@@ -238,14 +239,12 @@ public sealed class CreatePosSaleHandlerTests
     [Theory]
     [InlineData("missing", "pos.sale.customer_not_found")]
     [InlineData("inactive", "pos.sale.customer_inactive")]
-    [InlineData("noDocument", "pos.sale.customer_identification_missing")]
     public async Task AnUnusableCustomerIsADefinitive422(string state, string code)
     {
         var (bed, session) = Arrange();
         var customerId = state switch
         {
             "inactive" => bed.Customers.AddSnapshot("Pedro", "CC", "5566778899", active: false).Id,
-            "noDocument" => bed.Customers.AddSnapshot("Laura de WhatsApp").Id,
             _ => Guid.CreateVersion7(),
         };
 
@@ -255,6 +254,71 @@ public sealed class CreatePosSaleHandlerTests
         Assert.Equal(code, error.Code);
         Assert.Equal(0, bed.Numbers.Calls);
         Assert.Empty(bed.Sales.Stored);
+    }
+
+    private static TenantRegionalSettings WithDocumentOnBilling(bool onBilling) =>
+        new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56",
+            CustomerFieldPolicy: new Modules.Tenancy.Domain.CustomerFieldPolicy(
+                new Modules.Tenancy.Domain.FieldRequirement(false, onBilling), Modules.Tenancy.Domain.FieldRequirement.Always));
+
+    [Fact]
+    public async Task ACustomerWithoutDocumentIsRejectedWhenTheDocumentIsRequiredOnBilling()
+    {
+        var (bed, session) = Arrange();
+        // Sin fijar la política rige el default (todo exigido); se fija explícita para que la prueba no dependa de eso.
+        bed.TenantDirectory.Regional = WithDocumentOnBilling(true);
+        var customer = bed.Customers.AddSnapshot("Laura de WhatsApp");
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customer.Id), TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.customer_identification_missing", error.Code);
+        Assert.Equal(0, bed.Numbers.Calls);
+        Assert.Empty(bed.Sales.Stored);
+    }
+
+    [Fact]
+    public async Task ACustomerWithoutDocumentIsRejectedWhenTheTenantHasNoPolicyRow()
+    {
+        var (bed, session) = Arrange();
+        bed.TenantDirectory.Regional = null;
+        var customer = bed.Customers.AddSnapshot("Laura de WhatsApp");
+
+        var error = await Assert.ThrowsAsync<PosDomainException>(() => Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customer.Id), TestContext.Current.CancellationToken));
+
+        Assert.Equal("pos.sale.customer_identification_missing", error.Code);
+    }
+
+    [Fact]
+    public async Task ACustomerWithoutDocumentSellsWhenTheDocumentIsNotRequiredOnBilling()
+    {
+        var (bed, session) = Arrange();
+        bed.TenantDirectory.Regional = WithDocumentOnBilling(false);
+        var customer = bed.Customers.AddSnapshot("Laura de WhatsApp");
+
+        var result = await Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customer.Id), TestContext.Current.CancellationToken);
+
+        var stored = Assert.Single(bed.Sales.Stored);
+        Assert.Equal(customer.Id, stored.CustomerId);
+        Assert.Equal("Laura de WhatsApp", stored.CustomerName);
+        Assert.Null(stored.CustomerIdentificationType);
+        Assert.Null(stored.CustomerIdentificationNumber);
+        Assert.Null(result.Sale.Customer.IdentificationNumber);
+        Assert.Equal(1, bed.Numbers.Calls);
+    }
+
+    [Fact]
+    public async Task ACustomerWithADocumentNeverReadsThePolicy()
+    {
+        var (bed, session) = Arrange();
+        var customer = bed.Customers.AddSnapshot("Laura Gómez", "CC", "1020304050");
+
+        await Handler(bed, CustomerSeller).HandleAsync(
+            PlainCommand(session, customer.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, bed.TenantDirectory.Reads);
     }
 
     // Spec: la repetición se reconoce antes de mirar al cliente; si no, un cliente desactivado entre

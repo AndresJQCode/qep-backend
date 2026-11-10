@@ -87,12 +87,14 @@ public sealed class BillingPersonTypeRequirementTests
     }
 
     [Fact]
-    public async Task ANonColombianTenantIsNotChecked()
+    public async Task ANonColombianTenantIsChecked()
     {
-        // El requisito guardado queda en OnCustomerSave, pero Effective lo vuelve Never fuera de CO.
-        await BillingPersonTypeRequirement.EnsureForQuotationAsync(
-            Directory(PersonTypeRequirement.OnCustomerSave, country: "ES"), TenantId, NewQuotation(null),
-            TestContext.Current.CancellationToken);
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            BillingPersonTypeRequirement.EnsureForQuotationAsync(
+                Directory(PersonTypeRequirement.OnCustomerSave, country: "ES"), TenantId, NewQuotation(null),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.billing.person_type_required", error.Code);
     }
 
     [Fact]

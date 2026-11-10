@@ -67,12 +67,18 @@ public sealed class Tenant
     public string Country { get; private set; } = "CO";
 
     /// <summary>
-    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado**: sólo manda
-    /// si <see cref="Country"/> es <c>CO</c>; quien lo consulta pasa por
+    /// Cuándo exige el tenant el tipo de persona (spec 2026-10-26). Es lo **guardado** y manda en
+    /// todos los países; quien lo consulta pasa por
     /// <see cref="PersonTypeRequirementPolicy.Effective"/>. Arranca en <c>Never</c> y la migración
     /// rellena con lo mismo.
     /// </summary>
     public PersonTypeRequirement PersonTypeRequirement { get; private set; } = PersonTypeRequirement.Never;
+
+    /// <summary>
+    /// Qué datos del cliente (documento, ciudad) exige el tenant al guardar la ficha y al facturar.
+    /// Arranca exigiéndolo todo, como era antes de que fuera configurable.
+    /// </summary>
+    public CustomerFieldPolicy CustomerFieldPolicy { get; private set; } = CustomerFieldPolicy.Default;
 
     /// <summary>
     /// El archivo del logo en Storage, o null sin logo. La URL pública **no** se guarda acá: se
@@ -162,9 +168,18 @@ public sealed class Tenant
         string numberFormat,
         string country,
         PersonTypeRequirement personTypeRequirement,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        CustomerFieldPolicy? customerFieldPolicy = null)
     {
         EnsureActive();
+
+        var validatedPolicy = customerFieldPolicy ?? CustomerFieldPolicy;
+        if (!validatedPolicy.IsConsistent)
+        {
+            throw new TenantDomainException(
+                CustomerFieldPolicy.InvalidCode,
+                "A field required on customer save must also be required on billing.");
+        }
 
         var validatedDisplayName = ValidateDisplayName(displayName);
         var validatedCulture = ValidateCulture(defaultCulture);
@@ -187,6 +202,11 @@ public sealed class Tenant
             PersonTypeRequirement.ToString(),
             personTypeRequirement.ToString(),
             changedFields);
+        TrackChange(
+            nameof(CustomerFieldPolicy),
+            CustomerFieldPolicy.ToString(),
+            validatedPolicy.ToString(),
+            changedFields);
 
         if (changedFields.Count == 0)
         {
@@ -201,6 +221,7 @@ public sealed class Tenant
         NumberFormat = validatedNumberFormat;
         Country = validatedCountry;
         PersonTypeRequirement = personTypeRequirement;
+        CustomerFieldPolicy = validatedPolicy;
         Version++;
         UpdatedAt = occurredAt;
         _domainEvents.Add(new TenantSettingsUpdatedDomainEvent(

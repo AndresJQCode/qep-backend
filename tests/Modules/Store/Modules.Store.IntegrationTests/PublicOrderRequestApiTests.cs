@@ -302,6 +302,35 @@ public sealed class PublicOrderRequestApiTests
         Assert.Equal("123456", await rig.Fixture.ScalarAsync("SELECT identification_number FROM customers.customers WHERE id = @id", inactive));
     }
 
+    // Spec customer-field-policy 2026-11-09 §6.5 y §10.2: completar desde la tienda no pasa por la política de campos del cliente. Un
+    // incompleto con el documento del visitante se completa con sus datos tanto si el tenant relaja el documento y la ciudad como si los
+    // exige. Antes lo cubría «Tomar» (StoreTakeApiTests); sin bandeja, el checkout llega al mismo CompleteFromStoreAsync por documento.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnIncompleteCustomerWithTheDocumentIsCompletedUnderAnyFieldPolicy(bool strict)
+    {
+        await using var rig = await OpenRigAsync();
+        var required = strict ? "true" : "false";
+        await rig.Fixture.ExecuteAsync(
+            $"""
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = {required}, customer_document_required_on_billing = {required},
+                customer_city_required_on_save = {required}, customer_city_required_on_billing = {required}
+            WHERE id = @id
+            """,
+            Tenant);
+        var customerId = await StoreApiHarness.SeedCustomerAsync(
+            rig.Fixture.Settings.Factory, Tenant, "Pedro WhatsApp", phoneE164: "+573101112233");
+        await rig.Fixture.ExecuteAsync(
+            "UPDATE customers.customers SET identification_type = 'Cc', identification_number = '123456' WHERE id = @id", customerId);
+
+        var receipt = await CreatedAsync(await SubmitAsync(rig, Body(rig)));
+
+        Assert.Equal(customerId, (await LoadOrderAsync(rig, (Guid)receipt["id"]!)).ClientId);
+        Assert.Equal("Complete", await rig.Fixture.ScalarAsync("SELECT completeness FROM customers.customers WHERE id = @id", customerId));
+    }
+
     [Fact]
     public async Task ABillingAndShippingAddressGoToTheCustomerBook()
     {

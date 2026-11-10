@@ -240,7 +240,8 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
         bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> ListForExportAsync(
         Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take,

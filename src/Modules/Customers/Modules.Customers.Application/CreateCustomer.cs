@@ -9,8 +9,8 @@ public sealed record CreateCustomerCommand(
     Guid TenantId,
     string Name,
     string? BusinessName,
-    string IdentificationType,
-    string IdentificationNumber,
+    string? IdentificationType,
+    string? IdentificationNumber,
     string? Phone,
     string? Email,
     string? Address,
@@ -57,6 +57,8 @@ public sealed class CreateCustomerHandler(
         await validator.ValidateAndThrowAsync(command, cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
+        await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
+            tenantDirectory, command.TenantId, command, current: null, cancellationToken);
 
         // La clasificacion y la ciudad se resuelven **antes** de pedir el CUC: hacen falta su
         // prefijo (si trae clasificacion) y su codigo de departamento para armarlo, no son un pre-chequeo de integridad
@@ -64,16 +66,17 @@ public sealed class CreateCustomerHandler(
         // consecutivo cuando la referencia del cuerpo es invalida.
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
-        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se
-        // aseguro de que venga la que corresponde al pais; aca se comprueba que exista.
+        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. Puede no venir: si hacia
+        // falta, ya lo rechazo la politica del tenant (CustomerFieldPolicyRequirement, arriba); si
+        // viene, aca se comprueba que exista.
         // Sin `?.`: el validador de arriba ya exigio el pais NotEmpty, asi que a esta altura no es
         // nulo — y tratarlo como si pudiera serlo contagia el nulo a Country mas abajo.
         var isColombian = string.Equals(
             command.Country.Trim(),
             Customer.ColombiaCountryCode,
             StringComparison.OrdinalIgnoreCase);
-        var city = isColombian
-            ? await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+        var city = isColombian && command.CityId is { } cityId
+            ? await geographyLookup.FindCityAsync(cityId, cancellationToken)
                 ?? throw new CustomersDomainException(
                     "customers.customer.city_not_found",
                     "The city was not found.")

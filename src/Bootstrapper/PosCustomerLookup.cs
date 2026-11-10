@@ -19,9 +19,10 @@ internal sealed class PosCustomerLookup(
     private const string Source = "pos";
 
     public async Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken)
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken)
     {
-        var found = await customers.SearchSelectableAsync(tenantId, search, take, cancellationToken);
+        var found = await customers.SearchSelectableAsync(
+            tenantId, search, take, includeIncompleteWithoutDocument, cancellationToken);
         return found.Select(ToRef).ToList();
     }
 
@@ -71,12 +72,12 @@ internal sealed class PosCustomerLookup(
         return ToRef(customer);
     }
 
-    // Todo cliente que llega acá tiene documento: la búsqueda del selector lo exige y FindByIdentification parte de él.
+    // El documento es opcional (spec 2026-11-09): el selector admite a un cliente completo sin él.
     private static PosCustomerRef ToRef(Customer customer) => new(
         customer.Id.Value,
         customer.Name,
-        customer.IdentificationType!.Value.ToWireValue(),
-        customer.IdentificationNumber!,
+        customer.IdentificationType?.ToWireValue(),
+        customer.IdentificationNumber,
         customer.IsComplete,
         customer.IsActive);
 }

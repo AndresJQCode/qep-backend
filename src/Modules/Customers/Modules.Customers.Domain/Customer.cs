@@ -58,7 +58,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -67,8 +67,12 @@ public sealed class Customer
     {
         // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
         var country = contact.Normalized().Country;
-        EnsureDocumentAllowedForCountry(identification.Type, country);
-        EnsurePersonTypeMatches(personType, identification.Type, country);
+        if (identification is not null)
+        {
+            EnsureDocumentAllowedForCountry(identification.Type, country);
+            EnsurePersonTypeMatches(personType, identification.Type, country);
+        }
+
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -92,8 +96,8 @@ public sealed class Customer
         // que asignar IdentificationNumber alla deja el constructor con un CS8618. Country tiene
         // el mismo problema: se inicializa aca por lo mismo, y Assign(contact) la pisa enseguida
         // con el valor normalizado real.
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
         PersonType = personType;
         Country = string.Empty;
         Assign(contact);
@@ -321,7 +325,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -334,7 +338,7 @@ public sealed class Customer
             NormalizeName(name),
             NormalizeBusinessName(businessName),
             principalAddress,
-            identification.Normalized(),
+            identification?.Normalized(),
             personType,
             contact,
             commercial,
@@ -389,17 +393,20 @@ public sealed class Customer
         CustomerId id,
         Guid tenantId,
         string name,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         string? phone,
         DateTimeOffset now,
         IPhoneNumberNormalizer phoneNormalizer,
         string? email = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
         var normalizedName = NormalizeName(name);
-        var normalizedIdentification = identification.Normalized();
-        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, ColombiaCountryCode);
+        var normalizedIdentification = identification?.Normalized();
+        if (normalizedIdentification is not null)
+        {
+            EnsureDocumentAllowedForCountry(normalizedIdentification.Type, ColombiaCountryCode);
+        }
+
         var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
         if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
         {
@@ -437,14 +444,13 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(commercial);
         EnsureNotMerged();
@@ -457,11 +463,10 @@ public sealed class Customer
         var normalizedCuc = NormalizeCuc(cuc);
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         var location = EnsureValidLocation(normalizedContact);
-        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, normalizedContact.Country);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         _ = EnsureValidClassificationId(commercial.ClassificationId);
 
         Cuc = normalizedCuc;
@@ -863,7 +868,7 @@ public sealed class Customer
     public void Update(
         string name,
         string? businessName,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -884,13 +889,12 @@ public sealed class Customer
         // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
-        EnsureDocumentAllowedForCountry(normalizedIdentification.Type, normalizedContact.Country);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
         // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
@@ -934,10 +938,10 @@ public sealed class Customer
 
     // Desarma el value object en las dos columnas. Ver Customer.Identification para el porque del
     // aplanado.
-    private void Assign(CustomerIdentification identification)
+    private void Assign(CustomerIdentification? identification)
     {
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
     }
 
     // Asigna todo siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
@@ -1207,7 +1211,10 @@ public sealed class Customer
     /// los dos dejaria dos respuestas a "donde esta el cliente" sin nada que diga cual gana al
     /// pintar la ficha — y la que sobra envejece sola, porque el formulario ya no la muestra.
     ///
-    /// Para Colombia el chequeo es estructural y minimo (no vacia): la FK de base
+    /// La obligacion de tener ciudad ya no vive aca: depende del tenant y la decide
+    /// <c>CustomerFieldPolicyRequirement</c> (Application). Sin ciudad el trio queda en null.
+    ///
+    /// Para Colombia el chequeo es estructural y minimo (no Guid.Empty): la FK de base
     /// (<c>customers.customers.city_id -> geography.cities.id</c>) garantiza que la ciudad exista,
     /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
     /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
@@ -1220,18 +1227,30 @@ public sealed class Customer
 
         if (country == ColombiaCountryCode)
         {
-            return normalized.CityId is { } cityId && cityId != Guid.Empty
-                ? (country, cityId, null)
-                : throw new CustomersDomainException(
-                    "customers.customer.city_required",
-                    "The customer city is required.");
+            // Solo null es "sin ciudad"; un Guid.Empty es un id roto y se sigue rechazando (G5).
+            return normalized.CityId is { } cityId
+                ? (country, cityId != Guid.Empty
+                    ? cityId
+                    : throw new CustomersDomainException(
+                        "customers.customer.city_required",
+                        "The customer city is required."), null)
+                : (country, null, null);
         }
 
-        return string.IsNullOrWhiteSpace(normalized.CityName)
-            ? throw new CustomersDomainException(
-                "customers.customer.city_name_required",
-                "The customer city is required for a customer outside Colombia.")
-            : (country, null, normalized.CityName);
+        return (country, null, string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName);
+    }
+
+    // Con documento corren las dos reglas de pais; sin documento no hay nada que comprobar.
+    private static void EnsureIdentificationAllowed(
+        CustomerIdentification? identification, PersonType? personType, string country)
+    {
+        if (identification is null)
+        {
+            return;
+        }
+
+        EnsureDocumentAllowedForCountry(identification.Type, country);
+        EnsurePersonTypeMatches(personType, identification.Type, country);
     }
 
     /// <summary>

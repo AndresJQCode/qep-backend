@@ -83,6 +83,35 @@ public sealed class TenancyDbContext(DbContextOptions<TenancyDbContext> options)
             .HasMaxLength(20)
             .HasConversion<string>()
             .IsRequired();
+        // Política de datos del cliente (spec 2026-11-09): cuatro bool NOT NULL DEFAULT true, dos por
+        // campo. Complejo y no owned: es un valor, y `Default`/`Always` son instancias compartidas
+        // que una entidad owned no admite en dos lugares. El default de la columna rellena a los
+        // tenants existentes con «todo exigido», el comportamiento de antes.
+        tenant.ComplexProperty(value => value.CustomerFieldPolicy, policy =>
+        {
+            policy.ComplexProperty(value => value.Document, document =>
+            {
+                document.Property(value => value.OnCustomerSave)
+                    .HasColumnName("customer_document_required_on_save")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+                document.Property(value => value.OnBilling)
+                    .HasColumnName("customer_document_required_on_billing")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+            });
+            policy.ComplexProperty(value => value.City, city =>
+            {
+                city.Property(value => value.OnCustomerSave)
+                    .HasColumnName("customer_city_required_on_save")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+                city.Property(value => value.OnBilling)
+                    .HasColumnName("customer_city_required_on_billing")
+                    .IsRequired()
+                    .HasDefaultValue(true);
+            });
+        });
         // 512 es el largo de storage.file_resources.public_storage_key (StorageDbContext.cs:56):
         // la clave que se guarda acá es esa misma.
         tenant.Property(value => value.LogoFileId).HasColumnName("logo_file_id");

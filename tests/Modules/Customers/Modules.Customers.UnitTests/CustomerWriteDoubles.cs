@@ -33,6 +33,9 @@ internal static class CustomerWriteDoubles
         public static TenantDirectory With(string country, PersonTypeRequirement requirement) =>
             new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", country, requirement) };
 
+        public static TenantDirectory WithPolicy(CustomerFieldPolicy policy) =>
+            new() { Regional = new("America/Bogota", "dd/MM/yyyy", "COP", "1.234,56", CustomerFieldPolicy: policy) };
+
         public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken) =>
             Task.FromResult(Regional);
 
@@ -198,7 +201,7 @@ internal static class CustomerWriteDoubles
         public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<Customer>> ListForExportAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take, CancellationToken cancellationToken) =>

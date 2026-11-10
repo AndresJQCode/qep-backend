@@ -2,8 +2,8 @@ namespace Modules.Tenancy.Domain;
 
 /// <summary>
 /// Cuándo exige el tenant que la persona a quien se factura tenga tipo de persona (natural o
-/// jurídica). Spec 2026-10-26. Es un ajuste del tenant, pero sólo manda si el tenant es
-/// colombiano: ver <see cref="PersonTypeRequirementPolicy.Effective"/>.
+/// jurídica). Spec 2026-10-26. Es un ajuste del tenant y manda en todos los países:
+/// ver <see cref="PersonTypeRequirementPolicy.Effective"/>.
 /// </summary>
 public enum PersonTypeRequirement
 {
@@ -13,21 +13,15 @@ public enum PersonTypeRequirement
 }
 
 /// <summary>
-/// La regla del país de a quien se factura vive en una sola comparación (Global Constraints del
-/// plan): <c>"CO"</c>, ordinal, sin distinguir mayúsculas. Quotations.Domain no ve Tenancy y lleva
-/// su propia copia de esa comparación.
+/// El requisito de tipo de persona aplica en todos los países. La regla «jurídica ⇒ NIT» sigue
+/// siendo sólo colombiana y vive en el cliente.
 /// </summary>
 public static class PersonTypeRequirementPolicy
 {
-    public const string ColombiaCountryCode = "CO";
-
-    public static bool IsColombian(string? country) =>
-        string.Equals(country, ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>El requisito guardado sólo cuenta si el tenant es colombiano; fuera de Colombia no
-    /// existe la distinción natural/jurídica que la DIAN exige, así que es <c>Never</c>.</summary>
+    /// <summary>El requisito guardado manda tal cual, sea cual sea el país del tenant. El país se
+    /// conserva en la firma para no tocar a quien ya la llama.</summary>
     public static PersonTypeRequirement Effective(string? tenantCountry, PersonTypeRequirement stored) =>
-        IsColombian(tenantCountry) ? stored : PersonTypeRequirement.Never;
+        stored;
 
     public static PersonTypeRequirement Parse(string value) =>
         Enum.TryParse<PersonTypeRequirement>(value, ignoreCase: false, out var parsed)

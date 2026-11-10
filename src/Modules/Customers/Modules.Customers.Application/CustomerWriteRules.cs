@@ -17,9 +17,9 @@ public interface ICustomerWriteCommand
 {
     string Name { get; }
 
-    string IdentificationType { get; }
+    string? IdentificationType { get; }
 
-    string IdentificationNumber { get; }
+    string? IdentificationNumber { get; }
 
     string? Phone { get; }
 
@@ -66,8 +66,9 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         RuleFor(command => command.Name)
             .NotEmpty()
             .MaximumLength(Customer.NameMaxLength);
+        // El documento ya no es obligatorio aca: si hace falta lo decide la politica del tenant
+        // (CustomerFieldPolicyRequirement), que tambien exige que tipo y numero vengan juntos.
         RuleFor(command => command.IdentificationNumber)
-            .NotEmpty()
             .MaximumLength(CustomerIdentification.NumberMaxLength);
         // El telefono es obligatorio (CustomerContactInfo): se rechaza aca tambien para que el 422
         // lleve el mapa errors por campo y no solo el codigo de dominio.
@@ -86,7 +87,6 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
         // valores validos que alguien puede ampliar por separado terminan discrepando, y la que
         // gana es la del dominio — con un 422 sin mapa de errores.
         RuleFor(command => command.IdentificationType)
-            .NotEmpty()
             .Must(IsSupportedIdentificationType)
             .WithMessage(command =>
                 $"The identification type must be one of {Join(IdentificationTypeParser.SupportedWireValues)}.")
@@ -127,22 +127,10 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
                 $"The country must be an ISO-3166-1 alpha-2 code ({CustomerContactInfo.CountryLength} letters).")
             .When(command => !string.IsNullOrWhiteSpace(command.Country));
 
-        // Cual de los dos carriles de ciudad hace falta lo decide el pais. DIVIPOLA solo describe
-        // Colombia, asi que un cliente de afuera no tiene CityId que mandar y escribe su ciudad.
-        // Marcar el campo correcto importa: el formulario pinta un combobox o un input de texto
-        // segun el pais, y un error apuntando al campo que no esta en pantalla no se ve.
-        // NotEmpty() en un Guid? solo rechaza null: un Guid.Empty explicito lo deja pasar y el
-        // rechazo llega despues, como customers.customer.city_not_found del dominio y sin el mapa
-        // errors -- el mismo hueco que register-tenant ya documenta para un campo obligatorio mal
-        // comprobado. Must() cubre los dos casos con el mismo codigo de campo.
-        RuleFor(command => command.CityId)
-            .Must(cityId => cityId is { } value && value != Guid.Empty)
-            .WithMessage("The city is required.")
-            .When(IsColombian);
-        RuleFor(command => command.CityName)
-            .NotEmpty()
-            .WithMessage("The city is required.")
-            .When(command => !IsColombian(command));
+        // La ciudad ya no es obligatoria aca: si hace falta (y cual de los dos carriles, CityId o CityName, segun el
+        // pais) lo decide la politica del tenant en CustomerFieldPolicyRequirement. Lo que se sigue rechazando aca es
+        // Guid.Empty, un id roto que no es una forma de decir "ninguna" (la ausencia se dice con null).
+        RuleFor(command => command.CityId).NotEqual(Guid.Empty);
         RuleFor(command => command.CityName)
             .MaximumLength(CustomerContactInfo.CityNameMaxLength)
             .When(command => !string.IsNullOrWhiteSpace(command.CityName));
@@ -154,18 +142,6 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
             .EmailAddress()
             .When(command => !string.IsNullOrWhiteSpace(command.Email));
     }
-
-    // Un pais ausente cuenta como Colombia a los efectos de **cual** ciudad exigir. No es
-    // adivinar: el pais tiene su propia regla NotEmpty que ya marca el campo, y dejar los dos
-    // carriles apagados haria que un cuerpo sin pais tampoco reporte la ciudad — el formulario
-    // marcaria un solo campo por vez y el usuario corregiria de a uno. Ademas conserva el
-    // comportamiento anterior al pais para cualquier llamador que todavia no lo mande.
-    private static bool IsColombian(ICustomerWriteCommand command) =>
-        string.IsNullOrWhiteSpace(command.Country)
-        || string.Equals(
-            command.Country.Trim(),
-            Customer.ColombiaCountryCode,
-            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsSupportedIdentificationType(string? value)
     {

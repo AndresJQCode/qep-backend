@@ -112,6 +112,29 @@ public sealed class PosSaleTests
     }
 
     [Fact]
+    public void ACustomerWithoutDocumentNeverTakesTheFinalConsumerNumber()
+    {
+        var id = Guid.CreateVersion7();
+        var sale = PosSale.Create(
+            PosSaleId.New(), Fingerprint, OpenSession(), WorkedExampleLines(), [Card(20_000m, "1234"), Cash(20_000m)], Now,
+            new PosSaleCustomer(id, "Laura de WhatsApp", null, null));
+
+        Assert.Equal(id, sale.CustomerId);
+        Assert.Null(sale.CustomerIdentificationType);
+        Assert.Null(sale.CustomerIdentificationNumber);
+        Assert.NotEqual("222222222222", sale.CustomerIdentificationNumber);
+    }
+
+    [Fact]
+    public void WithoutCustomerTheSaleKeepsTheFinalConsumerNumber()
+    {
+        var sale = Sale(OpenSession());
+
+        Assert.Null(sale.CustomerId);
+        Assert.Equal("222222222222", sale.CustomerIdentificationNumber);
+    }
+
+    [Fact]
     public void ASaleWithoutACustomerIsTheFinalConsumer()
     {
         var sale = Sale(OpenSession());
