@@ -47,7 +47,7 @@ public sealed record PublicOrderRequestBody(
     PublicBuyerSignupInput? CreateAccount = null,
     bool UpdateProfile = false);
 
-/// <param name="Number">El consecutivo con formato de pantalla: <c>T-0001</c>.</param>
+/// <param name="Number">El número del pedido, con el formato de numeración del tenant.</param>
 /// <param name="BuyerSessionRejected"><c>true</c> sólo si se pidió <c>updateProfile</c> y la sesión no sirve: el BFF borra la cookie.</param>
 public sealed record PublicOrderRequestReceiptDto(
     Guid Id, string Number, decimal Total, string Currency, bool BuyerSessionRejected = false);
@@ -72,7 +72,7 @@ public sealed class PublicOrderRequestBodyValidator : AbstractValidator<PublicOr
 
     public const int AddressMaxLength = 200;
 
-    // La nota viaja a Notes del pedido; el tope es el que tenía la solicitud de la tienda.
+    // La nota viaja a Notes del pedido; el tope es el mismo de las notas de un pedido de la tienda.
     public const int NoteMaxLength = 1000;
 
     // Copia de BuyerPasswordRules (Store no ve Buyers); BuyerParityTests (Bootstrapper.UnitTests) las ata.

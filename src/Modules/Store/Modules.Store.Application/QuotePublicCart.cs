@@ -48,7 +48,7 @@ public sealed class QuotePublicCartHandler(
 }
 
 /// <summary>
-/// El precio de un carrito, compartido por la cotización y por el envío de la solicitud (que lo vuelve a correr al enviar). Un carrito
+/// El precio de un carrito, compartido por la cotización y por el envío del pedido (que lo vuelve a correr al enviar). Un carrito
 /// viejo no se rechaza entero: se precian las líneas que la tienda todavía vende en esa moneda y las otras se reportan como no
 /// disponibles. Los totales salen siempre del motor de pedidos.
 /// </summary>
@@ -67,7 +67,7 @@ public sealed class PublicCartPricing(IStoreCatalogReader catalog, IStoreOrders 
 
     /// <summary>
     /// Lo mismo que <see cref="PriceAsync"/> más el origen del descuento de cada línea (por variante), que la cotización pública no
-    /// expone pero la solicitud congela. Con <paramref name="nameUnavailable"/> falso no se lee el nombre de las líneas que quedaron fuera
+    /// expone pero el pedido congela. Con <paramref name="nameUnavailable"/> falso no se lee el nombre de las líneas que quedaron fuera
     /// (quedan en null): el envío rechaza el carrito si hay alguna, así que no lo usa.
     /// </summary>
     public async Task<(PublicCartQuoteDto Quote, IReadOnlyList<Guid> Unavailable, IReadOnlyDictionary<Guid, string> Origins)> PriceWithOriginsAsync(

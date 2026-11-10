@@ -13,11 +13,11 @@ public static class StoreIntegrationEvents
 }
 
 /// <summary>
-/// El alta de cuenta pedida desde el checkout. Commitea con la solicitud: es idempotente por <paramref name="OrderId"/>.
+/// El alta de cuenta pedida desde el checkout. Commitea con el pedido: es idempotente por <paramref name="OrderId"/>.
 /// Lleva <paramref name="PasswordHash"/> y <b>nunca</b> la contraseña en claro.
 /// </summary>
 /// <param name="StoreHost">El host normalizado de la tienda: el de los enlaces del correo y el del consentimiento.</param>
-/// <param name="VisitorIp">La IP del consentimiento, la misma que guarda la solicitud.</param>
+/// <param name="VisitorIp">La IP del consentimiento, la misma que guarda el pedido.</param>
 /// <param name="Email">El email de facturación ya normalizado (<see cref="StoreBuyerSignup.TryNormalizeEmail"/>): el de ingreso.</param>
 public sealed record StoreBuyerSignupRequestedPayload(
     Guid OrderId,

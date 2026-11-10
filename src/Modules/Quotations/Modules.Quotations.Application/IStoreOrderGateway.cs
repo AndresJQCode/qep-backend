@@ -165,7 +165,7 @@ public sealed class StoreOrderGateway(
 
         var customer = await customerLookup.FindAsync(draft.TenantId, draft.ClientId, cancellationToken);
         OrderCustomerEligibility.Ensure(customer, draft.TenantId, draft.ClientId, allowIncomplete: true);
-        // La cuenta es la entrada de la tienda para la moneda de la solicitud: de ella sale la moneda del pedido
+        // La cuenta es la entrada de la tienda para la moneda del pedido: de ella sale la moneda del pedido
         // y con ella se precian las líneas, nunca con una moneda aparte que pudiera discrepar.
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
                 companyLookup, draft.TenantId, draft.BillingAccount, cancellationToken)

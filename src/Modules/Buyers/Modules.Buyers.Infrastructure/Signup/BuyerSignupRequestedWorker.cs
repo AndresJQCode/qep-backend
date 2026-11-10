@@ -13,9 +13,9 @@ namespace Modules.Buyers.Infrastructure.Signup;
 /// Crea la cuenta pedida desde el checkout (D7): consume <c>store.buyer-signup-requested.v1</c> del outbox de plataforma con su
 /// inbox propio y aplica <see cref="BuyerSignup"/>, el mismo algoritmo del registro, con el hash que trae el mensaje.
 ///
-/// Idempotente por solicitud de pedido: <c>buyers.processed_signups</c> y el <c>processed_at</c> del inbox entran en el mismo
+/// Idempotente por pedido: <c>buyers.processed_signups</c> y el <c>processed_at</c> del inbox entran en el mismo
 /// <c>SaveChanges</c> que la cuenta, el perfil, el consentimiento, el token y el outbox del correo. Un mensaje reprocesado (o un
-/// segundo mensaje de la misma solicitud) sólo cierra su inbox; dos réplicas a la vez chocan en <c>PK_processed_signups</c> y la
+/// segundo mensaje del mismo pedido) sólo cierra su inbox; dos réplicas a la vez chocan en <c>PK_processed_signups</c> y la
 /// perdedora descarta lo suyo. Los logs llevan el id del mensaje y nunca el email, el hash ni el token.
 /// </summary>
 internal sealed partial class BuyerSignupRequestedWorker(
@@ -162,7 +162,7 @@ internal sealed partial class BuyerSignupRequestedWorker(
         }
         catch (DbUpdateException exception) when (UniqueViolation.Is(exception, BuyersDbContext.ProcessedSignupsKey))
         {
-            // Otra réplica aplicó la misma solicitud primero: lo pendiente de ésta se descarta y el mensaje queda como procesado.
+            // Otra réplica aplicó el mismo pedido primero: lo pendiente de ésta se descarta y el mensaje queda como procesado.
             dbContext.ChangeTracker.Clear();
             await CloseAsync(dbContext, record.Id, clock.UtcNow);
         }
