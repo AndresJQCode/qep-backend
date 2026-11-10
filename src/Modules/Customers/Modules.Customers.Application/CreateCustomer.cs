@@ -66,8 +66,9 @@ public sealed class CreateCustomerHandler(
         // consecutivo cuando la referencia del cuerpo es invalida.
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
-        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. El validador ya se
-        // aseguro de que venga la que corresponde al pais; aca se comprueba que exista.
+        // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver. Puede no venir: si hacia
+        // falta, ya lo rechazo la politica del tenant (CustomerFieldPolicyRequirement, arriba); si
+        // viene, aca se comprueba que exista.
         // Sin `?.`: el validador de arriba ya exigio el pais NotEmpty, asi que a esta altura no es
         // nulo — y tratarlo como si pudiera serlo contagia el nulo a Country mas abajo.
         var isColombian = string.Equals(

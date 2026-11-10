@@ -15,8 +15,8 @@ public sealed record FieldRequirement(bool OnCustomerSave, bool OnBilling)
 /// <summary>Qué datos del cliente exige el tenant y en qué momento (spec 2026-11-09).</summary>
 public sealed record CustomerFieldPolicy(FieldRequirement Document, FieldRequirement City)
 {
-    // EF no enlaza navegaciones owned a parámetros de constructor: materializa con este y asigna las
-    // dos propiedades. Nada del dominio lo llama.
+    // EF no enlaza propiedades de tipo complejo (ComplexProperty en TenancyDbContext) a parámetros de
+    // constructor: materializa con este y asigna las dos propiedades. Nada del dominio lo llama.
     private CustomerFieldPolicy()
         : this(FieldRequirement.Always, FieldRequirement.Always)
     {

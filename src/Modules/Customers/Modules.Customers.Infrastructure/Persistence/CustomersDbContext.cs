@@ -33,8 +33,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
     internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
 
-    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. Teléfono y ciudad siguen exigidos
-    /// por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. El teléfono sigue exigido por
+    /// CustomerWriteRules, como antes; la ciudad, desde el 2026-11-09, la exige (o no) la política de campos del tenant en
+    /// Application (<c>CustomerFieldPolicyRequirement</c>), así que tampoco va en este check. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
     /// ficha completa puede no tenerla, y su CUC va sin prefijo. La dirección salió el 2026-11-01: es opcional, y sin
     /// ella la ficha guarda <c>null</c> y nace sin libreta. La identificación salió el 2026-11-09: la política de campos
     /// del tenant decide en Application si una ficha completa la lleva; aquí sólo se exige que tipo y número vayan

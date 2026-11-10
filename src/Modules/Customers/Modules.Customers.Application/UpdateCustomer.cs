@@ -75,7 +75,8 @@ public sealed class UpdateCustomerHandler(
         var classification = await classificationRepository.ResolveForCustomerAsync(
             command.TenantId, command.ClassificationId, cancellationToken);
         // Solo un cliente colombiano tiene ciudad DIVIPOLA que resolver; uno de afuera escribe la
-        // suya. El validador ya exigio la que corresponde al pais. Sobre una ficha completa es puro
+        // suya. Puede no venir: si hacia falta, ya lo rechazo la politica del tenant
+        // (CustomerFieldPolicyRequirement). Sobre una ficha completa es puro
         // chequeo de existencia: el CUC no se reconstruye en un Update (el departamento de su
         // codigo es el del alta, no el vigente). Sobre una incompleta, la ciudad da el departamento
         // del CUC que se emite al completarla, como en el alta.
