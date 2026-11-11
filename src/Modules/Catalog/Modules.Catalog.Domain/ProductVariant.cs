@@ -19,6 +19,7 @@ public sealed class ProductVariant
     public const int BarcodeMaxLength = 64;
 
     private readonly List<ProductPrice> _prices = [];
+    private readonly List<ProductVariantCost> _costs = [];
     private readonly List<PriceScale> _priceScales = [];
     private readonly List<ProductVariantOptionValue> _optionValues = [];
 
@@ -74,6 +75,14 @@ public sealed class ProductVariant
     public decimal? PriceIn(string currency) =>
         _prices.Find(price => price.Currency == currency)?.Amount;
 
+    /// <summary>El costo unitario manual, una fila por moneda. No es parte del precio: no se
+    /// cotiza ni se vende con él.</summary>
+    public IReadOnlyCollection<ProductVariantCost> Costs => _costs;
+
+    /// <summary>Null cuando la variante no tiene costo en esa moneda. Nunca una conversión.</summary>
+    public decimal? CostIn(string currency) =>
+        _costs.Find(cost => cost.Currency == currency)?.Amount;
+
     /// <summary>Se reemplazan enteras en cada <see cref="Product.Update"/>: el PUT reemplaza el
     /// recurso completo, así que una escala que no viene deja de existir.</summary>
     public IReadOnlyCollection<PriceScale> PriceScales => _priceScales;
@@ -118,6 +127,12 @@ public sealed class ProductVariant
         IsActive = input.IsActive;
         Position = position;
         ApplyPricing(input.Pricing);
+
+        // Null conserva los guardados: un cliente que no conoce el campo no debe borrar costos.
+        if (input.Costs is not null)
+        {
+            ReplaceCosts(input.Costs);
+        }
     }
 
     /// <summary>Ver <see cref="Product.ApplyCopiedPriceScales"/>.</summary>
@@ -234,6 +249,31 @@ public sealed class ProductVariant
         }
     }
 
+    // En el lugar, como ReplacePrices: EF sigue la fila por (dueño, moneda). Un monto no positivo
+    // es un error de programación; el 422 lo da el validador de la aplicación.
+    private void ReplaceCosts(IReadOnlyDictionary<string, decimal> costs)
+    {
+        foreach (var (currency, amount) in costs)
+        {
+            EnsureCurrencyCodeShape(currency);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(amount, 0m, nameof(costs));
+        }
+
+        _costs.RemoveAll(cost => !costs.ContainsKey(cost.Currency));
+        foreach (var (currency, amount) in costs)
+        {
+            var existing = _costs.Find(cost => cost.Currency == currency);
+            if (existing is null)
+            {
+                _costs.Add(new ProductVariantCost(currency, amount));
+            }
+            else
+            {
+                existing.ChangeAmount(amount);
+            }
+        }
+    }
+
     private void ReplaceScales(IReadOnlyCollection<PriceScaleInput> scales, bool keepsIncompleteScales)
     {
         _priceScales.Clear();
@@ -331,4 +371,8 @@ public sealed record ProductVariantInput
     public Guid? GalleryFileId { get; init; }
 
     public bool IsActive { get; init; } = true;
+
+    /// <summary>Costo unitario por moneda. Null conserva los guardados, un mapa los reemplaza y
+    /// uno vacío los borra. Las claves llegan normalizadas por la aplicación.</summary>
+    public IReadOnlyDictionary<string, decimal>? Costs { get; init; }
 }

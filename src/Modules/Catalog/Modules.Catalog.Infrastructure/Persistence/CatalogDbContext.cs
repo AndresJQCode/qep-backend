@@ -244,6 +244,26 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         });
         variant.Navigation(value => value.Prices).UsePropertyAccessMode(PropertyAccessMode.Field);
 
+        // Costo unitario manual (spec 2026-11-10): tabla propia y no una columna de product_prices,
+        // porque no es parte del precio y su ausencia (sin fila) significa «costo desconocido». El
+        // CHECK es > 0: un cero se confundiría con «gratis» en el reporte de margen.
+        variant.OwnsMany(value => value.Costs, cost =>
+        {
+            cost.ToTable("product_variant_costs", "catalog", table =>
+                table.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0"));
+            cost.WithOwner().HasForeignKey("VariantId");
+            cost.Property<VariantId>("VariantId")
+                .HasColumnName("variant_id")
+                .HasConversion(id => id.Value, value => new VariantId(value));
+            cost.Property(value => value.Currency)
+                .HasColumnName("currency")
+                .HasColumnType("character(3)")
+                .HasMaxLength(3);
+            cost.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            cost.HasKey("VariantId", nameof(ProductVariantCost.Currency));
+        });
+        variant.Navigation(value => value.Costs).UsePropertyAccessMode(PropertyAccessMode.Field);
+
         // Mismo criterio que product_options: FK RESTRICT a option_values, para que un valor en
         // uso no se borre ni por SQL; y el índice por valor sirve la pregunta «¿está en uso?».
         variant.OwnsMany<ProductVariantOptionValue>("_optionValues", value =>
