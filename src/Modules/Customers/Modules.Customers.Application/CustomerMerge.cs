@@ -222,6 +222,14 @@ public sealed class MergeCustomersHandler(
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
+        // Borrar clientes (final review I-1): antes de leer nada, el candado exclusivo de referencias de todos los clientes que la
+        // fusión toca (el que queda, los fusionados y su cadena), en orden de id, como el borrado en bloque. Si un borrado de
+        // cualquiera de ellos va primero, la fusión espera y después no lo encuentra (404); si va después, el borrado ve lo que la
+        // fusión movió y lo bloquea. La cadena se lee antes del candado sólo para saber qué pedir; se relee abajo, ya con él.
+        var expectedChain = await mergeStore.FindIdsMergedIntoAsync(command.TenantId, mergedIds.ToArray(), cancellationToken);
+        Guid[] locked = [command.SurvivorId, .. mergedIds, .. expectedChain];
+        await references.LockAsync(command.TenantId, locked, cancellationToken);
+
         var survivor = await repository.FindAsync(command.TenantId, new CustomerId(command.SurvivorId), cancellationToken)
             ?? throw CustomerNotFound.For(command.SurvivorId);
         if (survivor.Version != command.ExpectedVersion)
@@ -241,6 +249,12 @@ public sealed class MergeCustomersHandler(
 
         // D-F2: los que ya apuntaban a un fusionado (C → B) pasan a apuntar al que queda, y lo suyo también se mueve.
         var chain = await mergeStore.FindIdsMergedIntoAsync(command.TenantId, mergedIds.ToArray(), cancellationToken);
+        if (chain.Except(locked).Any())
+        {
+            // Otra fusión sumó un eslabón entre la primera lectura y el candado: moverlo sin su candado rompería el orden.
+            throw new RequestConcurrencyException("concurrency.conflict", "Another merge changed these customers while this one was starting.");
+        }
+
         var moved = mergedIds.Concat(chain).Distinct().ToArray();
         var (tagMerge, mergedAssignments) = await CustomerMergeTags.PlanAsync(tags, command.TenantId, plan, cancellationToken);
 
