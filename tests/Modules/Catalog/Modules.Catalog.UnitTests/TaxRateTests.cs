@@ -54,8 +54,8 @@ public sealed class TaxRateTests
         Assert.Equal("catalog.tax_rate.name_too_long", error.Code);
     }
 
-    // CA-CAT-03-06. El porcentaje es entero de 0 decimales (P-008, owner 2026-08-10) y sólo
-    // tiene sentido dentro de 0..100: un negativo devolvería plata y uno mayor a 100 cobraría
+    // CA-CAT-03-06. El porcentaje sólo tiene sentido dentro de 0..100 (la forma
+    // —entero o con fracción— la fija el tipo, D15): un negativo devolvería plata y uno mayor a 100 cobraría
     // más impuesto que el valor de la línea.
     [Theory]
     [InlineData(-1)]

@@ -617,6 +617,9 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public void Add(Company company) => throw new NotSupportedException();
 
     public void Remove(Company company) => throw new NotSupportedException();

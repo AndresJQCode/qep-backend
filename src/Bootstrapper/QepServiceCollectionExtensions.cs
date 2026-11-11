@@ -237,6 +237,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetTaxRateQuery, TaxRateDto>,
             GetTaxRateHandler>();
         services.AddScoped<
+            IQueryHandler<GetTaxRateOptionsQuery, TaxRateOptionsDto>,
+            GetTaxRateOptionsHandler>();
+        services.AddScoped<
             ICommandHandler<CreateTaxRateCommand, TaxRateDto>,
             CreateTaxRateHandler>();
         services.AddScoped<
@@ -1520,6 +1523,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
         services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
+        // Impuestos por tipo (spec 2026-11-10 §7.2): Catalog verifica el país de una tasa contra las empresas del tenant.
+        services.AddScoped<ITaxRateCountrySource, TaxRateCountrySource>();
         // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
         // lo usan crear, guardar y previsualizar la cotización y el pedido.
         services.AddScoped<ShippingResolver>();
