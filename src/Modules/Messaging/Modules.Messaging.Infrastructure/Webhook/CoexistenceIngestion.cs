@@ -39,18 +39,23 @@ internal static class CoexistenceIngestion
         // OrderBy es estable: dos mensajes del mismo segundo conservan el orden en que Meta los mandó.
         var ordered = messages.OrderBy(message => message.OccurredAt).ToList();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        // Borrar clientes (A-12 y P4): el candado compartido del cliente, y el cliente comprobado, antes de crear la conversación con
-        // él o de colgarle mensajes; también el del cliente que la conversación ya tenía, que es el que conserva el COALESCE de
-        // UpdateSummaryAsync. Si el borrado ganó, CustomerVanishedException deshace el hilo entero y la entrega se reintenta: el
-        // reintento ya no encuentra ni la conversación ni el cliente, y crea los nuevos (D-4).
-        if (customerId is { } held)
+        // Borrar clientes (A-12 y P4): un solo candado de cliente, antes de cualquier fila (EnsureAttachedIsHeld explica el orden): el
+        // del cliente que la conversación ya tiene, que es el que conserva el COALESCE de UpdateSummaryAsync, o, si no hay conversación o
+        // no tiene cliente, el resuelto afuera. Si el borrado ganó, CustomerVanishedException deshace el hilo entero y la entrega se
+        // reintenta: el reintento ya no encuentra ni la conversación ni el cliente, y crea los nuevos (D-4).
+        var existing = await ConversationOpener.FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken);
+        var held = (existing is { } existingId ? await MessagingCustomerReferenceLock.OwnerOfAsync(dbContext, existingId, cancellationToken) : null)
+            ?? customerId;
+        if (held is { } heldId)
         {
-            await MessagingCustomerReferenceLock.HoldOrVanishAsync(dbContext, tenantId, held, cancellationToken);
+            await MessagingCustomerReferenceLock.HoldOrVanishAsync(dbContext, tenantId, heldId, cancellationToken);
         }
 
         var (conversationId, created) = await FindOrCreateAsync(
             dbContext, tenantId, connectionId, waId, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
-        await MessagingCustomerReferenceLock.HoldConversationCustomerAsync(dbContext, tenantId, conversationId, customerId, cancellationToken);
+        MessagingCustomerReferenceLock.EnsureAttachedIsHeld(
+            created ? customerId : await MessagingCustomerReferenceLock.OwnerOfAsync(dbContext, conversationId, cancellationToken) ?? customerId,
+            held);
 
         var changed = created;
         // La marca durable de lo importado (decisión del owner del 2026-10-30): un eco es tráfico en vivo y no la lleva.

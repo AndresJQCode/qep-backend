@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -210,5 +211,109 @@ public sealed class CustomerDeletionRaceTests
             "SELECT customer_id FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
         Assert.Equal(version, await ScalarAsync<long>(f.ConnectionString,
             "SELECT version FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
+    }
+
+    /// <summary>
+    /// El orden de candados frente al borrado (P1 y P5): el borrado toma el exclusivo del cliente y después bloquea sus conversaciones
+    /// con <c>FOR UPDATE</c>. La adopción de una fila vieja sin BSUID (las que abre <c>OpenByPhoneAsync</c> con el cliente de una
+    /// cotización en el número de otro, D16b) no puede tomar la fila antes que el candado del cliente: el <c>FOR UPDATE</c> del borrado
+    /// quedaría esperando a la ingesta mientras la ingesta espera el candado, y Postgres abortaría a uno de los dos. Con el orden bueno,
+    /// la ingesta espera el candado sin tener la fila y el <c>FOR UPDATE</c> entra en el acto.
+    /// </summary>
+    [Fact]
+    public async Task AdoptingALegacyConversationDuringDeletionWaitsWithoutHoldingItsRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        // El cliente de la conversación vieja tiene otro número: el entrante resuelve (y crea) otro cliente por su teléfono.
+        var owner = await CreateCustomerAsync(f.Factory, f.Tenant, "CONSTRUCTORA SAS", "300 555 0101");
+        var conversationId = await SeedConversationAsync(f.Factory, f.Tenant.TenantId, f.ConnectionId, WaId);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET customer_id = @customerId WHERE id = @id",
+            ("customerId", owner), ("id", conversationId));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await PostAndDrainAsync(f, MetaPayloads.Inbound(PhoneNumberId, MetaPayloads.UserIdFor(WarmUpWaId), WarmUpWaId, "wamid.warmup", now - 120, "Hola"));
+        var (connection, transaction) = await HoldExclusiveAsync(f.ConnectionString, f.Tenant.TenantId, owner);
+        await using var _c = connection;
+        await using var _t = transaction;
+        Assert.Equal(HttpStatusCode.OK, (await PostWebhookAsync(
+            f.Webhook, MetaPayloads.Inbound(PhoneNumberId, MetaPayloads.UserIdFor(WaId), WaId, "wamid.adopt", now - 60, "Hola, soy de compras"))).StatusCode);
+
+        var drain = Task.Run(() => DrainDeliveriesAsync(f.Factory), Ct);
+
+        Assert.NotSame(drain, await Task.WhenAny(drain, Task.Delay(NoAnswerWindow, Ct)));
+        // P5: el borrado bloquea las conversaciones del cliente. Por debajo del deadlock_timeout (1 s) de Postgres: con la fila tomada
+        // por la ingesta esto esperaría hasta que el detector abortara a alguien.
+        var clock = Stopwatch.StartNew();
+        await using (var lockRows = new NpgsqlCommand(
+            "SELECT id FROM messaging.conversations WHERE tenant_id = @tenantId AND customer_id = @id FOR UPDATE", connection, transaction))
+        {
+            lockRows.Parameters.AddWithValue("tenantId", f.Tenant.TenantId);
+            lockRows.Parameters.AddWithValue("id", owner);
+            await lockRows.ExecuteNonQueryAsync(Ct);
+        }
+
+        Assert.True(clock.Elapsed < NoAnswerWindow, $"FOR UPDATE took {clock.Elapsed}: the ingest held the conversation row.");
+        await DeleteAndCommitAsync(connection, transaction, owner, conversationId);
+        await drain;
+
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.messages WHERE wamid = 'wamid.adopt'"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.webhook_deliveries WHERE processed_at IS NULL"));
+
+        await RetryNowAsync(f);
+
+        await AssertLandedOnANewCustomerAsync(f, "wamid.adopt", owner);
+    }
+
+    private const string CampaignCatalog = """
+        {"data":[
+          {"id":"1","name":"promo","language":"es","status":"APPROVED","category":"MARKETING",
+           "components":[{"type":"BODY","text":"Hola {{1}}"}]}
+        ]}
+        """;
+
+    /// <summary>P4: el cliente de un destinatario se borra mientras la campaña le abre la conversación. El destinatario termina
+    /// <c>Skipped</c>/<c>unreachable</c>, como uno que ya no tiene cliente, y no queda conversación.</summary>
+    [Fact]
+    public async Task ACampaignRecipientWhoseCustomerIsDeletedWhileOpeningIsSkippedAsUnreachable()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, "LAURA GÓMEZ", "300 111 2233");
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, CampaignCatalog);
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CampaignPermissions);
+        var url = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/campaigns";
+        var created = await SendAsync(client, HttpMethod.Post, url, new
+        {
+            name = "Promo",
+            connectionId = f.ConnectionId,
+            template = new { name = "promo", language = "es" },
+            parameters = new Dictionary<string, object> { ["1"] = new { source = "customerName" } },
+            audience = new { tagIds = Array.Empty<Guid>(), customerIds = new[] { customerId } },
+            scheduledAt = (string?)null,
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var campaignId = (await created.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(client, HttpMethod.Post, $"{url}/{campaignId}/launch", new { expectedVersion = 1 })).StatusCode);
+        // La audiencia queda congelada a mano con el único destinatario, para que el worker no la vuelva a congelar.
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now() WHERE id = @id", ("id", campaignId));
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, status, attempts, next_attempt_at)
+            VALUES (@id, @campaign, @tenant, @customer, 'Laura', @wa, 'Pending', 0, now() - interval '1 hour')
+            """,
+            ("id", Guid.CreateVersion7()), ("campaign", campaignId), ("tenant", f.Tenant.TenantId), ("customer", customerId), ("wa", WaId));
+        var (connection, transaction) = await HoldExclusiveAsync(f.ConnectionString, f.Tenant.TenantId, customerId);
+        await using var _c = connection;
+        await using var _t = transaction;
+
+        var drain = Task.Run(() => DrainCampaignsAsync(f.Factory), Ct);
+
+        Assert.NotSame(drain, await Task.WhenAny(drain, Task.Delay(NoAnswerWindow, Ct)));
+        await DeleteAndCommitAsync(connection, transaction, customerId, conversationId: null);
+        await drain;
+
+        Assert.Equal("Skipped|unreachable", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT status || '|' || coalesce(failure_code, '') FROM messaging.campaign_recipients WHERE campaign_id = @id", ("id", campaignId)));
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
     }
 }

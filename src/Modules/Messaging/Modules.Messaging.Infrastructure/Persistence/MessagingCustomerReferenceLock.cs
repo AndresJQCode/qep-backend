@@ -39,18 +39,33 @@ internal sealed class MessagingCustomerReferenceLock(MessagingDbContext dbContex
     }
 
     /// <summary>
-    /// Para el webhook: el cliente que la conversación ya tiene, si es otro que <paramref name="held"/>. El <c>COALESCE(customer_id, …)</c>
-    /// de la ingesta se queda con ése, y el mensaje cuelga de su conversación: si se está borrando, hay que esperarlo igual.
+    /// Para el webhook: el cliente de una conversación, leído sin candado. Si la fila ya no está (el borrado se la llevó entre la búsqueda
+    /// y esta lectura), <see cref="CustomerVanishedException"/>: lo mismo que si el cliente hubiera desaparecido.
     /// </summary>
-    internal static async Task HoldConversationCustomerAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid conversationId, Guid? held, CancellationToken cancellationToken)
+    internal static async Task<Guid?> OwnerOfAsync(MessagingDbContext dbContext, Guid conversationId, CancellationToken cancellationToken)
     {
-        var owner = await dbContext.Database.SqlQuery<Guid?>(
+        var rows = await dbContext.Database.SqlQuery<Guid?>(
             $"""SELECT customer_id AS "Value" FROM messaging.conversations WHERE id = {conversationId}""")
-            .SingleAsync(cancellationToken);
-        if (owner is { } customerId && customerId != held)
+            .ToListAsync(cancellationToken);
+        return rows is [var owner]
+            ? owner
+            : throw new CustomerVanishedException($"Conversation '{conversationId}' was deleted while a webhook delivery was writing to it.");
+    }
+
+    /// <summary>
+    /// Orden de candados frente al borrado (P1 y P5): el borrado toma los exclusivos ordenados por id y después bloquea con
+    /// <c>FOR UPDATE</c> las conversaciones de esos clientes. El webhook, en cambio, toma un solo candado de cliente y lo toma antes de
+    /// cualquier fila, así que nunca espera un candado teniendo algo que el borrado necesite. Ese único candado es el del cliente que la
+    /// conversación queda teniendo: el que ya tenía (el <c>COALESCE</c> lo conserva) o, si no tenía, el resuelto afuera. Si después de
+    /// tomarlo la conversación resulta colgar de otro (otro request se la cambió o la creó entretanto), no se escribe sin su candado: se
+    /// reintenta la entrega.
+    /// </summary>
+    internal static void EnsureAttachedIsHeld(Guid? attached, Guid? held)
+    {
+        if (attached is { } customerId && customerId != held)
         {
-            await HoldOrVanishAsync(dbContext, tenantId, customerId, cancellationToken);
+            throw new CustomerVanishedException(
+                $"The conversation moved to customer '{customerId}' while a webhook delivery held the lock of another one.");
         }
     }
 }

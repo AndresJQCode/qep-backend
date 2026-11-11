@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -281,7 +282,19 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         var contact = new MessagingCustomerContact(
             customerId, recipient.CustomerName, recipient.WaId is null ? null : "+" + recipient.WaId, recipient.UserId, IsActive: true, MarketingOptOut: false);
         // §6.3 paso 3.1: sin asignar. Una respuesta entra por la ingesta normal y cae en «Sin asignar», donde un asesor la toma.
-        var opened = await opener.OpenAsync(recipient.TenantId, recipient.ConnectionId, contact, assignedMemberId: null, actorUserId: null, now, cancellationToken);
+        OpenedConversation opened;
+        try
+        {
+            opened = await opener.OpenAsync(recipient.TenantId, recipient.ConnectionId, contact, assignedMemberId: null, actorUserId: null, now, cancellationToken);
+        }
+        catch (ResourceNotFoundException exception) when (exception.Code == MessagingErrorCodes.CustomerNotFound)
+        {
+            // Borrar clientes (A-12 y P4): el cliente se borró mientras el abridor esperaba su candado. Es el mismo destinatario que uno
+            // sin cliente: inalcanzable, sin conversación y sin pasar por el reintento del lease.
+            await SkipAsync(recipient, CampaignFailureCodes.Unreachable, cancellationToken);
+            return null;
+        }
+
         var messageId = recipient.MessageId ?? Guid.CreateVersion7();
 
         // Paso 3.2: mensaje y message_id del destinatario, en la misma transacción. client_id = el destinatario: la clave única
