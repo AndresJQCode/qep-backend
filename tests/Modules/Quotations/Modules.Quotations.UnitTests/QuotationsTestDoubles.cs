@@ -1285,10 +1285,19 @@ internal sealed class StubQuotationGeographyLookup(
 
     public IReadOnlyCollection<Guid> LastCoordinadoraRequestedIds { get; private set; } = [];
 
+    /// <summary>Cuántas veces se pidieron nombres de ciudad: uno por lote es la aserción.</summary>
+    public int FindCityNamesCalls { get; private set; }
+
+    public IReadOnlyCollection<Guid> LastCityRequestedIds { get; private set; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
-        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        FindCityNamesCalls++;
+        LastCityRequestedIds = cityIds;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(cityNames.ContainsKey).Distinct().ToDictionary(id => id, id => cityNames[id]));
+    }
 
     public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)

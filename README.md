@@ -1154,7 +1154,7 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 | 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
 | 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
 | 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
-| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
+| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
 | 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está en `Pending` con pago `PaymentPending` y sin comprobantes, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
 
 Notas:
@@ -1172,7 +1172,7 @@ Notas:
 
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
-- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status`, `paymentStatus`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`) y `cancelledAt`.
+- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status`, `paymentStatus`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `isStorePickup`, `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
 - **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no

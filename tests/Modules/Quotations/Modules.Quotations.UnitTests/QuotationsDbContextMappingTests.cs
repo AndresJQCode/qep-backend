@@ -597,6 +597,16 @@ public sealed class QuotationsDbContextMappingTests
     }
 
     [Fact]
+    public void TheOrderBuyerNotesMapsToANullableTextColumn()
+    {
+        using var context = new QuotationsDbContextFactory().CreateDbContext([]);
+        var property = context.Model.FindEntityType(typeof(Order))!.FindProperty(nameof(Order.BuyerNotes))!;
+        Assert.Equal("buyer_notes", property.GetColumnName());
+        Assert.Equal("text", property.GetColumnType());
+        Assert.True(property.IsNullable);
+    }
+
+    [Fact]
     public void TheOrderBuyerAccountMapsToItsColumnAndFilteredIndex()
     {
         using var context = new QuotationsDbContextFactory().CreateDbContext([]);
