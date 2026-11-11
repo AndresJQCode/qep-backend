@@ -91,6 +91,11 @@ public sealed class AddOrderPaymentProofsHandler(
         var order = await repository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
+        PaidOrderProofRemoval.EnsureAmountCorrectionAuthorized(
+            executionContext,
+            command.TenantId,
+            order,
+            command.UpdatedProofs.Select(update => (update.ProofId, update.Amount)));
 
         foreach (var proof in command.PaymentProofs)
         {

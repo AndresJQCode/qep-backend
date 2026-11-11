@@ -88,9 +88,11 @@ el banco y, hoy, «aprueba» el pedido. Es el «Marcar como pagado» de Shopify 
   comprobantes volvería a `PendingVerification` en el siguiente recálculo.
 - **Deshacer pagado**: mismo permiso; vuelve al valor calculado (`PendingVerification` si lo consignado cubre).
   Sólo si el pedido no está preparado ni facturado.
-- **Comprobantes sobre un pedido ya pagado** *(decisión del diseñador)*: agregar o corregir un comprobante con
-  `manage` **no cambia** el estado del pago. Quitar un comprobante de un pedido pagado exige
-  `quotations.order.approve`; sin él, 403. Así ningún camino con sólo `manage` deshace el pagado.
+- **Comprobantes sobre un pedido ya pagado** *(decisión del diseñador)*: agregar un comprobante, o corregir sólo
+  su fecha o su archivo con el mismo monto, sigue con `manage` y **no cambia** el estado del pago. Quitar un
+  comprobante de un pedido pagado, o corregir su monto (por `PUT` con `proofs.update` o por `POST …/proofs` con
+  `updatedProofs`), exige `quotations.order.approve`; sin él, 403. Bajar un monto y subir el neto en el mismo
+  guardado bajaría el pagado a parcial: así ningún camino con sólo `manage` deshace el pagado.
 - **El recálculo** (`RecalculatePaymentStatus`, tras editar líneas o quitar un comprobante) **nunca sube a
   pagado** *(decisión del diseñador: si subiera, un asesor con `manage` lo dejaría pagado sin el permiso)*. Sobre
   un pedido pagado sólo baja a `PartialPaymentReceived` cuando **la edición sube el neto** y el nuevo neto supera lo

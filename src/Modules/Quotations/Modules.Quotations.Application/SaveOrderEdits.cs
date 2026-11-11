@@ -75,6 +75,12 @@ public sealed class SaveOrderEditsHandler(
             PaidOrderProofRemoval.EnsureAuthorized(executionContext, command.TenantId, order);
         }
 
+        PaidOrderProofRemoval.EnsureAmountCorrectionAuthorized(
+            executionContext,
+            command.TenantId,
+            order,
+            command.Proofs.Update.Select(update => (update.ProofId, update.Amount)));
+
         // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la
         // copia pública de un comprobante publicada.
         if (order.Version != command.ExpectedVersion)

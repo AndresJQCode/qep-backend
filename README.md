@@ -1706,7 +1706,8 @@ la API con su nombre:
   COP), `PendingVerification` («Por verificar»). `FullPaymentReceived` («Pagado») sólo se alcanza con
   `mark-paid`, que deja `paidMarkedAt`/`paidMarkedBy`, o con el pago que sincroniza Shopify en un pedido
   sin comprobantes. Quitar un comprobante de un pedido pagado (por `DELETE …/proofs/{id}` o por
-  `proofs.removeIds` del `PUT`) exige `.approve`: con sólo `.manage` es `403`. `balance` es neto menos
+  `proofs.removeIds` del `PUT`), o corregir su monto (`proofs.update` del `PUT` o `updatedProofs` de
+  `POST …/proofs`), exige `.approve`: con sólo `.manage` es `403`. `balance` es neto menos
   consignado (negativo es sobrante).
 - **Editable** es `Open`, sin preparar y sin facturar (`Order.IsEditable`). Pagado sigue siendo editable;
   preparado congela el pedido. Fuera de eso, `PUT`, `preview`, `items` y `proofs` responden

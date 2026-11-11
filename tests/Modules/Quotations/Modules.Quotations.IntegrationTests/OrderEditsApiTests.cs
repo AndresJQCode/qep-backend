@@ -339,6 +339,84 @@ public sealed class OrderEditsApiTests
         Assert.Equal(new DateOnly(2026, 10, 7), corrected.PaidOn);
     }
 
+    // Spec 2026-11-10 §3.2: corregir el monto de un comprobante de un pedido pagado exige
+    // quotations.order.approve, igual que quitarlo. Con sólo manage, bajar el monto a 1 y subir el
+    // neto en el mismo guardado bajaría el pagado a parcial y borraría la marca de quien lo revisó.
+    [Theory]
+    [InlineData(false, HttpStatusCode.Forbidden, "FullPaymentReceived")]
+    [InlineData(true, HttpStatusCode.OK, "PartialPaymentReceived")]
+    public async Task CorrectingAProofAmountOnAPaidOrderRequiresTheApprovePermission(
+        bool withApprove, HttpStatusCode expectedStatus, string expectedPayment)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = manager;
+        var (order, productId, proofId) = await CreatePaidOrderWithProofAsync(
+            manager, factory, tenantId, ownerUserId);
+        using var editor = withApprove
+            ? CreateClient(factory, ownerUserId.ToString(), tenantId.ToString(), ApproverPermissions)
+            : CreateClient(factory, ownerUserId.ToString(), tenantId.ToString(), ManagerPermissions);
+
+        var response = await PutEditsAsync(
+            editor, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 2m)],
+                new OrderEditProofsRequest(null, [new OrderPaymentProofUpdateRequest(proofId, 1m)], null),
+                null));
+
+        Assert.Equal(expectedStatus, response.StatusCode);
+        var fetched = await GetDetailAsync(manager, tenantId, order.Id);
+        Assert.Equal(expectedPayment, fetched.Order.PaymentStatus);
+        Assert.Equal(withApprove, fetched.Order.PaidMarkedAt is null);
+    }
+
+    // La misma regla por POST /proofs (`updatedProofs`): ningún camino con sólo manage corrige el
+    // monto de un comprobante de un pedido pagado.
+    [Fact]
+    public async Task CorrectingAProofAmountOnAPaidOrderThroughTheProofsRouteIsForbiddenWithOnlyManage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = manager;
+        var (order, _, proofId) = await CreatePaidOrderWithProofAsync(manager, factory, tenantId, ownerUserId);
+
+        var response = await manager.PostAsJsonAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/proofs",
+            new AddOrderPaymentProofsRequest([], UpdatedProofs: [new OrderPaymentProofUpdateRequest(proofId, 1m)]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var fetched = await GetDetailAsync(manager, tenantId, order.Id);
+        Assert.Equal("FullPaymentReceived", fetched.Order.PaymentStatus);
+        Assert.NotEqual(1m, Assert.Single(fetched.Order.PaymentProofs).Amount);
+    }
+
+    // Corregir sólo la fecha (el mismo monto) de un pedido pagado no toca el pago y sigue con manage.
+    [Fact]
+    public async Task CorrectingOnlyThePaidOnDateOfAPaidOrderProofStaysWithManage()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, manager) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = manager;
+        var (order, productId, proofId) = await CreatePaidOrderWithProofAsync(
+            manager, factory, tenantId, ownerUserId);
+        var amount = Assert.Single(order.PaymentProofs).Amount;
+
+        var response = await PutEditsAsync(
+            manager, tenantId, order.Id, order.Version,
+            new SaveOrderEditsRequest(
+                [new OrderEditItemRequest(productId, 1m)],
+                new OrderEditProofsRequest(
+                    null, [new OrderPaymentProofUpdateRequest(proofId, amount, PaidOn: new DateOnly(2026, 10, 7))], null),
+                null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("FullPaymentReceived", (await ReadDetailAsync(response)).Order.PaymentStatus);
+    }
+
     // Atomicidad: el proofId ajeno falla después de aplicar los productos en memoria, y nada
     // persiste. El fileId inexistente falla antes de mutar, con su propio código.
     [Fact]
@@ -911,6 +989,30 @@ public sealed class OrderEditsApiTests
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(order);
         return (quotation, order, productId);
+    }
+
+    // Un pedido con un comprobante por el total, marcado pagado por quien tiene approve.
+    private static async Task<(OrderResponse Order, Guid ProductId, Guid ProofId)> CreatePaidOrderWithProofAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid ownerUserId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var converted = await client.PostAsJsonAsync(
+            OrderUrl(tenantId, quotation.Id),
+            new ConvertQuotationToOrderRequest(null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        using var approver = CreateClient(factory, ownerUserId.ToString(), tenantId.ToString(), ApproverPermissions);
+        var paid = await approver.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/mark-paid", null, TestContext.Current.CancellationToken);
+        paid.EnsureSuccessStatusCode();
+        var detail = await GetDetailAsync(client, tenantId, order.Id);
+        Assert.Equal("FullPaymentReceived", detail.Order.PaymentStatus);
+        return (detail.Order, productId, Assert.Single(detail.Order.PaymentProofs).Id);
     }
 
     private static async Task<HttpResponseMessage> PutEditsAsync(
