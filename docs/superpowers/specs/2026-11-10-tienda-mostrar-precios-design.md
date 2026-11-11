@@ -3,7 +3,7 @@
 Fecha: 2026-11-10 · Repo: `qep-backend` · Specs hermanos: `qep-frontend/docs/superpowers/specs/2026-11-10-tienda-mostrar-precios-design.md`
 y `qep-storefront/docs/superpowers/specs/2026-11-10-tienda-mostrar-precios-design.md`. Este documento manda el contrato HTTP.
 
-Estado: borrador para revisión del owner. Las decisiones de §3.1 son del owner. Las de §3.2 son **decisión del
+Estado: aprobado por el owner el 2026-11-10. Las decisiones de §3.1 son del owner. Las de §3.2 son **decisión del
 asistente**: se tomaron al escribir y el owner las tiene que confirmar. §8 lista lo que el código contradice o deja
 abierto.
 
@@ -49,7 +49,7 @@ la API pública los sigue devolviendo.
 | O4 | Ocultar es sólo visual: los precios pueden quedar en el HTML y en las respuestas del backend. |
 | O5 | En modo catálogo el backend precia el pedido al enviarlo con el `PricingMode` de la tienda, como hoy: `RetailOnly` → detal, `QuantityScales` → escalas. No se fuerza detal. Quien no quiera escalas en una tienda catálogo elige «Sólo detal». Ni `SubmitOrderRequest` ni `QuotePublicCart` leen `ShowPrices`. |
 
-### 3.2 Del asistente (pendientes de confirmar por el owner)
+### 3.2 Del asistente (aprobadas por el owner el 2026-11-10)
 
 | # | Decisión |
 | --- | --- |
