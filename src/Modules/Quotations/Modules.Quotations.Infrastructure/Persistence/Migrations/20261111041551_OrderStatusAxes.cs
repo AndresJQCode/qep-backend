@@ -101,13 +101,33 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 WHERE status IN ('Approved', 'Invoiced') AND payment_status = 'FullPaymentReceived';
                 """);
 
-            // §8: un «Pago total» que nadie aprobó pasa a verificación. El pago sincronizado de Shopify lo dice la
-            // tienda, no una persona, y conserva su valor (Review Focus 1).
+            // §8: un «Pago total» que nadie aprobó vuelve a lo que digan sus comprobantes, igual que
+            // Order.CalculatedPaymentStatus: nada consignado es PaymentPending; menos que el neto redondeado como lo
+            // muestra la moneda (pesos enteros en COP, centavos en las demás; round de numeric redondea alejándose
+            // del cero, como MidpointRounding.AwayFromZero) es PartialPaymentReceived; lo que lo cubre,
+            // PendingVerification. El pago sincronizado de Shopify lo dice la tienda, no una persona, y conserva su
+            // valor (Review Focus 1); pero uno de Shopify con comprobantes de QEP lo eligió la asesora (la
+            // sincronización no corre con comprobantes) y se recalcula como los demás.
             migrationBuilder.Sql(
                 """
-                UPDATE quotations.orders
-                SET payment_status = 'PendingVerification'
-                WHERE status = 'Pending' AND payment_status = 'FullPaymentReceived' AND source <> 'Shopify';
+                WITH consigned AS (
+                    SELECT o.id,
+                           EXISTS (SELECT 1 FROM quotations.order_payment_proofs p WHERE p.order_id = o.id) AS has_proofs,
+                           COALESCE(
+                               (SELECT sum(p.amount) FROM quotations.order_payment_proofs p WHERE p.order_id = o.id),
+                               0) AS paid,
+                           round(o.net_total, CASE WHEN o.currency = 'COP' THEN 0 ELSE 2 END) AS displayed_net
+                    FROM quotations.orders o
+                    WHERE o.status = 'Pending' AND o.payment_status = 'FullPaymentReceived'
+                )
+                UPDATE quotations.orders o
+                SET payment_status = CASE
+                    WHEN c.paid <= 0 THEN 'PaymentPending'
+                    WHEN c.paid < c.displayed_net THEN 'PartialPaymentReceived'
+                    ELSE 'PendingVerification'
+                END
+                FROM consigned c
+                WHERE o.id = c.id AND (o.source <> 'Shopify' OR c.has_proofs);
                 """);
 
             // §8: los tres estados vivos pasan a Open; invoiced_* queda como estaba. Nada se archiva.
@@ -160,6 +180,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 WHERE status IN ('Open', 'Archived');
                 """);
 
+            // Con pérdida: un «Pago total» sin aprobar que el Up recalculó a PaymentPending o PartialPaymentReceived
+            // no se distingue de uno que ya lo era, y se queda así. Sólo PendingVerification vuelve a pagado.
             migrationBuilder.Sql(
                 """
                 UPDATE quotations.orders

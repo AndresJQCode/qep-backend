@@ -208,10 +208,13 @@ pagado sin comprobante hasta prenderlo. Decisión explícita del owner.
 - `fulfillment_status` nuevo, `NotPrepared` para todos.
 - `Approved` (y `Invoiced`) con `FullPaymentReceived`: quedan `FullPaymentReceived`; su `PaidMarkedBy/At` se toma
   de `ApprovedBy/At` *(decisión del diseñador: es quien de hecho verificó el pago)*.
-- `Pending` con `FullPaymentReceived` (la asesora lo dejó en «Pago total» y nadie lo aprobó): pasan a
-  `PendingVerification` (owner, 2026-11-10: la verificación de facturación no se salta).
+- `Pending` con `FullPaymentReceived` (la asesora lo dejó en «Pago total» y nadie lo aprobó): vuelven a lo que digan
+  sus comprobantes, con la regla de §3.2 (owner, 2026-11-10: la verificación de facturación no se salta). Sin
+  comprobantes, `PaymentPending`; con menos que el neto redondeado como lo muestra la moneda, `PartialPaymentReceived`;
+  con lo que lo cubre, `PendingVerification`. El `Down` sólo devuelve a pagado los `PendingVerification`.
 - `Approved` sin pago completo (sólo posible por API directa): quedan `Open` y editables otra vez.
-- Pedidos de Shopify con pago sincronizado: conservan su valor.
+- Pedidos de Shopify con pago sincronizado (sin comprobantes): conservan su valor. Uno de Shopify con comprobantes
+  de QEP se recalcula como los demás: su «Pago total» lo eligió la asesora, no la tienda.
 - Ningún pedido existente se archiva.
 - Toda escritura cruda a `quotations.orders` (`ExportLoadSeeder`, pruebas con `INSERT` a mano) usa los valores
   nuevos.

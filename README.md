@@ -1733,8 +1733,9 @@ la API con su nombre:
   `quotations.order.approve` conserva su nombre y ahora se llama «Marcar pedidos como pagados».
 - **Migración `OrderStatusAxes`:** `Pending`, `Approved` e `Invoiced` pasan a `Open` (la marca de facturado
   queda); quien aprobó un pedido pagado queda como quien lo marcó pagado; un `FullPaymentReceived` que nadie
-  aprobó pasa a `PendingVerification`, salvo los de Shopify, cuyo pago lo dice la tienda. `approved_at` y
-  `approved_by` se eliminan.
+  aprobó vuelve a lo que digan sus comprobantes (`PaymentPending`, `PartialPaymentReceived` o
+  `PendingVerification`, con el neto redondeado como lo muestra la moneda), salvo los de Shopify sin
+  comprobantes, cuyo pago lo dice la tienda. `approved_at` y `approved_by` se eliminan.
 
 **Rollback.** El código anterior no sabe escribir las siete columnas que `AddOrderOwnData` deja
 `NOT NULL` sin default: sin este paso, toda conversión falla con `23502`. Se corre **antes** de

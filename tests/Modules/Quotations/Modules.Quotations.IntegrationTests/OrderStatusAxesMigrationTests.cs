@@ -29,6 +29,11 @@ public sealed class OrderStatusAxesMigrationTests
     private const string PendingPaidShopify = "01900000-0000-7000-8000-00000000e105";
     private const string ApprovedPartial = "01900000-0000-7000-8000-00000000e106";
     private const string CancelledOrder = "01900000-0000-7000-8000-00000000e107";
+    private const string PendingPaidWithoutProofs = "01900000-0000-7000-8000-00000000e108";
+    private const string PendingPaidPartialProofs = "01900000-0000-7000-8000-00000000e109";
+    private const string PendingPaidCopRounded = "01900000-0000-7000-8000-00000000e10a";
+    private const string PendingPaidUsdCents = "01900000-0000-7000-8000-00000000e10b";
+    private const string PendingPaidShopifyWithProof = "01900000-0000-7000-8000-00000000e10c";
 
     [Fact]
     public async Task PendingApprovedAndInvoicedBecomeOpenAndKeepTheInvoicing()
@@ -74,8 +79,35 @@ public sealed class OrderStatusAxesMigrationTests
         }
     }
 
+    // Un «Pago total» que nadie aprobó vuelve a lo que digan sus comprobantes, como CalculatedPaymentStatus: sin
+    // comprobantes, pendiente; con menos que el neto (redondeado como lo muestra la moneda), parcial; con lo que lo
+    // cubre, por verificar. Nunca queda pagado.
     [Fact]
-    public async Task AnUnapprovedFullPaymentGoesToVerification()
+    public async Task AnUnapprovedFullPaymentIsRecalculatedFromItsProofs()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateSeededAsync(connectionString);
+
+        foreach (var (id, expected) in new[]
+        {
+            (PendingPaidManual, "PendingVerification"),
+            (PendingPaidWithoutProofs, "PaymentPending"),
+            (PendingPaidPartialProofs, "PartialPaymentReceived"),
+            (PendingPaidCopRounded, "PendingVerification"),
+            (PendingPaidUsdCents, "PartialPaymentReceived"),
+        })
+        {
+            var where = $"FROM quotations.orders WHERE id = '{id}'";
+            Assert.Equal((id, expected), (id, await TextAsync(connectionString, $"SELECT payment_status {where}")));
+            Assert.Equal(1L, await ScalarAsync<long>(connectionString, $"SELECT count(*) {where} AND paid_marked_at IS NULL"));
+        }
+    }
+
+    // Un pedido de Shopify con comprobantes de QEP: el «Pago total» lo eligió la asesora, no lo sincronizó la tienda
+    // (SyncExternalPaymentStatus no corre con comprobantes), así que se recalcula como uno manual.
+    [Fact]
+    public async Task AShopifyOrderWithQepProofsIsRecalculatedFromThem()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
@@ -83,9 +115,8 @@ public sealed class OrderStatusAxesMigrationTests
 
         Assert.Equal(
             "PendingVerification",
-            await TextAsync(connectionString, $"SELECT payment_status FROM quotations.orders WHERE id = '{PendingPaidManual}'"));
-        Assert.Equal(1L, await ScalarAsync<long>(
-            connectionString, $"SELECT count(*) FROM quotations.orders WHERE id = '{PendingPaidManual}' AND paid_marked_at IS NULL"));
+            await TextAsync(
+                connectionString, $"SELECT payment_status FROM quotations.orders WHERE id = '{PendingPaidShopifyWithProof}'"));
     }
 
     // Review Focus 1: el pago sincronizado de Shopify no lo marcó una persona; lo dice la tienda.
@@ -169,16 +200,22 @@ public sealed class OrderStatusAxesMigrationTests
 
     private static string OrderValues(
         string id, int number, string status, string paymentStatus, string source, string? approvedBy, string? invoicedAt,
-        string? externalKey = null) =>
+        string? externalKey = null, string currency = "COP", string netTotal = "116500.00") =>
         $"""
         ('{id}', '{TenantId}', 'PED-2026-{number:0000}', NULL, '{status}', '{paymentStatus}', '2026-09-10T15:00:00Z',
          '{MemberA}', {(approvedBy is null ? "NULL" : $"'{ApprovedAt}'")}, {(approvedBy is null ? "NULL" : $"'{approvedBy}'")},
          {(invoicedAt is null ? "NULL" : $"'{invoicedAt}'")}, {(invoicedAt is null ? "NULL" : $"'{MemberB}'")},
          '2026-09-10T15:00:00Z', '2026-09-10T15:00:00Z', 1, '{source}',
          {(externalKey is null ? "NULL" : $"'#{number}'")}, {(externalKey is null ? "NULL" : $"'{externalKey}'")},
-         '01900000-0000-7000-8000-00000000e0c1', '{MemberA}', 'COP', '01900000-0000-7000-8000-00000000e0d1', 'Bancolombia',
+         '01900000-0000-7000-8000-00000000e0c1', '{MemberA}', '{currency}', '01900000-0000-7000-8000-00000000e0d1', 'Bancolombia',
          '7542', 'COP', 'Transferencia', false, NULL, false, false, false, NULL, NULL, true, false,
-         100000.00, 19.00, 19000.00, 0.00, 119000.00, 2500.00, 116500.00)
+         100000.00, 19.00, 19000.00, 0.00, 119000.00, 2500.00, {netTotal})
+        """;
+
+    private static string ProofValues(string orderId, int number, string amount) =>
+        $"""
+        ('01900000-0000-7000-8000-00000000f{number:000}', '{orderId}', '01900000-0000-7000-8000-00000000f9{number:00}',
+         {amount}, '{MemberA}', '2026-09-10T15:00:00Z')
         """;
 
     private static readonly string SeedSql = $"""
@@ -200,7 +237,20 @@ public sealed class OrderStatusAxesMigrationTests
         {OrderValues(PendingPaidManual, 4, "Pending", "FullPaymentReceived", "Manual", null, null)},
         {OrderValues(PendingPaidShopify, 5, "Pending", "FullPaymentReceived", "Shopify", null, null, "shop-1:5005")},
         {OrderValues(ApprovedPartial, 6, "Approved", "PartialPaymentReceived", "Manual", MemberA, null)},
-        {OrderValues(CancelledOrder, 7, "Cancelled", "PaymentPending", "Manual", null, null)};
+        {OrderValues(CancelledOrder, 7, "Cancelled", "PaymentPending", "Manual", null, null)},
+        {OrderValues(PendingPaidWithoutProofs, 8, "Pending", "FullPaymentReceived", "Manual", null, null)},
+        {OrderValues(PendingPaidPartialProofs, 9, "Pending", "FullPaymentReceived", "Manual", null, null)},
+        {OrderValues(PendingPaidCopRounded, 10, "Pending", "FullPaymentReceived", "Manual", null, null, netTotal: "116529.37")},
+        {OrderValues(PendingPaidUsdCents, 11, "Pending", "FullPaymentReceived", "Manual", null, null, currency: "USD", netTotal: "100.37")},
+        {OrderValues(PendingPaidShopifyWithProof, 12, "Pending", "FullPaymentReceived", "Shopify", null, null, "shop-1:5012")};
+        INSERT INTO quotations.order_payment_proofs (id, order_id, file_id, amount, uploaded_by, uploaded_at)
+        VALUES
+        {ProofValues(PendingPaidManual, 1, "116500.00")},
+        {ProofValues(PendingPaidPartialProofs, 2, "50000.00")},
+        {ProofValues(PendingPaidCopRounded, 3, "116529.00")},
+        {ProofValues(PendingPaidUsdCents, 4, "100.00")},
+        {ProofValues(PendingPaidShopifyWithProof, 5, "60000.00")},
+        {ProofValues(PendingPaidShopifyWithProof, 6, "56500.00")};
         RESET session_replication_role;
         """;
 
