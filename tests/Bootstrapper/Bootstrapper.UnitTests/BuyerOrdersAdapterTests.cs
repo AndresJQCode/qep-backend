@@ -53,14 +53,18 @@ public sealed class BuyerOrdersAdapterTests
     private static BuyerOrderDetail SampleDetail() =>
         new(OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa",
             [new BuyerOrderLine("Camisa", 1.5m, 10m, 17.85m), new BuyerOrderLine("Gorra", 2m, 50m, 101.65m)],
-            Cancelled, false);
+            Cancelled, false, 84.03m, 15.97m, 19.5m, false, "Coordinadora", "BillingParty",
+            new BuyerOrderBilling("Ana Pérez", "CC", "123456", "ana@test.co", "3001234567", "Calle 1 # 2-3", "CO", "Antioquia", "Medellín"),
+            new BuyerOrderShipping("Luis Gómez", "3009876543", "Carrera 4 # 5-6", "CO", "Cundinamarca", "Bogotá"),
+            "Entregar en portería");
 
-    private static (BuyerOrdersAdapter Adapter, Counter Counter) CreateAdapter(bool withDetail = true, Exception? cancelFailure = null)
+    private static (BuyerOrdersAdapter Adapter, Counter Counter) CreateAdapter(
+        bool withDetail = true, Exception? cancelFailure = null, BuyerOrderDetail? detail = null)
     {
         var counter = new Counter();
         var services = new ServiceCollection();
         services.AddScoped<IBuyerOrderGateway>(_ =>
-            new RecordingBuyerOrderGateway(counter, withDetail ? SampleDetail() : null, cancelFailure));
+            new RecordingBuyerOrderGateway(counter, withDetail ? detail ?? SampleDetail() : null, cancelFailure));
         var factory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         return (new BuyerOrdersAdapter(factory), counter);
     }
@@ -102,6 +106,58 @@ public sealed class BuyerOrdersAdapterTests
             line => Assert.Equal(new BuyerOrderLineDto("Camisa", 1.5m, 10m, 17.85m), line),
             line => Assert.Equal(new BuyerOrderLineDto("Gorra", 2m, 50m, 101.65m), line));
     }
+
+    [Fact]
+    public async Task FindMapsTheTotalsPartiesAndBuyerNotes()
+    {
+        var source = SampleDetail();
+        var (adapter, _) = CreateAdapter();
+
+        var detail = await adapter.FindAsync(Tenant, Account, OrderId, CancellationToken.None);
+
+        Assert.NotNull(detail);
+        Assert.Equal(84.03m, detail.Subtotal);
+        Assert.Equal(15.97m, detail.TaxAmount);
+        Assert.Equal(19.5m, detail.FreightTotal);
+        Assert.False(detail.IsStorePickup);
+        Assert.Equal("Coordinadora", detail.CarrierName);
+        Assert.Equal("BillingParty", detail.BilledTo);
+        Assert.Equal("Entregar en portería", detail.BuyerNotes);
+        var billing = source.Billing!;
+        Assert.Equal(
+            new BuyerOrderBillingDto(
+                billing.Name, billing.IdentificationType, billing.IdentificationNumber, billing.Email, billing.Phone, billing.Address,
+                billing.Country, billing.DepartmentName, billing.CityName),
+            detail.Billing);
+        var shipping = source.Shipping!;
+        Assert.Equal(
+            new BuyerOrderShippingDto(
+                shipping.Name, shipping.Phone, shipping.Address, shipping.Country, shipping.DepartmentName, shipping.CityName),
+            detail.Shipping);
+    }
+
+    [Fact]
+    public async Task AMissingBillingAndShippingStayNull()
+    {
+        var (adapter, _) = CreateAdapter(detail: SampleDetail() with { Billing = null, Shipping = null, BilledTo = "FinalConsumer" });
+
+        var detail = await adapter.FindAsync(Tenant, Account, OrderId, CancellationToken.None);
+
+        Assert.NotNull(detail);
+        Assert.Null(detail.Billing);
+        Assert.Null(detail.Shipping);
+        Assert.Equal("FinalConsumer", detail.BilledTo);
+    }
+
+    [Theory]
+    [InlineData(typeof(BuyerOrderDetail), typeof(BuyerOrderDetailDto))]
+    [InlineData(typeof(BuyerOrderBilling), typeof(BuyerOrderBillingDto))]
+    [InlineData(typeof(BuyerOrderShipping), typeof(BuyerOrderShippingDto))]
+    [InlineData(typeof(BuyerOrderLine), typeof(BuyerOrderLineDto))]
+    public void TheDetailDtosMirrorTheGatewayRecords(Type gateway, Type dto) =>
+        Assert.Equal(
+            gateway.GetProperties().Select(p => p.Name).Order(StringComparer.Ordinal),
+            dto.GetProperties().Select(p => p.Name).Order(StringComparer.Ordinal));
 
     [Fact]
     public async Task ListMapsPageAndSummaries()

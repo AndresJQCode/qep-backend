@@ -14,7 +14,17 @@ public interface ICustomerRepository
     /// <c>name</c>/<c>identificationNumber</c>/<c>cuc</c> son tres filtros independientes
     /// (CLI-FILTROS-01): cada uno filtra su propia columna con ILIKE, y se combinan con AND
     /// cuando el llamador manda mas de uno. <c>search</c> es el criterio OR original —sobre los
-    /// mismos tres campos— que el combobox de clientes de <c>quotes</c> todavia necesita.
+    /// mismos tres campos y el telefono— que el combobox de clientes de <c>quotes</c> todavia
+    /// necesita. El telefono se compara solo por los digitos del termino contra <c>PhoneE164</c>,
+    /// y solo desde siete digitos: un fragmento mas corto aparece en casi cualquier numero.
+    ///
+    /// <c>phone</c> es una cuarta caja al nivel de las otras tres (AND): compara solo los digitos del
+    /// valor contra <c>PhoneE164</c>, sin el minimo de siete, porque quien llena el campo Telefono ya
+    /// dijo que busca un telefono. Sin ningun digito no filtra.
+    ///
+    /// <c>includeContacts</c> en <c>false</c> deja fuera a los clientes que son contacto de una empresa (spec 2026-11-10 §5); el
+    /// handler lo decide a partir de <c>contacts</c> y de si hubo una búsqueda. Además, <c>search</c> y <c>name</c> también
+    /// comparan la razón social, y la relevancia la suma.
     ///
     /// <c>cityIds</c> filtra por ciudad exacta (no ILIKE: son ids). <c>null</c> es "sin filtro";
     /// una coleccion vacia es "no matchear ninguna fila" — la usa <c>ListCustomersHandler</c>
@@ -28,10 +38,12 @@ public interface ICustomerRepository
         string? name,
         string? identificationNumber,
         string? cuc,
+        string? phone,
         IReadOnlyCollection<Guid>? cityIds,
         bool? isComplete,
         int page,
         int pageSize,
+        bool includeContacts,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -40,7 +52,7 @@ public interface ICustomerRepository
     /// sin documento son los más nuevos y llenarían la página.
     /// Con <paramref name="includeIncompleteWithoutDocument"/> también los activos incompletos sin documento: el tenant no
     /// exige el documento al facturar, así que la caja les puede vender y tiene que poder volver a encontrarlos.
-    /// Un solo término contra nombre, documento y CUC, con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
+    /// Un solo término contra nombre, documento, CUC y teléfono (mismo criterio que <c>search</c> de <see cref="SearchAsync"/>), con el orden de <see cref="SearchAsync"/>; sin término, el más nuevo primero.
     /// </summary>
     Task<IReadOnlyList<Customer>> SearchSelectableAsync(
         Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken);
@@ -60,8 +72,10 @@ public interface ICustomerRepository
         string? name,
         string? identificationNumber,
         string? cuc,
+        string? phone,
         int skip,
         int take,
+        bool includeContacts,
         CancellationToken cancellationToken);
 
     Task<Customer?> FindAsync(
@@ -109,6 +123,18 @@ public interface ICustomerRepository
     Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId,
         IReadOnlyCollection<string> suffixes,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-10 §4.8: los clientes sin fusionar del tenant que tienen alguno de estos números de documento, **sin
+    /// importar el tipo**, en una sola consulta batch. La usa la columna «Empresa» de la importación, que trae sólo el número:
+    /// como el índice único es por tipo y número, uno puede tener dos dueños (de distinto tipo) y entonces es ambiguo. El
+    /// número se compara tal cual está guardado (recortado, como lo deja <c>CustomerIdentification</c>). Sólo ids: no carga
+    /// entidades. Un número sin dueño no aparece.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> numbers,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -217,6 +243,23 @@ public interface ICustomerRepository
     /// 2026-10-24 §3.3): quien llama resuelve uno por <see cref="Customer.MergedIntoId"/>.
     /// </summary>
     Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-10 §3.3: toma <c>SELECT id … ORDER BY id FOR UPDATE</c> sobre los clientes dados, en orden de id, para que dos
+    /// vinculaciones concurrentes (A→B y B→A) se serialicen en vez de violar «un solo nivel». Sólo ids: no carga entidades.
+    /// Dura lo que la transacción de la unidad de trabajo.
+    /// </summary>
+    Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Como <see cref="LockForCompanyLinkAsync"/> pero en la misma sentencia, ordenada por id, también bloquea los contactos sin
+    /// fusionar de <paramref name="companyIds"/> (los que la fusión va a mover). Así el conjunto que la fusión adquiere es un
+    /// superconjunto ordenado del que adquiere el vínculo y el <c>UPDATE</c> posterior no toma bloqueos nuevos fuera de orden.
+    /// Una ventana queda abierta: un contacto vinculado a un cliente fusionado mientras esta sentencia esperaba no está en el conjunto
+    /// y lo bloquea después el repoint; ese ciclo residual se manifiesta como 412, no como 500.
+    /// </summary>
+    Task LockForMergeAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken);
 
     void Add(Customer customer);
 }

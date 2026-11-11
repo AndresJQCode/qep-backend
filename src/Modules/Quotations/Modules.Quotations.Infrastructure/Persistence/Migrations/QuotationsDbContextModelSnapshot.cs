@@ -179,6 +179,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("buyer_account_id");
 
+                    b.Property<string>("BuyerNotes")
+                        .HasColumnType("text")
+                        .HasColumnName("buyer_notes");
+
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")

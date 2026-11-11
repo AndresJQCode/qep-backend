@@ -613,6 +613,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
                 value => value.HasValue ? new MemberId(value.Value) : null);
         // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
         order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
+        // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
+        order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")

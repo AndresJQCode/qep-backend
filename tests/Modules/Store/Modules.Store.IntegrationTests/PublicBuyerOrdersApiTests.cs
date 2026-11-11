@@ -21,6 +21,25 @@ public sealed class PublicBuyerOrdersApiTests
 {
     private const string Password = "una-contrasena-larga";
     private const string BuyerCancellationReason = "Cancelado por el comprador desde la tienda";
+    private const string BuyerNote = "Entregar en portería";
+
+    private static readonly string[] DetailKeys = [
+        "billedTo", "billing", "buyerNotes", "canCancel", "cancelledAt", "carrierName", "createdAt", "currency", "firstLineName",
+        "freightTotal", "id", "isStorePickup", "lineCount", "lines", "number", "paymentStatus", "shipping", "status", "subtotal",
+        "taxAmount", "total"];
+
+    private static readonly string[] BillingKeys = [
+        "address", "cityName", "country", "departmentName", "email", "identificationNumber", "identificationType", "name", "phone"];
+
+    private static readonly string[] ShippingKeys = ["address", "cityName", "country", "departmentName", "name", "phone"];
+
+    private static string[] Keys(JsonNode node) => node.AsObject().Select(p => p.Key).Order(StringComparer.Ordinal).ToArray();
+
+    private static Task<string?> PlaceNameAsync(BuyerOrdersRig rig, string table, Guid id) =>
+        rig.TextAsync($"SELECT name FROM geography.{table} WHERE id = @id", ("id", id));
+
+    private static Task<string?> BillingPhoneAsync(BuyerOrdersRig rig, Guid orderId) =>
+        rig.TextAsync("SELECT phone FROM quotations.order_parties WHERE order_id = @order AND role = 'Billing'", ("order", orderId));
 
     // ---- Comprador ----------------------------------------------------------------------------------------------------------
 
@@ -94,9 +113,10 @@ public sealed class PublicBuyerOrdersApiTests
 
     /// <summary>Un pedido por el checkout real (2 × Camiseta a 10.000 COP, Pending, PaymentPending), enlazado a la cuenta por SQL
     /// si se da una; sin cuenta queda como pedido de invitado.</summary>
-    private static async Task<Guid> SeedBuyerOrderAsync(BuyerOrdersRig rig, Guid? accountId)
+    private static async Task<Guid> SeedBuyerOrderAsync(
+        BuyerOrdersRig rig, Guid? accountId, Action<Dictionary<string, object?>>? tweak = null)
     {
-        var orderId = (Guid)(await rig.CheckoutOkAsync())["id"]!;
+        var orderId = (Guid)(await rig.CheckoutOkAsync(rig.CheckoutBody(tweak: tweak)))["id"]!;
         if (accountId is { } account)
         {
             await rig.ExecuteAsync(
@@ -350,6 +370,146 @@ public sealed class PublicBuyerOrdersApiTests
         Assert.Equal((decimal)console["total"]!, (decimal)detail["total"]!);
         Assert.True((bool)detail["canCancel"]!);
         Assert.Null(detail["cancelledAt"]);
+    }
+
+    [Fact]
+    public async Task TheDetailCarriesTheBillingTotalsAndTheBuyerNote()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account, b => b["note"] = "  Entregar en portería  ");
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        var console = (await rig.OrderAsync(orderId))["order"]!;
+        Assert.Equal("BillingParty", (string)detail["billedTo"]!);
+        Assert.False((bool)detail["isStorePickup"]!);
+        Assert.Null(detail["carrierName"]);
+        Assert.Equal(0m, (decimal)detail["freightTotal"]!);
+        Assert.Equal((decimal)console["subtotal"]!, (decimal)detail["subtotal"]!);
+        Assert.Equal((decimal)console["taxAmount"]!, (decimal)detail["taxAmount"]!);
+        Assert.Equal(
+            (decimal)detail["total"]!, (decimal)detail["subtotal"]! + (decimal)detail["taxAmount"]! + (decimal)detail["freightTotal"]!);
+        var billing = detail["billing"]!;
+        Assert.Equal("Ana Pérez", (string)billing["name"]!);
+        Assert.Equal("CC", (string)billing["identificationType"]!);
+        Assert.Equal("123456", (string)billing["identificationNumber"]!);
+        Assert.Equal("ana@test.co", (string)billing["email"]!);
+        Assert.Equal(await BillingPhoneAsync(rig, orderId), (string)billing["phone"]!);
+        Assert.Equal("Calle 1 # 2-3", (string)billing["address"]!);
+        Assert.Equal("CO", (string)billing["country"]!);
+        Assert.Equal(await PlaceNameAsync(rig, "departments", rig.Department), (string)billing["departmentName"]!);
+        Assert.Equal(await PlaceNameAsync(rig, "cities", rig.City), (string)billing["cityName"]!);
+        Assert.Equal(BuyerNote, (string)detail["buyerNotes"]!);
+        Assert.Equal(
+            BuyerNote, await rig.TextAsync("SELECT buyer_notes FROM quotations.orders WHERE id = @order", ("order", orderId)));
+    }
+
+    /// <summary>Guarda de no regresión de un no-objetivo (D6): ocultar precios lo resuelve el storefront, el backend sigue enviando montos.</summary>
+    [Fact]
+    public async Task WithShowPricesOffTheDetailStillCarriesAmounts()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account);
+        await rig.ExecuteAsync("UPDATE store.stores SET show_prices = false WHERE tenant_id = @tenant", ("tenant", Guid.Parse(TenantId)));
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        Assert.NotNull(detail["total"]);
+        Assert.NotNull(detail["subtotal"]);
+        Assert.NotNull(detail["taxAmount"]);
+        Assert.NotNull(detail["freightTotal"]);
+        var line = Assert.Single(detail["lines"]!.AsArray())!;
+        Assert.NotNull(line["unitPrice"]);
+        Assert.NotNull(line["lineTotal"]);
+    }
+
+    [Fact]
+    public async Task UsingTheSameDataShipsToTheBillingWithoutEmailOrDocument()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account);
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        var billing = detail["billing"]!;
+        var shipping = detail["shipping"]!;
+        Assert.Equal(ShippingKeys, Keys(shipping));
+        foreach (var key in ShippingKeys)
+        {
+            Assert.Equal((string?)billing[key], (string?)shipping[key]);
+        }
+    }
+
+    [Fact]
+    public async Task TheDetailHasExactlyTheContractKeys()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account);
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        Assert.Equal(DetailKeys, Keys(detail));
+        Assert.Equal(BillingKeys, Keys(detail["billing"]!));
+        Assert.Equal(ShippingKeys, Keys(detail["shipping"]!));
+    }
+
+    [Fact]
+    public async Task TheConsoleNoteEditDoesNotChangeTheBuyerNote()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account, b => b["note"] = BuyerNote);
+        var order = (await rig.OrderAsync(orderId))["order"]!;
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/tenants/{TenantId}/orders/{orderId}")
+        {
+            Content = JsonContent.Create(
+                new SaveOrderEditsRequest([new OrderEditItemRequest(rig.Variant, 2m)], null, "Texto del asesor", IsRetail: (bool)order["isRetail"]!)),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{(long)order["version"]!}\"");
+
+        var saved = await rig.Console.SendAsync(request, TestContext.Current.CancellationToken);
+
+        var savedJson = await JsonAsync(saved);
+        Assert.True(saved.StatusCode == HttpStatusCode.OK, savedJson.ToJsonString());
+        Assert.Equal("Texto del asesor", (string)(await rig.OrderAsync(orderId))["order"]!["notes"]!);
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+        Assert.Equal(BuyerNote, (string)detail["buyerNotes"]!);
+    }
+
+    [Fact]
+    public async Task AnOrderWithoutBuyerNotesNeverShowsTheAdvisorNotes()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account);
+        await rig.ExecuteAsync(
+            "UPDATE quotations.orders SET notes = 'Texto del asesor', buyer_notes = NULL WHERE id = @order", ("order", orderId));
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        Assert.Null(detail["buyerNotes"]);
+    }
+
+    [Fact]
+    public async Task CancelReturnsTheExtendedDetail()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account, b => b["note"] = BuyerNote);
+
+        var cancelled = await OkAsync(await CancelAsync(rig, orderId, session));
+
+        Assert.Equal(DetailKeys, Keys(cancelled));
+        Assert.Equal("Cancelled", (string)cancelled["status"]!);
+        Assert.Equal(BuyerNote, (string)cancelled["buyerNotes"]!);
+        Assert.NotNull(cancelled["billing"]);
+        Assert.Equal(
+            (decimal)cancelled["total"]!,
+            (decimal)cancelled["subtotal"]! + (decimal)cancelled["taxAmount"]! + (decimal)cancelled["freightTotal"]!);
     }
 
     [Fact]

@@ -1747,16 +1747,83 @@ public sealed class OrderTests
         return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
     }
 
-    private static Order NewBuyerStoreOrder(Guid? buyer, OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)
+    private static Order NewBuyerStoreOrder(
+        Guid? buyer, OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending, string? notes = null)
     {
         var order = Order.CreateFromStore(
-            OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], null, Advisor, Now, "store-checkout:abc", buyerAccountId: buyer);
+            OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], notes, Advisor, Now, "store-checkout:abc", buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
             order.SyncExternalPaymentStatus(payment, autoArchive: false, Now);
         }
 
         return order;
+    }
+
+    [Theory]
+    [InlineData("  Entregar en portería  ", "Entregar en portería")]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void BuyerNotesKeepTheNormalizedCheckoutNote(string? note, string? expected)
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: note);
+        Assert.Equal(expected, order.BuyerNotes);
+        Assert.Equal(order.Notes, order.BuyerNotes);
+    }
+
+    [Fact]
+    public void BuyerNotesKeepInnerLineBreaks() =>
+        Assert.Equal("Portería\nTorre 2", NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "  Portería\nTorre 2  ").BuyerNotes);
+
+    [Fact]
+    public void BuyerNotesSurviveTheAdvisorNoteEdit()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
+
+        order.UpdateNotes("Texto del asesor", Now.AddHours(1));
+
+        Assert.Equal("Texto del asesor", order.Notes);
+        Assert.Equal("Entregar en portería", order.BuyerNotes);
+    }
+
+    [Fact]
+    public void BuyerNotesSurviveAPaymentProofWithAnotherNote()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
+
+        order.AddPaymentProofs(
+            [new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m)],
+            "Comprobante recibido", Advisor, Now.AddHours(1));
+
+        Assert.Equal("Comprobante recibido", order.Notes);
+        Assert.Equal("Entregar en portería", order.BuyerNotes);
+    }
+
+    [Fact]
+    public void BuyerNotesSurviveShippingAndBillingEdits()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
+
+        order.SetShipping(new ShippingDetails(null, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, false), Advisor, Now);
+        order.SetBilling(null, true, false, null, null, Advisor, Now);
+
+        Assert.Equal("Entregar en portería", order.BuyerNotes);
+    }
+
+    [Fact]
+    public void BuyerNotesAreNullOutsideTheStore()
+    {
+        var manual = NewOrder(notes: "Nota manual");
+        var converted = Order.FromQuotation(
+            OrderId.New(), TenantId, "PED-2026-0001", ConvertedQuotation(),
+            "Pago verificado", ConvertedBy, [], Now);
+        var shopify = NewShopifyOrder(notes: "Nota de Shopify");
+
+        Assert.All([manual, converted, shopify], order =>
+        {
+            Assert.NotNull(order.Notes);
+            Assert.Null(order.BuyerNotes);
+        });
     }
 
     [Theory]

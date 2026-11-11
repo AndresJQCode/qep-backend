@@ -110,6 +110,10 @@ public sealed class StoreDbContext(DbContextOptions<StoreDbContext> options)
             .HasMaxLength(16);
         store.Property(value => value.PrimaryCurrency).HasColumnName("primary_currency").HasMaxLength(3);
 
+        // El centinela es true (no el false del CLR): con el default de la base, EF omitiría del INSERT un false recién asignado y la base
+        // pondría true, así que una tienda nueva guardada con los precios apagados los leería encendidos (spec 2026-11-10, B1).
+        store.Property(value => value.ShowPrices).HasColumnName("show_prices").HasDefaultValue(true).HasSentinel(true);
+
         // Sin FK a tenancy: los módulos no se cruzan por clave foránea; Application valida que sea un miembro activo.
         store.Property(value => value.AdvisorMembershipId).HasColumnName("advisor_membership_id");
 

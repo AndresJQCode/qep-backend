@@ -27,7 +27,8 @@ internal static class StoreTestData
         IReadOnlyList<StoreCurrency>? currencies = null,
         string? primaryCurrency = "COP",
         IReadOnlyList<string>? countries = null,
-        Guid? advisorMembershipId = null) =>
+        Guid? advisorMembershipId = null,
+        bool showPrices = true) =>
         new(
             slug,
             Name: null,
@@ -43,7 +44,8 @@ internal static class StoreTestData
             PrimaryCurrency: primaryCurrency,
             SalesCountries: countries ?? ["CO"],
             FeaturedCategoryIds: [],
-            AdvisorMembershipId: advisorMembershipId);
+            AdvisorMembershipId: advisorMembershipId,
+            ShowPrices: showPrices);
 
     public static OnlineStore ConfiguredStore(StoreSettingsInput? input = null)
     {

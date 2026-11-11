@@ -76,6 +76,33 @@ public sealed class PublicCatalogApiTests
     }
 
     [Fact]
+    public async Task ThePublicStoreShowsPricesByDefault()
+    {
+        await using var fixture = await OpenAsync();
+
+        var store = await fixture.GetJsonAsync("/");
+
+        Assert.Equal(true, (bool?)store["showPrices"]);
+    }
+
+    [Fact]
+    public async Task AHiddenPricesStoreStillReturnsAmounts()
+    {
+        // Ocultar precios es sólo visual: los montos siguen viajando en el catálogo y en la cotización del carrito.
+        await using var fixture = await OpenAsync((_, body) => body["showPrices"] = false);
+        var (_, variant) = await fixture.CreateProductAsync("Vendible", "V-1", Prices(10_000m));
+
+        var store = await fixture.GetJsonAsync("/");
+        var page = await fixture.GetJsonAsync("/products?currency=COP");
+        var quote = await JsonAsync(await fixture.QuoteAsync(
+            new { currency = "COP", lines = new[] { new { variantId = variant, quantity = 2 } } }));
+
+        Assert.Equal(false, (bool?)store["showPrices"]);
+        Assert.Equal(10_000m, (decimal)Assert.Single(page["items"]!.AsArray())!["priceFrom"]!);
+        Assert.Equal(20_000m, (decimal)quote["total"]!);
+    }
+
+    [Fact]
     public async Task TheStoreDtoCarriesNoBillingAccountOrTenantId()
     {
         await using var fixture = await OpenAsync();

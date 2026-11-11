@@ -93,10 +93,73 @@ public sealed class StoreSettingsHandlerTests
         Assert.Null(settings.ResolvedColors);
         Assert.Null(settings.ColorChecks);
         Assert.Equal("RetailOnly", settings.PricingMode);
+        Assert.True(settings.ShowPrices);
         Assert.Equal(["SlugRequired", "CurrencyRequired", "SalesCountryRequired"], settings.PublishBlockers);
         Assert.Equal("Origen Botánico", settings.EffectiveName);
         Assert.Equal("https://cdn.test/logo.png", settings.LogoUrl);
         Assert.Empty(rig.Log.Entries);
+    }
+
+    [Fact]
+    public async Task SavingShowPricesFalseStoresIt()
+    {
+        var rig = new SettingsRig();
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(showPrices: false)), Ct);
+
+        Assert.False(saved.ShowPrices);
+        Assert.False(rig.Stores.Stored!.ShowPrices);
+        Assert.Contains("showPrices", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task AnAbsentShowPricesKeepsAStoredFalse()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(showPrices: false)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        Assert.False(saved.ShowPrices);
+    }
+
+    [Fact]
+    public async Task AnAbsentShowPricesKeepsAStoredTrue()
+    {
+        var rig = new SettingsRig(ConfiguredStore());
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        Assert.True(saved.ShowPrices);
+    }
+
+    [Fact]
+    public async Task ANewStoreWithoutShowPricesShowsPrices()
+    {
+        var rig = new SettingsRig();
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body()), Ct);
+
+        Assert.True(saved.ShowPrices);
+        Assert.DoesNotContain("showPrices", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task TogglingOnlyShowPricesAuditsIt()
+    {
+        var rig = new SettingsRig(ConfiguredStore());
+        var handler = rig.UpdateHandler();
+        await handler.HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        var saved = await handler.HandleAsync(Update(Body(name: "Nueva", showPrices: false), 2), Ct);
+
+        Assert.Equal(3, saved.Version);
+        Assert.Equal(["showPrices"], rig.Audit.Entries[^1].ChangedFields);
+
+        var saves = rig.UnitOfWork.Saves;
+        var audits = rig.Audit.Entries.Count;
+        await handler.HandleAsync(Update(Body(name: "Nueva", showPrices: false), 3), Ct);
+        Assert.Equal(saves, rig.UnitOfWork.Saves);
+        Assert.Equal(audits, rig.Audit.Entries.Count);
     }
 
     [Fact]

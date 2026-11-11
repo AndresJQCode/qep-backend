@@ -1012,6 +1012,10 @@ máscara de permisos del módulo apagado ya los descarta antes, y las rutas púb
   si no, `422 store.settings.advisor_not_found` (reenviar el mismo valor no lo revalida, para no bloquear los demás ajustes si esa
   persona dejó el tenant). No se exige un permiso concreto al asesor: el pedido lo crea el sistema. No bloquea la
   publicación.
+- **Ajustes, mostrar precios:** `PUT /settings` acepta `showPrices` (opcional; ausente o `null` conserva el valor guardado, a propósito,
+  para no apagar precios con un frontend viejo); `GET /settings` y `GET /api/v1/public/stores/{host}` lo devuelven siempre. Es sólo
+  visual: el pedido se precia con `pricingMode` y los demás endpoints públicos siguen devolviendo montos. Un cambio puede tardar hasta la
+  caché pública (`max-age=60`, `stale-while-revalidate=300`) en verse.
 - **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
   `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
   `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
@@ -1150,7 +1154,7 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 | 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
 | 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
 | 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
-| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
+| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
 | 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está `Open` con pago `PaymentPending`, sin comprobantes, sin preparar y sin facturar, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
 
 Notas:
@@ -1168,7 +1172,7 @@ Notas:
 
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
-- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`) y `cancelledAt`.
+- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `isStorePickup`, `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
 - **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
@@ -2210,7 +2214,7 @@ el spec del slice; esta tabla es el inventario.
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
-| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento o CUC |
+| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento, CUC o teléfono (desde 7 dígitos, sin importar el formato) |
 | `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing` |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |

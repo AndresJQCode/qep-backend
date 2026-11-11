@@ -1,3 +1,4 @@
+using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Phones;
 
 namespace Modules.Customers.UnitTests;
@@ -6,6 +7,41 @@ namespace Modules.Customers.UnitTests;
 public sealed class LibPhoneNumberNormalizerTests
 {
     private readonly LibPhoneNumberNormalizer _normalizer = new();
+
+    [Theory]
+    [InlineData("+573001234567", "CO", "3001234567")]
+    [InlineData("+14155552671", "US", "4155552671")]
+    [InlineData("+34612345678", "ES", "612345678")]
+    [InlineData("+390612345678", "IT", "0612345678")] // el cero italiano es parte del número nacional
+    public void SplitsAValidNumberIntoRegionAndNationalDigits(string e164, string country, string national) =>
+        Assert.Equal(new PhoneNumberParts(country, national), _normalizer.Split(e164));
+
+    // Cliente desde un contacto compartido: el SPA recibe (país, nacional) de Split y los devuelve a POST /customers;
+    // el teléfono del cliente (ToE164) tiene que ser el mismo E.164 original, o StartConversation escribe a otro número.
+    [Theory]
+    [InlineData("+573001234567")] // CO
+    [InlineData("+14155552671")] // US
+    [InlineData("+34612345678")] // ES
+    [InlineData("+393123456789")] // IT, celular
+    [InlineData("+390612345678")] // IT, fijo con el cero nacional
+    [InlineData("+525512345678")] // MX
+    [InlineData("+5491123456789")] // AR: el «9» del celular es parte del número nacional
+    public void SplitPartsRoundTripToTheSameE164(string e164)
+    {
+        var parts = _normalizer.Split(e164);
+
+        Assert.NotNull(parts);
+        Assert.Equal(e164, _normalizer.ToE164(parts.NationalNumber, parts.Country));
+    }
+
+    [Theory]
+    [InlineData("+3001234567")] // un wa_id sin indicativo: +30 (Grecia) no existe como ese número
+    [InlineData("+57123")]
+    [InlineData("+")]
+    [InlineData("+abc")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void AnInvalidNumberIsNotSplit(string? e164) => Assert.Null(_normalizer.Split(e164));
 
     // La larga distancia colombiana es «0» + el dígito del operador + el número completo («03 300…»):
     // la librería la quita. «0300…» con el 0 pegado al celular no es un formato real, y da null.
