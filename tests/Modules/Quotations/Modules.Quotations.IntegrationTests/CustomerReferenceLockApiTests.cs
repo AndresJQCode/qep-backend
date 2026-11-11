@@ -107,7 +107,7 @@ public sealed class CustomerReferenceLockApiTests
         var request = new CreateOrderRequest(
             customerId, "Transferencia", "Pedido de mostrador", false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            [new OrderEditItemRequest(productId, 3m)], "PaymentPending", []);
+            [new OrderEditItemRequest(productId, 3m)], []);
         await WarmUpAsync(client, $"/api/v1/tenants/{tenantId}/orders");
         var (connection, transaction) = await HoldExclusiveAsync(connectionString, tenantId, customerId);
         await using var _c = connection;
