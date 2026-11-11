@@ -187,7 +187,7 @@ public sealed class UpdateStoreSettingsHandler(
             salesCountries,
             body.FeaturedCategoryIds!,
             body.AdvisorMembershipId,
-            store.ShowPrices);
+            body.ShowPrices ?? store.ShowPrices);
 
         var previousSlug = store.Slug;
         var before = Snapshot(store);
@@ -320,6 +320,7 @@ public sealed class UpdateStoreSettingsHandler(
         ["tiktokUrl"] = store.Contact.TiktokUrl,
         ["dataPolicyUrl"] = store.DataPolicyUrl,
         ["pricingMode"] = store.PricingMode.ToString(),
+        ["showPrices"] = store.ShowPrices.ToString(),
         ["currencies"] = string.Join(
             '|',
             store.Currencies.Select(currency =>

@@ -23,6 +23,13 @@ public sealed class UpdateStoreSettingsValidatorTests
         Assert.Empty(FailedProperties(Body()));
     }
 
+    [Fact]
+    public void ABodyWithoutShowPricesIsValid()
+    {
+        Assert.Empty(FailedProperties(Body(showPrices: null)));
+        Assert.Empty(FailedProperties(Body(showPrices: false)));
+    }
+
     // Familia: largos de texto. El tope se mide recortado, y justo en el tope pasa.
     [Theory]
     [InlineData("name", 80)]
