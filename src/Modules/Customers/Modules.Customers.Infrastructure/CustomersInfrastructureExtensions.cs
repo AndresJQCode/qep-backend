@@ -52,6 +52,7 @@ public static class CustomersInfrastructureExtensions
 
         // Spec 2026-10-09 §6.5: phone_e164 para que Messaging empareje por teléfono.
         services.AddSingleton<IPhoneNumberNormalizer, LibPhoneNumberNormalizer>();
+        services.AddSingleton<IPhoneNumberSplitter, LibPhoneNumberNormalizer>();
         services.AddScoped<ICustomerPhoneDirectory, CustomerPhoneDirectory>();
         // Spec 2026-10-10 §6.2: el cliente de quien escribe por WhatsApp (asegurar, BSUID, nombres, búsqueda).
         services.AddScoped<ICustomerWhatsAppDirectory, CustomerWhatsAppDirectory>();
