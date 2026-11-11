@@ -276,8 +276,10 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
             return new PreparedSend(existingMessage, existingConversation);
         }
 
+        // El despachador salta a los destinatarios sin cliente antes de preparar; el abridor nunca recibe un nulo.
+        var customerId = recipient.CustomerId ?? throw new InvalidOperationException("Un destinatario sin cliente no abre conversación.");
         var contact = new MessagingCustomerContact(
-            recipient.CustomerId, recipient.CustomerName, recipient.WaId is null ? null : "+" + recipient.WaId, recipient.UserId, IsActive: true, MarketingOptOut: false);
+            customerId, recipient.CustomerName, recipient.WaId is null ? null : "+" + recipient.WaId, recipient.UserId, IsActive: true, MarketingOptOut: false);
         // §6.3 paso 3.1: sin asignar. Una respuesta entra por la ingesta normal y cae en «Sin asignar», donde un asesor la toma.
         var opened = await opener.OpenAsync(recipient.TenantId, recipient.ConnectionId, contact, assignedMemberId: null, actorUserId: null, now, cancellationToken);
         var messageId = recipient.MessageId ?? Guid.CreateVersion7();
@@ -521,7 +523,7 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
 
         public Guid TenantId { get; set; }
 
-        public Guid CustomerId { get; set; }
+        public Guid? CustomerId { get; set; }
 
         public string CustomerName { get; set; } = string.Empty;
 

@@ -1121,7 +1121,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("customer_created_at");
 
-                    b.Property<Guid>("CustomerId")
+                    b.Property<Guid?>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
 
