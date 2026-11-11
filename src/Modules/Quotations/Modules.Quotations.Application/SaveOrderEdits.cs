@@ -70,6 +70,11 @@ public sealed class SaveOrderEditsHandler(
                 "An order can only be edited while it is open, not prepared and not invoiced.");
         }
 
+        if (command.Proofs.RemoveIds.Count > 0)
+        {
+            PaidOrderProofRemoval.EnsureAuthorized(executionContext, command.TenantId, order);
+        }
+
         // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la
         // copia pública de un comprobante publicada.
         if (order.Version != command.ExpectedVersion)

@@ -63,8 +63,9 @@ public sealed class AuthorizationCatalogApiTests
         Assert.NotNull(catalog);
         CatalogPermissionPayload[] expected =
         [
-            new("quotations.order.approve", "Aprobar pedidos",
-                "Permite dar el visto bueno a un pedido pendiente.", "Quotations", "medium"),
+            new("quotations.order.approve", "Marcar pedidos como pagados",
+                "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
+                "Quotations", "medium"),
             new("quotations.order.cancel", "Anular pedidos",
                 "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.", "Quotations", "high"),
             new("quotations.order.invoice", "Facturar pedidos",

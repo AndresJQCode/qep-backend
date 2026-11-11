@@ -18,6 +18,10 @@ public sealed record InvoiceOrderCommand(Guid TenantId, Guid OrderId)
 /// facturación (decisión 5).
 ///
 /// Sin validador, porque no hay texto libre, y sin evento de outbox.
+///
+/// Desde spec 2026-11-10 §3.4 el pago completo lo exige el ajuste del tenant
+/// (<see cref="OrderSettings.RequireFullPaymentToInvoice"/>, prendido por defecto), no exige preparado, y
+/// corre las mismas validaciones de datos de facturación que marcar pagado, después de las guardas del pedido.
 /// </summary>
 public sealed class InvoiceOrderHandler(
     IOrderRepository repository,
@@ -25,7 +29,10 @@ public sealed class InvoiceOrderHandler(
     IQuotationAuditPublisher auditPublisher,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
-    IClock clock)
+    IClock clock,
+    IQuotationSettingsStore settingsStore,
+    ITenantDirectory tenantDirectory,
+    IQuotationCustomerLookup customerLookup)
     : ICommandHandler<InvoiceOrderCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(
@@ -44,8 +51,15 @@ public sealed class InvoiceOrderHandler(
         var invoicedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        var settings = await settingsStore.GetOrderSettingsAsync(command.TenantId, cancellationToken);
+        order.EnsureCanInvoice(settings.RequireFullPaymentToInvoice);
+        await BilledPersonTypeRequired.EnsureSatisfiedAsync(
+            tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
+        await BilledCustomerFieldsRequired.EnsureSatisfiedAsync(
+            tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
+
         var now = clock.UtcNow;
-        order.Invoice(invoicedBy, requireFullPayment: true, now);
+        order.Invoice(invoicedBy, settings.RequireFullPaymentToInvoice, now);
         repository.AddHistoryEntry(OrderHistoryEntry.Create(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Invoiced, invoicedBy, OrderChangeSummary.Invoiced(), now));
 

@@ -81,6 +81,20 @@ public static class OrderChangeSummary
 
     public static string InvoicingReverted() => "Se revirtió la facturación.";
 
+    public static string PaidMarked() => "Marcado como pagado.";
+
+    public static string PaidUnmarked() => "Se deshizo el pagado.";
+
+    public static string Prepared() => "Marcado como preparado.";
+
+    public static string PreparationUndone() => "Se deshizo el preparado.";
+
+    public static string Archived() => "Archivado.";
+
+    public static string ArchivedAutomatically() => "Archivado automáticamente: quedó pagado y preparado.";
+
+    public static string Unarchived() => "Desarchivado.";
+
     public static string PaymentProofsChanged(int added, int corrected, int removed)
     {
         var parts = new List<string>(3);

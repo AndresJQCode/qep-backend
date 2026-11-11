@@ -7,6 +7,24 @@ namespace Modules.Quotations.Application;
 public sealed record RemoveOrderPaymentProofCommand(
     Guid TenantId, Guid OrderId, Guid ProofId) : ICommand<OrderDto>;
 
+/// <summary>
+/// Quitar un comprobante de un pedido pagado exige además <see cref="OrdersPermissions.OrderApprove"/>
+/// (spec 2026-11-10 §3.2): ningún camino con sólo <c>manage</c> deshace el pagado. Las dos rutas que quitan
+/// comprobantes la llaman antes de tocar el pedido: <see cref="RemoveOrderPaymentProofHandler"/> y
+/// <see cref="SaveOrderEditsHandler"/> (con <c>proofs.removeIds</c>). Agregar o corregir sigue con
+/// <c>manage</c> y no cambia el pago.
+/// </summary>
+internal static class PaidOrderProofRemoval
+{
+    public static void EnsureAuthorized(IExecutionContext executionContext, Guid tenantId, Order order)
+    {
+        if (order.PaymentStatus == OrderPaymentStatus.FullPaymentReceived)
+        {
+            QuotationsAuthorization.EnsureAuthorized(executionContext, tenantId, OrdersPermissions.OrderApprove);
+        }
+    }
+}
+
 public sealed class RemoveOrderPaymentProofHandler(
     IOrderRepository orderRepository,
     IQuotationsUnitOfWork unitOfWork,
@@ -28,6 +46,7 @@ public sealed class RemoveOrderPaymentProofHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
+        PaidOrderProofRemoval.EnsureAuthorized(executionContext, command.TenantId, order);
 
         var now = clock.UtcNow;
         var previousNetTotal = order.NetTotal;

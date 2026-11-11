@@ -101,6 +101,21 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-10: las acciones del pedido, sin cuerpo ni If-Match, como facturar. Pagado con el
+        // permiso de marcar pagado; preparado y archivado con el de gestión.
+        MapStateAction(collection, "mark-paid", OrdersPermissions.OrderApprove,
+            (tenantId, orderId) => new MarkOrderPaidCommand(tenantId, orderId));
+        MapStateAction(collection, "unmark-paid", OrdersPermissions.OrderApprove,
+            (tenantId, orderId) => new UnmarkOrderPaidCommand(tenantId, orderId));
+        MapStateAction(collection, "prepare", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new PrepareOrderCommand(tenantId, orderId));
+        MapStateAction(collection, "unprepare", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new UndoOrderPreparationCommand(tenantId, orderId));
+        MapStateAction(collection, "archive", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new ArchiveOrderCommand(tenantId, orderId));
+        MapStateAction(collection, "unarchive", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new UnarchiveOrderCommand(tenantId, orderId));
+
         // «Enviar el pedido por WhatsApp». Mismo contrato que POST /quotations/{id}/send: el cuerpo es
         // opcional de verdad (un cuerpo inferido como requerido rompió aquel envío con 500), y responde el
         // detalle entero para que la pantalla repinte el historial con la entrada nueva.
@@ -470,6 +485,23 @@ public static class OrderEndpoints
             cancellationToken);
         return Results.Ok(OrderResponses.ToResponse(order));
     }
+
+    private static void MapStateAction<TCommand>(
+        RouteGroupBuilder collection,
+        string action,
+        string permission,
+        Func<Guid, Guid, TCommand> createCommand)
+        where TCommand : ICommand<OrderDto> =>
+        collection.MapPost(
+                $"/{{orderId:guid}}/{action}",
+                async (Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                    Results.Ok(OrderResponses.ToResponse(
+                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken))))
+            .RequireAuthorization(permission)
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
     private static async Task<IResult> RevertOrderInvoicingAsync(
         Guid tenantId,

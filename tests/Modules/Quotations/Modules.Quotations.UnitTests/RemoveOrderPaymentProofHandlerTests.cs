@@ -1,5 +1,8 @@
+using BuildingBlocks.Application;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Quotations.UnitTests;
 
@@ -83,7 +86,77 @@ public sealed class RemoveOrderPaymentProofHandlerTests
                 && entry.Details == "El pago pasó de Por verificar a Pago parcial: el neto pasó de 119.000 a 119.000.");
     }
 
-    private static RemoveOrderPaymentProofHandler NewHandler(StubOrderListRepository repository) =>
+    // Spec 2026-11-10 §3.2: ningún camino con sólo `manage` deshace el pagado. Quitar un comprobante de un
+    // pedido pagado exige `approve`, y el 403 llega antes de tocar el pedido.
+    [Fact]
+    public async Task RemovingAProofFromAPaidOrderNeedsApprove()
+    {
+        var order = PaidOrderWithTwoProofs();
+        var proofId = order.PaymentProofs.First().Id;
+
+        await Assert.ThrowsAsync<RequestForbiddenException>(() =>
+            NewHandler(
+                new StubOrderListRepository(order),
+                new GrantedPermissionsExecutionContext(SubjectId, TenantId, "quotations.order.manage"))
+            .HandleAsync(
+                new RemoveOrderPaymentProofCommand(TenantId, order.Id.Value, proofId.Value),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, order.PaymentProofs.Count);
+        Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+    }
+
+    [Fact]
+    public async Task RemovingAProofFromAPaidOrderWithApproveKeepsItPaid()
+    {
+        var order = PaidOrderWithTwoProofs();
+        var proofId = order.PaymentProofs.First().Id;
+
+        var result = await NewHandler(
+                new StubOrderListRepository(order),
+                new GrantedPermissionsExecutionContext(
+                    SubjectId, TenantId, "quotations.order.manage", "quotations.order.approve"))
+            .HandleAsync(
+                new RemoveOrderPaymentProofCommand(TenantId, order.Id.Value, proofId.Value),
+                TestContext.Current.CancellationToken);
+
+        Assert.Single(order.PaymentProofs);
+        Assert.Equal("FullPaymentReceived", result.PaymentStatus);
+    }
+
+    // Un pedido sin pagar sigue con el permiso de gestión de siempre.
+    [Fact]
+    public async Task RemovingAProofFromAnUnpaidOrderNeedsOnlyManage()
+    {
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 1_000m)]);
+
+        await NewHandler(
+                new StubOrderListRepository(order),
+                new GrantedPermissionsExecutionContext(SubjectId, TenantId, "quotations.order.manage"))
+            .HandleAsync(
+                new RemoveOrderPaymentProofCommand(TenantId, order.Id.Value, order.PaymentProofs.Single().Id.Value),
+                TestContext.Current.CancellationToken);
+
+        Assert.Empty(order.PaymentProofs);
+    }
+
+    private static Order PaidOrderWithTwoProofs()
+    {
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now,
+            proofs:
+            [
+                new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m),
+                new OrderPaymentProofInput(Guid.CreateVersion7(), 19_000m),
+            ]);
+        order.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        return order;
+    }
+
+    private static RemoveOrderPaymentProofHandler NewHandler(
+        StubOrderListRepository repository, IExecutionContext? executionContext = null) =>
         new(
             repository,
             new NoOpQuotationsUnitOfWork(),
@@ -91,8 +164,18 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             new NoOpOrderPaymentProofEventPublisher(),
             new StubMembershipDirectory(AdvisorId.Value),
             new StubTenantDirectory(),
-            new StubExecutionContext(SubjectId, TenantId),
+            executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now.AddHours(1)));
+
+    private sealed class GrantedPermissionsExecutionContext(
+        Guid subjectId, Guid tenantId, params string[] grantedPermissions) : IExecutionContext
+    {
+        public Guid SubjectId { get; } = subjectId;
+
+        public TenantId TenantId { get; } = new(tenantId);
+
+        public bool HasPermission(string permission) => grantedPermissions.Contains(permission);
+    }
 
     private static Quotation NewQuotationWithOneItem(bool customerWithRetention)
     {

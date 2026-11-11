@@ -99,17 +99,116 @@ public sealed class OrderInvoicingHandlerTests
         Assert.Equal(["quotation.order.invoice_reverted"], audit.Actions);
     }
 
+    // Spec 2026-11-10 §3.4 y §6: el pago completo lo exige el ajuste del tenant, que arranca prendido.
+    [Fact]
+    public async Task InvoicingRequiresFullPaymentByDefault()
+    {
+        var row = NewUnpaidRow();
+        var audit = new RecordingQuotationAuditPublisher();
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            InvoiceAsync(NewInvoiceHandler(row, audit, Invoicer()), row));
+
+        Assert.Equal("order.order.not_paid", error.Code);
+        Assert.False(row.IsInvoiced);
+        Assert.Empty(audit.Actions);
+    }
+
+    [Fact]
+    public async Task InvoicingWithoutFullPaymentWhenTheTenantAllowsIt()
+    {
+        var row = NewUnpaidRow();
+
+        var invoiced = await InvoiceAsync(
+            NewInvoiceHandler(
+                row, new RecordingQuotationAuditPublisher(), Invoicer(),
+                settings: new FixedQuotationSettingsStore { OrderSettings = new(false, false, false) }),
+            row);
+
+        Assert.NotNull(invoiced.InvoicedAt);
+        Assert.NotEqual("FullPaymentReceived", invoiced.PaymentStatus);
+    }
+
+    // Las mismas validaciones de datos de facturación que marcar pagado (spec 2026-11-10 §3.4).
+    [Fact]
+    public async Task InvoicingRunsTheBillingDataChecks()
+    {
+        var row = NewPaidRow();
+        var audit = new RecordingQuotationAuditPublisher();
+        var withoutDocument = new StubQuotationCustomerLookup(new QuotationCustomerRef(
+            Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+            "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
+            PersonType: "Natural", Country: "CO"));
+
+        var error = await Assert.ThrowsAsync<BilledCustomerFieldRequiredException>(() =>
+            InvoiceAsync(NewInvoiceHandler(row, audit, Invoicer(), customer: withoutDocument), row));
+
+        Assert.Equal("order.order.billed_document_required", error.Code);
+        Assert.False(row.IsInvoiced);
+        Assert.Empty(audit.Actions);
+    }
+
+    [Fact]
+    public async Task InvoicingDoesNotRequirePreparation()
+    {
+        var row = NewPaidRow();
+        Assert.False(row.IsPrepared);
+
+        var invoiced = await InvoiceAsync(NewInvoiceHandler(row, new RecordingQuotationAuditPublisher(), Invoicer()), row);
+
+        Assert.NotNull(invoiced.InvoicedAt);
+    }
+
+    [Fact]
+    public async Task RevertingKeepsTheOrderStatus()
+    {
+        var row = NewInvoicedRow();
+        row.Archive(AdvisorId, Now);
+
+        var reverted = await NewRevertHandler(row, new RecordingQuotationAuditPublisher(), Invoicer())
+            .HandleAsync(new RevertOrderInvoicingCommand(TenantId, row.Id.Value), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Archived", reverted.Status);
+        Assert.Null(reverted.InvoicedAt);
+    }
+
+    private static GrantedPermissionsExecutionContext Invoicer() =>
+        new(SubjectId, TenantId, "quotations.order.invoice");
+
+    private static Task<OrderDto> InvoiceAsync(InvoiceOrderHandler handler, Order row) =>
+        handler.HandleAsync(new InvoiceOrderCommand(TenantId, row.Id.Value), TestContext.Current.CancellationToken);
+
+    private static Order NewUnpaidRow() =>
+        OrderBuilders.Pending(
+            TenantId, AdvisorId, Now,
+            proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+
+    // Por defecto los ajustes del owner, Never y un cliente con documento: las pruebas de permisos no cambian.
     private static InvoiceOrderHandler NewInvoiceHandler(
         Order row,
         RecordingQuotationAuditPublisher audit,
-        IExecutionContext executionContext) =>
+        IExecutionContext executionContext,
+        FixedQuotationSettingsStore? settings = null,
+        StubQuotationCustomerLookup? customer = null) =>
         new(
             new StubOrderListRepository(row),
             new NoOpQuotationsUnitOfWork(),
             audit,
             new StubMembershipDirectory(BillerId.Value),
             executionContext,
-            new FixedClock(Now));
+            new FixedClock(Now),
+            settings ?? new FixedQuotationSettingsStore(),
+            new StubTenantDirectory
+            {
+                Regional = new(
+                    "America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal,
+                    "CO", PersonTypeRequirement.Never)
+            },
+            customer ?? new StubQuotationCustomerLookup(new QuotationCustomerRef(
+                Guid.CreateVersion7(), TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
+                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false,
+                PersonType: "Natural", Country: "CO",
+                IdentificationNumber: "900123456", IdentificationType: "NIT")));
 
     private static RevertOrderInvoicingHandler NewRevertHandler(
         Order row,

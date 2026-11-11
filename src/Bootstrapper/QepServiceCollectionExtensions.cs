@@ -749,6 +749,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // Las acciones del pedido de spec 2026-11-10: pagado, preparado y archivado, con sus deshacer.
+        services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
+        services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
+        services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -2061,11 +2068,12 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
-        // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
+        // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
+        // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
-            "Aprobar pedidos",
-            "Permite dar el visto bueno a un pedido pendiente.",
+            "Marcar pedidos como pagados",
+            "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
