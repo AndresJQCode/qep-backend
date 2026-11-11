@@ -508,6 +508,36 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                     b.ToTable("tax_rates", "catalog");
                 });
 
+            modelBuilder.Entity("Modules.Catalog.Domain.TaxUnitValue", b =>
+                {
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .HasColumnName("country")
+                        .IsFixedLength();
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<decimal>("Value")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Country", "Year");
+
+                    b.ToTable("tax_unit_values", "catalog");
+                });
+
             modelBuilder.Entity("Modules.Catalog.Infrastructure.Persistence.CatalogOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
