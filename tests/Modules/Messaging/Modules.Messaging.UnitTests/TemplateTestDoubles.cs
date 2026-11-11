@@ -48,9 +48,16 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
     public Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Contacts.GetValueOrDefault(customerId));
 
+    /// <summary>Los <c>waId</c> de cada llamada a <see cref="ResolveSharedPhonesAsync"/>, en orden.</summary>
+    public List<string[]> SharedPhoneCalls { get; } = [];
+
     public Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(
-        Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<string, MessagingSharedPhone>>(new Dictionary<string, MessagingSharedPhone>());
+        Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
+    {
+        SharedPhoneCalls.Add([.. waIds]);
+        return Task.FromResult<IReadOnlyDictionary<string, MessagingSharedPhone>>(
+            waIds.ToDictionary(waId => waId, _ => new MessagingSharedPhone(null, null, null)));
+    }
 
     /// <summary>Ningún cliente de estas pruebas está fusionado: cada uno es el que quedó.</summary>
     public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => Task.FromResult(customerId);
