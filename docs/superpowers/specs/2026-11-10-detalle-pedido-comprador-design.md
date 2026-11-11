@@ -217,6 +217,10 @@ Reglas del armado:
   `departmentName = null` y `cityName = OrderParty.CityName`.
 - `identificationType`/`identificationNumber` pueden ser `null` aunque `billing` exista (el dominio sólo los exige a una
   fila con nombre propio, `EnsureBillingRules`); la tienda siempre los manda.
+- **Anulables exactos (como en `IBuyerOrderGateway.cs` y `BuyerOrders.cs`):** en `billing`, `identificationType`,
+  `identificationNumber`, `email`, `phone`, `address`, `departmentName` y `cityName` pueden ser `null`; `name` y `country`
+  siempre vienen. En `shipping`, `name`, `phone`, `address`, `departmentName` y `cityName` pueden ser `null`; `country`
+  siempre viene.
 - `buyerNotes` es `Order.BuyerNotes`, nunca `Order.Notes` (D9, §4.8).
 - Texto tal como está guardado; sin enmascarar: el comprador es dueño de esos datos y la sesión ya se verificó.
 - Partes, transportadora y flete se muestran **como están hoy**, con los cambios del asesor (§7, R1). La nota no: es la
@@ -332,7 +336,8 @@ Integración (`Modules.Store.IntegrationTests`, `PublicBuyerOrdersApiTests`; Tes
 
 Migración (`Modules.Quotations.IntegrationTests`, `OrdersMigrationTests`): columna `buyer_notes text NULL`; una fila
 existente queda en `NULL` al aplicar; la migración aplica sobre `AddOrderBuyerAccount`; un `Order` nuevo con
-`BuyerNotes` se lee de vuelta.
+`BuyerNotes` se lee de vuelta: esa última comprobación vive en la prueba de integración (`PublicBuyerOrdersApiTests`, que
+lee `quotations.orders.buyer_notes` tras el checkout real) y no en `OrdersMigrationTests`, como explica el plan.
 
 `ArchitectureTests`: sin cambios; `BuyersLayerTests` y `QuotationsLayerTests` en verde.
 
