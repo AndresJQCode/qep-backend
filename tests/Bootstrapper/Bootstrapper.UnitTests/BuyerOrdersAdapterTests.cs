@@ -53,7 +53,7 @@ public sealed class BuyerOrdersAdapterTests
     private static BuyerOrderDetail SampleDetail() =>
         new(OrderId, "PED-1", Created, "Cancelled", "Pending", 119.5m, "COP", 2, "Camisa",
             [new BuyerOrderLine("Camisa", 1.5m, 10m, 17.85m), new BuyerOrderLine("Gorra", 2m, 50m, 101.65m)],
-            Cancelled, false);
+            Cancelled, false, 0m, 0m, 0m, false, null, "BillingParty", null, null, null);
 
     private static (BuyerOrdersAdapter Adapter, Counter Counter) CreateAdapter(bool withDetail = true, Exception? cancelFailure = null)
     {
