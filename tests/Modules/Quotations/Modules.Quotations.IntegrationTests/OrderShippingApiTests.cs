@@ -185,7 +185,7 @@ public sealed class OrderShippingApiTests
         using var _ = client;
         var carrierId = await PrepareFreightAsync(client, tenantId);
         var paid = await PaidOrderAsync(client, factory, tenantId);
-        Assert.Equal("FullPaymentReceived", paid.Order.PaymentStatus);
+        Assert.Equal("PendingVerification", paid.Order.PaymentStatus);
 
         var body = EditsFor(paid, new ShippingRequest(carrierId, "Charged", 15000m, false));
 

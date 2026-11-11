@@ -104,7 +104,7 @@ public sealed class ExternalOrderServiceTests
             $"{OrdersUrl(tenantId)}/{result.OrderId}", TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         Assert.Equal(
-            ("Shopify", "#1001", "FullPaymentReceived", "Pending"),
+            ("Shopify", "#1001", "FullPaymentReceived", "Open"),
             (detail.Order.Source, detail.Order.ExternalReference, detail.Order.PaymentStatus, detail.Order.Status));
         Assert.Equal(incompleteId, detail.Order.ClientId);
         Assert.Equal(advisorId, detail.Order.AdvisorId);
@@ -158,9 +158,11 @@ public sealed class ExternalOrderServiceTests
         var synced = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{external.OrderId}", TestContext.Current.CancellationToken);
         Assert.Equal("FullPaymentReceived", synced!.Order.PaymentStatus);
+        // Spec 2026-11-10 §3.2: el pedido con comprobante igual al total queda «Por verificar», calculado por el
+        // sistema; la sincronización rechazada no lo tocó.
         var untouched = await client.GetFromJsonAsync<OrderDetailResponse>(
             $"{OrdersUrl(tenantId)}/{withProofId}", TestContext.Current.CancellationToken);
-        Assert.Equal("FullPaymentReceived", untouched!.Order.PaymentStatus);
+        Assert.Equal("PendingVerification", untouched!.Order.PaymentStatus);
     }
 
     [Fact]

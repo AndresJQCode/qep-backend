@@ -45,7 +45,7 @@ public sealed class ManualOrderApiTests
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         Assert.Equal(
-            ("Pending", "Manual", (Guid?)null, "COP"),
+            ("Open", "Manual", (Guid?)null, "COP"),
             (detail.Order.Status, detail.Order.Source, detail.Order.QuotationId, detail.Order.Currency));
         Assert.StartsWith("PED-", detail.Order.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(3m, Assert.Single(detail.Items).Quantity);

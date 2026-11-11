@@ -264,8 +264,8 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
-    // El aprobador no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
-    // que retiene al usuario es advisor_id (ya cubierto arriba) o approved_by.
+    // Quien marca pagado no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
+    // que retiene al usuario es advisor_id (ya cubierto arriba) o paid_marked_by.
     [Fact]
     public async Task ApprovingAnOrderKeepsTheUser()
     {
@@ -828,7 +828,7 @@ public sealed class OrphanUserCleanupTests
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es paid_marked_by,
     // cancelled_by o invoiced_by, no el resto del contrato de pedidos. Desde el spec 2026-10-15 el
     // pedido tiene datos propios y no necesita cotización: se siembra uno manual.
     private static async Task SeedOrderAsync(

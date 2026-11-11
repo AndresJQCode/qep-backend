@@ -76,7 +76,7 @@ public sealed class OrderListApiTests
         // y el respaldo se recorren punta a punta en QuotationAdvisorNameApiTests (spec 2026-09-11,
         // D1, nota del 2026-09-15).
         Assert.NotNull(row.AdvisorName);
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("PaymentPending", row.PaymentStatus);
         Assert.Equal(quotation.Currency, row.Currency);
         Assert.Equal(quotation.Total, row.Total);
@@ -164,20 +164,20 @@ public sealed class OrderListApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
-        var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var approvedOrder = await ConvertToOrderAsync(client, tenantId, approved.Id);
+        var archived = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var archivedOrder = await ConvertToOrderAsync(client, tenantId, archived.Id);
         (await client.PostAsync(
-            $"{OrdersUrl(tenantId)}/{approvedOrder.Id}/approve",
+            $"{OrdersUrl(tenantId)}/{archivedOrder.Id}/archive",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        await ConvertToOrderAsync(client, tenantId, pending.Id);
+        var open = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, open.Id);
 
         var page = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?status=Approved", TestContext.Current.CancellationToken);
+            $"{OrdersUrl(tenantId)}?status=Open", TestContext.Current.CancellationToken);
 
         Assert.NotNull(page);
-        Assert.Equal(approved.Id, Assert.Single(page.Items).QuotationId);
+        Assert.Equal(open.Id, Assert.Single(page.Items).QuotationId);
     }
 
     // Un estado que no existe es un 422 con codigo de dominio, no un filtro que en silencio no
@@ -236,7 +236,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(detail);
         Assert.Equal(order.Id, detail.Order.Id);
         Assert.Equal(order.OrderNumber, detail.Order.OrderNumber);
-        Assert.Equal("Pending", detail.Order.Status);
+        Assert.Equal("Open", detail.Order.Status);
         // El detalle llega compuesto (spec 2026-10-15 §6.2): cliente resuelto, líneas con el nombre
         // del producto y la cotización de origen sólo como referencia.
         Assert.Equal(quotation.Id, detail.SourceQuotation?.Id);

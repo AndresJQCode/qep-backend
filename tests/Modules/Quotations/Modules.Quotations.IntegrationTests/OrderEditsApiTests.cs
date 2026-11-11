@@ -104,8 +104,8 @@ public sealed class OrderEditsApiTests
             Guid.CreateVersion7(), orderId, TestContext.Current.CancellationToken));
     }
 
-    // Decisión 6: la versión viaja al frontend para mandarla en If-Match. Aprobar sube la versión
-    // exactamente una vez (Order.Approve), así que la segunda lectura es predecible.
+    // Decisión 6: la versión viaja al frontend para mandarla en If-Match. Marcar pagado sube la
+    // versión exactamente una vez (Order.MarkPaid), así que la segunda lectura es predecible.
     [Fact]
     public async Task TheOrderResponseCarriesTheVersion()
     {
@@ -117,7 +117,7 @@ public sealed class OrderEditsApiTests
         Assert.True(order.Version >= 1);
 
         var approve = await client.PostAsync(
-            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
+            $"{OrderByIdUrl(tenantId, order.Id)}/mark-paid", null, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
         var body = await approve.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
@@ -176,7 +176,7 @@ public sealed class OrderEditsApiTests
     }
 
     // Decisión 5: el cliente ya no manda paymentStatus; comprobantes que cubren el total lo dejan
-    // FullPaymentReceived.
+    // PendingVerification (spec 2026-11-10 §3.2: pagado sólo lo marca una persona).
     [Fact]
     public async Task SaveDerivesThePaymentStatusOnTheServer()
     {
@@ -195,14 +195,14 @@ public sealed class OrderEditsApiTests
                 null));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("FullPaymentReceived", (await ReadDetailAsync(response)).Order.PaymentStatus);
+        Assert.Equal("PendingVerification", (await ReadDetailAsync(response)).Order.PaymentStatus);
     }
 
     // Decisión del dueño de producto (2026-10-05): con retención en la fuente el pedido queda
-    // pagado cuando los comprobantes cubren el neto (NetTotal), no lo facturado (Total) — el
+    // por verificar cuando los comprobantes cubren el neto (NetTotal), no lo facturado (Total) — el
     // cliente no paga en efectivo lo que retiene. Un peso menos que el neto sigue siendo parcial.
     [Theory]
-    [InlineData(0, "FullPaymentReceived")]
+    [InlineData(0, "PendingVerification")]
     [InlineData(1, "PartialPaymentReceived")]
     public async Task SaveComparesTheProofsAgainstTheNetOfRetention(int shortBy, string expected)
     {
@@ -252,7 +252,7 @@ public sealed class OrderEditsApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
-        Assert.Equal("FullPaymentReceived", (await ReadDetailAsync(preview)).Order.PaymentStatus);
+        Assert.Equal("PendingVerification", (await ReadDetailAsync(preview)).Order.PaymentStatus);
     }
 
     // Paso 5 del spec: quitar y corregir en el mismo guardado, con el evento detached en el outbox.
@@ -398,26 +398,27 @@ public sealed class OrderEditsApiTests
         Assert.Equal("Primera", (await GetDetailAsync(client, tenantId, order.Id)).Order.Notes);
     }
 
+    // Spec 2026-11-10 §3.3: preparado congela el pedido.
     [Fact]
-    public async Task AnApprovedOrderIsNotEditable()
+    public async Task APreparedOrderIsNotEditable()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
-        var approve = await client.PostAsync(
-            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
-        approve.EnsureSuccessStatusCode();
-        var approved = await approve.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
-        Assert.NotNull(approved);
+        var prepare = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/prepare", null, TestContext.Current.CancellationToken);
+        prepare.EnsureSuccessStatusCode();
+        var prepared = await prepare.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(prepared);
 
         var response = await PutEditsAsync(
-            client, tenantId, approved.Id, approved.Version,
+            client, tenantId, prepared.Id, prepared.Version,
             new SaveOrderEditsRequest([new OrderEditItemRequest(productId, 2m)], null, null));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
     // «Sin ningún cambio real: responde 200 con el estado actual, sin historial ni auditoría y sin
@@ -510,7 +511,7 @@ public sealed class OrderEditsApiTests
         var preview = await ReadDetailAsync(response);
         Assert.Equal(3m, Assert.Single(preview.Items).Quantity);
         Assert.Equal(300_000m, preview.Order.Total);
-        Assert.Equal("FullPaymentReceived", preview.Order.PaymentStatus);
+        Assert.Equal("PendingVerification", preview.Order.PaymentStatus);
         Assert.Equal("Borrador", preview.Order.Notes);
         Assert.Single(preview.Order.PaymentProofs);
         Assert.Equal(order.Version, preview.Order.Version);
@@ -574,7 +575,7 @@ public sealed class OrderEditsApiTests
         Assert.Equal(2, fetched.Order.PaymentProofs.Count);
         Assert.Contains(fetched.Order.PaymentProofs, proof => proof.Id == kept.Id && proof.Amount == 60_000m);
         Assert.Contains(fetched.Order.PaymentProofs, proof => proof.Id == removed.Id && proof.Amount == 40_000m);
-        Assert.Equal("FullPaymentReceived", fetched.Order.PaymentStatus);
+        Assert.Equal("PendingVerification", fetched.Order.PaymentStatus);
         Assert.Equal(order.Version, fetched.Order.Version);
     }
 
@@ -603,7 +604,7 @@ public sealed class OrderEditsApiTests
     }
 
     [Fact]
-    public async Task PreviewOnAnApprovedOrderIsNotPending()
+    public async Task PreviewOnAPreparedOrderIsNotEditable()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -611,7 +612,7 @@ public sealed class OrderEditsApiTests
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         (await client.PostAsync(
-            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken))
+            $"{OrderByIdUrl(tenantId, order.Id)}/prepare", null, TestContext.Current.CancellationToken))
             .EnsureSuccessStatusCode();
 
         var response = await client.PostAsJsonAsync(
@@ -620,7 +621,7 @@ public sealed class OrderEditsApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
     // Spec 2026-10-26, «Editar pedido» cambia la facturación. El tenant de prueba es colombiano, así que la
@@ -794,26 +795,30 @@ public sealed class OrderEditsApiTests
     }
 
     [Fact]
-    public async Task AnApprovedOrderCannotChangeItsBilling()
+    public async Task AnInvoicedOrderCannotChangeItsBilling()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
-        var approve = await client.PostAsync(
-            $"{OrderByIdUrl(tenantId, order.Id)}/approve", null, TestContext.Current.CancellationToken);
-        approve.EnsureSuccessStatusCode();
-        var approved = await approve.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
-        Assert.NotNull(approved);
+        (await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/mark-paid", null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        var invoice = await client.PostAsync(
+            $"{OrderByIdUrl(tenantId, order.Id)}/invoice", null, TestContext.Current.CancellationToken);
+        invoice.EnsureSuccessStatusCode();
+        var invoiced = await invoice.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(invoiced);
 
         var response = await PutEditsAsync(
-            client, tenantId, approved.Id, approved.Version,
+            client, tenantId, invoiced.Id, invoiced.Version,
             new SaveOrderEditsRequest(
                 [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client)));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
     // Decisión del pre-vuelo: el preview aplica el bloque billing antes de recalcular, así que la retención que

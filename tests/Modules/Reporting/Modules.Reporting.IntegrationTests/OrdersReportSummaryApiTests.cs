@@ -180,7 +180,7 @@ public sealed class OrdersReportSummaryApiTests
     /// <summary>
     /// Spec 2026-10-05, decisión 7: un facturado es una venta concretada y cuenta en el resumen.
     /// Prueba de guarda (Review Focus 5): <c>OrdersReportSource</c> sólo excluye <c>Cancelled</c>, y
-    /// un filtro reescrito como «sólo Approved» la pone en rojo.
+    /// un filtro reescrito como «sólo sin facturar» la pone en rojo.
     /// </summary>
     [Fact]
     public async Task SummaryCountsAnInvoicedOrderAsASale()
@@ -196,7 +196,7 @@ public sealed class OrdersReportSummaryApiTests
             client, factory, tenant.TenantId, customer.Id, productId);
         var order = await ConvertToOrderAsync(client, factory, tenant.TenantId, quotation);
         (await client.PostAsync(
-            $"/api/v1/tenants/{tenant.TenantId}/orders/{order.Id}/approve",
+            $"/api/v1/tenants/{tenant.TenantId}/orders/{order.Id}/mark-paid",
             content: null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         (await client.PostAsync(

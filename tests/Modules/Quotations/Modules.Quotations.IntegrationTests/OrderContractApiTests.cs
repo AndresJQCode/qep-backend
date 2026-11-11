@@ -79,7 +79,7 @@ public sealed class OrderContractApiTests
         {
             var row = Assert.Single(quotations.RootElement.GetProperty("items").EnumerateArray());
             Assert.Equal(orderId, row.GetProperty("orderId").GetGuid());
-            Assert.Equal("Pending", row.GetProperty("orderStatus").GetString());
+            Assert.Equal("Open", row.GetProperty("orderStatus").GetString());
             Assert.False(row.TryGetProperty("saleId", out var ignoredSaleId));
             Assert.False(row.TryGetProperty("saleStatus", out var ignoredSaleStatus));
         }
@@ -100,7 +100,7 @@ public sealed class OrderContractApiTests
     // Las acciones sobre el pedido cuelgan de su propio id (`/orders/{orderId}/…`); de la
     // cotización sólo quedan convertir y leer su pedido.
     [Fact]
-    public async Task ProofsAndApprovalHangFromTheOrderItself()
+    public async Task ProofsAndMarkPaidHangFromTheOrderItself()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -124,16 +124,17 @@ public sealed class OrderContractApiTests
             new AddOrderPaymentProofsRequest(
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
-        var approve = await client.PostAsync(
-            $"/api/v1/tenants/{tenantId}/orders/{orderId}/approve",
+        var markPaid = await client.PostAsync(
+            $"/api/v1/tenants/{tenantId}/orders/{orderId}/mark-paid",
             content: null,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, proofs.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
-        using var approved = JsonDocument.Parse(
-            await approve.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-        Assert.Equal("Approved", approved.RootElement.GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.OK, markPaid.StatusCode);
+        using var paid = JsonDocument.Parse(
+            await markPaid.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal("Open", paid.RootElement.GetProperty("status").GetString());
+        Assert.Equal("FullPaymentReceived", paid.RootElement.GetProperty("paymentStatus").GetString());
     }
 
     // Corte duro, igual que con `sale(s)`: las acciones que se mudaron a `/orders/{orderId}` no
