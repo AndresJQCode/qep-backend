@@ -1222,6 +1222,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
           "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
@@ -1429,6 +1430,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "DocumentFormat.OpenXml": "[3.1.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
@@ -1498,6 +1500,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "ClosedXML": "[0.105.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
