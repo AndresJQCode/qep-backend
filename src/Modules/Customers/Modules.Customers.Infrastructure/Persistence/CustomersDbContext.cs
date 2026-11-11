@@ -242,9 +242,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             rate.WithOwner().HasForeignKey("CustomerId");
             rate.Property<CustomerId>("CustomerId")
                 .HasColumnName("customer_id")
-                .HasConversion(id => id.Value, value => new CustomerId(value));
+                .HasConversion(id => id.Value, value => new CustomerId(value))
+                .ValueGeneratedNever();
             rate.Property(value => value.TenantId).HasColumnName("tenant_id");
-            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id");
+            // Clave asignada por el cliente: sin ValueGeneratedNever, EF toma una fila nueva con clave Guid ya puesta de una
+            // coleccion de un cliente rastreado como Modified (UPDATE de 0 filas -> 412) en vez de Added.
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id").ValueGeneratedNever();
             rate.HasKey("CustomerId", nameof(CustomerTaxRate.TaxRateId)).HasName("PK_customer_tax_rates");
             rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
                 .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");

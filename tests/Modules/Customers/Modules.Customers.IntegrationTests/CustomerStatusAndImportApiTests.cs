@@ -1527,6 +1527,34 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     [Fact]
+    public async Task ImportUpdateAddsRateToExistingCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var rate = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+        var created = await ImportAsync(client,
+        [
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Classification: classification.Name)
+        ]);
+        var customer = await ImportedCustomerAsync(client, created);
+        Assert.Empty(customer.WithholdingTaxRates);
+
+        var updated = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
+                Classification: classification.Name, Retefuente: "Retefuente servicios")
+        ]);
+
+        Assert.Empty(updated.Errors);
+        Assert.Equal(rate, Assert.Single((await GetAsync(client, customer.Id)).WithholdingTaxRates).Id);
+    }
+
+    [Fact]
     public async Task OldFileWithConRetencionIsReadIgnoringIt()
     {
         await using var database = await StartDatabaseAsync();
@@ -1556,33 +1584,29 @@ public sealed class CustomerStatusAndImportApiTests
         var customer = await ImportedCustomerAsync(client, created);
         Assert.Empty(customer.WithholdingTaxRates);
 
-        var withRate = await manager.PostAsJsonAsync(
-            CustomersUrl(),
+        (await manager.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
             new
             {
-                name = "Con Tasa",
-                identificationType = "NIT",
-                identificationNumber = "900.777.777-7",
-                phone = "310 935 2187",
-                email = "tasa@verde.co",
-                address = "Calle 10 # 45-12",
+                name = customer.Name,
+                identificationType = customer.IdentificationType,
+                identificationNumber = customer.IdentificationNumber,
+                phone = customer.Phone,
+                email = customer.Email,
+                address = customer.Address,
                 country = "CO",
                 cityId = city.CityId,
                 classificationId = classification.Id,
                 vatSurplus = false,
                 withholdingTaxRateIds = new[] { retefuente }
             },
-            TestContext.Current.CancellationToken);
-        withRate.EnsureSuccessStatusCode();
-        customer = (await withRate.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken))!;
-        Assert.Single(customer.WithholdingTaxRates);
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
         var updated = await ImportAsync(
             client,
             [
                 new ExcelRowInput(
-                    Cuc: customer.Cuc, Name: "Con Tasa", IdentificationNumber: "900.777.777-7",
-                    Department: city.DepartmentName, City: city.CityName,
+                    Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
                     Classification: classification.Name, LegacyWithRetention: "No")
             ],
             oldHeaders);

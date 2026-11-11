@@ -111,6 +111,51 @@ public sealed class CustomerWithholdingTaxRatesApiTests
     }
 
     [Fact]
+    public async Task PutAddsRateToCustomerCreatedWithoutRates()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var rate = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente servicios", "Retefuente", 4m);
+        var created = await CreateAsync(client, Body(city.CityId));
+        var id = created.GetProperty("id").GetGuid();
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { rate };
+
+        var updated = await UpdateAsync(client, id, body);
+
+        Assert.Equal([rate], RateIds(updated));
+        var read = await ReadAsync(
+            await client.GetAsync($"{CustomersUrl()}/{id}", TestContext.Current.CancellationToken), HttpStatusCode.OK);
+        Assert.Equal([rate], RateIds(read));
+    }
+
+    [Fact]
+    public async Task PutChangesRateToAnother()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var a = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente 2.5", "Retefuente", 2.5m);
+        var b = await InsertRateAsync(database.GetConnectionString(), TenantId, "Retefuente 4", "Retefuente", 4m);
+        var createBody = Body(city.CityId);
+        createBody["withholdingTaxRateIds"] = new[] { a };
+        var created = await CreateAsync(client, createBody);
+        var id = created.GetProperty("id").GetGuid();
+        var body = Body(city.CityId);
+        body["withholdingTaxRateIds"] = new[] { b };
+
+        var updated = await UpdateAsync(client, id, body);
+
+        Assert.Equal([b], RateIds(updated));
+        var read = await ReadAsync(
+            await client.GetAsync($"{CustomersUrl()}/{id}", TestContext.Current.CancellationToken), HttpStatusCode.OK);
+        Assert.Equal([b], RateIds(read));
+    }
+
+    [Fact]
     public async Task TwoRetefuenteRatesAreRejected()
     {
         await using var database = await StartDatabaseAsync();
