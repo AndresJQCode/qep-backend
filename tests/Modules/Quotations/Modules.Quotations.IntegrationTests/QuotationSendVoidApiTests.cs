@@ -394,7 +394,8 @@ public sealed class QuotationSendVoidApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
-        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: null);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
         await LinkContactAsync(client, tenantId, contactId, companyId);
         var quotation = await CreateQuotationAsync(client, tenantId, companyId);
 
@@ -420,7 +421,8 @@ public sealed class QuotationSendVoidApiTests
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
-        var withoutPhoneId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos", phone: null);
+        var withoutPhoneId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), withoutPhoneId);
         await LinkContactAsync(client, tenantId, contactId, companyId);
         await LinkContactAsync(client, tenantId, withoutPhoneId, companyId);
         var quotation = await CreateQuotationAsync(client, tenantId, companyId);

@@ -372,6 +372,18 @@ internal static class QuotationsApiHarness
         return body.Id;
     }
 
+    /// <summary>El alta exige teléfono (<c>CustomerWriteRules</c>): un contacto sin teléfono sólo existe por datos que no pasaron
+    /// por el alta, así que la prueba le borra el teléfono por SQL.</summary>
+    public static async Task ClearCustomerPhoneAsync(string connectionString, Guid customerId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE customers.customers SET phone = NULL, phone_e164 = NULL WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", customerId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
     /// <summary>Spec 2026-11-10 §4.1: <c>contactId</c> pasa a ser contacto de <c>companyId</c>
     /// (<c>PUT /customers/{id}/company</c>). Sin ligar, un cliente es una empresa o una persona suelta.</summary>
     public static async Task LinkContactAsync(HttpClient client, Guid tenantId, Guid contactId, Guid companyId)

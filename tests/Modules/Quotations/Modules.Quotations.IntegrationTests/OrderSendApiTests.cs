@@ -365,7 +365,8 @@ public sealed class OrderSendApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
-        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: null);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
         await LinkContactAsync(client, tenantId, contactId, companyId);
         var order = await CreateOrderAsync(client, factory, tenantId, companyId);
 
