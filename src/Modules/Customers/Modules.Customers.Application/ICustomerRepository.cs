@@ -126,6 +126,18 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Spec 2026-11-10 §4.8: los clientes sin fusionar del tenant que tienen alguno de estos números de documento, **sin
+    /// importar el tipo**, en una sola consulta batch. La usa la columna «Empresa» de la importación, que trae sólo el número:
+    /// como el índice único es por tipo y número, uno puede tener dos dueños (de distinto tipo) y entonces es ambiguo. El
+    /// número se compara tal cual está guardado (recortado, como lo deja <c>CustomerIdentification</c>). Sólo ids: no carga
+    /// entidades. Un número sin dueño no aparece.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> numbers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Ids de cliente cuyo <c>IdentificationNumber</c> contiene <paramref name="term"/> (ILIKE,
     /// sin distinguir mayusculas), en una sola consulta sin paginar — la usa el filtro de
     /// cotizaciones por NIT (<c>Modules.Quotations</c>, via <c>IQuotationCustomerLookup</c>) para

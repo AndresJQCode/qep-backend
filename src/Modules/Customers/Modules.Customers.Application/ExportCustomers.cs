@@ -35,6 +35,7 @@ public sealed class ExportCustomersHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomerExportBuilder exportBuilder,
     ICustomerExportStorage exportStorage,
     ICustomerExportEventPublisher exportEventPublisher,
@@ -89,7 +90,8 @@ public sealed class ExportCustomersHandler(
             new TenantId(command.TenantId), cancellationToken);
         var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
         var items = await ToDtosAsync(command.TenantId, customers, cancellationToken);
-        var file = exportBuilder.Build(items, calendar, dateTimePattern, cancellationToken);
+        var companyNumbers = await CompanyNumbersAsync(command.TenantId, customers, cancellationToken);
+        var file = exportBuilder.Build(items, companyNumbers, calendar, dateTimePattern, cancellationToken);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
@@ -154,6 +156,29 @@ public sealed class ExportCustomersHandler(
                 return all;
             }
         }
+    }
+
+    // El documento de la empresa de cada contacto, en una sola consulta para todo el archivo (la que ya trae la empresa del
+    // contacto con su número, ruling P5) y no una por fila. Los contactos que salen son los mismos que la lista, porque
+    // `customers` ya viene filtrado por CustomerContactsRule. Una empresa sin documento no aporta valor.
+    private async Task<IReadOnlyDictionary<Guid, string>> CompanyNumbersAsync(
+        Guid tenantId,
+        IReadOnlyList<Customer> customers,
+        CancellationToken cancellationToken)
+    {
+        var contactIds = customers
+            .Where(customer => customer.CompanyId is not null)
+            .Select(customer => customer.Id.Value)
+            .ToArray();
+        if (contactIds.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var companies = await companyDirectory.FindCompaniesAsync(tenantId, contactIds, cancellationToken);
+        return companies
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value.IdentificationNumber))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.IdentificationNumber!);
     }
 
     // La misma resolucion en lote que ListCustomersHandler, y aca importa mas: a escala de tenant

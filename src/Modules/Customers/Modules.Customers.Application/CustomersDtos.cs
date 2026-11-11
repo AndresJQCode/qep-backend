@@ -301,7 +301,9 @@ public sealed record CustomerImportRowData(
     string City,
     string Classification,
     string? WithRetention,
-    string? VatSurplus);
+    string? VatSurplus,
+    /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>
+    string? CompanyIdentificationNumber = null);
 
 /// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para

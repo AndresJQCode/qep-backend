@@ -180,11 +180,17 @@ internal static class CustomerWriteDoubles
             Guid tenantId, IReadOnlyCollection<(IdentificationType Type, string Number)> identifications, CancellationToken cancellationToken)
         {
             IdentificationLookups++;
-            return Task.FromResult<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>(
-                Existing is { IdentificationType: { } type, IdentificationNumber: { } number } && tenantId == Existing.TenantId &&
-                identifications.Contains((type, number))
-                    ? new Dictionary<(IdentificationType, string), CustomerId> { [(type, number)] = Existing.Id }
-                    : new Dictionary<(IdentificationType, string), CustomerId>());
+            // Sólo lo que la prueba entregó (Existing y Known); el primero que ocupa un par es su dueño, y Existing va primero.
+            var owners = new Dictionary<(IdentificationType Type, string Number), CustomerId>();
+            foreach (var item in Known.Prepend(Existing).OfType<Customer>().Where(item => item.TenantId == tenantId && item.MergedIntoId is null))
+            {
+                if (item is { IdentificationType: { } type, IdentificationNumber: { } number } && identifications.Contains((type, number)))
+                {
+                    owners.TryAdd((type, number), item.Id);
+                }
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>(owners);
         }
 
         /// <summary>El orden en que se tocó el repositorio (<c>find:id</c>, <c>lock</c>): lo que importa en el vínculo es que el
@@ -246,8 +252,30 @@ internal static class CustomerWriteDoubles
         public Task<bool> AnyWithClassificationAsync(Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        /// <summary>Todo lo que este doble conoce del tenant, sin repetir: <see cref="Existing"/>, <see cref="Known"/> y lo ya agregado.</summary>
+        private IEnumerable<Customer> Everyone(Guid tenantId) =>
+            Known.Append(Existing).OfType<Customer>().Concat(Added)
+                .Where(item => item.TenantId == tenantId).DistinctBy(item => item.Id);
+
         public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyDictionary<string, CustomerId>>(
+                Everyone(tenantId)
+                    .Where(item => item.Cuc is not null && suffixes.Contains(Customer.StableSuffixOf(item.Cuc)))
+                    .ToDictionary(item => Customer.StableSuffixOf(item.Cuc!), item => item.Id));
+
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+            Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken)
+        {
+            IdentificationNumberLookups.Add(numbers);
+            return Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>>(
+                Everyone(tenantId)
+                    .Where(item => item.MergedIntoId is null && item.IdentificationNumber is not null && numbers.Contains(item.IdentificationNumber))
+                    .GroupBy(item => item.IdentificationNumber!)
+                    .ToDictionary(group => group.Key, group => (IReadOnlyList<CustomerId>)group.Select(item => item.Id).ToArray()));
+        }
+
+        /// <summary>Los números que se pidieron en cada <see cref="FindIdsByIdentificationNumberAsync"/>: el lote es uno solo por archivo.</summary>
+        public List<IReadOnlyCollection<string>> IdentificationNumberLookups { get; } = [];
 
         public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

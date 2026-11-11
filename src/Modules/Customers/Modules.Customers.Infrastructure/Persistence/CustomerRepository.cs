@@ -419,6 +419,36 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .ToDictionary(identification => identification, identification => ownerByIdentification[identification]);
     }
 
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId,
+        IReadOnlyCollection<string> numbers,
+        CancellationToken cancellationToken)
+    {
+        if (numbers.Count == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<CustomerId>>();
+        }
+
+        var wanted = numbers.Distinct().ToArray();
+        // Un fusionado queda fuera: comparte documento con el que quedó (el índice es parcial) y contarlo daría «ambiguo» donde
+        // hay una sola empresa. Un incompleto sí cuenta: también puede ser dueño de un documento (POSC-05).
+        var owners = await dbContext.Customers
+            .AsNoTracking()
+            .Where(customer =>
+                customer.TenantId == tenantId &&
+                customer.MergedIntoId == null &&
+                customer.IdentificationNumber != null &&
+                wanted.Contains(customer.IdentificationNumber))
+            .Select(customer => new { customer.Id, Number = customer.IdentificationNumber! })
+            .ToListAsync(cancellationToken);
+
+        return owners
+            .GroupBy(owner => owner.Number)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<CustomerId>)group.Select(owner => owner.Id).ToArray());
+    }
+
     public async Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(
         Guid tenantId,
         string term,
