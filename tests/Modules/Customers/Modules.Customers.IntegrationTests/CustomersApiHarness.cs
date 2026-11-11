@@ -269,7 +269,8 @@ internal static class CustomersApiHarness
         string? City = null,
         string? Classification = null,
         string? WithRetention = null,
-        string? VatSurplus = null);
+        string? VatSurplus = null,
+        string? Company = null);
 
     /// <summary>
     /// Arma un <c>.xlsx</c> real en memoria con ClosedXML — las pruebas de import ya no suben
@@ -310,7 +311,8 @@ internal static class CustomersApiHarness
                 [CustomerImportColumns.City] = row.City,
                 [CustomerImportColumns.Classification] = row.Classification,
                 [CustomerImportColumns.WithRetention] = row.WithRetention,
-                [CustomerImportColumns.VatSurplus] = row.VatSurplus
+                [CustomerImportColumns.VatSurplus] = row.VatSurplus,
+                [CustomerImportColumns.Company] = row.Company
             };
             for (var column = 0; column < columns.Count; column++)
             {

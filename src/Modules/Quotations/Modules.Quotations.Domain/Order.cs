@@ -256,6 +256,13 @@ public sealed class Order
     /// <summary>Sin tope (plan 2026-10-15, P2): hereda las notas de la cotización, que no lo tienen.</summary>
     public string? Notes { get; private set; }
 
+    /// <summary>
+    /// La nota que el comprador escribió en el checkout de la tienda (spec 2026-11-10, D9). <see cref="Notes"/> la
+    /// sobrescriben <c>UpdateNotes</c>, <c>AddPaymentProofs</c> y <c>AttachExternalShipping</c>; ésta se fija al crear
+    /// el pedido de la tienda y no cambia, para que el comprador siga viendo lo que escribió.
+    /// </summary>
+    public string? BuyerNotes { get; private set; }
+
     public DateTimeOffset ConvertedAt { get; private set; }
 
     public MemberId ConvertedBy { get; private set; }
@@ -503,6 +510,7 @@ public sealed class Order
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
         order.ExternalKey = key;
         order.BuyerAccountId = buyerAccountId;
+        order.BuyerNotes = NormalizeNotes(notes);
         return order;
     }
 

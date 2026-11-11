@@ -176,6 +176,21 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.MergedIntoId })
             .HasFilter("merged_into_id IS NOT NULL")
             .HasDatabaseName("IX_customers_tenant_merged_into");
+        // Empresa de un contacto (spec 2026-11-10 §3.2, G3): un solo nivel, reglas en el agregado. A diferencia de MergedIntoId
+        // sí lleva FK: la autorreferencia no puede quedar colgando, y SET NULL deja al contacto suelto si la empresa se borra.
+        customer.Property(value => value.CompanyId)
+            .HasColumnName("company_id")
+            .HasConversion(new ValueConverter<CustomerId, Guid>(
+                id => id.Value, value => new CustomerId(value)));
+        customer.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CompanyId)
+            .HasConstraintName("FK_customers_customers_company_id")
+            .OnDelete(DeleteBehavior.SetNull);
+        // Parcial: sólo los contactos. Sirve «los contactos de esta empresa» y su conteo.
+        customer.HasIndex(value => new { value.TenantId, value.CompanyId })
+            .HasFilter("company_id IS NOT NULL")
+            .HasDatabaseName("IX_customers_tenant_company");
         customer.HasOne<ClientClassification>()
             .WithMany()
             .HasForeignKey(value => new { value.TenantId, value.ClassificationId })
@@ -267,6 +282,12 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // completo, no por un fragmento en cualquier posicion.
         customer.HasIndex(value => value.Name)
             .HasDatabaseName("IX_customers_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
+
+        // Lo mismo para la razón social: la búsqueda de empresas del listado compara BusinessName con ILIKE '%término%'.
+        customer.HasIndex(value => value.BusinessName)
+            .HasDatabaseName("IX_customers_business_name_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
     }

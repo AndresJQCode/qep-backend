@@ -251,6 +251,33 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
 
     public int FindManyCalls { get; private set; }
 
+    /// <summary>Los contactos (sin fusionar) del cliente base, tal como los entrega el puerto. Un id que no está acá es
+    /// "no es contacto de este cliente": de otra empresa, de otro tenant, fusionado o el propio cliente. El doble no
+    /// reimplementa esa exclusión (es del puerto de Customers), sólo responde lo que el puerto respondería.</summary>
+    public List<QuotationClientContact> Contacts { get; } = [];
+
+    public int FindContactCalls { get; private set; }
+
+    public int ListContactsCalls { get; private set; }
+
+    public Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken)
+    {
+        FindContactCalls++;
+        return Task.FromResult(
+            clientId == customer.Id
+                ? Contacts.FirstOrDefault(contact => contact.Id == contactId)
+                : null);
+    }
+
+    public Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        ListContactsCalls++;
+        return Task.FromResult<IReadOnlyList<QuotationClientContact>>(
+            clientId == customer.Id ? [.. Contacts] : []);
+    }
+
     public Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
     {
@@ -806,7 +833,8 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
-            quotation.FreightTaxAmount));
+            quotation.FreightTaxAmount,
+            []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
     // way the real composer does, against the defaults a tenant without settings reads.
@@ -1257,10 +1285,19 @@ internal sealed class StubQuotationGeographyLookup(
 
     public IReadOnlyCollection<Guid> LastCoordinadoraRequestedIds { get; private set; } = [];
 
+    /// <summary>Cuántas veces se pidieron nombres de ciudad: uno por lote es la aserción.</summary>
+    public int FindCityNamesCalls { get; private set; }
+
+    public IReadOnlyCollection<Guid> LastCityRequestedIds { get; private set; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
-        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        FindCityNamesCalls++;
+        LastCityRequestedIds = cityIds;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(cityNames.ContainsKey).Distinct().ToDictionary(id => id, id => cityNames[id]));
+    }
 
     public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)

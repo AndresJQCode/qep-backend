@@ -237,14 +237,14 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
         Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds,
-        bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+        bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
         Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> ListForExportAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take,
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> AnyWithClassificationAsync(
@@ -252,6 +252,9 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -283,6 +286,12 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public void Add(Customer customer) => throw new NotSupportedException();
 }
 
@@ -302,6 +311,14 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -309,8 +326,11 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
+    public Dictionary<Guid, Guid> SurvivorsById { get; } = [];
+
     public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(SurvivorsById.TryGetValue(customerId, out var survivor) ? survivor : (Guid?)null);
 }
 
 internal sealed class FakeCustomerProvisioning : ICustomerProvisioning

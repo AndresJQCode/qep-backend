@@ -79,6 +79,10 @@ internal sealed class FakePipelineCustomers : IPipelineCustomerDirectory
 
     public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Survivors.GetValueOrDefault(customerId, customerId));
+
+    public Task<Guid?> FindCompanyIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<PipelineCompanyRef?> FindCompanyAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => throw new NotSupportedException();
 }
 
 internal sealed class FakeProvisioner(SalesPipeline pipeline) : IPipelineProvisioner

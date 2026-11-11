@@ -699,6 +699,287 @@ public sealed class CustomerMergeApiTests
             arranged.ConnectionString, $"SELECT count(*) FROM customers.customers WHERE merged_into_id = '{arranged.Survivor}'"));
     }
 
+    // ---- Spec 2026-11-10 contactos de empresa §4.7: la fusión y el vínculo persona → empresa ----
+
+    private const string CompanyConflictCode = "customers.customer.merge_company_conflict";
+
+    private static async Task<Guid> CreateNumberedAsync(Arranged arranged, string name, int number) =>
+        await CreateAsync(arranged.Client, arranged.CityId, arranged.ClassificationId, name, "CC", $"1020304{number:D3}");
+
+    private static async Task LinkAsync(Arranged arranged, Guid customer, Guid company)
+    {
+        var response = await arranged.Client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer}/company", new { companyId = company }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    private static Task<string?> CompanyOfAsync(string connectionString, Guid customer) =>
+        TextAsync(connectionString, $"SELECT company_id FROM customers.customers WHERE id = '{customer}'");
+
+    // El invariante de la fusión: nadie apunta a un fusionado ni a sí mismo, y nadie es a la vez contacto y empresa.
+    private static async Task AssertNoBrokenLinksAsync(string connectionString)
+    {
+        Assert.Equal(
+            0,
+            await ScalarAsync(
+                connectionString,
+                """
+                SELECT count(*) FROM customers.customers contact
+                JOIN customers.customers company ON company.id = contact.company_id
+                WHERE contact.id = company.id OR company.merged_into_id IS NOT NULL OR company.company_id IS NOT NULL
+                """));
+        Assert.Equal(
+            0,
+            await ScalarAsync(
+                connectionString,
+                "SELECT count(*) FROM customers.customers WHERE merged_into_id IS NOT NULL AND company_id IS NOT NULL"));
+    }
+
+    private static async Task<Arranged> ArrangeBlankAsync(QepApiFactory factory, string connectionString)
+    {
+        var client = CreateMerger(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        return new Arranged(connectionString, client, city.CityId, classification.Id, Guid.Empty, Guid.Empty);
+    }
+
+    [Fact]
+    public async Task TheContactsOfAMergedCompanyMoveToTheSurvivor()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var survivor = await CreateNumberedAsync(arranged, "Verde Esencial", 1);
+        var company = await CreateNumberedAsync(arranged, "Verde Esencial SAS", 2);
+        var first = await CreateNumberedAsync(arranged, "Laura Pérez", 3);
+        var second = await CreateNumberedAsync(arranged, "Mario Ruiz", 4);
+        await LinkAsync(arranged, first, company);
+        await LinkAsync(arranged, second, company);
+
+        await MergeAsync(client, survivor, company);
+
+        Assert.Equal(survivor.ToString(), await CompanyOfAsync(arranged.ConnectionString, first));
+        Assert.Equal(survivor.ToString(), await CompanyOfAsync(arranged.ConnectionString, second));
+        Assert.Null(await CompanyOfAsync(arranged.ConnectionString, company));
+        Assert.Null(await CompanyOfAsync(arranged.ConnectionString, survivor));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task MergingAContactIntoItsCompanyLeavesNoSelfLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var company = await CreateNumberedAsync(arranged, "Verde Esencial", 1);
+        var contact = await CreateNumberedAsync(arranged, "Laura Pérez", 2);
+        await LinkAsync(arranged, contact, company);
+
+        await MergeAsync(client, company, contact);
+
+        Assert.Null(await CompanyOfAsync(arranged.ConnectionString, company));
+        Assert.Null(await CompanyOfAsync(arranged.ConnectionString, contact));
+        Assert.Equal(company.ToString(), await MergedIntoAsync(arranged.ConnectionString, contact));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task MergingACompanyIntoItsContactClearsTheSurvivorsLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var company = await CreateNumberedAsync(arranged, "Verde Esencial", 1);
+        var survivor = await CreateNumberedAsync(arranged, "Laura Pérez", 2);
+        var other = await CreateNumberedAsync(arranged, "Mario Ruiz", 3);
+        await LinkAsync(arranged, survivor, company);
+        await LinkAsync(arranged, other, company);
+
+        var body = await MergeAsync(client, survivor, company);
+
+        Assert.Null(await CompanyOfAsync(arranged.ConnectionString, survivor));
+        Assert.Equal(survivor.ToString(), await CompanyOfAsync(arranged.ConnectionString, other));
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("company").ValueKind);
+        Assert.Equal(1, body.GetProperty("contactCount").GetInt32());
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task ASurvivorThatWouldKeepACompanyAndGainContactsIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var parent = await CreateNumberedAsync(arranged, "Casa Matriz", 1);
+        var survivor = await CreateNumberedAsync(arranged, "Sucursal Norte", 2);
+        var company = await CreateNumberedAsync(arranged, "Verde Esencial", 3);
+        var contact = await CreateNumberedAsync(arranged, "Laura Pérez", 4);
+        await LinkAsync(arranged, survivor, parent);
+        await LinkAsync(arranged, contact, company);
+        var version = await PreviewVersionAsync(client, survivor, company);
+        var before = await TextAsync(arranged.ConnectionString, State);
+
+        var body = await BodyAsync(
+            await PostMergeAsync(client, survivor, $"\"{version}\"", [company]), HttpStatusCode.UnprocessableEntity);
+
+        Assert.Equal(CompanyConflictCode, body.GetProperty("code").GetString());
+        Assert.Equal(before, await TextAsync(arranged.ConnectionString, State));
+        Assert.Null(await MergedIntoAsync(arranged.ConnectionString, company));
+        Assert.Equal(company.ToString(), await CompanyOfAsync(arranged.ConnectionString, contact));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task NoCustomerIsLeftPointingAtAMergedCompanyOrTwoLevelsDeep()
+    {
+        // Varios escenarios en el mismo tenant; después de cada fusión el SQL del invariante tiene que dar cero filas rotas.
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var companyA = await CreateNumberedAsync(arranged, "Empresa A", 1);
+        var companyB = await CreateNumberedAsync(arranged, "Empresa B", 2);
+        var companyC = await CreateNumberedAsync(arranged, "Empresa C", 3);
+        var contactA = await CreateNumberedAsync(arranged, "Contacto A", 4);
+        var contactB = await CreateNumberedAsync(arranged, "Contacto B", 5);
+        var contactC = await CreateNumberedAsync(arranged, "Contacto C", 6);
+        await LinkAsync(arranged, contactA, companyA);
+        await LinkAsync(arranged, contactB, companyB);
+        await LinkAsync(arranged, contactC, companyC);
+
+        await MergeAsync(client, companyA, companyB);
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        await MergeAsync(client, companyA, contactC);
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+        await MergeAsync(client, contactA, companyA);
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+
+        Assert.Equal(contactA.ToString(), await CompanyOfAsync(arranged.ConnectionString, contactB));
+
+        // SurvivorKeepsCompany sin conflicto: el que queda sigue siendo contacto de su empresa y nadie llega a él.
+        var siblingCompany = await CreateNumberedAsync(arranged, "Empresa D", 7);
+        var keeper = await CreateNumberedAsync(arranged, "Contacto D", 8);
+        var plain = await CreateNumberedAsync(arranged, "Cliente suelto", 9);
+        await LinkAsync(arranged, keeper, siblingCompany);
+
+        await MergeAsync(client, keeper, plain);
+
+        Assert.Equal(siblingCompany.ToString(), await CompanyOfAsync(arranged.ConnectionString, keeper));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task AMergeAndALinkOnTheSameContactNeverAnswerA500()
+    {
+        // X ya es contacto de la empresa M (que se fusiona en S) y, a la vez, X se re-vincula a S. Antes de bloquear también los
+        // contactos que se mueven, la fusión tomaba X después de S/M y el vínculo al revés: Postgres cortaba un ciclo (40P01).
+        // Ahora la fusión toma {S, M, X} en una sola sentencia ordenada y cualquier ciclo residual es el 412 del módulo. Varias
+        // rondas para que los ids (v7, crecientes) caigan en ambos órdenes.
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var statuses = new List<HttpStatusCode>();
+        for (var round = 0; round < 5; round++)
+        {
+            var baseNumber = 10 + (round * 3);
+            var company = await CreateNumberedAsync(arranged, $"Empresa {round}", baseNumber);
+            var survivor = await CreateNumberedAsync(arranged, $"Quien queda {round}", baseNumber + 1);
+            var contact = await CreateNumberedAsync(arranged, $"Contacto {round}", baseNumber + 2);
+            await LinkAsync(arranged, contact, company);
+            var version = await PreviewVersionAsync(client, survivor, company);
+
+            var merge = PostMergeAsync(client, survivor, $"\"{version}\"", [company]);
+            var link = client.PutAsJsonAsync(
+                $"{CustomersUrl()}/{contact}/company", new { companyId = survivor }, TestContext.Current.CancellationToken);
+            statuses.Add((await merge).StatusCode);
+            statuses.Add((await link).StatusCode);
+        }
+
+        HttpStatusCode[] allowed = [HttpStatusCode.OK, HttpStatusCode.PreconditionFailed, HttpStatusCode.UnprocessableEntity];
+        Assert.All(statuses, status => Assert.Contains(status, allowed));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task ALinkRacingAMergeNeverPointsAtATombstone()
+    {
+        // Mecanismo explícito: FOR UPDATE de Postgres sobre la fila de la empresa (LockForCompanyLinkAsync). La prueba retiene esa
+        // fila con una transacción propia, deja que la fusión se ponga en la cola del bloqueo y después el vínculo (se espera en
+        // pg_stat_activity, sin sleeps a ciegas), y suelta. La cola es FIFO: la fusión va primero y el vínculo ve a la empresa
+        // fusionada (company_not_found). Si el orden fuera el contrario, el contacto vinculado se movería al que queda. En
+        // ambos casos el invariante se cumple.
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var survivor = await CreateNumberedAsync(arranged, "Verde Esencial", 1);
+        var company = await CreateNumberedAsync(arranged, "Verde Esencial SAS", 2);
+        var person = await CreateNumberedAsync(arranged, "Laura Pérez", 3);
+        var version = await PreviewVersionAsync(client, survivor, company);
+        var ct = TestContext.Current.CancellationToken;
+
+        await using var holder = new NpgsqlConnection(arranged.ConnectionString);
+        await holder.OpenAsync(ct);
+        await using var holderTransaction = await holder.BeginTransactionAsync(ct);
+        await using (var hold = new NpgsqlCommand(
+            $"SELECT id FROM customers.customers WHERE id = '{company}' FOR UPDATE", holder, holderTransaction))
+        {
+            await hold.ExecuteNonQueryAsync(ct);
+        }
+
+        var merge = PostMergeAsync(client, survivor, $"\"{version}\"", [company]);
+        await WaitForWaitersAsync(arranged.ConnectionString, 1, merge);
+        var link = client.PutAsJsonAsync($"{CustomersUrl()}/{person}/company", new { companyId = company }, ct);
+        await WaitForWaitersAsync(arranged.ConnectionString, 2, link);
+        await holderTransaction.CommitAsync(ct);
+
+        Assert.Equal(HttpStatusCode.OK, (await merge).StatusCode);
+        var linkResponse = await link;
+        if (linkResponse.StatusCode == HttpStatusCode.OK)
+        {
+            Assert.Equal(survivor.ToString(), await CompanyOfAsync(arranged.ConnectionString, person));
+        }
+        else
+        {
+            var body = await BodyAsync(linkResponse, HttpStatusCode.UnprocessableEntity);
+            Assert.Equal("customers.customer.company_not_found", body.GetProperty("code").GetString());
+            Assert.Null(await CompanyOfAsync(arranged.ConnectionString, person));
+        }
+
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    // Espera a que haya <expected> consultas FOR UPDATE de customers.customers esperando una fila; si la tarea termina antes,
+    // falla acá y no se cuelga.
+    private static async Task WaitForWaitersAsync(string connectionString, int expected, Task pending)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (pending.IsCompleted)
+            {
+                await pending;
+                Assert.Fail("The request finished before waiting for the row lock.");
+            }
+
+            if (await ScalarAsync(
+                connectionString,
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%customers.customers%FOR UPDATE%'") == expected)
+            {
+                return;
+            }
+
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The row lock never had the expected number of waiters.");
+    }
+
     private sealed class FailingMergeReferences : ICustomerMergeReferences
     {
         public Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>

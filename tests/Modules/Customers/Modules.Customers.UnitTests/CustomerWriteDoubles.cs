@@ -310,38 +310,105 @@ internal static class CustomerWriteDoubles
             Guid tenantId, IReadOnlyCollection<(IdentificationType Type, string Number)> identifications, CancellationToken cancellationToken)
         {
             IdentificationLookups++;
-            return Task.FromResult<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>(
-                Existing is { IdentificationType: { } type, IdentificationNumber: { } number } && tenantId == Existing.TenantId &&
-                identifications.Contains((type, number))
-                    ? new Dictionary<(IdentificationType, string), CustomerId> { [(type, number)] = Existing.Id }
-                    : new Dictionary<(IdentificationType, string), CustomerId>());
+            // Sólo lo que la prueba entregó (Existing y Known); el primero que ocupa un par es su dueño, y Existing va primero.
+            var owners = new Dictionary<(IdentificationType Type, string Number), CustomerId>();
+            foreach (var item in Known.Prepend(Existing).OfType<Customer>().Where(item => item.TenantId == tenantId && item.MergedIntoId is null))
+            {
+                if (item is { IdentificationType: { } type, IdentificationNumber: { } number } && identifications.Contains((type, number)))
+                {
+                    owners.TryAdd((type, number), item.Id);
+                }
+            }
+
+            return Task.FromResult<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>(owners);
         }
 
-        public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken) =>
-            Task.FromResult(
+        /// <summary>El orden en que se tocó el repositorio (<c>find:id</c>, <c>lock</c>): lo que importa en el vínculo es que el
+        /// bloqueo vaya antes de leer a nadie.</summary>
+        public List<string> Log { get; } = [];
+
+        /// <summary>Los ids de cada <see cref="LockForCompanyLinkAsync"/>.</summary>
+        public List<IReadOnlyCollection<Guid>> LockCalls { get; } = [];
+
+        public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
+        {
+            Log.Add("find:" + customerId.Value);
+            return Task.FromResult(
                 Existing is not null && Existing.TenantId == tenantId && Existing.Id == customerId
                     ? Existing
                     : Known.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
+        }
+
+        /// <summary>Los (ids, empresas) de cada <see cref="LockForMergeAsync"/>.</summary>
+        public List<(IReadOnlyCollection<Guid> Ids, IReadOnlyCollection<Guid> Companies)> MergeLockCalls { get; } = [];
+
+        public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken)
+        {
+            Log.Add("lock-merge");
+            MergeLockCalls.Add((customerIds, companyIds));
+            return Task.CompletedTask;
+        }
+
+        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+        {
+            Log.Add("lock");
+            LockCalls.Add(customerIds);
+            return Task.CompletedTask;
+        }
 
         public void Add(Customer customer) => Added.Add(customer);
 
         public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken)
+        {
+            SearchCalls.Add(includeContacts);
+            return Task.FromResult<(IReadOnlyList<Customer> Items, int Total)>((SearchPage, SearchPage.Count));
+        }
+
+        /// <summary>El <c>includeContacts</c> de cada <see cref="SearchAsync"/>: lo que el handler decidió a partir de los parámetros.</summary>
+        public List<bool> SearchCalls { get; } = [];
+
+        /// <summary>La página que <see cref="SearchAsync"/> devuelve (el doble no filtra: lo que se prueba es el parámetro).</summary>
+        public List<Customer> SearchPage { get; } = [];
 
         public Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<Customer>> ListForExportAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<Customer>> ListForExportAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<bool> AnyWithClassificationAsync(Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        /// <summary>Todo lo que este doble conoce del tenant, sin repetir: <see cref="Existing"/>, <see cref="Known"/> y lo ya agregado.</summary>
+        private IEnumerable<Customer> Everyone(Guid tenantId) =>
+            Known.Append(Existing).OfType<Customer>().Concat(Added)
+                .Where(item => item.TenantId == tenantId).DistinctBy(item => item.Id);
+
         public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyDictionary<string, CustomerId>>(
+                Everyone(tenantId)
+                    .Where(item => item.Cuc is not null && suffixes.Contains(Customer.StableSuffixOf(item.Cuc)))
+                    .ToDictionary(item => Customer.StableSuffixOf(item.Cuc!), item => item.Id));
+
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+            Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken)
+        {
+            IdentificationNumberLookups.Add(numbers);
+            return Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>>(
+                Everyone(tenantId)
+                    .Where(item => (IncludeMergedInNumberLookup || item.MergedIntoId is null) && item.IdentificationNumber is not null && numbers.Contains(item.IdentificationNumber))
+                    .GroupBy(item => item.IdentificationNumber!)
+                    .ToDictionary(group => group.Key, group => (IReadOnlyList<CustomerId>)group.Select(item => item.Id).ToArray()));
+        }
+
+        /// <summary>Para simular la carrera en que una empresa se fusiona entre la búsqueda por número y la lectura de la fila.</summary>
+        public bool IncludeMergedInNumberLookup { get; set; }
+
+        /// <summary>Los números que se pidieron en cada <see cref="FindIdsByIdentificationNumberAsync"/>: el lote es uno solo por archivo.</summary>
+        public List<IReadOnlyCollection<string>> IdentificationNumberLookups { get; } = [];
 
         public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -353,7 +420,11 @@ internal static class CustomerWriteDoubles
             throw new NotSupportedException();
 
         public Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyDictionary<CustomerId, Customer>>(
+                Known.Append(Existing).OfType<Customer>()
+                    .Where(item => item.TenantId == tenantId && customerIds.Contains(item.Id))
+                    .DistinctBy(item => item.Id)
+                    .ToDictionary(item => item.Id));
 
         public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

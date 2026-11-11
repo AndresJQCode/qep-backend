@@ -56,6 +56,35 @@ public sealed class OnlineStoreTests
     }
 
     [Fact]
+    public void AnEmptyStoreShowsPrices() => Assert.True(Empty().ShowPrices);
+
+    [Fact]
+    public void ChangingOnlyShowPricesBumpsTheVersion()
+    {
+        var store = ConfiguredStore();
+
+        Assert.True(store.Configure(Input(showPrices: false), KnowsCoAndEs, Member, Now));
+
+        Assert.False(store.ShowPrices);
+        Assert.Equal(2, store.Version);
+    }
+
+    [Fact]
+    public void ReconfiguringWithShowPricesFalseAgainChangesNothing()
+    {
+        var store = ConfiguredStore(Input(showPrices: false));
+        var version = store.Version;
+
+        Assert.False(store.Configure(Input(showPrices: false), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(version, store.Version);
+    }
+
+    [Fact]
+    public void HidingPricesIsNotAPublishBlocker() =>
+        Assert.Empty(ConfiguredStore(Input(showPrices: false)).PublishBlockers());
+
+    [Fact]
     public void ConfiguringBumpsTheVersionOnlyWhenSomethingChanges()
     {
         var store = ConfiguredStore();

@@ -43,10 +43,16 @@ public sealed class CustomerMergePlan
     private readonly MarketingConsentSource? _optOutSource;
     private readonly DateTimeOffset? _optOutAt;
 
+    // Spec 2026-11-10 §4.7: se captura al planear, antes de que MarkMerged/FillSurvivor toquen nada.
+    private readonly bool _survivorCompanyIsMerged;
+
     private CustomerMergePlan(Customer survivor, IReadOnlyList<Customer> merged)
     {
         Survivor = survivor;
         Merged = merged;
+
+        _survivorCompanyIsMerged = survivor.CompanyId is { } survivorCompany && merged.Any(c => c.Id == survivorCompany);
+        SurvivorKeepsCompany = survivor.CompanyId is not null && !_survivorCompanyIsMerged;
 
         // Para cada campo vacío del que queda, el primer fusionado (en el orden pedido) que lo tenga. D-F14: nunca la
         // clasificación ni el CUC.
@@ -100,6 +106,17 @@ public sealed class CustomerMergePlan
 
     /// <summary>Lo que la fusión llena del que queda, en el orden del enum.</summary>
     public IReadOnlyList<CustomerMergeField> FilledFields { get; }
+
+    /// <summary>El que queda tiene empresa y esa empresa no es uno de los fusionados: después de la fusión sigue siendo contacto.
+    /// (Si la empresa se fusiona en él, o él es su contacto, el vínculo se borra y deja de serlo.)</summary>
+    public bool SurvivorKeepsCompany { get; }
+
+    /// <summary>
+    /// Dos niveles: el que queda seguiría siendo contacto y además tendría contactos (los suyos o los que llegan de un fusionado).
+    /// La fusión lo rechaza con <c>customers.customer.merge_company_conflict</c>; la vista previa sólo lo avisa.
+    /// </summary>
+    public bool HasCompanyConflict(int survivorContacts, int movedContacts) =>
+        SurvivorKeepsCompany && survivorContacts + movedContacts > 0;
 
     /// <summary>
     /// Valida y calcula sin escribir. El primero que falla gana: un id repetido, el del que queda entre los fusionados o
@@ -210,6 +227,12 @@ public sealed class CustomerMergePlan
         if (_optOutFrom is not null)
         {
             Survivor.OptOutOfMarketing(_optOutSource ?? MarketingConsentSource.Manual, _optOutAt ?? now);
+        }
+
+        // La empresa del que queda se fusionó en él: sería un vínculo a un fusionado (o a sí mismo).
+        if (_survivorCompanyIsMerged)
+        {
+            Survivor.ClearCompanyLink();
         }
 
         Survivor.TouchForMerge(now);

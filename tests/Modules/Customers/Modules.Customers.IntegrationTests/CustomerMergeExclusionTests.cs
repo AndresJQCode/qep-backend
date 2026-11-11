@@ -89,7 +89,7 @@ public sealed class CustomerMergeExclusionTests
         var repository = scope.ServiceProvider.GetRequiredService<ICustomerRepository>();
         var ct = TestContext.Current.CancellationToken;
 
-        var exported = await repository.ListForExportAsync(Tenant, null, null, null, null, null, 0, 100, ct);
+        var exported = await repository.ListForExportAsync(Tenant, null, null, null, null, null, 0, 100, true, ct);
         var selectable = await repository.SearchSelectableAsync(Tenant, null, 50, false, ct);
         var selectableByName = await repository.SearchSelectableAsync(Tenant, "Fusionado", 50, false, ct);
 

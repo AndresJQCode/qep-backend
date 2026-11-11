@@ -11,6 +11,7 @@ public sealed class GetCustomerHandler(
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     IExecutionContext executionContext)
     : IQueryHandler<GetCustomerQuery, CustomerDto>
 {
@@ -25,7 +26,7 @@ public sealed class GetCustomerHandler(
             query.TenantId, new CustomerId(query.CustomerId), cancellationToken)
             ?? throw CustomerNotFound.For(query.CustomerId);
 
-        var dto = await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, cancellationToken);
+        var dto = await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
         if (customer.MergedIntoId is not { } survivorId)
         {
             return dto;

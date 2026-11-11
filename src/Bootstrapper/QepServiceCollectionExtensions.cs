@@ -557,6 +557,9 @@ public static class QepServiceCollectionExtensions
             ICommandHandler<ActivateCustomerCommand, CustomerDto>,
             ActivateCustomerHandler>();
         services.AddScoped<
+            ICommandHandler<SetCustomerCompanyCommand, CustomerDto>,
+            SetCustomerCompanyHandler>();
+        services.AddScoped<
             ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
             ImportCustomersHandler>();
         // Fase 6: la plantilla es una lectura (IQuery), no un comando — no muta nada.

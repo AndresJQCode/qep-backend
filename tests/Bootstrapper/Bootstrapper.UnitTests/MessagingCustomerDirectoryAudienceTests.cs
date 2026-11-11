@@ -127,7 +127,7 @@ public sealed class MessagingCustomerDirectoryAudienceTests
     }
 
     private static MessagingCustomerDirectory AdapterOver(FakeWhatsApp whatsApp, FakeTagLookup? tags = null, FakePhones? phones = null) =>
-        new(phones ?? new FakePhones(), new LibPhoneNumberNormalizer(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(),
+        new(phones ?? new FakePhones(), new LibPhoneNumberNormalizer(), whatsApp, new FakeInstagram(), tags ?? new FakeTagLookup(), new FakeCustomerMergeStore(), null!,
             NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]

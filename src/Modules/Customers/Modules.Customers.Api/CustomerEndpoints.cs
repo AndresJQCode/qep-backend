@@ -132,6 +132,16 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-10 §4.1: vincular o desvincular la empresa de un contacto. Sin If-Match: no edita la ficha, y repetir el
+        // vínculo es un 200 sin cambios (ruling P10). Un solo permiso, el de administrar clientes.
+        group.MapPut("/{customerId:guid}/company", SetCustomerCompanyAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<SetCustomerCompanyRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/{customerId:guid}/deactivate", DeactivateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Produces<CustomerResponse>()
@@ -208,7 +218,8 @@ public static class CustomerEndpoints
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize,
         string? isComplete = null,
-        string? phone = null)
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
@@ -222,7 +233,8 @@ public static class CustomerEndpoints
                 page,
                 pageSize,
                 isComplete,
-                phone),
+                phone,
+                contacts),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -323,6 +335,9 @@ public static class CustomerEndpoints
             survivor.MarketingConsent,
             survivor.MergedInto,
             survivor.PersonType,
+            survivor.Company,
+            survivor.Contacts ?? [],
+            survivor.ContactCount,
             result.DroppedTags));
     }
 
@@ -381,6 +396,20 @@ public static class CustomerEndpoints
                 request.WithRetention,
                 request.VatSurplus,
                 request.PersonType),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> SetCustomerCompanyAsync(
+        Guid tenantId,
+        Guid customerId,
+        SetCustomerCompanyRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new SetCustomerCompanyCommand(tenantId, customerId, request.CompanyId),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -462,10 +491,11 @@ public static class CustomerEndpoints
         string? name = null,
         string? identificationNumber = null,
         string? cuc = null,
-        string? phone = null)
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone),
+            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone, contacts),
             cancellationToken);
 
         return Results.Accepted(value: new ExportCustomersResponse(
@@ -605,7 +635,10 @@ public static class CustomerEndpoints
         customer.Tags,
         customer.MarketingConsent,
         customer.MergedInto,
-        customer.PersonType);
+        customer.PersonType,
+        customer.Company,
+        customer.Contacts ?? [],
+        customer.ContactCount);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -621,5 +654,9 @@ public static class CustomerEndpoints
         customer.Classification,
         customer.IsActive,
         customer.IsComplete,
-        customer.CreatedAt);
+        customer.CreatedAt,
+        customer.BusinessName,
+        customer.PersonType,
+        customer.Company,
+        customer.ContactCount);
 }
