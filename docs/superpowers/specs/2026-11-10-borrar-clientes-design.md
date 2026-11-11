@@ -222,10 +222,19 @@ Lo que apareció al construirlo (2026-11-11). Donde el plan y el código discrep
 | `pipeline.deal_stage_history` | Se borra con el negocio. |
 | `pipeline.deals.origin_conversation_id` de negocios de **otros** clientes | Pasa a `NULL` al borrarse la conversación de origen (R11, A-7: sin ids muertos). |
 | `shopify.city_corrections`, `city_correction_jobs` | Quedan como están (R12): un trabajo pendiente ya termina en `CustomerNotFound` y la fusión tampoco los mueve. |
+| `customers.data_consents.conversation_id` | Sin tocar: es historia, como la fila misma (A-5, A-11). Queda apuntando a una conversación borrada y no se «arregla»: es la prueba de por dónde respondió el titular. |
 
 ### Escritores que no toman el candado (P13 / R13)
 
 El POS y los escritores del pipeline no toman `CustomerReferenceLock`. Una venta del POS creada mientras se borra puede conservar el id borrado (`pos.sales.customer_id`); la foto del cliente en la venta sigue mostrándose. Aceptado (R13).
+
+Lo mismo con el pipeline: un negocio que el triage crea en la ventana de la carrera puede quedar con `pipeline.deals.customer_id` apuntando al cliente borrado, y el tablero lo muestra sin cliente («negocio fantasma»). Aceptado bajo R13.
+
+### Escritores que sí toman el candado (revisión final)
+
+- **R7 revocado.** El perfil de cobro también toma el candado: `PUT /customers/{id}/profile` crea un `CustomerBillingProfile` sin servicio, así que la premisa de R7 («el perfil nace con el servicio») era falsa. `ServiceContractsUnitOfWork` toma el compartido y comprueba que el cliente exista también para un perfil nuevo; si el borrado ganó, `CustomerNotFound`.
+- **Fusión (I-1).** La fusión toma el candado **exclusivo** de todos sus clientes (el que queda, los fusionados y su cadena), en orden de id, al empezar su transacción: fusión y borrado se serializan sólo por candados consultivos y ninguno deja referencias a un cliente borrado.
+- **Vínculo del chatbot (I-2).** `LinkCustomerAsync` toma el compartido antes de colgar la conversación; si el cliente ya no existe, la unidad del motor se reintenta. El borrado bloquea con `FOR UPDATE` las filas de los clientes borrables después de leer los bloqueos y antes de la foto de consentimientos: un consentimiento o una revocación que llegue en ese tramo espera y no encuentra al cliente.
 
 ### Auditoría (R10)
 
