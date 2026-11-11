@@ -170,7 +170,9 @@ public sealed class SharedContactCustomerApiTests
 
         // 1) Sólo el texto del Arrange: ninguna tarjeta, ninguna llamada.
         var textOnly = await f.Client.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, f.ConversationId), TestContext.Current.CancellationToken);
-        Assert.Single(textOnly.GetProperty("items").EnumerateArray());
+        // El hilo ya trae el texto y el evento CustomerCreated que escribe la ingesta; ninguno es una tarjeta.
+        var baseline = textOnly.GetProperty("items").GetArrayLength();
+        Assert.All(textOnly.GetProperty("items").EnumerateArray(), item => Assert.Equal(JsonValueKind.Null, item.GetProperty("contacts").ValueKind));
         Assert.Equal(0, calls.Count);
 
         // 2) Dos tarjetas que comparten un número: una llamada, con los tres números sin repetir.
@@ -180,7 +182,7 @@ public sealed class SharedContactCustomerApiTests
 
         var withCards = await f.Client.GetFromJsonAsync<JsonElement>(MessagesUrl(f.Tenant.TenantId, f.ConversationId), TestContext.Current.CancellationToken);
 
-        Assert.Equal(3, withCards.GetProperty("items").GetArrayLength());
+        Assert.Equal(baseline + 2, withCards.GetProperty("items").GetArrayLength());
         Assert.Equal(1, calls.Count);
         Assert.Equal(["14155552671", "34612345678", CardWaId], calls.WaIds.Order(StringComparer.Ordinal));
     }
