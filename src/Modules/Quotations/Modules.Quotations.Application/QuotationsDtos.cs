@@ -64,11 +64,10 @@ public sealed record QuotationDto(
     IReadOnlyCollection<QuotationPartyDto> Parties,
     /// <summary>Si la facturación sigue al cliente, si va con su razón social.</summary>
     bool BillingUsesBusinessName,
-    /// <summary>Si quien recibe la factura practica retención en la fuente, sólo cuando
-    /// <c>Parties</c> trae fila de facturación propia (<c>Quotation.PartyWithRetention</c>). Null
-    /// con los datos del cliente (ahí manda <c>CustomerVatSurplus</c>/lo que ya diga el cliente) o
-    /// mientras no se contestó con datos propios — la pantalla lo trata como "todavía sin elegir",
-    /// no como false.</summary>
+    /// <summary>Derivado para el frontend viejo (spec impuestos por tipo §9): con fila de facturación
+    /// propia en <c>Parties</c>, si hay algún selector de retención elegido
+    /// (<c>Quotation.BillingWithholdings</c>), nunca null, porque el frontend viejo bloquea la conversión
+    /// con null; con los datos del cliente, null. En el cuerpo se ignora.</summary>
     bool? BillingWithRetention,
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA
     /// (<c>Quotation.PartyVatSurplus</c>).</summary>
