@@ -7,12 +7,17 @@ namespace Modules.Quotations.Application;
 /// línea suma al total.</summary>
 public sealed record BuyerOrderLine(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
 
+/// <summary>Los cuatro ejes del pedido (spec 2026-11-10 §9), por nombre: <c>Status</c> es <c>Open</c>,
+/// <c>Archived</c> o <c>Cancelled</c>; <c>FulfillmentStatus</c>, <c>NotPrepared</c> o <c>Prepared</c>; e
+/// <c>Invoiced</c>, la marca de facturado. Sin capa de compatibilidad: no hay compradores en producción.</summary>
 public sealed record BuyerOrderSummary(
     Guid Id,
     string Number,
     DateTimeOffset CreatedAt,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     decimal Total,
     string Currency,
     int LineCount,
@@ -25,6 +30,8 @@ public sealed record BuyerOrderDetail(
     DateTimeOffset CreatedAt,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     decimal Total,
     string Currency,
     int LineCount,
@@ -208,6 +215,8 @@ public sealed class BuyerOrderGateway(
             order.CreatedAt,
             order.Status.ToString(),
             order.PaymentStatus.ToString(),
+            order.FulfillmentStatus.ToString(),
+            order.IsInvoiced,
             order.Total,
             order.Currency,
             order.Items.Count,
@@ -221,6 +230,8 @@ public sealed class BuyerOrderGateway(
             order.CreatedAt,
             order.Status.ToString(),
             order.PaymentStatus.ToString(),
+            order.FulfillmentStatus.ToString(),
+            order.IsInvoiced,
             order.Total,
             order.Currency,
             order.Items.Count,

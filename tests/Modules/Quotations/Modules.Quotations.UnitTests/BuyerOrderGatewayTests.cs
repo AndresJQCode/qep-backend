@@ -122,6 +122,26 @@ public sealed class BuyerOrderGatewayTests
         Assert.True(summary.CanCancel);
     }
 
+    // Spec 2026-11-10 §9: el comprador ve los cuatro ejes, sin capa de compatibilidad.
+    [Fact]
+    public async Task TheBuyerSeesTheFourAxes()
+    {
+        var order = StoreOrder(Buyer);
+        order.Prepare(Advisor, Now);
+        var orders = new StubOrderListRepository(order);
+
+        var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
+        var detail = await Gateway(orders).FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (summary.Status, summary.PaymentStatus, summary.FulfillmentStatus, summary.Invoiced, summary.CanCancel));
+        Assert.NotNull(detail);
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (detail.Status, detail.PaymentStatus, detail.FulfillmentStatus, detail.Invoiced, detail.CanCancel));
+    }
+
     [Theory]
     [InlineData(false, OrderPaymentStatus.PaymentPending, true)]
     [InlineData(false, OrderPaymentStatus.PartialPaymentReceived, false)]

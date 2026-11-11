@@ -926,12 +926,14 @@ public sealed class ShopifyAdaptersTests
             new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", Guid.CreateVersion7(), Guid.CreateVersion7()));
         var label = ShopifyOrderImporter.RawAddressLabel;
         var orders = new FakeExternalOrderWriter();
-        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(OrderStatus.Open, false, null, $"Shopify #1001\n{label}Cra 5, CALLI");
-        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(OrderStatus.Archived, true, party, $"Shopify #1002 {label}no es una línea\n");
+        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(
+            OrderStatus.Open, false, null, $"Shopify #1001\n{label}Cra 5, CALLI", IsEditable: true);
+        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(
+            OrderStatus.Archived, true, party, $"Shopify #1002 {label}no es una línea\n", IsEditable: false);
         var adapter = CityCorrectionWriter(orders: orders);
 
-        Assert.Equal(new ShopifyOrderCityState("Open", false, false, true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
-        Assert.Equal(new ShopifyOrderCityState("Archived", true, true, false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Open", false, false, true, IsEditable: true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Archived", true, true, false, IsEditable: false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(TenantId, Guid.CreateVersion7(), Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(Guid.CreateVersion7(), orderId, Ct));
     }

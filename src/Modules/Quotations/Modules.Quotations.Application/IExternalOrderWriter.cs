@@ -52,9 +52,11 @@ public sealed record ExternalShippingParty(
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
 /// envío: su estado, si es de recoger en tienda, su parte de envío (<c>null</c> si no tiene) y sus notas tal cual están
-/// guardadas (<c>null</c> si no tiene). Sólo lee.
+/// guardadas (<c>null</c> si no tiene). Sólo lee. <see cref="IsEditable"/> es <c>Order.IsEditable</c> (spec 2026-11-10 §3.6:
+/// abierto, sin preparar y sin facturar): el estado solo ya no dice si el pedido admite la parte de envío.
 /// </summary>
-public sealed record ExternalShippingState(OrderStatus Status, bool IsStorePickup, ExternalShippingParty? Shipping, string? Notes);
+public sealed record ExternalShippingState(
+    OrderStatus Status, bool IsStorePickup, ExternalShippingParty? Shipping, string? Notes, bool IsEditable);
 
 /// <summary>Qué pasó con una parte de envío: <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito (la segunda es
 /// un reintento); el resto son las razones por las que el pedido ya no admite el cambio.</summary>
@@ -263,7 +265,9 @@ public sealed class ExternalOrderService(
         Guid tenantId, Guid orderId, CancellationToken cancellationToken)
     {
         var order = await orderRepository.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken);
-        return order is null ? null : new ExternalShippingState(order.Status, order.IsStorePickup, ToExternal(order.Shipping), order.Notes);
+        return order is null
+            ? null
+            : new ExternalShippingState(order.Status, order.IsStorePickup, ToExternal(order.Shipping), order.Notes, order.IsEditable);
     }
 
     // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.

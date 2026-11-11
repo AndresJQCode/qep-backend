@@ -156,6 +156,6 @@ public sealed class BuyerOrdersHandlersTests
         }
 
         private static BuyerOrderDetailDto Sample() =>
-            new(Guid.NewGuid(), "P-1", DateTimeOffset.UnixEpoch, "New", "Pending", 10m, "COP", 1, "Camisa", [], null, true);
+            new(Guid.NewGuid(), "P-1", DateTimeOffset.UnixEpoch, "Open", "PaymentPending", "NotPrepared", false, 10m, "COP", 1, "Camisa", [], null, true);
     }
 }

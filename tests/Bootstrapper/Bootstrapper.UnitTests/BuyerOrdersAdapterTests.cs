@@ -37,7 +37,7 @@ public sealed class BuyerOrdersAdapterTests
 
         public Task<BuyerOrderPage> ListAsync(Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken) =>
             Task.FromResult(new BuyerOrderPage(
-                [new BuyerOrderSummary(OrderId, "PED-1", Created, "Cancelled", "Pending", 119.5m, "COP", 2, "Camisa", true)],
+                [new BuyerOrderSummary(OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true)],
                 page, pageSize, 7));
 
         public Task<BuyerOrderDetail?> FindAsync(Guid tenantId, Guid buyerAccountId, Guid orderId, CancellationToken cancellationToken) =>
@@ -51,7 +51,7 @@ public sealed class BuyerOrdersAdapterTests
     }
 
     private static BuyerOrderDetail SampleDetail() =>
-        new(OrderId, "PED-1", Created, "Cancelled", "Pending", 119.5m, "COP", 2, "Camisa",
+        new(OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa",
             [new BuyerOrderLine("Camisa", 1.5m, 10m, 17.85m), new BuyerOrderLine("Gorra", 2m, 50m, 101.65m)],
             Cancelled, false);
 
@@ -88,7 +88,9 @@ public sealed class BuyerOrdersAdapterTests
         Assert.Equal("PED-1", detail.Number);
         Assert.Equal(Created, detail.CreatedAt);
         Assert.Equal("Cancelled", detail.Status);
-        Assert.Equal("Pending", detail.PaymentStatus);
+        Assert.Equal("PaymentPending", detail.PaymentStatus);
+        Assert.Equal("Prepared", detail.FulfillmentStatus);
+        Assert.True(detail.Invoiced);
         Assert.Equal(119.5m, detail.Total);
         Assert.Equal("COP", detail.Currency);
         Assert.Equal(2, detail.LineCount);
@@ -112,7 +114,10 @@ public sealed class BuyerOrdersAdapterTests
         Assert.Equal(20, page.PageSize);
         Assert.Equal(7, page.Total);
         var item = Assert.Single(page.Items);
-        Assert.Equal(new BuyerOrderSummaryDto(OrderId, "PED-1", Created, "Cancelled", "Pending", 119.5m, "COP", 2, "Camisa", true), item);
+        Assert.Equal(
+            new BuyerOrderSummaryDto(
+                OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true),
+            item);
     }
 
     [Fact]

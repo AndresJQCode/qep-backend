@@ -604,9 +604,11 @@ public sealed class ExternalOrderServiceTests
         await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET status = 'Archived', is_store_pickup = true WHERE id = @id", order.OrderId);
         var approvedPickup = await FindStateAsync(factory, setup.TenantId, order.OrderId);
 
-        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, null, notes), withoutParty);
-        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, Party(), "Shopify #3013"), withParty);
-        Assert.Equal((OrderStatus.Archived, true), (approvedPickup?.Status, approvedPickup?.IsStorePickup));
+        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, null, notes, IsEditable: true), withoutParty);
+        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, Party(), "Shopify #3013", IsEditable: true), withParty);
+        Assert.Equal(
+            (OrderStatus.Archived, true, false),
+            (approvedPickup?.Status, approvedPickup?.IsStorePickup, approvedPickup?.IsEditable));
         Assert.Null(await FindStateAsync(factory, Guid.CreateVersion7(), order.OrderId));
         Assert.Null(await FindStateAsync(factory, setup.TenantId, Guid.CreateVersion7()));
     }

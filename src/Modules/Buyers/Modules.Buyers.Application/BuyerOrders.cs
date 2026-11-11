@@ -5,12 +5,17 @@ namespace Modules.Buyers.Application;
 
 public sealed record BuyerOrderLineDto(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
 
+/// <summary>Contrato con <c>qep-storefront</c>. Los cuatro ejes del pedido viajan por nombre (spec 2026-11-10 §9):
+/// <c>Status</c> (<c>Open</c> | <c>Archived</c> | <c>Cancelled</c>), <c>PaymentStatus</c>, <c>FulfillmentStatus</c>
+/// (<c>NotPrepared</c> | <c>Prepared</c>) e <c>Invoiced</c>.</summary>
 public sealed record BuyerOrderSummaryDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
+    string FulfillmentStatus, bool Invoiced,
     decimal Total, string Currency, int LineCount, string FirstLineName, bool CanCancel);
 
 public sealed record BuyerOrderDetailDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
+    string FulfillmentStatus, bool Invoiced,
     decimal Total, string Currency, int LineCount, string FirstLineName,
     IReadOnlyList<BuyerOrderLineDto> Lines, DateTimeOffset? CancelledAt, bool CanCancel);
 
