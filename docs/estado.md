@@ -187,7 +187,7 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 
 ## Decisiones del owner pendientes
 
-- Detalle del pedido del comprador: confirmar las interpretaciones tomadas: las líneas sin IVA bajo el excedente de IVA, sin fila de descuento, y `billing` oculto cuando `billedTo=Customer`. Y el seguimiento de cancelar (500 tras cancelar si falla Geography), en «Defectos conocidos».
+- Detalle del pedido del comprador: confirmar las interpretaciones tomadas: las líneas sin IVA bajo el excedente de IVA, sin fila de descuento, y `billing` oculto cuando `billedTo=Customer`.
 - Gestor de plantillas: qué errores de Meta pausan la conexión.
 - Flete: P1 (retención sin el envío) y P2 (giro del recaudo), con valor por defecto en el spec.
 - Shopify: si se saca `shopify` de `DefaultForNewTenants` hasta que exista el frontend (alternativa a esperar).
@@ -210,6 +210,10 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 
 ## Hotfixes y decisiones que no se ven en el código
 
+- Cancelar un pedido del comprador (2026-11-11, merge `dd6ca631`, decisión del owner): `CancelAsync` resuelve los nombres
+  de ciudad y departamento **antes** de cancelar, en el primer intento y en el reintento por concurrencia. Si Geography
+  falla, el pedido no se cancela y el error se propaga; un pedido que ya no se puede cancelar responde 409 sin consultar Geography.
+
 - USD sin IVA (hotfix 2026-10-14): sin backfill; fila de IVA oculta en el frontend; solo COP discrimina IVA. La
   generalización a otras monedas no se le consultó al owner.
 - ImageSharp exige licencia en Release: `main` ya tiene la supresión (hotfix 2026-10-14).
@@ -217,9 +221,6 @@ cumplida sólo por eso: las que no digan lo contrario siguen sin comprobar.
 
 ## Defectos conocidos
 
-- Detalle del pedido del comprador, seguimiento sin cerrar (mergeado 2026-11-11): `CancelAsync` arma el detalle después de
-  `SaveChanges`, así que si la consulta de Geography falla, `POST …/{id}/cancel` responde 500 aunque el pedido ya quedó cancelado.
-  Opción de arreglo: resolver la geografía antes de cancelar. Decisión del owner.
 - Pedidos del comprador, seguimientos sin cerrar (mergeado 2026-11-10, revisiones):
   - Dos clases se llaman `BuyerOrderErrors` (`Modules.Buyers.Application` y `Modules.Quotations.Domain`); compilan por namespace.
   - Las pruebas unitarias de los handlers Get/Cancel no afirman que tenant y cuenta llegan al puerto (la integración sí lo cubre).
