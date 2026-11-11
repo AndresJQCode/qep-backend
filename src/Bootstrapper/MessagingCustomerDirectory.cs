@@ -8,6 +8,7 @@ namespace Bootstrapper;
 /// <summary>§6.5: el wa_id de Meta son los dígitos del E.164; se traduce en las dos direcciones acá.</summary>
 internal sealed partial class MessagingCustomerDirectory(
     ICustomerPhoneDirectory phones,
+    IPhoneNumberSplitter splitter,
     ICustomerWhatsAppDirectory whatsApp,
     ICustomerInstagramDirectory instagram,
     ICustomerTagLookup tagLookup,
@@ -25,6 +26,28 @@ internal sealed partial class MessagingCustomerDirectory(
     {
         var matches = await phones.MatchAsync(tenantId, waIds.Select(waId => "+" + waId).ToArray(), cancellationToken);
         return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete), StringComparer.Ordinal);
+    }
+
+    public async Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(
+        Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
+    {
+        var distinct = waIds.Distinct(StringComparer.Ordinal).ToArray();
+        if (distinct.Length == 0)
+        {
+            return new Dictionary<string, MessagingSharedPhone>();
+        }
+
+        var active = await phones.MatchActiveAsync(tenantId, distinct.Select(waId => "+" + waId).ToArray(), cancellationToken);
+        var resolved = new Dictionary<string, MessagingSharedPhone>(distinct.Length, StringComparer.Ordinal);
+        foreach (var waId in distinct)
+        {
+            var e164 = "+" + waId;
+            var customer = active.TryGetValue(e164, out var match) ? new CustomerRefDto(match.Id, match.Name, match.IsComplete) : null;
+            var parts = splitter.Split(e164);
+            resolved[waId] = new MessagingSharedPhone(customer, parts?.Country, parts?.NationalNumber);
+        }
+
+        return resolved;
     }
 
     public async Task<IReadOnlyList<CustomerRefDto>> ListByPhoneAsync(Guid tenantId, string waId, int take, CancellationToken cancellationToken) =>

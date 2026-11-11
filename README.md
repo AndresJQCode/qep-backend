@@ -1012,6 +1012,10 @@ máscara de permisos del módulo apagado ya los descarta antes, y las rutas púb
   si no, `422 store.settings.advisor_not_found` (reenviar el mismo valor no lo revalida, para no bloquear los demás ajustes si esa
   persona dejó el tenant). No se exige un permiso concreto al asesor: el pedido lo crea el sistema. No bloquea la
   publicación.
+- **Ajustes, mostrar precios:** `PUT /settings` acepta `showPrices` (opcional; ausente o `null` conserva el valor guardado, a propósito,
+  para no apagar precios con un frontend viejo); `GET /settings` y `GET /api/v1/public/stores/{host}` lo devuelven siempre. Es sólo
+  visual: el pedido se precia con `pricingMode` y los demás endpoints públicos siguen devolviendo montos. Un cambio puede tardar hasta la
+  caché pública (`max-age=60`, `stale-while-revalidate=300`) en verse.
 - **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
   `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
   `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
