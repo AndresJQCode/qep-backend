@@ -211,11 +211,22 @@ pagado sin comprobante hasta prenderlo. Decisión explícita del owner.
 - `Pending` con `FullPaymentReceived` (la asesora lo dejó en «Pago total» y nadie lo aprobó): vuelven a lo que digan
   sus comprobantes, con la regla de §3.2 (owner, 2026-11-10: la verificación de facturación no se salta). Sin
   comprobantes, `PaymentPending`; con menos que el neto redondeado como lo muestra la moneda, `PartialPaymentReceived`;
-  con lo que lo cubre, `PendingVerification`. El `Down` sólo devuelve a pagado los `PendingVerification`.
+  con lo que lo cubre, `PendingVerification`.
 - `Approved` sin pago completo (sólo posible por API directa): quedan `Open` y editables otra vez.
 - Pedidos de Shopify con pago sincronizado (sin comprobantes): conservan su valor. Uno de Shopify con comprobantes
   de QEP se recalcula como los demás: su «Pago total» lo eligió la asesora, no la tienda.
 - Ningún pedido existente se archiva.
+- **Sin pérdida y reversible** (owner, 2026-11-11). Antes de cualquier `UPDATE`, el `Up` copia `status` y
+  `payment_status` de cada pedido a `legacy_status` y `legacy_payment_status`. `approved_at` y `approved_by` no se
+  eliminan: se quedan como columnas históricas. Las cuatro llevan un `COMMENT` que dice que son históricas, no están
+  en el modelo de EF y el código no las usa. No hay `DELETE`, y `quotations.quotations` no se toca.
+- **Cómo revertir:** bajar a `AddOrderBuyerAccount` con el factory de diseño
+  (`dotnet ef database update AddOrderBuyerAccount --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext`).
+  El `Down` devuelve cada pedido que existía antes del `Up` a su `status` y `payment_status` exactos desde `legacy_*`,
+  deja `approved_*` como estaban y borra todo lo que agregó el `Up`, `legacy_*` incluidas. Un pedido creado después
+  del `Up` no tiene respaldo: se traduce al esquema viejo (`Invoiced` si está facturado, `Approved` si está marcado
+  pagado, si no `Pending`; `PendingVerification` vuelve a `FullPaymentReceived`; quien lo marcó pagado queda como
+  quien lo aprobó).
 - Toda escritura cruda a `quotations.orders` (`ExportLoadSeeder`, pruebas con `INSERT` a mano) usa los valores
   nuevos.
 

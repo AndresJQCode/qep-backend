@@ -1739,7 +1739,13 @@ la API con su nombre:
   queda); quien aprobó un pedido pagado queda como quien lo marcó pagado; un `FullPaymentReceived` que nadie
   aprobó vuelve a lo que digan sus comprobantes (`PaymentPending`, `PartialPaymentReceived` o
   `PendingVerification`, con el neto redondeado como lo muestra la moneda), salvo los de Shopify sin
-  comprobantes, cuyo pago lo dice la tienda. `approved_at` y `approved_by` se eliminan.
+  comprobantes, cuyo pago lo dice la tienda. **Es sin pérdida:** `approved_at` y `approved_by` se quedan como
+  columnas históricas, y el estado y el pago de antes quedan respaldados en `legacy_status` y
+  `legacy_payment_status`. Ninguna de las cuatro está en el modelo de EF; todas llevan un `COMMENT` que lo dice.
+  Para revertir, baja a `AddOrderBuyerAccount` con `$env:ConnectionStrings__QepDatabase` apuntando a la base
+  (`dotnet ef database update AddOrderBuyerAccount --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext`):
+  cada pedido anterior vuelve exacto a su estado y su pago, y el `Down` borra lo que agregó el `Up`. Un pedido
+  creado después no tiene respaldo y se traduce al esquema viejo (spec 2026-11-10 §8).
 
 **Rollback.** El código anterior no sabe escribir las siete columnas que `AddOrderOwnData` deja
 `NOT NULL` sin default: sin este paso, toda conversión falla con `23502`. Se corre **antes** de
