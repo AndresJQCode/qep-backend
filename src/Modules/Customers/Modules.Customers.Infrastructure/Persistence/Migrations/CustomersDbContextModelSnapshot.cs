@@ -412,6 +412,16 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
 
+                    b.Property<string>("CustomerName")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("customer_name");
+
+                    b.Property<string>("CustomerPhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("customer_phone_e164");
+
                     b.Property<string>("Event")
                         .IsRequired()
                         .HasMaxLength(16)
