@@ -236,6 +236,31 @@ Lo mismo con el pipeline: un negocio que el triage crea en la ventana de la carr
 - **Fusión (I-1).** La fusión toma el candado **exclusivo** de todos sus clientes (el que queda, los fusionados y su cadena), en orden de id, al empezar su transacción: fusión y borrado se serializan sólo por candados consultivos y ninguno deja referencias a un cliente borrado.
 - **Vínculo del chatbot (I-2).** `LinkCustomerAsync` toma el compartido antes de colgar la conversación; si el cliente ya no existe, la unidad del motor se reintenta. El borrado bloquea con `FOR UPDATE` las filas de los clientes borrables después de leer los bloqueos y antes de la foto de consentimientos: un consentimiento o una revocación que llegue en ese tramo espera y no encuentra al cliente.
 
+### Contactos de empresa (merge de `develop`, 2026-11-11)
+
+`develop` trajo `customers.customers.company_id` (FK a la misma tabla, `ON DELETE SET NULL`, spec
+`2026-11-10-contactos-de-empresa-backend-design.md`). Es la única columna nueva que guarda un id de cliente; las otras migraciones
+del merge (`AddOrderBuyerNotes`, `AddStoreShowPrices`) no guardan ninguno.
+
+- **Borrar una empresa** no bloquea (contactos A17): sus contactos quedan con `company_id` en `NULL` por la FK, dentro de la misma
+  sentencia `DELETE` de `CustomerDeletionStore.DeleteAsync`. Las lápidas fusionadas nunca tienen `company_id` (invariante de la
+  fusión), así que borrarlas con `merged_into_id` no choca con la FK. El contacto **no** recibe una fila
+  `customers.customer.company_changed` ni sube `version`: el cambio lo hace la base, no el handler. Aceptado: la auditoría del
+  borrado de la empresa es el rastro.
+- **Negocios de la empresa.** El triage crea el negocio de la conversación de un contacto con `customer_id` = la empresa
+  (contactos §4.5) y la decisión con `customer_id` = el contacto. Borrar la empresa se lleva esos negocios (D-3), su historial y
+  las decisiones de triage que apuntan a ellos (`deal_id`); la conversación del contacto sigue, ya sin decisión, así que puede
+  volver a aparecer como pendiente de triage. Nada queda apuntando al negocio borrado.
+- **Borrar un contacto** se lleva su conversación (D-5) y su decisión de triage; el negocio de la empresa se queda con
+  `origin_conversation_id` en `NULL` (R11).
+- **Fusión.** Toma primero los candados consultivos exclusivos de `CustomerReferenceLock` (que queda ∪ fusionados ∪ cadena, uno
+  por sentencia, en orden de id) y después `LockForMergeAsync` (`FOR UPDATE` en una sentencia `ORDER BY id` de que queda ∪
+  fusionados ∪ contactos de los fusionados). El borrado sigue el mismo orden (consultivos y después filas) y el vínculo
+  `PUT …/company` sólo toma filas, así que no hay ciclo entre clases de candado.
+
+Pruebas: `CustomerDeletionAcrossModulesTests.DeletingACompanyLeavesItsContactWithoutCompanyAndKeepsTheContactsConversation` y
+`DeletingAContactOfACompanyKeepsTheCompanysDealWithoutItsOrigin`.
+
 ### Auditoría (R10)
 
 El port de consentimientos devuelve un conteo **por cliente**, y la auditoría de cada cliente escribe `dataConsents=<n>` en `changed_fields`: deja constancia de que el consentimiento se conservó (D-3).
