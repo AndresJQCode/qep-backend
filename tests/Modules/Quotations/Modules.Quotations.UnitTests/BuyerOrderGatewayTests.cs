@@ -672,7 +672,8 @@ public sealed class BuyerOrderGatewayTests
         var orders = new StubOrderListRepository(loaded);
         orders.QueueBuyerReads(loaded, editedMeanwhile);
         var unitOfWork = FailingUnitOfWork(orders, failures: 1);
-        // Departamento y ciudad del primer intento pasan; el del reintento falla.
+        // allowedCalls: 2 = una consulta de departamento y una de ciudad por intento; el primer intento pasa y el
+        // reintento falla.
         var gateway = Gateway(orders, unitOfWork, new ThrowingGeographyLookup(allowedCalls: 2));
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -686,9 +687,44 @@ public sealed class BuyerOrderGatewayTests
         Assert.Empty(_lifecycle.Published);
     }
 
+    [Fact]
+    public async Task ANonCancellableOrderWithAFailingLookupStillGetsTheConflictAndMakesNoLookups()
+    {
+        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var geography = new ThrowingGeographyLookup();
+        var gateway = Gateway(new StubOrderListRepository(order), geography: geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(0, geography.Calls);
+    }
+
+    [Fact]
+    public async Task ARereadOrderThatIsNoLongerCancellableGetsTheConflictWithoutLookups()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(Buyer, id: id);
+        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+        var geography = new ThrowingGeographyLookup(allowedCalls: 2);
+        var gateway = Gateway(orders, unitOfWork, geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(2, geography.Calls);
+    }
+
     private sealed class ThrowingGeographyLookup(int allowedCalls = 0) : IQuotationGeographyLookup
     {
         private int _calls;
+
+        public int Calls => _calls;
 
         public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
             IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => Call();

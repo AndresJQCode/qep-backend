@@ -126,7 +126,7 @@ public sealed class BuyerOrderGateway(
         try
         {
             // Los nombres se resuelven antes de anular: si el lookup falla, el pedido queda intacto.
-            var places = await ResolvePlacesAsync(order, cancellationToken);
+            var places = await ResolvePlacesIfCancellableAsync(order, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, order, cancellationToken);
             return ToDetail(order, places);
         }
@@ -146,7 +146,7 @@ public sealed class BuyerOrderGateway(
         try
         {
             // Del pedido que se anula, no del primero: el releído puede traer ediciones del asesor.
-            var places = await ResolvePlacesAsync(reread, cancellationToken);
+            var places = await ResolvePlacesIfCancellableAsync(reread, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, reread, cancellationToken);
             return ToDetail(reread, places);
         }
@@ -265,6 +265,12 @@ public sealed class BuyerOrderGateway(
             billedTo == BilledPartySource.BillingParty ? order.Billing : null,
             order.IsStorePickup ? null : order.Shipping);
     }
+
+    // Un pedido que ya no se puede anular responde 409 sin tocar Geography: CancelAndSaveAsync lo rechaza.
+    private async Task<Places> ResolvePlacesIfCancellableAsync(Order order, CancellationToken cancellationToken) =>
+        order.CanBeCancelledByBuyer
+            ? await ResolvePlacesAsync(order, cancellationToken)
+            : new Places(new Dictionary<Guid, string>(), new Dictionary<Guid, string>());
 
     private async Task<Places> ResolvePlacesAsync(Order order, CancellationToken cancellationToken)
     {
