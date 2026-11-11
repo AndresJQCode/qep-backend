@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -12,7 +13,8 @@ namespace Modules.Messaging.Infrastructure.Persistence;
 /// BSUID (paso 1a del spec 2026-10-10 §8.1): no hay duplicado. El envío de la cotización abre por teléfono, sin cliente en la búsqueda
 /// (<see cref="OpenByPhoneAsync"/>, spec 2026-10-21 D16b).
 /// </summary>
-internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagingAuditRecorder audit) : IConversationOpener
+internal sealed class ConversationOpener(
+    MessagingDbContext dbContext, IMessagingAuditRecorder audit, IMessagingCustomerReferenceLock customerReferences) : IConversationOpener
 {
     public async Task<OpenedConversation> OpenAsync(
         Guid tenantId, Guid connectionId, MessagingCustomerContact contact, Guid? assignedMemberId, Guid? actorUserId, DateTimeOffset now,
@@ -33,6 +35,8 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
 
         var at = now.ToUniversalTime();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Borrar clientes (A-12 y P4): el candado compartido del cliente antes del INSERT que lo referencia, en esta transacción.
+        await HoldOrNotFoundAsync(tenantId, contact.CustomerId, cancellationToken);
         var id = Guid.CreateVersion7();
         // El blanco del ON CONFLICT es el índice que protege la clave con la que se inserta: el BSUID, o el teléfono de una fila sin él.
         var inserted = userId is not null
@@ -81,7 +85,7 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
 
     /// <summary>
     /// Spec 2026-10-21 D16b: la del teléfono, sin <c>customer_id</c> en la búsqueda. Pasarlo encontraría la conversación del cliente,
-    /// que con destinatario de facturación es otro número. Sin transacción: un solo <c>INSERT</c>, sin evento ni auditoría (nace sin
+    /// que con destinatario de facturación es otro número. Un solo <c>INSERT</c>, sin evento ni auditoría (nace sin
     /// asignar).
     /// </summary>
     public async Task<OpenedConversation> OpenByPhoneAsync(
@@ -102,6 +106,29 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
         var id = Guid.CreateVersion7();
         var name = string.IsNullOrWhiteSpace(profileName) ? null
             : profileName.Length <= Conversation.ProfileNameMaxLength ? profileName : profileName[..Conversation.ProfileNameMaxLength];
+        // Borrar clientes (A-12 y P4): con cliente, el INSERT lo referencia, así que va con su candado compartido tomado, y el candado
+        // necesita una transacción que dure hasta el commit: la de quien llama si ya hay una, si no una propia solo para esto.
+        if (customerId is not { } holder)
+        {
+            return await InsertByPhoneAsync(tenantId, connectionId, waId, id, name, null, at, cancellationToken);
+        }
+
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await HoldOrNotFoundAsync(tenantId, holder, cancellationToken);
+            return await InsertByPhoneAsync(tenantId, connectionId, waId, id, name, holder, at, cancellationToken);
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await HoldOrNotFoundAsync(tenantId, holder, cancellationToken);
+        var opened = await InsertByPhoneAsync(tenantId, connectionId, waId, id, name, holder, at, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return opened;
+    }
+
+    private async Task<OpenedConversation> InsertByPhoneAsync(
+        Guid tenantId, Guid connectionId, string waId, Guid id, string? name, Guid? customerId, DateTimeOffset at, CancellationToken cancellationToken)
+    {
         // Sin BSUID, el blanco del ON CONFLICT es el índice del teléfono de una fila vieja (IX_conversations_connection_wa_legacy).
         var inserted = await dbContext.Database.SqlQuery<Guid>(
             $"""
@@ -120,6 +147,16 @@ internal sealed class ConversationOpener(MessagingDbContext dbContext, IMessagin
         var raced = await FindByPhoneAsync(dbContext, tenantId, connectionId, waId, cancellationToken)
             ?? throw new InvalidOperationException("The conversation that blocked the insert could not be found.");
         return new OpenedConversation(raced, false);
+    }
+
+    /// <summary>A-12 y P4: si el cliente se borró mientras esto esperaba el candado, el mismo 404 <c>messaging.customer.not_found</c>
+    /// que responde iniciar una conversación con un cliente que no existe (<c>StartConversationHandler</c>).</summary>
+    private async Task HoldOrNotFoundAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken)
+    {
+        if (!await customerReferences.HoldAsync(tenantId, customerId, cancellationToken))
+        {
+            throw new ResourceNotFoundException(MessagingErrorCodes.CustomerNotFound, $"Customer '{customerId}' was not found.");
+        }
     }
 
     public Task<Guid?> FindByPhoneAsync(Guid tenantId, Guid connectionId, string waId, CancellationToken cancellationToken) =>

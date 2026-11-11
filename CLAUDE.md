@@ -647,7 +647,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
   `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
 - **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
-  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`), y el borrado de clientes, que **no la borra**: la tabla ya no tiene
+  FK a `customers` y cada fila guarda `customer_name` y `customer_phone_e164`, una foto tomada al borrar (spec 2026-11-10); el estado vigente es la última fila por `(occurred_at, sequence)`.
   Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
   traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
   en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
@@ -782,3 +783,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
 [README § Verificación](README.md#verificación).
+
+- **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
+  `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
+  `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
+  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
+  y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
+  `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
+  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros) y una conversación bloqueada.
+- **`CustomerReferenceLock` serializa el borrado contra quien referencia al cliente** (advisory lock por cliente, `Exclusive` para el
+  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans y ServiceContracts; en Messaging, el ingreso
+  (entrante y coexistencia), el opener, el cambio de cliente y el despacho de campañas, con **un solo candado compartido antes de
+  cualquier candado de fila de conversación**. El borrado además toma el candado por conversación del runner de Automations
+  (`AutomationsConversationLock.Namespace`) antes del `FOR UPDATE` de `conversations`: sin ese orden hay un ciclo de espera que la base
+  no detecta. Todo esto exige `READ COMMITTED`; en `REPEATABLE READ` el chequeo de bloqueadores vería una foto vieja. El POS y los
+  escritores del pipeline **no** lo toman: una venta creada en plena corrida puede conservar el id borrado (su foto sigue mostrándose).

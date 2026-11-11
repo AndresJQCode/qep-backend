@@ -58,7 +58,7 @@ public sealed record CampaignRow(
 
 /// <summary><c>MessageStatus</c> sale del mensaje que el destinatario tiene atado (<c>message_id</c>); <c>null</c> mientras no hay.</summary>
 public sealed record CampaignRecipientRow(
-    Guid CustomerId,
+    Guid? CustomerId,
     string CustomerName,
     CampaignRecipientStatus Status,
     string? FailureCode,

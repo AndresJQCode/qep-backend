@@ -167,6 +167,16 @@ internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
         Saves++;
         return Task.FromResult(1);
     }
+
+    public Task<IMessagingTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IMessagingTransaction>(new FakeTransaction());
+
+    private sealed class FakeTransaction : IMessagingTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }
 
 /// <summary>Los handlers de campañas sobre el banco de Messaging: el mismo tenant, miembro, conexión, catálogo, clientes y reloj.</summary>

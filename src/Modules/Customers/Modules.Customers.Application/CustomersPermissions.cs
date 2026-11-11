@@ -32,6 +32,9 @@ public static class CustomersPermissions
     // CustomerManage: un rol custom puede tener uno y no el otro.
     public const string CustomerMerge = "customers.customer.merge";
 
+    // Spec 2026-11-10 D-8: borrar es definitivo; sólo admin (el owner del tenant siempre lo es, Membership.cs:529).
+    public const string CustomerDelete = "customers.customer.delete";
+
     // Spec 2026-10-26 D-9. Registrar que un titular revocó su autorización de datos personales no es editar su ficha: un rol
     // custom puede tener CustomerManage sin este permiso.
     public const string DataConsentRevoke = "customers.data_consent.revoke";

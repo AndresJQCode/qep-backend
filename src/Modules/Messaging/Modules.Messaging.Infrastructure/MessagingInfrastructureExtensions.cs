@@ -35,6 +35,8 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+        // Borrar clientes (A-12 y P4): el candado compartido del cliente al colgarle una conversación, sobre la conexión de Mensajería.
+        services.AddScoped<IMessagingCustomerReferenceLock, MessagingCustomerReferenceLock>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
         // Spec 2026-10-10 §8.7: los eventos que escriben los handlers, en el mismo SaveChanges que el agregado.
@@ -140,6 +142,10 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
         services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
         services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
+        // Spec 2026-11-10 (borrar clientes) A-9: borra de R2 los adjuntos que dejó un cliente borrado. Singleton: el estado es del proceso.
+        services.AddSingleton<CustomerDeletion.CustomerMediaPurgeProcessor>();
+        services.AddSingleton<CustomerDeletion.ICustomerMediaPurgeProcessor>(provider => provider.GetRequiredService<CustomerDeletion.CustomerMediaPurgeProcessor>());
+        services.AddHostedService<CustomerDeletion.CustomerMediaPurgeWorker>();
         // Spec 2026-10-29: el worker que le pide a Meta los contactos y el historial de cada importación Pending.
         services.TryAddSingleton(Coexistence.HistorySyncRequestSchedule.Default);
         services.AddSingleton<Coexistence.HistorySyncRequestProcessor>();
