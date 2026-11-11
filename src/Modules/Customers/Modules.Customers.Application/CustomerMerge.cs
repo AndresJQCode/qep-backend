@@ -11,7 +11,7 @@ public static class CustomerMergeLimits
     public const int MaxMerged = 10;
 }
 
-/// <summary>Las ocho clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
+/// <summary>Las nueve clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
 public enum CustomerMergeMoveKind
 {
     Quotations,
@@ -22,6 +22,7 @@ public enum CustomerMergeMoveKind
     Notes,
     Addresses,
     Tags,
+    Contacts,
 }
 
 public sealed record GetCustomerMergePreviewQuery(Guid TenantId, Guid SurvivorId, IReadOnlyList<Guid>? MergedCustomerIds)
@@ -65,6 +66,7 @@ public sealed class GetCustomerMergePreviewHandler(
     ICustomerMergeStore mergeStore,
     ICustomerMergeReferences references,
     ICustomerTagRepository tags,
+    ICustomerCompanyDirectory companyDirectory,
     IExecutionContext executionContext,
     IValidator<GetCustomerMergePreviewQuery> validator)
     : IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>
@@ -95,6 +97,14 @@ public sealed class GetCustomerMergePreviewHandler(
         var referenceCounts = await references.CountAsync(query.TenantId, moved, cancellationToken);
         var owned = await mergeStore.CountOwnedAsync(query.TenantId, moved, cancellationToken);
         var tagsGained = await CountTagsGainedAsync(query.TenantId, plan, cancellationToken);
+        var contactsMoved = await mergeStore.CountContactsMovedAsync(
+            query.TenantId, query.SurvivorId, mergedIds.ToArray(), cancellationToken);
+
+        // Nunca lanza: la pantalla avisa antes de confirmar y el POST de la fusión es quien lo rechaza con 422.
+        var survivorContacts = plan.SurvivorKeepsCompany
+            ? (await companyDirectory.CountContactsAsync(query.TenantId, [query.SurvivorId], cancellationToken))
+                .GetValueOrDefault(query.SurvivorId)
+            : 0;
 
         return new CustomerMergePreviewResponse(
             ToParty(survivor),
@@ -109,8 +119,10 @@ public sealed class GetCustomerMergePreviewHandler(
                 Move(CustomerMergeMoveKind.Notes, owned.Notes),
                 Move(CustomerMergeMoveKind.Addresses, owned.Addresses),
                 Move(CustomerMergeMoveKind.Tags, tagsGained),
+                Move(CustomerMergeMoveKind.Contacts, contactsMoved),
             ],
-            plan.FilledFields.Select(field => field.ToString()).ToArray());
+            plan.FilledFields.Select(field => field.ToString()).ToArray(),
+            plan.HasCompanyConflict(survivorContacts, contactsMoved));
     }
 
     private async Task<int> CountTagsGainedAsync(Guid tenantId, CustomerMergePlan plan, CancellationToken cancellationToken) =>

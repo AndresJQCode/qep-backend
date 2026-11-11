@@ -249,7 +249,11 @@ internal static class CustomerWriteDoubles
             throw new NotSupportedException();
 
         public Task<IReadOnlyDictionary<CustomerId, Customer>> FindManyAsync(Guid tenantId, IReadOnlyCollection<CustomerId> customerIds, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            Task.FromResult<IReadOnlyDictionary<CustomerId, Customer>>(
+                Known.Append(Existing).OfType<Customer>()
+                    .Where(item => item.TenantId == tenantId && customerIds.Contains(item.Id))
+                    .DistinctBy(item => item.Id)
+                    .ToDictionary(item => item.Id));
 
         public Task<Customer?> FindByWhatsAppUserIdAsync(Guid tenantId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

@@ -491,18 +491,21 @@ public sealed record CustomerMergePartyDto(
 public sealed record CustomerMergeMoveDto(string Kind, int Count);
 
 /// <summary>
-/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las ocho clases siempre, en el orden del enum y también
+/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las nueve clases siempre (<c>Contacts</c> al final), en el orden del enum y también
 /// en cero, para que la confirmación dibuje en gris la que está en cero sin conocer el enum; <c>Tags</c> son las que el que
 /// queda gana de verdad (sin repetir y dentro del tope), no las que traen los fusionados. <c>FilledFields</c> son nombres
 /// de <c>CustomerMergeField</c> (B2): lo que la ficha del que queda recibe. <c>DocumentsDiffer</c> avisa que algún
 /// fusionado tiene un número distinto del que queda al normalizar ambos; si a uno de los dos le falta el número, no cuenta.
+/// <c>CompanyConflict</c> avisa que el que queda seguiría siendo contacto y además tendría contactos: la vista previa responde 200
+/// y el POST de la fusión de esa misma selección responde 422 <c>customers.customer.merge_company_conflict</c>.
 /// </summary>
 public sealed record CustomerMergePreviewResponse(
     CustomerMergePartyDto Survivor,
     IReadOnlyList<CustomerMergePartyDto> Merged,
     bool DocumentsDiffer,
     IReadOnlyList<CustomerMergeMoveDto> Moves,
-    IReadOnlyList<string> FilledFields);
+    IReadOnlyList<string> FilledFields,
+    bool CompanyConflict = false);
 
 /// <summary>D-F5: una etiqueta que no cupo en el que queda. Sólo lo que el aviso nombra: el color y el conteo no hacen falta
 /// para decir cuáles no cupieron.</summary>

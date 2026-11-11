@@ -9,13 +9,13 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 namespace Modules.Customers.IntegrationTests;
 
 /// <summary>Spec 2026-10-24 §3.4: la vista previa de la fusión cuenta lo que pasaría y no escribe nada. El contrato con el
-/// frontend (B1, B2, B4): <c>survivor.version</c> entero, <c>moves</c> con las ocho clases también en cero, <c>filledFields</c>
+/// frontend (B1, B2, B4): <c>survivor.version</c> entero, <c>moves</c> con las nueve clases (también <c>Contacts</c>) también en cero, <c>filledFields</c>
 /// por nombre y <c>documentsDiffer</c> sobre el número normalizado.</summary>
 public sealed class CustomerMergePreviewApiTests
 {
     private const string SharedNumber = "92-1396892";
     private static readonly string[] EveryMove =
-        ["Quotations", "Orders", "Conversations", "PosSales", "Deals", "Notes", "Addresses", "Tags"];
+        ["Quotations", "Orders", "Conversations", "PosSales", "Deals", "Notes", "Addresses", "Tags", "Contacts"];
 
     private sealed record Arranged(
         string ConnectionString, HttpClient Client, Guid CityId, Guid ClassificationId, Guid Survivor, Guid Merged);
@@ -136,7 +136,7 @@ public sealed class CustomerMergePreviewApiTests
         Assert.Equal(mergedDetail.Addresses.Count, Move(preview, "Addresses"));
         Assert.True(Move(preview, "Addresses") >= 1);
         Assert.Equal(1, Move(preview, "Tags"));
-        foreach (var kind in new[] { "Quotations", "Orders", "Conversations", "PosSales", "Deals" })
+        foreach (var kind in new[] { "Quotations", "Orders", "Conversations", "PosSales", "Deals", "Contacts" })
         {
             Assert.Equal(0, Move(preview, kind));
         }
@@ -339,6 +339,73 @@ public sealed class CustomerMergePreviewApiTests
 
         Assert.Equal(3, Move(preview, "Notes"));
         Assert.Equal(1, Move(preview, "Tags"));
+    }
+
+    private static async Task LinkAsync(HttpClient client, Guid customer, Guid company)
+    {
+        var response = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer}/company", new { companyId = company }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Arma: parent <- survivor (contacto de la casa matriz), y company con un contacto que llegaría al que queda.
+    private static async Task<(Arranged Base, Guid Parent, Guid Company, Guid Contact)> ArrangeConflictAsync(
+        QepApiFactory factory, string connectionString)
+    {
+        var arranged = await ArrangeAsync(factory, connectionString);
+        var client = arranged.Client;
+        var parent = await CreateAsync(client, arranged.CityId, arranged.ClassificationId, "Casa Matriz", "CC", "1020304001");
+        var company = await CreateAsync(client, arranged.CityId, arranged.ClassificationId, "Verde Esencial", "CC", "1020304002");
+        var contact = await CreateAsync(client, arranged.CityId, arranged.ClassificationId, "Laura Pérez", "CC", "1020304003");
+        await LinkAsync(client, arranged.Survivor, parent);
+        await LinkAsync(client, contact, company);
+        return (arranged, parent, company, contact);
+    }
+
+    [Fact]
+    public async Task ThePreviewReportsContactsAndConflictAnd200()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (arranged, _, company, _) = await ArrangeConflictAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+
+        var preview = await PreviewAsync(client, arranged.Survivor, company);
+
+        Assert.Equal(1, Move(preview, "Contacts"));
+        Assert.True(preview.GetProperty("companyConflict").GetBoolean());
+        Assert.Equal(9, preview.GetProperty("moves").GetArrayLength());
+
+        var calm = await PreviewAsync(client, arranged.Survivor, arranged.Merged);
+        Assert.Equal(0, Move(calm, "Contacts"));
+        Assert.False(calm.GetProperty("companyConflict").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ConfirmingAFlaggedSelectionIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (arranged, _, company, contact) = await ArrangeConflictAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var preview = await PreviewAsync(client, arranged.Survivor, company);
+        Assert.True(preview.GetProperty("companyConflict").GetBoolean());
+        var version = preview.GetProperty("survivor").GetProperty("version").GetInt64();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{CustomersUrl()}/{arranged.Survivor}/merge")
+        {
+            Content = JsonContent.Create(new { mergedCustomerIds = new[] { company } }),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var problem = await ProblemAsync(await client.SendAsync(request, TestContext.Current.CancellationToken), HttpStatusCode.UnprocessableEntity);
+
+        Assert.Equal("customers.customer.merge_company_conflict", problem.GetProperty("code").GetString());
+        Assert.Equal(
+            0,
+            await ScalarAsync(arranged.ConnectionString, $"SELECT count(*) FROM customers.customers WHERE id = '{company}' AND merged_into_id IS NOT NULL"));
+        Assert.Equal(
+            1,
+            await ScalarAsync(arranged.ConnectionString, $"SELECT count(*) FROM customers.customers WHERE id = '{contact}' AND company_id = '{company}'"));
     }
 }
 
