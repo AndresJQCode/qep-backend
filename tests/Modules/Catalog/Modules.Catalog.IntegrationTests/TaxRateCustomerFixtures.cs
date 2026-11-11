@@ -53,4 +53,25 @@ internal static class TaxRateCustomerFixtures
             response.StatusCode == HttpStatusCode.Created,
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
+
+    /// <summary>
+    /// Deja fusionados a los clientes que tienen la tasa, como lo haría la fusión (que no les quita sus tasas). Por SQL: la
+    /// fusión por la API exige un sobreviviente con sus propios datos, y eso no es lo que estas pruebas verifican.
+    /// </summary>
+    public static async Task MergeCustomersWithAsync(string connectionString, Guid taxRateId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SET session_replication_role = replica;
+            UPDATE customers.customers
+            SET merged_into_id = gen_random_uuid(), merged_at = now(), is_active = false
+            WHERE id IN (SELECT customer_id FROM customers.customer_tax_rates WHERE tax_rate_id = @taxRateId);
+            RESET session_replication_role;
+            """,
+            connection);
+        command.Parameters.AddWithValue("taxRateId", taxRateId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
 }

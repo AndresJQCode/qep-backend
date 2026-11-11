@@ -132,6 +132,51 @@ public sealed class RetentionToWithholdingsMigrationTests
                 + "FROM customers.customer_tax_rates"));
     }
 
+    // Un cliente fusionado ya no se edita ni se cotiza: no recibe la tasa, y así no la deja «en uso» para siempre.
+    [Fact]
+    public async Task MergedCustomersDoNotGetTheRate()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = StartHost(connectionString);
+        var survivor = Id(0xa101);
+        var merged = Id(0xa102);
+
+        await MigrateFromLegacyAsync(
+            connectionString,
+            Customer(TenantA, survivor, withRetention: true)
+            + Customer(TenantA, merged, withRetention: true, mergedInto: survivor));
+
+        Assert.Equal(
+            new[] { survivor },
+            await ListAsync(
+                connectionString,
+                "SELECT customer_id::text FROM customers.customer_tax_rates ORDER BY customer_id"));
+    }
+
+    // Los dos nombres de la migración ya los tienen otras tasas: la tercera lleva un sufijo propio y el arranque no falla.
+    [Fact]
+    public async Task BothNamesTakenUsesAUniqueSuffix()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = StartHost(connectionString);
+
+        await MigrateFromLegacyAsync(
+            connectionString,
+            Rate(TenantA, Id(0xa301), RateName, "IVA", 19m)
+            + Rate(TenantA, Id(0xa302), MigratedRateName, "IVA", 5m)
+            + Customer(TenantA, Id(0xa101), withRetention: true));
+
+        var name = await ScalarAsync<string>(
+            connectionString,
+            $"SELECT name FROM catalog.tax_rates WHERE tenant_id = '{TenantA}' AND type = 'Retefuente'");
+        Assert.Matches(@"^Retefuente 2,5 % \(migrada [0-9a-f]{8}\)$", name);
+        Assert.Equal(
+            new[] { Id(0xa101) },
+            await ListAsync(connectionString, "SELECT customer_id::text FROM customers.customer_tax_rates"));
+    }
+
     [Fact]
     public async Task QuotationGetsCustomerAndBillingRows()
     {
@@ -335,11 +380,13 @@ public sealed class RetentionToWithholdingsMigrationTests
 
     private static string Id(int suffix) => $"01900000-0000-7000-8000-0000000{suffix:x5}";
 
-    private static string Customer(string tenantId, string id, bool withRetention) => $"""
+    private static string Customer(string tenantId, string id, bool withRetention, string? mergedInto = null) => $"""
         INSERT INTO customers.customers (
             id, tenant_id, name, completeness, country, is_active, marketing_opt_out, vat_surplus, with_retention, version, created_at,
-            updated_at)
-        VALUES ('{id}', '{tenantId}', 'Cliente {id}', 'Incomplete', 'CO', true, false, false, {Bool(withRetention)}, 1, now(), now());
+            updated_at, merged_into_id, merged_at)
+        VALUES ('{id}', '{tenantId}', 'Cliente {id}', 'Incomplete', 'CO', {Bool(mergedInto is null)}, false, false,
+            {Bool(withRetention)}, 1, now(), now(), {(mergedInto is null ? "NULL" : $"'{mergedInto}'")},
+            {(mergedInto is null ? "NULL" : "now()")});
 
         """;
 

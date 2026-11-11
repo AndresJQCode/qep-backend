@@ -279,6 +279,29 @@ public sealed class TaxRateDeletionApiTests
         Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
     }
 
+    // Un cliente fusionado ya no se edita ni se cotiza: su tasa no frena el borrado.
+    [Fact]
+    public async Task DeletingARateAssignedOnlyToAMergedCustomerIsAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var taxRateId = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios");
+        await TaxRateCustomerFixtures.AssignToANewCustomerAsync(customers, TenantId, taxRateId);
+        await TaxRateCustomerFixtures.MergeCustomersWithAsync(database.GetConnectionString(), taxRateId);
+
+        var response = await DeleteTaxRateAsync(client, TenantId, taxRateId);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.NoContent,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await CountTaxRateAsync(database, taxRateId));
+    }
+
     private static Task<HttpResponseMessage> DeleteTaxRateAsync(
         HttpClient client,
         string tenantId,

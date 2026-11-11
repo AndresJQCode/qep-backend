@@ -329,8 +329,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     customer.ClassificationId == classificationId,
                 cancellationToken);
 
-    // La tabla de asignaciones tiene el índice (tenant_id, tax_rate_id) justo para esta pregunta. Sin filtro por fusionado:
-    // la ficha de un fusionado sigue leyéndose y pinta sus tasas.
+    // La tabla de asignaciones tiene el índice (tenant_id, tax_rate_id) justo para esta pregunta. Un fusionado no cuenta:
+    // ya no se edita ni se cotiza, y la fusión no le quita sus tasas, así que contarlo dejaría la tasa «en uso» para siempre.
+    // Su ficha sigue pintándolas; si la tasa se borra, la lectura ya omite las que no encuentra.
     public Task<bool> AnyWithTaxRateAsync(
         Guid tenantId,
         Guid taxRateId,
@@ -340,6 +341,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             .AnyAsync(
                 customer =>
                     customer.TenantId == tenantId &&
+                    customer.MergedIntoId == null &&
                     EF.Property<List<CustomerTaxRate>>(customer, "_withholdingTaxRates")
                         .Any(rate => rate.TaxRateId == taxRateId),
                 cancellationToken);

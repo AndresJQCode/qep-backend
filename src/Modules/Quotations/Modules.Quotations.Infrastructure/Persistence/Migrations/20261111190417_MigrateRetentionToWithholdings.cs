@@ -48,15 +48,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             // Paso 1 (§11.2.1): una «Retefuente 2,5 %» por tenant que usó la retención fija, en un cliente o en un documento
-            // (un documento puede retener por un cliente que ya no lo hace, y su foto necesita la tasa). Si el nombre ya lo
-            // tiene otra tasa, «(migrada)».
+            // (un documento puede retener por un cliente que ya no lo hace, y su foto necesita la tasa). Un cliente fusionado no
+            // cuenta: no recibe la tasa en el paso 2. Si el nombre ya lo tiene otra tasa, «(migrada)»; si también ese, un
+            // sufijo al azar, porque el índice único (tenant_id, name) haría fallar el arranque.
             migrationBuilder.Sql(
                 $$"""
                 DO $$
                 BEGIN
                     IF {{Guard}} THEN
                         WITH tenants AS (
-                            SELECT tenant_id FROM customers.customers WHERE with_retention
+                            SELECT tenant_id FROM customers.customers WHERE with_retention AND merged_into_id IS NULL
                             UNION
                             SELECT tenant_id FROM quotations.quotations
                             WHERE customer_with_retention OR party_with_retention IS TRUE
@@ -73,7 +74,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                                 WHEN EXISTS (
                                     SELECT 1 FROM catalog.tax_rates AS taken
                                     WHERE taken.tenant_id = t.tenant_id AND taken.name = 'Retefuente 2,5 %')
-                                THEN 'Retefuente 2,5 % (migrada)'
+                                THEN CASE
+                                    WHEN EXISTS (
+                                        SELECT 1 FROM catalog.tax_rates AS taken
+                                        WHERE taken.tenant_id = t.tenant_id AND taken.name = 'Retefuente 2,5 % (migrada)')
+                                    THEN 'Retefuente 2,5 % (migrada ' || left(gen_random_uuid()::text, 8) || ')'
+                                    ELSE 'Retefuente 2,5 % (migrada)'
+                                END
                                 ELSE 'Retefuente 2,5 %'
                             END,
                             2.5, 'Retefuente', 'CO', NULL, true, 1, now(), now()
@@ -85,7 +92,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                 """);
 
             // Paso 2 (§11.2.2): la tasa a cada cliente con retención. Un cliente tiene una sola tasa por tipo: si ya tiene
-            // una Retefuente, se queda con la suya.
+            // una Retefuente, se queda con la suya. Un fusionado no la recibe: ya no se edita ni se cotiza, y la tasa quedaría
+            // «en uso» por él para siempre.
             migrationBuilder.Sql(
                 $$"""
                 DO $$
@@ -97,6 +105,7 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         FROM customers.customers AS c
                         JOIN migrated AS m ON m.tenant_id = c.tenant_id
                         WHERE c.with_retention
+                          AND c.merged_into_id IS NULL
                           AND NOT EXISTS (
                               SELECT 1
                               FROM customers.customer_tax_rates AS assigned
