@@ -12,6 +12,11 @@ namespace BuildingBlocks.Infrastructure;
 /// <c>customers.customers</c> por nombre, y el escritor lo corre **dentro** de su transacción, ya con el candado
 /// compartido tomado: si el borrado ganó la carrera, el escritor espera al candado, y al despertar ve la fila ya
 /// confirmada como borrada. Leer antes del candado vería un cliente que está por desaparecer.
+///
+/// Esa garantía vale sólo en READ COMMITTED (el nivel por defecto): en REPEATABLE READ o SERIALIZABLE la foto de la
+/// transacción se toma en la primera sentencia, el SELECT del candado y antes de esperar, así que <see cref="Exists"/> seguiría
+/// viendo la fila borrada. Por eso el escritor corre <see cref="Shared"/> y <see cref="Exists"/> en una transacción READ
+/// COMMITTED, y <see cref="Exists"/> va como sentencia aparte, después del candado, nunca combinada con él.
 /// </summary>
 public static class CustomerReferenceLock
 {
