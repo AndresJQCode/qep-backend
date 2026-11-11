@@ -207,6 +207,16 @@ internal sealed class ProductVariantRequestRules : AbstractValidator<ProductVari
                     "catalog.product_cost.amount_not_positive",
                     "The cost must be greater than zero."));
             }
+
+            // numeric(18,2) redondearía 0.001 a 0.00 y el CHECK amount > 0 daría un 500: más de dos
+            // decimales (lo que incluye 0 < x < 0.01) se frena aquí, en el mismo campo.
+            foreach (var (code, amount) in costs.Where(cost => cost.Value != 0m && decimal.Round(cost.Value, 2) != cost.Value))
+            {
+                context.AddFailure(ProductWriteRules.Failure(
+                    $"{context.PropertyPath}.{code?.Trim().ToUpperInvariant()}",
+                    "catalog.product_cost.amount_not_positive",
+                    "The cost can have at most two decimal places."));
+            }
         });
 
         RuleFor(variant => variant.Pricing!)

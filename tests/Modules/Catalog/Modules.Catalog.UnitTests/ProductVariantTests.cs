@@ -497,6 +497,11 @@ public sealed class ProductVariantTests
             NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 0m })));
 
     [Fact]
+    public void ACostBeyondTwoDecimalsIsAProgrammingError() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 0.001m })));
+
+    [Fact]
     public void ANewVariantWithoutCostsStartsEmpty()
     {
         var product = NewProduct();

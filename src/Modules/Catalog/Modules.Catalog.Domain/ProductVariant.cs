@@ -257,6 +257,8 @@ public sealed class ProductVariant
         {
             EnsureCurrencyCodeShape(currency);
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(amount, 0m, nameof(costs));
+            // numeric(18,2): un tercer decimal se redondearía a 0.00 y violaría el CHECK amount > 0.
+            ArgumentOutOfRangeException.ThrowIfNotEqual(decimal.Round(amount, 2), amount, nameof(costs));
         }
 
         _costs.RemoveAll(cost => !costs.ContainsKey(cost.Currency));

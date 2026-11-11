@@ -187,6 +187,23 @@ public sealed class ProductVariantCostsApiTests
     }
 
     [Fact]
+    public async Task ASubCentCostIs422WithTheFieldNotA500()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = Client(factory, CostManager);
+
+        var response = await manager.PostAsJsonAsync(
+            ProductsUrl,
+            ProductBodies.Create("Vela", "VC-3", costs: new Dictionary<string, decimal> { ["COP"] = 0.001m }),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.True(body.RootElement.GetProperty("errors").TryGetProperty("Variants[0].Costs.COP", out _));
+    }
+
+    [Fact]
     public async Task TheProductListAndSelectorNeverCarryCosts()
     {
         await using var database = await StartDatabaseAsync();
