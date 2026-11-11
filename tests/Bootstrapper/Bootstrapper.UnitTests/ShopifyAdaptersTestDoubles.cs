@@ -305,6 +305,14 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 

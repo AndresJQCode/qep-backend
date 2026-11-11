@@ -223,6 +223,11 @@ public sealed class MergeCustomersHandler(
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
 
+        // Las mismas filas que bloquea el vínculo, en el mismo orden (por id) y antes de leer nada: una fusión y un
+        // PUT …/company concurrentes se serializan, y el segundo ve lo que dejó el primero. Sin esto, el vínculo podría apuntar a
+        // un fusionado o dejar dos niveles. El mecanismo es FOR UPDATE de Postgres; dura lo que la transacción.
+        await repository.LockForCompanyLinkAsync(command.TenantId, [command.SurvivorId, .. mergedIds], cancellationToken);
+
         var survivor = await repository.FindAsync(command.TenantId, new CustomerId(command.SurvivorId), cancellationToken)
             ?? throw CustomerNotFound.For(command.SurvivorId);
         if (survivor.Version != command.ExpectedVersion)
@@ -239,6 +244,19 @@ public sealed class MergeCustomersHandler(
         }
 
         var plan = CustomerMergePlan.Create(survivor, merged);
+
+        // Dos niveles nunca: el que queda sigue siendo contacto de otra empresa y además tendría contactos. Antes de escribir.
+        if (plan.SurvivorKeepsCompany)
+        {
+            var own = await companyDirectory.CountContactsAsync(command.TenantId, [command.SurvivorId], cancellationToken);
+            var moving = await mergeStore.CountContactsMovedAsync(command.TenantId, command.SurvivorId, mergedIds.ToArray(), cancellationToken);
+            if (plan.HasCompanyConflict(own.GetValueOrDefault(command.SurvivorId), moving))
+            {
+                throw new CustomersDomainException(
+                    CustomersErrorCodes.MergeCompanyConflict,
+                    "The customer that remains is a contact and would end up with contacts too.");
+            }
+        }
 
         // D-F2: los que ya apuntaban a un fusionado (C → B) pasan a apuntar al que queda, y lo suyo también se mueve.
         var chain = await mergeStore.FindIdsMergedIntoAsync(command.TenantId, mergedIds.ToArray(), cancellationToken);
@@ -258,6 +276,7 @@ public sealed class MergeCustomersHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await mergeStore.RepointMergedIntoAsync(command.TenantId, chain, survivor.Id.Value, cancellationToken);
+        await mergeStore.RepointContactsAsync(command.TenantId, survivor.Id.Value, mergedIds.ToArray(), cancellationToken);
 
         // Segundo SaveChanges: el que queda los toma, y las etiquetas cambian de dueño. Las de los fusionados se borran todas:
         // un fusionado no conserva etiquetas, y las que no cupieron vuelven en DroppedTags.

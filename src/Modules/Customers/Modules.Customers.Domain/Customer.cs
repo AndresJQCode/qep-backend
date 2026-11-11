@@ -1160,6 +1160,9 @@ public sealed class Customer
         Touch(now);
     }
 
+    // Sin versión ni auditoría propias: el que queda ya sube su versión en TouchForMerge.
+    internal void ClearCompanyLink() => CompanyId = null;
+
     internal void FillEmail(string value) => Email = value;
 
     internal void FillBusinessName(string value) => BusinessName = value;
