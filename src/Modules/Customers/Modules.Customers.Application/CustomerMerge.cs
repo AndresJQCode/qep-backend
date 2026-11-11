@@ -97,6 +97,7 @@ public sealed class GetCustomerMergePreviewHandler(
         var referenceCounts = await references.CountAsync(query.TenantId, moved, cancellationToken);
         var owned = await mergeStore.CountOwnedAsync(query.TenantId, moved, cancellationToken);
         var tagsGained = await CountTagsGainedAsync(query.TenantId, plan, cancellationToken);
+        // Con mergedIds y no con `moved`: los fusionados de la cadena (C → B) son tombstones y su company_id siempre es nulo.
         var contactsMoved = await mergeStore.CountContactsMovedAsync(
             query.TenantId, query.SurvivorId, mergedIds.ToArray(), cancellationToken);
 
@@ -238,7 +239,7 @@ public sealed class MergeCustomersHandler(
         // Las mismas filas que bloquea el vínculo, en el mismo orden (por id) y antes de leer nada: una fusión y un
         // PUT …/company concurrentes se serializan, y el segundo ve lo que dejó el primero. Sin esto, el vínculo podría apuntar a
         // un fusionado o dejar dos niveles. El mecanismo es FOR UPDATE de Postgres; dura lo que la transacción.
-        await repository.LockForCompanyLinkAsync(command.TenantId, [command.SurvivorId, .. mergedIds], cancellationToken);
+        await repository.LockForMergeAsync(command.TenantId, [command.SurvivorId, .. mergedIds], mergedIds, cancellationToken);
 
         var survivor = await repository.FindAsync(command.TenantId, new CustomerId(command.SurvivorId), cancellationToken)
             ?? throw CustomerNotFound.For(command.SurvivorId);

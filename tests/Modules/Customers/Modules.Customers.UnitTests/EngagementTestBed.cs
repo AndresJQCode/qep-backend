@@ -94,6 +94,9 @@ internal static class EngagementTestBed
         public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken) =>
             Task.FromResult(Items.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
 
+        public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

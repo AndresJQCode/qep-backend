@@ -239,5 +239,13 @@ public interface ICustomerRepository
     /// </summary>
     Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Como <see cref="LockForCompanyLinkAsync"/> pero en la misma sentencia, ordenada por id, también bloquea los contactos sin
+    /// fusionar de <paramref name="companyIds"/> (los que la fusión va a mover). Así el conjunto que la fusión adquiere es un
+    /// superconjunto ordenado del que adquiere el vínculo y el <c>UPDATE</c> posterior no toma bloqueos nuevos fuera de orden.
+    /// </summary>
+    Task LockForMergeAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }

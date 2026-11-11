@@ -820,6 +820,50 @@ public sealed class CustomerMergeApiTests
         await AssertNoBrokenLinksAsync(arranged.ConnectionString);
 
         Assert.Equal(contactA.ToString(), await CompanyOfAsync(arranged.ConnectionString, contactB));
+
+        // SurvivorKeepsCompany sin conflicto: el que queda sigue siendo contacto de su empresa y nadie llega a él.
+        var siblingCompany = await CreateNumberedAsync(arranged, "Empresa D", 7);
+        var keeper = await CreateNumberedAsync(arranged, "Contacto D", 8);
+        var plain = await CreateNumberedAsync(arranged, "Cliente suelto", 9);
+        await LinkAsync(arranged, keeper, siblingCompany);
+
+        await MergeAsync(client, keeper, plain);
+
+        Assert.Equal(siblingCompany.ToString(), await CompanyOfAsync(arranged.ConnectionString, keeper));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
+    }
+
+    [Fact]
+    public async Task AMergeAndALinkOnTheSameContactNeverAnswerA500()
+    {
+        // X ya es contacto de la empresa M (que se fusiona en S) y, a la vez, X se re-vincula a S. Antes de bloquear también los
+        // contactos que se mueven, la fusión tomaba X después de S/M y el vínculo al revés: Postgres cortaba un ciclo (40P01).
+        // Ahora la fusión toma {S, M, X} en una sola sentencia ordenada y cualquier ciclo residual es el 412 del módulo. Varias
+        // rondas para que los ids (v7, crecientes) caigan en ambos órdenes.
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeBlankAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var statuses = new List<HttpStatusCode>();
+        for (var round = 0; round < 5; round++)
+        {
+            var baseNumber = 10 + (round * 3);
+            var company = await CreateNumberedAsync(arranged, $"Empresa {round}", baseNumber);
+            var survivor = await CreateNumberedAsync(arranged, $"Quien queda {round}", baseNumber + 1);
+            var contact = await CreateNumberedAsync(arranged, $"Contacto {round}", baseNumber + 2);
+            await LinkAsync(arranged, contact, company);
+            var version = await PreviewVersionAsync(client, survivor, company);
+
+            var merge = PostMergeAsync(client, survivor, $"\"{version}\"", [company]);
+            var link = client.PutAsJsonAsync(
+                $"{CustomersUrl()}/{contact}/company", new { companyId = survivor }, TestContext.Current.CancellationToken);
+            statuses.Add((await merge).StatusCode);
+            statuses.Add((await link).StatusCode);
+        }
+
+        HttpStatusCode[] allowed = [HttpStatusCode.OK, HttpStatusCode.PreconditionFailed, HttpStatusCode.UnprocessableEntity];
+        Assert.All(statuses, status => Assert.Contains(status, allowed));
+        await AssertNoBrokenLinksAsync(arranged.ConnectionString);
     }
 
     [Fact]

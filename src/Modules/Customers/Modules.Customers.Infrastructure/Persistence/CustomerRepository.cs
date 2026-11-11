@@ -562,26 +562,46 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return customers.ToDictionary(customer => customer.Id);
     }
 
-    // Sin componer: EF envolvería el FOR UPDATE en una subconsulta, y un FromSql de entidad exigiría todas las columnas.
-    // SqlQuery<Guid> sólo lee el id. ORDER BY id fija el orden de los bloqueos entre transacciones concurrentes para que
-    // no se crucen en un deadlock.
-    public async Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(customerIds);
+        return LockRowsAsync(tenantId, customerIds, [], cancellationToken);
+    }
+
+    public Task LockForMergeAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customerIds);
+        ArgumentNullException.ThrowIfNull(companyIds);
+        return LockRowsAsync(tenantId, customerIds, companyIds, cancellationToken);
+    }
+
+    // Una sola sentencia, ORDER BY id: dos transacciones que compitan por filas comunes las toman en el mismo orden. Si aun así
+    // Postgres corta un ciclo (40P01), CustomersWriteRaces lo vuelve el 412 del módulo y no un 500.
+    private async Task LockRowsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken)
+    {
         if (customerIds.Count == 0)
         {
             return;
         }
 
         var ids = customerIds.Distinct().ToArray();
-        _ = await dbContext.Database
-            .SqlQuery<Guid>($"""
-                SELECT id AS "Value" FROM customers.customers
-                WHERE tenant_id = {tenantId} AND id = ANY({ids})
-                ORDER BY id
-                FOR UPDATE
-                """)
-            .ToListAsync(cancellationToken);
+        var companies = companyIds.Distinct().ToArray();
+        await CustomersWriteRaces.RunAsync(async () =>
+        {
+            // Sin componer: EF envolvería el FOR UPDATE en una subconsulta, y un FromSql de entidad exigiría todas las columnas.
+            // SqlQuery<Guid> sólo lee el id.
+            _ = await dbContext.Database
+                .SqlQuery<Guid>($"""
+                    SELECT id AS "Value" FROM customers.customers
+                    WHERE tenant_id = {tenantId}
+                      AND (id = ANY({ids}) OR (merged_into_id IS NULL AND company_id = ANY({companies})))
+                    ORDER BY id
+                    FOR UPDATE
+                    """)
+                .ToListAsync(cancellationToken);
+        });
     }
 
     public void Add(Customer customer) => dbContext.Customers.Add(customer);

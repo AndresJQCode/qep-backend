@@ -203,6 +203,16 @@ internal static class CustomerWriteDoubles
                     : Known.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
         }
 
+        /// <summary>Los (ids, empresas) de cada <see cref="LockForMergeAsync"/>.</summary>
+        public List<(IReadOnlyCollection<Guid> Ids, IReadOnlyCollection<Guid> Companies)> MergeLockCalls { get; } = [];
+
+        public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken)
+        {
+            Log.Add("lock-merge");
+            MergeLockCalls.Add((customerIds, companyIds));
+            return Task.CompletedTask;
+        }
+
         public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
         {
             Log.Add("lock");

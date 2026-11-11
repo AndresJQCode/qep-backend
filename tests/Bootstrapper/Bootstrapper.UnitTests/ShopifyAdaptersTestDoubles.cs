@@ -283,6 +283,9 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         Task.CompletedTask;
 

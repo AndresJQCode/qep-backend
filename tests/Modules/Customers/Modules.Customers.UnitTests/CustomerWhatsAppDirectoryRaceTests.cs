@@ -103,6 +103,9 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
         public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A blank term must not reach the repository.");
 
+        public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
