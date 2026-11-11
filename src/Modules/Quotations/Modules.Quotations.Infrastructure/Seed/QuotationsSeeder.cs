@@ -231,6 +231,9 @@ public static class QuotationsSeeder
         "shipping_department",
         "shipping_phone",
         "shipping_email",
+        // Spec impuestos por tipo (P12): una columna por tipo de retención, que la hoja no usa.
+        "withholding_retefuente",
+        "withholding_reteica",
     ];
 
     /// <summary>

@@ -23,7 +23,7 @@ public sealed class GetOrdersExportLayoutHandlerTests
 
         Assert.Equal(TenantId, dto.TenantId);
         Assert.Equal(1, dto.Version);
-        Assert.Equal(81, dto.Columns.Count);
+        Assert.Equal(83, dto.Columns.Count);
         Assert.All(dto.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
@@ -104,7 +104,8 @@ public sealed class GetOrdersExportLayoutHandlerTests
                         or "billing_name" or "billing_identification_type" or "billing_identification_number" or "billing_person_type"
                         or "billing_address" or "billing_city" or "billing_department" or "billing_phone" or "billing_email"
                         or "shipping_name" or "shipping_identification_type" or "shipping_identification_number" or "shipping_person_type"
-                        or "shipping_address" or "shipping_city" or "shipping_city_coordinadora" or "shipping_department" or "shipping_phone" or "shipping_email"),
+                        or "shipping_address" or "shipping_city" or "shipping_city_coordinadora" or "shipping_department" or "shipping_phone" or "shipping_email"
+                        or "withholding_retefuente" or "withholding_reteica"),
                 column.DefaultVisible));
         Assert.Equal(5, dto.Columns.Count(column => column.DefaultVisible == false && column.Key!.StartsWith("payment_method_", StringComparison.Ordinal)));
     }
@@ -139,8 +140,8 @@ public sealed class GetOrdersExportLayoutHandlerTests
         var dto = await handler.HandleAsync(new GetOrdersExportLayoutQuery(TenantId), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dto.Version);
-        // 81 del catálogo (reorganización de cliente y facturación, 2026-10-28) + 1 fija.
-        Assert.Equal(82, dto.Columns.Count);
+        // 83 del catálogo (retenciones por tipo, P12) + 1 fija.
+        Assert.Equal(84, dto.Columns.Count);
         Assert.Equal(new OrdersExportColumnDto("Fixed", null, null, null, null, "Tipo Doc", "FV", true), dto.Columns[0]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "email", "Email", 19, true, "Correo", null, true), dto.Columns[1]);
         Assert.Equal(new OrdersExportColumnDto("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), dto.Columns[2]);

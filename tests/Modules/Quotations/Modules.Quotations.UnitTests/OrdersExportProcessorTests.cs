@@ -1874,6 +1874,40 @@ public sealed class OrdersExportProcessorTests
         Assert.All(writer.Rows, cells => Assert.Equal(ExportCell.OfNumber(4_300m), cells[TotalFacturadoIndex]));
     }
 
+    // Spec impuestos por tipo (P12): una columna por tipo, ocultas por defecto. La celda suma el monto de las
+    // retenciones aplicadas de ese tipo y es 0 si ninguna; «Retencion» sigue siendo la suma de todas.
+    [Fact]
+    public async Task ExportHasAmountPerWithholdingType()
+    {
+        var writer = new RecordingExportWorkbookWriter();
+        var reteIca = new WithholdingRate(
+            Guid.Parse("0193b6a2-0000-7000-8000-000000000026"), "ReteICA 0,966 %", "ReteICA", "CO", 0.966m, null, null, null);
+        var both = NewRow("PED-2026-0001", withholdings: [TestWithholdings.RetefuenteCo, reteIca]);
+        var onlyRetefuente = NewRow("PED-2026-0002", customerWithRetention: true);
+        var none = NewRow("PED-2026-0003");
+        var retefuente = both.AppliedWithholdings.Single(w => w.Rate.Type == "Retefuente").Amount;
+        var ica = both.AppliedWithholdings.Single(w => w.Rate.Type == "ReteICA").Amount;
+        Assert.True(retefuente > 0m && ica > 0m);
+        var layouts = StoredLayout(
+            OrdersExportColumnSetting.Catalog("order_number", "Pedido", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_retefuente", "Retefuente", visible: true),
+            OrdersExportColumnSetting.Catalog("withholding_reteica", "ReteICA", visible: true),
+            OrdersExportColumnSetting.Catalog("retention_amount", "Retencion", visible: true));
+
+        await NewProcessor(new StubOrderListRepository(both, onlyRetefuente, none), writer, layouts: layouts)
+            .ProcessAsync(NewJob(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(["Pedido", "Retefuente", "ReteICA", "Retencion"], writer.Columns.Take(4).Select(c => c.Header));
+        var rows = writer.Rows.ToDictionary(cells => cells[0].Text!);
+        Assert.Equal(ExportCell.OfNumber(retefuente), rows["PED-2026-0001"][1]);
+        Assert.Equal(ExportCell.OfNumber(ica), rows["PED-2026-0001"][2]);
+        Assert.Equal(ExportCell.OfNumber(both.RetentionAmount), rows["PED-2026-0001"][3]);
+        Assert.Equal(ExportCell.OfNumber(onlyRetefuente.RetentionAmount), rows["PED-2026-0002"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0002"][2]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][1]);
+        Assert.Equal(ExportCell.OfNumber(0m), rows["PED-2026-0003"][2]);
+    }
+
     // Con retención en la fuente el cliente paga NetTotal, pero lo facturado sigue siendo Total: la
     // retención no es un descuento de la factura.
     [Fact]
@@ -2724,6 +2758,7 @@ public sealed class OrdersExportProcessorTests
         IReadOnlyList<(Guid ProductId, decimal Quantity, decimal UnitPrice, decimal DiscountPercentage, int TaxPercentage)>? items = null,
         IReadOnlyList<(decimal Amount, string? PublicKey)>? proofs = null,
         bool customerWithRetention = false,
+        IReadOnlyList<WithholdingRate>? withholdings = null,
         // La fecha de pago de cada comprobante, por índice contra `proofs`; null o ausente deja el
         // comprobante sin fecha, como uno anterior al campo (2026-10-08).
         IReadOnlyList<DateOnly?>? paidOn = null,
@@ -2742,7 +2777,7 @@ public sealed class OrdersExportProcessorTests
             OrderId.New(),
             TenantId,
             orderNumber,
-            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, false, TestWithholdings.Customer(customerWithRetention)),
+            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, false, withholdings ?? TestWithholdings.Customer(customerWithRetention)),
             parties ?? QuotationParties.Empty,
             billingAccount ?? DefaultBillingAccount,
             shipping ?? ShippingDetails.None,

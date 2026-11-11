@@ -370,9 +370,17 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(shippingContact.Department),
                 ExportCell.OfText(shippingContact.Phone),
                 ExportCell.OfText(shippingContact.Email),
+                WithholdingCell(order, "Retefuente"),
+                WithholdingCell(order, "ReteICA"),
             ];
         }
     }
+
+    /// <summary>La suma de lo retenido de ese tipo en el pedido; 0 si ninguna aplicó, como «Retencion».</summary>
+    private static ExportCell WithholdingCell(Order order, string type) =>
+        ExportCell.OfNumber(order.AppliedWithholdings
+            .Where(withholding => string.Equals(withholding.Type, type, StringComparison.Ordinal))
+            .Sum(withholding => withholding.Amount));
 
     private static ExportCell PaymentMethodCell(
         IReadOnlyList<OrderExportPaymentProof> proofs, int index, string bankAndAccount) =>
