@@ -366,10 +366,13 @@ public sealed class Quotation
     /// <summary>Lo elegido en los selectores de facturación propia, en el orden en que llegó.</summary>
     public IEnumerable<DocumentWithholding> BillingWithholdings => WithholdingsOf(WithholdingSource.Billing);
 
-    /// <summary>Las retenciones que aplicaron en el último recálculo, de la fuente vigente: los selectores
-    /// con parte de facturación propia, las del cliente si no.</summary>
+    /// <summary>Las tasas de la fuente vigente, apliquen o no: los selectores con parte de facturación propia, las
+    /// del cliente si no. Es lo que hereda el pedido al convertir.</summary>
+    public IEnumerable<DocumentWithholding> ActiveWithholdings => WithholdingsOf(ActiveWithholdingSource);
+
+    /// <summary>Las retenciones que aplicaron en el último recálculo, de la fuente vigente.</summary>
     public IEnumerable<DocumentWithholding> AppliedWithholdings =>
-        WithholdingsOf(ActiveWithholdingSource).Where(withholding => withholding.Applied);
+        ActiveWithholdings.Where(withholding => withholding.Applied);
 
     private WithholdingSource ActiveWithholdingSource =>
         Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
@@ -718,25 +721,10 @@ public sealed class Quotation
         return true;
     }
 
-    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates)
-    {
-        // Sin parte propia no hay selectores, y sin empresa no hay país contra el cual validarlos.
-        if (Billing is null
-            || BillingAccount?.Country is not { } country
-            || rates.Any(rate => !string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.withholding_tax_rate_invalid",
-                "Every selected withholding tax rate must belong to the billing company's country.");
-        }
-
-        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.withholding_type_repeated",
-                "Only one withholding tax rate per type can be selected.");
-        }
-    }
+    // Sin parte propia no hay selectores; lo demás (país de la empresa, uno por tipo) es la regla compartida con el
+    // pedido.
+    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
+        WithholdingSelectorRules.Ensure(rates, Billing is null ? null : BillingAccount?.Country, "quotation.billing");
 
     /// <summary>
     /// Cuál sería la moneda de esta cotización con esa cuenta de cobro. La aplicación la consulta
@@ -1205,29 +1193,8 @@ public sealed class Quotation
     private IEnumerable<DocumentWithholding> WithholdingsOf(WithholdingSource source) =>
         _withholdings.Where(withholding => withholding.Source == source).OrderBy(withholding => withholding.Position);
 
-    // Reemplaza la fuente entera conservando las filas que ya existen en su posición (cambian de valores, no de
-    // identidad): borrar y volver a agregar la misma clave (cotización, fuente, posición) en un agregado ya
-    // rastreado no es algo que EF traduzca bien. La posición es el orden de llegada.
-    private void ReplaceWithholdings(WithholdingSource source, IReadOnlyList<WithholdingRate> rates)
-    {
-        var existing = WithholdingsOf(source).ToList();
-        for (var position = 0; position < rates.Count; position++)
-        {
-            if (position < existing.Count)
-            {
-                existing[position].Replace(rates[position]);
-            }
-            else
-            {
-                _withholdings.Add(new DocumentWithholding(source, (short)position, rates[position]));
-            }
-        }
-
-        foreach (var extra in existing.Skip(rates.Count))
-        {
-            _withholdings.Remove(extra);
-        }
-    }
+    private void ReplaceWithholdings(WithholdingSource source, IReadOnlyList<WithholdingRate> rates) =>
+        DocumentWithholding.ReplaceSource(_withholdings, source, rates);
 
     private QuotationItem FindItem(QuotationItemId itemId) =>
         _items.FirstOrDefault(item => item.Id == itemId)

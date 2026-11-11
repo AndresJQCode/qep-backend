@@ -346,10 +346,8 @@ public sealed class Order
             quotation.IsRetail,
             quotation.GlobalScaleFloor,
             quotation.CustomerVatSurplus,
-            // Hereda la fuente vigente de la cotización tal cual (spec §7.5): con parte propia, sus selectores; si no,
-            // la foto del cliente. La otra fuente no viaja: el pedido tiene una sola.
-            [.. (quotation.Billing is not null ? quotation.BillingWithholdings : quotation.CustomerWithholdings)
-                .Select(withholding => withholding.Rate)]);
+            // Hereda la fuente vigente de la cotización tal cual (spec §7.5); la otra no viaja: el pedido tiene una sola.
+            [.. quotation.ActiveWithholdings.Select(withholding => withholding.Rate)]);
         var parties = new QuotationParties(
             quotation.Billing?.ToDetails(),
             quotation.Shipping?.ToDetails(),
@@ -720,24 +718,9 @@ public sealed class Order
         return true;
     }
 
-    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates)
-    {
-        // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
-        if (BillingAccount?.Country is not { } country
-            || rates.Any(rate => !string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new QuotationsDomainException(
-                "order.billing.withholding_tax_rate_invalid",
-                "Every selected withholding tax rate must belong to the billing company's country.");
-        }
-
-        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
-        {
-            throw new QuotationsDomainException(
-                "order.billing.withholding_type_repeated",
-                "Only one withholding tax rate per type can be selected.");
-        }
-    }
+    // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
+    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates) =>
+        WithholdingSelectorRules.Ensure(rates, BillingAccount?.Country, "order.billing");
 
     /// <summary>
     /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="OrderStatus.Pending"/> (spec
@@ -1412,29 +1395,8 @@ public sealed class Order
         FreightTaxAmount = totals.FreightTaxAmount;
     }
 
-    // Reemplaza la foto conservando las filas que ya existen en su posición (cambian de valores, no de identidad),
-    // igual que la cotización: borrar y volver a agregar la misma clave (pedido, fuente, posición) en un agregado ya
-    // rastreado no es algo que EF traduzca bien. La posición es el orden de llegada.
-    private void ReplaceWithholdings(IReadOnlyList<WithholdingRate> rates)
-    {
-        var existing = _withholdings.OrderBy(withholding => withholding.Position).ToList();
-        for (var position = 0; position < rates.Count; position++)
-        {
-            if (position < existing.Count)
-            {
-                existing[position].Replace(rates[position]);
-            }
-            else
-            {
-                _withholdings.Add(new DocumentWithholding(WithholdingSource.Document, (short)position, rates[position]));
-            }
-        }
-
-        foreach (var extra in existing.Skip(rates.Count))
-        {
-            _withholdings.Remove(extra);
-        }
-    }
+    private void ReplaceWithholdings(IReadOnlyList<WithholdingRate> rates) =>
+        DocumentWithholding.ReplaceSource(_withholdings, WithholdingSource.Document, rates);
 
     private void AssignParties(QuotationParties parties)
     {

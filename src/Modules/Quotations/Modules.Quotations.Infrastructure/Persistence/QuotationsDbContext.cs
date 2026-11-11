@@ -200,6 +200,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tasa y fuente. Se derivan del agregado y no se persisten aparte.
         quotation.Ignore(value => value.CustomerWithholdings);
         quotation.Ignore(value => value.BillingWithholdings);
+        quotation.Ignore(value => value.ActiveWithholdings);
         quotation.Ignore(value => value.AppliedWithholdings);
         quotation.OwnsMany(value => value.Withholdings, withholding =>
         {

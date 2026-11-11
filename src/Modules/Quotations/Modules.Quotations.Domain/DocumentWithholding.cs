@@ -99,6 +99,36 @@ public sealed class DocumentWithholding
     }
 
     /// <summary>
+    /// Reemplaza las tasas de una fuente de un documento conservando las filas que ya existen en su posición
+    /// (cambian de valores, no de identidad): borrar y volver a agregar la misma clave (documento, fuente, posición)
+    /// en un agregado ya rastreado no es algo que EF traduzca bien. La posición es el orden de llegada. Lo usan la
+    /// cotización y el pedido.
+    /// </summary>
+    internal static void ReplaceSource(
+        List<DocumentWithholding> rows,
+        WithholdingSource source,
+        IReadOnlyList<WithholdingRate> rates)
+    {
+        var existing = rows.Where(row => row.Source == source).OrderBy(row => row.Position).ToList();
+        for (var position = 0; position < rates.Count; position++)
+        {
+            if (position < existing.Count)
+            {
+                existing[position].Replace(rates[position]);
+            }
+            else
+            {
+                rows.Add(new DocumentWithholding(source, (short)position, rates[position]));
+            }
+        }
+
+        foreach (var extra in existing.Skip(rates.Count))
+        {
+            rows.Remove(extra);
+        }
+    }
+
+    /// <summary>
     /// Liquida todas las filas de un documento con lo que devolvió <c>DocumentTotals.Compute</c>. Las de la
     /// fuente vigente se emparejan por <see cref="TaxRateId"/> y no por posición: el cálculo sólo devuelve
     /// las que aplicaron, así que las posiciones no coinciden en cuanto una no aplica. Una tasa aparece a lo
