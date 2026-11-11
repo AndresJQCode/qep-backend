@@ -48,6 +48,10 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
     public Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Contacts.GetValueOrDefault(customerId));
 
+    public Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(
+        Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<string, MessagingSharedPhone>>(new Dictionary<string, MessagingSharedPhone>());
+
     /// <summary>Ningún cliente de estas pruebas está fusionado: cada uno es el que quedó.</summary>
     public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => Task.FromResult(customerId);
 
