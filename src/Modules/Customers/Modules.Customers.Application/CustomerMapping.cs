@@ -33,7 +33,9 @@ internal static class CustomerMapping
         ClientClassification? classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
         IReadOnlyCollection<TagDto> tags,
-        CustomerCompanyDto? company = null) => new(
+        CustomerCompanyDto? company = null,
+        int contactCount = 0,
+        IReadOnlyList<CustomerContactDto>? contacts = null) => new(
         customer.Id.Value,
         customer.Cuc,
         customer.Name,
@@ -77,7 +79,9 @@ internal static class CustomerMapping
         customer.ToConsentDto(),
         customer.InstagramUsername,
         PersonType: customer.PersonType?.ToWireValue(),
-        Company: company);
+        Company: company,
+        ContactCount: contactCount,
+        Contacts: contacts);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
@@ -161,8 +165,37 @@ internal static class CustomerMapping
         // Spec 2026-11-10 (ruling P4): la empresa —y, en la tarea de contactos, la lista de contactos y su conteo— se llena aquí
         // y no en cada handler, para que ninguna respuesta de la ficha salga sin ella. Una consulta, acotada al tenant.
         var company = await ResolveCompanyAsync(customer, companyDirectory, cancellationToken);
+        var (contacts, contactCount) = await ResolveContactsAsync(customer, companyDirectory, cancellationToken);
 
-        return customer.ToDto(city, classification, citiesById, tags, company);
+        return customer.ToDto(city, classification, citiesById, tags, company, contactCount, contacts);
+    }
+
+    // Spec 2026-11-10 §4.2 (ruling P4): los contactos de una empresa viajan en toda respuesta de la ficha, no sólo en el GET, para
+    // que un PUT no deje a la caché del frontend sin ellos. Un contacto no tiene contactos (A2): no hay a quién preguntar. Se
+    // cuenta primero y se lista sólo si hay: la mayoría de los clientes no son empresa.
+    private static async Task<(IReadOnlyList<CustomerContactDto> Contacts, int Count)> ResolveContactsAsync(
+        Customer customer,
+        ICustomerCompanyDirectory companyDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (customer.CompanyId is not null)
+        {
+            return ([], 0);
+        }
+
+        var counts = await companyDirectory.CountContactsAsync(
+            customer.TenantId, [customer.Id.Value], cancellationToken);
+        if (!counts.TryGetValue(customer.Id.Value, out var count) || count == 0)
+        {
+            return ([], 0);
+        }
+
+        var contacts = await companyDirectory.ListContactsAsync(
+            customer.TenantId, customer.Id.Value, CustomerContactsLimits.MaxInDetail, cancellationToken);
+        return (contacts
+            .Select(contact => new CustomerContactDto(
+                contact.Id, contact.Name, contact.Phone, contact.Email, contact.IsComplete, contact.IsActive))
+            .ToArray(), count);
     }
 
     private static async Task<CustomerCompanyDto?> ResolveCompanyAsync(

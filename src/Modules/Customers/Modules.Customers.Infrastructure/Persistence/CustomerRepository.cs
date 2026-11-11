@@ -64,13 +64,22 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? namePattern,
         string? identificationPattern,
         string? cucPattern,
-        string? phonePattern)
+        string? phonePattern,
+        bool includeContacts,
+        bool matchBusinessName)
     {
         var query = dbContext.Customers
             .AsNoTracking()
             .Include(customer => customer.Addresses)
             // Un fusionado ya es otra ficha (spec 2026-10-24 §3.3): no se lista, ni se busca, ni se exporta, ni se elige en POS.
             .Where(customer => customer.TenantId == tenantId && customer.MergedIntoId == null);
+
+        // Spec 2026-11-10 §5: un contacto es una persona de una empresa, no un cliente más del padrón. Sin una búsqueda que lo
+        // pida, la grilla muestra a la empresa y no a cada una de sus personas (y el total coincide con las filas).
+        if (!includeContacts)
+        {
+            query = query.Where(customer => customer.CompanyId == null);
+        }
 
         // El criterio combinado original: un solo termino, OR entre nombre, documento, CUC y
         // telefono. Sigue vivo para el combobox de clientes de quotes, que necesita un unico
@@ -81,6 +90,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             // el filtro por número tiene que seguir alcanzándolo.
             query = query.Where(customer =>
                 EF.Functions.ILike(customer.Name, searchPattern, LikeEscapeCharacter) ||
+                // La razón social también nombra a la empresa (A4), pero sólo para el listado y la exportación: el POS sigue
+                // buscando por `Name` como siempre (G4), de ahí el parámetro.
+                (matchBusinessName && customer.BusinessName != null &&
+                    EF.Functions.ILike(customer.BusinessName, searchPattern, LikeEscapeCharacter)) ||
                 // Sólo `phone_e164`: es el teléfono propio del cliente ya normalizado. Los de las direcciones son
                 // de quien recibe, y la columna `phone` cruda conserva el formato con el que se escribió.
                 (phoneSearchPattern != null && customer.PhoneE164 != null &&
@@ -100,7 +113,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         if (namePattern is not null)
         {
             query = query.Where(customer =>
-                EF.Functions.ILike(customer.Name, namePattern, LikeEscapeCharacter));
+                EF.Functions.ILike(customer.Name, namePattern, LikeEscapeCharacter) ||
+                (matchBusinessName && customer.BusinessName != null &&
+                    EF.Functions.ILike(customer.BusinessName, namePattern, LikeEscapeCharacter)));
         }
 
         if (identificationPattern is not null)
@@ -145,6 +160,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? phone,
         int skip,
         int take,
+        bool includeContacts,
         CancellationToken cancellationToken) =>
         await FilteredQuery(
                 tenantId,
@@ -153,7 +169,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                 LikePattern(name),
                 LikePattern(identificationNumber),
                 LikePattern(cuc),
-                PhoneFilterPattern(phone))
+                PhoneFilterPattern(phone),
+                includeContacts,
+                matchBusinessName: true)
             .OrderBy(customer => customer.Cuc)
             .ThenBy(customer => customer.Id)
             .Skip(skip)
@@ -171,6 +189,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         bool? isComplete,
         int page,
         int pageSize,
+        bool includeContacts,
         CancellationToken cancellationToken)
     {
         var searchPattern = LikePattern(search);
@@ -184,7 +203,9 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
             namePattern,
             identificationPattern,
             cucPattern,
-            PhoneFilterPattern(phone));
+            PhoneFilterPattern(phone),
+            includeContacts,
+            matchBusinessName: true);
 
         // `null` es "sin filtro"; una coleccion (incluso vacia) filtra por esos ids exactos —
         // Departamento ya se tradujo a ids de ciudad en ListCustomersHandler, asi que aca no hay
@@ -214,7 +235,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         var total = await query.CountAsync(cancellationToken);
 
         var orderedQuery = OrderByRelevance(
-            query, search, searchPattern, name, namePattern, identificationNumber, identificationPattern, cuc, cucPattern);
+            query, search, searchPattern, name, namePattern, identificationNumber, identificationPattern, cuc, cucPattern,
+            matchBusinessName: true);
 
         var items = await orderedQuery
             .ThenBy(customer => customer.Name)
@@ -238,7 +260,8 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         string? identificationNumber,
         string? identificationPattern,
         string? cuc,
-        string? cucPattern)
+        string? cucPattern,
+        bool matchBusinessName)
     {
         // Con algun filtro de texto activo, el resultado se ordena por relevancia — la fila que
         // mas se parece al termino buscado va primero, no la que gana alfabeticamente. `search`
@@ -259,16 +282,30 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // Sin filtro de texto, el mas nuevo va primero: es el orden que importa para operar (el
         // cliente que alguien acaba de cargar aparece arriba de entrada, sin tener que buscarlo),
         // no el alfabetico que solo ayuda a ubicar un nombre que ya se conoce.
+        // La razón social suma a la relevancia sólo donde también filtra (listado y exportación); el POS no la toca (G4). Son dos
+        // ramas y no un `matchBusinessName ? ... : 0` dentro del lambda, para que la consulta del POS siga siendo la de siempre.
         return searchPattern is not null
-            ? query.OrderByDescending(customer =>
-                EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
-                EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, searchTerm) +
-                EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, searchTerm))
-            : namePattern is not null || identificationPattern is not null || cucPattern is not null
+            ? matchBusinessName
                 ? query.OrderByDescending(customer =>
-                    EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
-                    EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, identificationTerm) +
-                    EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, cucTerm))
+                    EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.BusinessName ?? string.Empty, searchTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, searchTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, searchTerm))
+                : query.OrderByDescending(customer =>
+                    EF.Functions.TrigramsSimilarity(customer.Name, searchTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, searchTerm) +
+                    EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, searchTerm))
+            : namePattern is not null || identificationPattern is not null || cucPattern is not null
+                ? matchBusinessName
+                    ? query.OrderByDescending(customer =>
+                        EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
+                        EF.Functions.TrigramsSimilarity(customer.BusinessName ?? string.Empty, nameTerm) +
+                        EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, identificationTerm) +
+                        EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, cucTerm))
+                    : query.OrderByDescending(customer =>
+                        EF.Functions.TrigramsSimilarity(customer.Name, nameTerm) +
+                        EF.Functions.TrigramsSimilarity(customer.IdentificationNumber ?? string.Empty, identificationTerm) +
+                        EF.Functions.TrigramsSimilarity(customer.Cuc ?? string.Empty, cucTerm))
                 : query.OrderByDescending(customer => customer.CreatedAt);
     }
 
@@ -285,7 +322,10 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         // Activo y, o con documento (numero Y tipo), o completo (spec 2026-11-09: un tenant que no exige el documento
         // tiene clientes completos sin el), en la consulta y no despues: los incompletos de WhatsApp sin documento son
         // los mas nuevos y, con el orden por fecha, llenarian el `Take` antes de llegar a un cliente que la caja si puede elegir.
-        var query = FilteredQuery(tenantId, searchPattern, PhoneDigitsPattern(search), null, null, null, null)
+        // El POS busca como siempre (G4): ve a los contactos y no mira la razón social.
+        var query = FilteredQuery(
+                tenantId, searchPattern, PhoneDigitsPattern(search), null, null, null, null,
+                includeContacts: true, matchBusinessName: false)
             .Where(customer => customer.IsActive
                 && ((customer.IdentificationNumber != null && customer.IdentificationType != null)
                     || customer.Completeness == CustomerCompleteness.Complete
@@ -295,7 +335,7 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     || (includeIncompleteWithoutDocument && customer.IdentificationNumber == null)));
 
         // Sin `CountAsync`: la caja muestra una lista corta, no pagina.
-        return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null)
+        return await OrderByRelevance(query, search, searchPattern, null, null, null, null, null, null, matchBusinessName: false)
             .ThenBy(customer => customer.Name)
             .ThenBy(customer => customer.Id)
             .Take(take)

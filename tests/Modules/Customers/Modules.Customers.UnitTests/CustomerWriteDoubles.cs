@@ -215,13 +215,22 @@ internal static class CustomerWriteDoubles
         public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds, bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken)
+        {
+            SearchCalls.Add(includeContacts);
+            return Task.FromResult<(IReadOnlyList<Customer> Items, int Total)>((SearchPage, SearchPage.Count));
+        }
+
+        /// <summary>El <c>includeContacts</c> de cada <see cref="SearchAsync"/>: lo que el handler decidió a partir de los parámetros.</summary>
+        public List<bool> SearchCalls { get; } = [];
+
+        /// <summary>La página que <see cref="SearchAsync"/> devuelve (el doble no filtra: lo que se prueba es el parámetro).</summary>
+        public List<Customer> SearchPage { get; } = [];
 
         public Task<IReadOnlyList<Customer>> SearchSelectableAsync(Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<Customer>> ListForExportAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<Customer>> ListForExportAsync(Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<bool> AnyWithClassificationAsync(Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) =>

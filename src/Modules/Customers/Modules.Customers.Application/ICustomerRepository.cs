@@ -22,6 +22,10 @@ public interface ICustomerRepository
     /// valor contra <c>PhoneE164</c>, sin el minimo de siete, porque quien llena el campo Telefono ya
     /// dijo que busca un telefono. Sin ningun digito no filtra.
     ///
+    /// <c>includeContacts</c> en <c>false</c> deja fuera a los clientes que son contacto de una empresa (spec 2026-11-10 §5); el
+    /// handler lo decide a partir de <c>contacts</c> y de si hubo una búsqueda. Además, <c>search</c> y <c>name</c> también
+    /// comparan la razón social, y la relevancia la suma.
+    ///
     /// <c>cityIds</c> filtra por ciudad exacta (no ILIKE: son ids). <c>null</c> es "sin filtro";
     /// una coleccion vacia es "no matchear ninguna fila" — la usa <c>ListCustomersHandler</c>
     /// cuando el filtro de Departamento ya resolvio que ningun id de ciudad aplica. El filtro de
@@ -39,6 +43,7 @@ public interface ICustomerRepository
         bool? isComplete,
         int page,
         int pageSize,
+        bool includeContacts,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -70,6 +75,7 @@ public interface ICustomerRepository
         string? phone,
         int skip,
         int take,
+        bool includeContacts,
         CancellationToken cancellationToken);
 
     Task<Customer?> FindAsync(

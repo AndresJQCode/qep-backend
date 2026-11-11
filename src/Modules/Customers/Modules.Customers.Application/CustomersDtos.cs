@@ -92,7 +92,22 @@ public sealed record CustomerDto(
     string? PersonType = null,
     /// <summary>Spec 2026-11-10: la empresa de la que este cliente es contacto; <c>null</c> si no tiene. Siempre se llena por
     /// <c>CustomerMapping.ToDtoAsync</c>, el camino que comparten todos los handlers que responden la ficha.</summary>
-    CustomerCompanyDto? Company = null);
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: cuántos contactos sin fusionar tiene la empresa (0 si no es empresa). Lo llenan el listado y
+    /// <c>CustomerMapping.ToDtoAsync</c>.</summary>
+    int ContactCount = 0,
+    /// <summary>Los contactos de la empresa, hasta <see cref="CustomerContactsLimits.MaxInDetail"/>, por nombre. Sólo lo llena
+    /// <c>CustomerMapping.ToDtoAsync</c> (la ficha); el listado no los trae y deja <c>null</c>.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null);
+
+/// <summary>Spec 2026-11-10 §4.2: un contacto como lo pinta la ficha de su empresa.</summary>
+public sealed record CustomerContactDto(Guid Id, string Name, string? Phone, string? Email, bool IsComplete, bool IsActive);
+
+/// <summary>G12: la ficha de una empresa trae a lo sumo estos contactos; <c>contactCount</c> sigue contando todos.</summary>
+public static class CustomerContactsLimits
+{
+    public const int MaxInDetail = 100;
+}
 
 /// <summary>Spec 2026-11-10 §4.1: la empresa de un contacto, ya con su etiqueta (<c>BusinessName ?? Name</c>, A4). Es un objeto
 /// y no un id suelto (BFF): la ficha pinta el nombre, el aviso de «incompleta» y «inactiva» sin un segundo <c>GET</c>.</summary>
@@ -139,7 +154,11 @@ public sealed record CustomerResponse(
     /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
     string? PersonType = null,
     /// <summary>Spec 2026-11-10: viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>), como <c>MergedInto</c>.</summary>
-    CustomerCompanyDto? Company = null);
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: los contactos de la empresa por nombre (hasta 100); <c>[]</c> para quien no tiene.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null,
+    /// <summary>Todos los contactos sin fusionar, aunque <c>Contacts</c> venga recortada.</summary>
+    int ContactCount = 0);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -171,7 +190,14 @@ public sealed record CustomerListItemResponse(
     bool IsComplete,
     /// <summary>Spec 2026-10-24 (B4): «Fusionar con…» propone como el que queda al cliente más viejo, y la pantalla lo elige con
     /// esta fecha sin pedir la ficha de cada candidato.</summary>
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>Spec 2026-11-10 §4.1: la razón social, para que la grilla distinga a una empresa de una persona sin pedir la ficha.</summary>
+    string? BusinessName,
+    string? PersonType,
+    /// <summary>La empresa de un contacto (<c>null</c> si no lo es), resuelta en lote para toda la página.</summary>
+    CustomerCompanyDto? Company,
+    /// <summary>Cuántos contactos sin fusionar tiene la fila (0 si no es empresa), contados en lote para toda la página.</summary>
+    int ContactCount);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
@@ -520,4 +546,6 @@ public sealed record CustomerMergeResponse(
     CustomerMergedIntoDto? MergedInto,
     string? PersonType,
     CustomerCompanyDto? Company,
+    IReadOnlyList<CustomerContactDto> Contacts,
+    int ContactCount,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

@@ -18,7 +18,8 @@ public sealed record ExportCustomersCommand(
     string? Name,
     string? IdentificationNumber,
     string? Cuc,
-    string? Phone = null) : ICommand<ExportCustomersResult>;
+    string? Phone = null,
+    string? Contacts = null) : ICommand<ExportCustomersResult>;
 
 /// <summary>
 /// Lo que el request devuelve. **No lleva el enlace**: el contrato de esta operacion es que el
@@ -64,7 +65,12 @@ public sealed class ExportCustomersHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerRead);
 
-        var customers = await ReadAllAsync(command, cancellationToken);
+        // Sin validador propio: el mismo 422 con la clave `contacts` que el listado, antes de leer nada.
+        var contactsFilter = CustomerContactsRule.ParseOrThrow(command.Contacts);
+        var includeContacts = CustomerContactsRule.IncludeContacts(
+            contactsFilter, command.Search, command.Name, command.IdentificationNumber, command.Cuc, command.Phone);
+
+        var customers = await ReadAllAsync(command, includeContacts, cancellationToken);
         if (customers.Count == 0)
         {
             // Mismo criterio que el export de filas fallidas: un archivo con solo la cabecera, o un
@@ -116,6 +122,7 @@ public sealed class ExportCustomersHandler(
     // existe para proteger la respuesta HTTP, y este camino no devuelve las filas por HTTP.
     private async Task<IReadOnlyList<Customer>> ReadAllAsync(
         ExportCustomersCommand command,
+        bool includeContacts,
         CancellationToken cancellationToken)
     {
         var all = new List<Customer>();
@@ -130,6 +137,7 @@ public sealed class ExportCustomersHandler(
                 command.Phone,
                 all.Count,
                 BatchSize,
+                includeContacts,
                 cancellationToken);
 
             all.AddRange(batch);

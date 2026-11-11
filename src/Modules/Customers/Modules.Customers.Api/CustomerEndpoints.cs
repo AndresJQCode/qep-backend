@@ -208,7 +208,8 @@ public static class CustomerEndpoints
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize,
         string? isComplete = null,
-        string? phone = null)
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
@@ -222,7 +223,8 @@ public static class CustomerEndpoints
                 page,
                 pageSize,
                 isComplete,
-                phone),
+                phone,
+                contacts),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -316,6 +318,8 @@ public static class CustomerEndpoints
             survivor.MergedInto,
             survivor.PersonType,
             survivor.Company,
+            survivor.Contacts ?? [],
+            survivor.ContactCount,
             result.DroppedTags));
     }
 
@@ -469,10 +473,11 @@ public static class CustomerEndpoints
         string? name = null,
         string? identificationNumber = null,
         string? cuc = null,
-        string? phone = null)
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone),
+            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone, contacts),
             cancellationToken);
 
         return Results.Accepted(value: new ExportCustomersResponse(
@@ -613,7 +618,9 @@ public static class CustomerEndpoints
         customer.MarketingConsent,
         customer.MergedInto,
         customer.PersonType,
-        customer.Company);
+        customer.Company,
+        customer.Contacts ?? [],
+        customer.ContactCount);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -629,5 +636,9 @@ public static class CustomerEndpoints
         customer.Classification,
         customer.IsActive,
         customer.IsComplete,
-        customer.CreatedAt);
+        customer.CreatedAt,
+        customer.BusinessName,
+        customer.PersonType,
+        customer.Company,
+        customer.ContactCount);
 }
