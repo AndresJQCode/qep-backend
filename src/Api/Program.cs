@@ -287,6 +287,8 @@ app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
 // Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
 app.MapCityOperatorEndpoints();
+// Spec 2026-11-10: la consola de la unidad tributaria del operador.
+app.MapTaxUnitOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
