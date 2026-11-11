@@ -93,6 +93,47 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(1503848.57m, document.NetTotal);
     }
 
+    // Spec impuestos por tipo §9.3 (F-1): una fila por retención que aplicó, rotulada con el nombre de la tasa; el
+    // JSON que recibe Typst trae `withholdings: [{ name, amount }]` y nada más por fila.
+    [Fact]
+    public void PdfHasOneRowPerAppliedWithholdingWithTheRateName()
+    {
+        var response = Response() with
+        {
+            RetentionAmount = 10_398m,
+            Withholdings =
+            [
+                WithholdingRow("Retefuente 2,5 %", "Retefuente", 7_500m),
+                WithholdingRow("ReteICA Bogotá", "ReteICA", 2_898m),
+            ],
+        };
+
+        var document = Map(response);
+
+        Assert.Equal(
+            new[] { new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m), new QuotationPdfWithholding("ReteICA Bogotá", 2_898m) },
+            document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal("Retefuente 2,5 %", json[0].GetProperty("name").GetString());
+        Assert.Equal(7_500m, json[0].GetProperty("amount").GetDecimal());
+        Assert.Equal("ReteICA Bogotá", json[1].GetProperty("name").GetString());
+        Assert.Equal(2, json[0].EnumerateObject().Count());
+    }
+
+    [Fact]
+    public void PdfWithoutWithholdingsHasNoRetentionRow()
+    {
+        var document = Map(Response());
+
+        Assert.Empty(document.Withholdings);
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(document, PayloadFormat).GetProperty("withholdings");
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, json.ValueKind);
+        Assert.Equal(0, json.GetArrayLength());
+    }
+
+    private static WithholdingResponse WithholdingRow(string name, string type, decimal amount) =>
+        new(Guid.CreateVersion7(), name, type, "CO", 2.5m, null, null, null, 300_000m, amount);
+
     // Sin esta bandera el documento tiene un IVA en cero que no explica por que: el lector no
     // puede distinguir "productos exentos" de "error de calculo".
     [Fact]
