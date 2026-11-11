@@ -14,18 +14,10 @@ internal sealed class MessagingCustomerReferenceLock(MessagingDbContext dbContex
     public Task<bool> HoldAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         HoldAsync(dbContext, tenantId, customerId, cancellationToken);
 
-    internal static async Task<bool> HoldAsync(
-        MessagingDbContext dbContext, Guid tenantId, Guid customerId, CancellationToken cancellationToken)
-    {
-        // Un candado de transacción sin transacción se suelta al terminar su propia sentencia y no protege nada.
-        if (dbContext.Database.CurrentTransaction is null)
-        {
-            throw new InvalidOperationException("The customer reference lock needs an open Messaging transaction.");
-        }
-
-        await dbContext.Database.ExecuteSqlAsync(CustomerReferenceLock.Shared(tenantId, customerId), cancellationToken);
-        return await dbContext.Database.SqlQuery<bool>(CustomerReferenceLock.Exists(tenantId, customerId)).SingleAsync(cancellationToken);
-    }
+    // Sin transacción (o fuera de READ COMMITTED) CustomerReferenceWrites lanza: el candado no protegería nada.
+    internal static Task<bool> HoldAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
+        CustomerReferenceWrites.HoldAsync(dbContext.Database, tenantId, customerId, cancellationToken);
 
     /// <summary>Para el webhook: si el cliente ya no existe, <see cref="CustomerVanishedException"/>, que deshace la transacción de la
     /// ingesta y el procesador traduce a reintento.</summary>

@@ -291,7 +291,8 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
-          "BuildingBlocks.Domain": "[1.0.0, )"
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
         }
       },
       "modules.audit.application": {
