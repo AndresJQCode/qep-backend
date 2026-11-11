@@ -65,7 +65,8 @@ public interface IQuotationCustomerLookup
 // VatSurplus es el excedente de IVA que la cotizacion congela al crearse (Quotation.CustomerVatSurplus):
 // igual criterio que Name/Phone/Address arriba, un pass-through desde Customer. WithRetention ya no es un
 // dato del cliente: el adaptador lo deriva de sus tasas asignadas (alguna Retefuente) y sólo lo lee la
-// respuesta (client.withRetention, para el frontend viejo) y el pedido hasta la Tarea 14.
+// respuesta (client.withRetention, para el frontend viejo). Ningún cálculo lo usa: las retenciones salen de las
+// tasas congeladas en el documento.
 // Cuc es nulo en un cliente incompleto (spec 2026-10-10 §6.2); QuotationCustomerEligibility lo rechaza.
 public sealed record QuotationCustomerRef(
     Guid Id,

@@ -11,7 +11,7 @@ namespace Modules.Quotations.Application;
 public interface IQuotationWithholdingLookup
 {
     /// <summary>Las tasas asignadas al cliente, en su orden. <paramref name="country"/> null = todas, de cualquier
-    /// país (la cotización, D16); con país, sólo las de ése (los pedidos, Tarea 14). Un cliente que no existe no
+    /// país (la cotización, D16); con país, sólo las de ése (el pedido manual, spec §7.5). Un cliente que no existe no
     /// tiene tasas.</summary>
     Task<IReadOnlyList<WithholdingRate>> ForCustomerAsync(
         Guid tenantId, Guid customerId, string? country, DateOnly documentDate, CancellationToken cancellationToken);

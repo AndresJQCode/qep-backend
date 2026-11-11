@@ -562,7 +562,15 @@ Borrar `customers.customers.with_retention`, `quotations.quotations.customer_wit
 1. Backend (migraciones 11.1–11.3). El frontend viejo sigue funcionando: los campos nuevos son aditivos, los viejos siguen en las
    respuestas y se ignoran en los cuerpos. Diferencias que verá: su vista previa local del 2,5 % puede mostrar un provisional
    distinto; su interruptor «Aplica retención» con datos propios deja de tener efecto; enviar sin empresa da
-   `quotation.billing.account_required`; editar el excedente o la retención de un cliente ya no mueve sus cotizaciones abiertas.
+   `quotation.billing.account_required`; editar el excedente o la retención de un cliente ya no mueve sus cotizaciones abiertas;
+   los selectores de tasa de producto y de envío listan también las tasas que retienen (Retefuente, ReteICA), y elegir una
+   responde 422 `catalog.product.tax_rate_not_vat` o `quotations.freight_tax_rate.not_vat`, códigos que el frontend viejo no
+   mapea a un campo (muestra el error genérico).
+
+   **Corte duro.** Una vez corridas las migraciones, el binario viejo del backend no puede seguir atendiendo escrituras: un
+   documento que él cree o edite no recibe foto de retenciones (no conoce `quotation_withholdings` ni `order_withholdings`) y
+   queda con totales que el binario nuevo no sabe reconstruir. El despliegue reemplaza todas las instancias a la vez, sin
+   convivencia de versiones.
 2. El operador carga la UVT de Colombia del año en curso.
 3. Frontend.
 4. Release N+1: migración de contrato (§11.5).
