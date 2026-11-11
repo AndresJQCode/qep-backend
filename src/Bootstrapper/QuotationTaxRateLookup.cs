@@ -16,8 +16,14 @@ internal sealed class QuotationTaxRateLookup(ITaxRateRepository repository) : IQ
         Guid tenantId, Guid taxRateId, CancellationToken cancellationToken)
     {
         var taxRate = await repository.FindAsync(tenantId, new TaxRateId(taxRateId), cancellationToken);
-        return taxRate is null
-            ? null
+        if (taxRate is null)
+        {
+            return null;
+        }
+
+        // VatPercentage tira con una tasa que retiene: el handler rechaza esa tasa por AddsTax.
+        return taxRate.Withholds
+            ? new QuotationTaxRateRef(taxRate.Id.Value, taxRate.Name, 0, taxRate.IsActive, AddsTax: false)
             : new QuotationTaxRateRef(taxRate.Id.Value, taxRate.Name, taxRate.VatPercentage, taxRate.IsActive);
     }
 }

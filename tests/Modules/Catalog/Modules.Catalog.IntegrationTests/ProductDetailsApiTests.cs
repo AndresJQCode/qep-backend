@@ -362,6 +362,64 @@ public sealed class ProductDetailsApiTests
         Assert.Equal(taxRateId, (await ReadProductAsync(response)).TaxRateId);
     }
 
+    // Un producto sólo lleva tasas que suman (IVA): una que retiene se rechaza al crear y al editar.
+    [Fact]
+    public async Task ProductWithRetefuenteRateIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var retefuenteId = await CreateTaxRateAsync(client, TenantId, "Retefuente 2.5", 2.5m, "Retefuente");
+        var pricing = new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } };
+
+        var create = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja", "VS-001", pricing: pricing, taxRateId: retefuenteId));
+        await AssertNotVatAsync(create);
+        Assert.Empty(await ListAsync(client, TenantId));
+
+        var created = await ReadProductAsync(await CreateProductAsync(
+            client, TenantId, ProductBodies.Create("Vela de soja", "VS-001", pricing: pricing)));
+        var update = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/products/{created.Id}",
+            ProductBodies.Update(created, "Vela de soja", "VS-001", pricing: pricing, taxRateId: retefuenteId),
+            TestContext.Current.CancellationToken);
+        await AssertNotVatAsync(update);
+    }
+
+    // Regresión de ProductTaxRateResolver: inactivar un IVA no impide seguir usándolo en un producto.
+    [Fact]
+    public async Task ProductWithInactiveIvaStillAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+
+        var ivaId = await CreateTaxRateAsync(client, TenantId, "IVA viejo", 16);
+        var deactivate = await client.PostAsync(
+            $"/api/v1/tenants/{TenantId}/catalog/tax-rates/{ivaId}/deactivate",
+            content: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
+
+        var response = await CreateProductAsync(client, TenantId, ProductBodies.Create(
+            "Vela de soja",
+            "VS-001",
+            pricing: new { prices = new Dictionary<string, decimal> { ["USD"] = 10m } },
+            taxRateId: ivaId));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static async Task AssertNotVatAsync(HttpResponseMessage response)
+    {
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.UnprocessableEntity,
+            $"Expected 422, got {response.StatusCode}: {text}");
+        Assert.Contains("catalog.product.tax_rate_not_vat", text, StringComparison.Ordinal);
+    }
+
     // CA-CAT-04-10
     [Fact]
     public async Task UpdatingTheDetailsWritesExactlyOneAuditEvent()
@@ -519,11 +577,12 @@ public sealed class ProductDetailsApiTests
         HttpClient client,
         string tenantId,
         string name,
-        int percentage)
+        decimal percentage,
+        string? type = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
-            new { name, percentage },
+            new { name, percentage, type },
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
