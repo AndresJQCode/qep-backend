@@ -1,6 +1,7 @@
 using FluentValidation;
 using FluentValidation.Results;
 using Modules.Catalog.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Catalog.Application;
 
@@ -109,7 +110,7 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
 
             if (variant.Id is { } id && !ids.Add(id))
             {
-                context.AddFailure(Failure(
+                context.AddFailure(ProductWriteRules.Failure(
                     $"{field}.{nameof(ProductVariantRequest.Id)}",
                     "catalog.variant.duplicated_in_request",
                     "Esta variante viene dos veces."));
@@ -119,7 +120,7 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
             // son el mismo código; «vs-001» no.
             if (variant.Code?.Trim() is { Length: > 0 } code && !codes.Add(code))
             {
-                context.AddFailure(Failure(
+                context.AddFailure(ProductWriteRules.Failure(
                     $"{field}.{nameof(ProductVariantRequest.Code)}",
                     "catalog.product.code_taken",
                     "Otra variante de este producto ya usa este código."));
@@ -127,7 +128,7 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
 
             if (variant.Barcode?.Trim() is { Length: > 0 } barcode && !barcodes.Add(barcode))
             {
-                context.AddFailure(Failure(
+                context.AddFailure(ProductWriteRules.Failure(
                     $"{field}.{nameof(ProductVariantRequest.Barcode)}",
                     "catalog.variant.barcode_taken",
                     "Otra variante de este producto ya usa este código de barras."));
@@ -137,7 +138,7 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
             // (ProductVariantChanges) y la cuenta se revisa después, con la biblioteca en la mano.
             if (variant.OptionValueIds is { } values && values.Count != optionCount)
             {
-                context.AddFailure(Failure(
+                context.AddFailure(ProductWriteRules.Failure(
                     $"{field}.{nameof(ProductVariantRequest.OptionValueIds)}",
                     "catalog.variant.value_count_mismatch",
                     "Elige un valor para cada opción del producto."));
@@ -145,7 +146,7 @@ internal sealed class ProductWriteRules : AbstractValidator<IProductWriteCommand
 
             if (variant.GalleryFileId is { } fileId && !gallery.Contains(fileId))
             {
-                context.AddFailure(Failure(
+                context.AddFailure(ProductWriteRules.Failure(
                     $"{field}.{nameof(ProductVariantRequest.GalleryFileId)}",
                     "catalog.variant.image_not_in_gallery",
                     "La foto de la variante tiene que estar en la galería del producto."));
@@ -184,6 +185,29 @@ internal sealed class ProductVariantRequestRules : AbstractValidator<ProductVari
                     .WithErrorCode("catalog.product.price_required")
                     .WithMessage("La variante necesita precio en al menos una moneda.");
         }
+
+        // Same per-row key as a price (`Variants[i].Costs.<CUR>`). Zero is rejected on top of the
+        // shared rule: a cost of 0 would read as «free» in the margin, and «no cost» is an absent row.
+        RuleFor(variant => variant.Costs).Custom((costs, context) =>
+        {
+            if (costs is null)
+            {
+                return;
+            }
+
+            foreach (var failure in CurrencyAmountRules.Check(costs, context.PropertyPath))
+            {
+                context.AddFailure(failure);
+            }
+
+            foreach (var (code, amount) in costs.Where(cost => cost.Value == 0m))
+            {
+                context.AddFailure(ProductWriteRules.Failure(
+                    $"{context.PropertyPath}.{code?.Trim().ToUpperInvariant()}",
+                    "catalog.product_cost.amount_not_positive",
+                    "The cost must be greater than zero."));
+            }
+        });
 
         RuleFor(variant => variant.Pricing!)
             .SetValidator(new ProductPricingRules())
