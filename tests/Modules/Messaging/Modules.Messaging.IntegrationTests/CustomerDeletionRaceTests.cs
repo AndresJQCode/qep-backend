@@ -316,4 +316,73 @@ public sealed class CustomerDeletionRaceTests
             "SELECT status || '|' || coalesce(failure_code, '') FROM messaging.campaign_recipients WHERE campaign_id = @id", ("id", campaignId)));
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.conversations"));
     }
+
+    /// <summary>P4 en el reintento: un destinatario que ya tiene su mensaje y su conversación (Meta no lo entregó la primera vez) vuelve a
+    /// enviarse por el camino que reusa los dos. Ese camino también toma el candado compartido del cliente y lo vuelve a buscar: si el
+    /// borrado ganó, el destinatario termina <c>Skipped</c>/<c>unreachable</c>, sin volver a apuntar a la conversación borrada y sin
+    /// llamar a Meta.</summary>
+    [Fact]
+    public async Task ARetriedCampaignRecipientWhoseCustomerIsDeletedIsSkippedWithoutSending()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var customerId = await CreateCustomerAsync(f.Factory, f.Tenant, "LAURA GÓMEZ", "300 111 2233");
+        var conversationId = await SeedConversationAsync(f.Factory, f.Tenant.TenantId, f.ConnectionId, WaId);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.conversations SET customer_id = @customerId WHERE id = @id",
+            ("customerId", customerId), ("id", conversationId));
+        f.Factory.MetaHandler.Respond("/222/message_templates", HttpStatusCode.OK, CampaignCatalog);
+        using var client = CreateClient(f.Factory, f.Tenant.OwnerUserId, f.Tenant.TenantId, CampaignPermissions);
+        var url = $"/api/v1/tenants/{f.Tenant.TenantId}/messaging/campaigns";
+        var created = await SendAsync(client, HttpMethod.Post, url, new
+        {
+            name = "Promo",
+            connectionId = f.ConnectionId,
+            template = new { name = "promo", language = "es" },
+            parameters = new Dictionary<string, object> { ["1"] = new { source = "customerName" } },
+            audience = new { tagIds = Array.Empty<Guid>(), customerIds = new[] { customerId } },
+            scheduledAt = (string?)null,
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var campaignId = (await created.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(client, HttpMethod.Post, $"{url}/{campaignId}/launch", new { expectedVersion = 1 })).StatusCode);
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaigns SET audience_frozen_at = now() WHERE id = @id", ("id", campaignId));
+        // El primer intento ya dejó su mensaje (Failed, sin confirmar) en la conversación, y el destinatario volvió a Pending.
+        var recipientId = Guid.CreateVersion7();
+        var messageId = Guid.CreateVersion7();
+        await ExecuteAsync(f.ConnectionString,
+            """
+            INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, client_id, created_at)
+            VALUES (@message, @conversation, @tenant, @connection, now(), 2, 1, 4, @recipient, now());
+            INSERT INTO messaging.campaign_recipients (id, campaign_id, tenant_id, customer_id, customer_name, wa_id, status, attempts, next_attempt_at,
+                message_id, conversation_id)
+            VALUES (@recipient, @campaign, @tenant, @customer, 'Laura', @wa, 'Pending', 1, now() - interval '1 hour', @message, @conversation);
+            """,
+            ("message", messageId), ("conversation", conversationId), ("tenant", f.Tenant.TenantId), ("connection", f.ConnectionId),
+            ("recipient", recipientId), ("campaign", campaignId), ("customer", customerId), ("wa", WaId));
+        var (connection, transaction) = await HoldExclusiveAsync(f.ConnectionString, f.Tenant.TenantId, customerId);
+        await using var _c = connection;
+        await using var _t = transaction;
+
+        var drain = Task.Run(() => DrainCampaignsAsync(f.Factory), Ct);
+
+        Assert.NotSame(drain, await Task.WhenAny(drain, Task.Delay(NoAnswerWindow, Ct)));
+        // Lo que hace el borrado con un destinatario en vuelo (Sending): suelta el cliente, la conversación y el mensaje.
+        await using (var recipient = new NpgsqlCommand(
+            "UPDATE messaging.campaign_recipients SET customer_id = NULL, conversation_id = NULL, message_id = NULL WHERE id = @id",
+            connection, transaction))
+        {
+            recipient.Parameters.AddWithValue("id", recipientId);
+            await recipient.ExecuteNonQueryAsync(Ct);
+        }
+
+        await DeleteAndCommitAsync(connection, transaction, customerId, conversationId);
+        await drain;
+
+        Assert.Equal("Skipped|unreachable||", await ScalarAsync<string>(f.ConnectionString,
+            """
+            SELECT status || '|' || coalesce(failure_code, '') || '|' || coalesce(message_id::text, '') || '|' || coalesce(conversation_id::text, '')
+            FROM messaging.campaign_recipients WHERE id = @id
+            """, ("id", recipientId)));
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal));
+    }
 }

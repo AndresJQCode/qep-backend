@@ -248,6 +248,17 @@ internal sealed class CampaignDispatchStore(MessagingDbContext dbContext, IConve
         if (recipient is { MessageId: { } existingMessage, ConversationId: { } existingConversation })
         {
             await using var reuse = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            // Borrar clientes (A-12 y P4): como el camino que abre la conversación, el candado compartido del cliente va antes de cualquier
+            // fila y después se vuelve a buscar el cliente. Si el borrado ganó, la conversación y el mensaje ya no existen: el destinatario
+            // queda inalcanzable, sin volver a apuntarlos y sin llamar a Meta.
+            if (recipient.CustomerId is not { } reusedCustomer
+                || !await MessagingCustomerReferenceLock.HoldAsync(dbContext, recipient.TenantId, reusedCustomer, cancellationToken))
+            {
+                await reuse.RollbackAsync(cancellationToken);
+                await SkipAsync(recipient, CampaignFailureCodes.Unreachable, cancellationToken);
+                return null;
+            }
+
             var stillOwned = await dbContext.Database.ExecuteSqlAsync(
                 $"""
                 UPDATE messaging.campaign_recipients SET message_id = {existingMessage}, conversation_id = {existingConversation}

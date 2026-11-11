@@ -292,6 +292,67 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         Assert.Equal(StateBefore(footprint), before);
     }
 
+    // El runner del chatbot (RunProcessor.ProcessUnitAsync) toma el candado de la conversación, después su corrida con FOR UPDATE, y
+    // mientras los tiene escribe la conversación por Mensajería en OTRA conexión. Si el borrado bloqueara la conversación antes de
+    // esperar la corrida, esa escritura esperaría al borrado, el borrado a la corrida y la corrida a la escritura: un ciclo que Postgres
+    // no ve (la transacción del runner está ociosa) y que sólo corta el timeout de 30 s. El borrado tiene que esperar el candado del
+    // runner sin tener ninguna fila de la conversación, y terminar cuando el runner confirma.
+    [Fact]
+    public async Task ADeletionWaitsForTheChatbotRunWithoutHoldingItsConversation()
+    {
+        var footprint = await SeedFootprintAsync();
+        await using var runner = new NpgsqlConnection(fixture.ConnectionString);
+        await runner.OpenAsync(Ct);
+        var runnerTransaction = await runner.BeginTransactionAsync(Ct);
+        await using (var hold = new NpgsqlCommand(
+            """
+            SELECT pg_advisory_xact_lock(20261022, hashtext(@conversation::text));
+            SELECT id FROM automations.conversation_runs WHERE id = @run FOR UPDATE;
+            """, runner, runnerTransaction))
+        {
+            hold.Parameters.AddWithValue("conversation", footprint.Conversation);
+            hold.Parameters.AddWithValue("run", footprint.Run);
+            await hold.ExecuteNonQueryAsync(Ct);
+        }
+
+        var deletion = Task.Run(() => DeleteAsync(footprint.Tenant, [footprint.Customer]), Ct);
+        Task? reply = null;
+        var committed = false;
+        try
+        {
+            await WaitUntilSomeoneWaitsForALockAsync(deletion);
+
+            // La respuesta del bot, por Mensajería y en su propia conexión, mientras el runner tiene su candado y su corrida.
+            reply = ExecuteAsync(
+                """
+                INSERT INTO messaging.messages (id, conversation_id, tenant_id, connection_id, occurred_at, direction, kind, status, created_at)
+                SELECT gen_random_uuid(), id, tenant_id, connection_id, now(), 2, 1, 2, now() FROM messaging.conversations WHERE id = @id
+                """,
+                ("id", footprint.Conversation));
+            Assert.Same(reply, await Task.WhenAny(reply, Task.Delay(TimeSpan.FromSeconds(3), Ct)));
+            await reply;
+            Assert.False(deletion.IsCompleted, "The deletion did not wait for the chatbot run.");
+
+            await runnerTransaction.CommitAsync(Ct);
+            committed = true;
+            await deletion;
+        }
+        finally
+        {
+            if (!committed)
+            {
+                await runnerTransaction.CommitAsync(Ct);
+                await Task.WhenAll(new[] { deletion, reply ?? Task.CompletedTask }.Select(task => task.ContinueWith(_ => { }, Ct)));
+            }
+
+            await runnerTransaction.DisposeAsync();
+        }
+
+        Assert.Equal(StateAfter(footprint), await StateAsync(footprint));
+        Assert.Equal(0L, await ScalarAsync(
+            "SELECT count(*) FROM messaging.messages WHERE conversation_id = @id", ("id", footprint.Conversation)));
+    }
+
     // §5 rendimiento: sentencias por lote. 100 clientes con 50 mensajes cada uno mandan los mismos comandos que uno solo.
     [Fact]
     public async Task RemovingAHundredCustomersRunsAFixedNumberOfStatements()
@@ -376,6 +437,25 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         var merged = await store.DeleteAsync(tenant, deletableIds, Ct);
         await transaction.CommitAsync(Ct);
         return new Deletion(blockers, consents, outcome, merged);
+    }
+
+    // Hasta que alguna sesión de esta base esté esperando un candado (el borrado, detrás del runner). Si el borrado termina o falla antes,
+    // no esperó a nadie: la prueba ya no tiene qué mirar.
+    private async Task WaitUntilSomeoneWaitsForALockAsync(Task deletion)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            Assert.False(deletion.IsCompleted, "The deletion finished without waiting for the chatbot run.");
+            if (await ScalarAsync(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'") > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(50, Ct);
+        }
+
+        Assert.Fail("The deletion never waited for a lock.");
     }
 
     // Los candados van uno por cliente a propósito (orden garantizado): se cuenta todo lo demás.

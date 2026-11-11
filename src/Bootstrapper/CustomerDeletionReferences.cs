@@ -1,6 +1,7 @@
 using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Application;
+using Modules.Automations.Infrastructure.Persistence;
 using Modules.Customers.Infrastructure.Persistence;
 using Modules.Messaging.Domain;
 
@@ -103,6 +104,17 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
                 SELECT customer_id AS "Value" FROM billing.charges WHERE tenant_id = {tenantId} AND customer_id = ANY({ids})
                 """).ToListAsync(cancellationToken)],
         };
+
+        // Antes del FOR UPDATE: el candado de conversación del runner del chatbot, de todas las conversaciones de estos clientes. El runner
+        // lo toma (sin esperar) antes de su corrida y, con los dos, escribe la conversación por otra conexión de Mensajería: si el borrado
+        // bloqueara la conversación primero, esa escritura esperaría al borrado, el borrado a la corrida y la corrida a la escritura, un
+        // ciclo que Postgres no ve (la transacción del runner queda ociosa) y que sólo corta el timeout. Así el borrado espera al runner sin
+        // tener ninguna fila suya, y un runner que llega después encuentra el candado tomado y deja la unidad para luego. El conjunto no
+        // cambia: abrir o mover una conversación a uno de estos clientes exige su candado compartido, y LockAsync tiene el exclusivo.
+        await database.ExecuteSqlAsync($"""
+            SELECT pg_advisory_xact_lock({AutomationsConversationLock.Namespace}, hashtext(conversation.id::text))
+            FROM (SELECT id FROM messaging.conversations WHERE tenant_id = {tenantId} AND customer_id = ANY({ids}) ORDER BY id) AS conversation
+            """, cancellationToken);
 
         // D-9 y P5: FOR UPDATE sobre todas las conversaciones de estos clientes, bloqueadas o no. Hasta el commit nadie las bloquea
         // (lo que convertiría en bloqueado a un cliente ya decidido como borrable) ni las desbloquea; y el borrado de más abajo
