@@ -37,6 +37,8 @@ public sealed class OrderResponseComposer(
             : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
+        var clientContacts = await QuotationResponseComposer.ClientContactsAsync(
+            customerLookup, tenantId, customer, cancellationToken);
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -59,7 +61,8 @@ public sealed class OrderResponseComposer(
                     entry.MemberId is { } member ? members.GetValueOrDefault(member)?.Label : null,
                     entry.Details))
                 .ToArray(),
-            QuotationResponseComposer.AvailableFloors(order.Items, products));
+            QuotationResponseComposer.AvailableFloors(order.Items, products),
+            clientContacts);
     }
 }
 

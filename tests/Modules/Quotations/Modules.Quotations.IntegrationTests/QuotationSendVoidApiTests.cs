@@ -363,4 +363,33 @@ public sealed class QuotationSendVoidApiTests
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Empty(factory.WhatsAppSender.Messages);
     }
+
+    // Spec 2026-11-10 §4.6: el detalle trae los contactos de la empresa para el diálogo de envío; sin contactos, una lista vacía.
+    [Fact]
+    public async Task TheQuotationDetailListsTheClientsContacts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        var withoutPhoneId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos", phone: null);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        await LinkContactAsync(client, tenantId, withoutPhoneId, companyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var standalone = await CreateQuotationAsync(client, tenantId, await CreateActiveCustomerAsync(client, tenantId));
+
+        var detail = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}", TestContext.Current.CancellationToken);
+        var none = await client.GetFromJsonAsync<QuotationResponse>(
+            $"{QuotationsUrl(tenantId)}/{standalone.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        Assert.Equal(
+            [("Laura Gómez", "311 555 0101"), ("Pedro Ríos", null)],
+            detail.ClientContacts.OrderBy(contact => contact.Name).Select(contact => (contact.Name, contact.Phone)));
+        Assert.NotNull(none);
+        Assert.Empty(none.ClientContacts);
+    }
 }

@@ -600,7 +600,14 @@ public sealed record QuotationResponse(
     /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
-    decimal FreightTaxAmount);
+    decimal FreightTaxAmount,
+    /// <summary>Spec 2026-11-10 §4.6: los contactos sin fusionar de la empresa del cliente, para elegir a quién se envía el
+    /// documento. Siempre presente: vacío si el cliente no tiene o si él mismo es un contacto. Lo llena el compositor.</summary>
+    IReadOnlyList<ClientContactDto> ClientContacts);
+
+/// <summary>Un contacto de la empresa del cliente tal como lo ve el diálogo de envío (spec 2026-11-10 §4.6). El teléfono es el de su
+/// ficha y puede faltar: ese contacto se muestra pero no se puede elegir.</summary>
+public sealed record ClientContactDto(Guid Id, string Name, string? Phone);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de

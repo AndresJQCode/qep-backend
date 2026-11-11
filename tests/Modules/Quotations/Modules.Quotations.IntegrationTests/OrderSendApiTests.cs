@@ -376,4 +376,24 @@ public sealed class OrderSendApiTests
 
         await AssertDomainRejectionAsync(response, "order.whatsapp.recipient_missing");
     }
+
+    [Fact]
+    public async Task TheOrderDetailListsTheClientsContacts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        var contact = Assert.Single(detail.ClientContacts);
+        Assert.Equal((contactId, "Laura Gómez", "311 555 0101"), (contact.Id, contact.Name, contact.Phone));
+    }
 }

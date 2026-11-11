@@ -308,7 +308,9 @@ public sealed record OrderDetailResponse(
     IReadOnlyCollection<QuotationItemResponse> Items,
     SourceQuotationResponse? SourceQuotation,
     IReadOnlyCollection<OrderHistoryEntryResponse> History,
-    int[] AvailableFloors);
+    int[] AvailableFloors,
+    // Spec 2026-11-10 §4.6: como en QuotationResponse. Sólo en la respuesta HTTP: el DTO interno no los trae.
+    IReadOnlyList<ClientContactDto> ClientContacts);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

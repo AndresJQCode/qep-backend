@@ -833,7 +833,8 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
-            quotation.FreightTaxAmount));
+            quotation.FreightTaxAmount,
+            []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
     // way the real composer does, against the defaults a tenant without settings reads.
