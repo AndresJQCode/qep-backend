@@ -104,7 +104,9 @@ el banco y, hoy, «aprueba» el pedido. Es el «Marcar como pagado» de Shopify 
   un campo.
 - **Shopify** (`SyncExternalPaymentStatus`) sigue fijando el pago sin validar datos de facturación ni exigir
   comprobante: lo cobró la plataforma y esos pedidos entran con cliente incompleto. Su guarda pasa de
-  `EnsurePending` a «abierto y no preparado ni facturado» *(decisión del diseñador)*.
+  `EnsurePending` a «no anulado ni facturado» *(decisión del diseñador)*: un pedido preparado o archivado sí recibe
+  el pago de la plataforma (un contraentrega de Shopify se prepara y se cobra después), y eso puede disparar el
+  archivado automático (§3.5).
 
 ### 3.3 Envío (`OrderFulfillmentStatus`, nuevo)
 
