@@ -317,6 +317,12 @@ internal static class MessagingApiHarness
                 // Spec 2026-10-29: el worker de smb_app_data tampoco corre solo; su intervalo no es configuración, así que se reemplaza acá.
                 services.RemoveAll<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule>();
                 services.AddSingleton(new Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule(TimeSpan.FromHours(1)));
+                // Spec 2026-11-10 A-9: el worker de la purga de medios tampoco corre solo (su intervalo es fijo); las pruebas llaman al procesador.
+                foreach (var descriptor in services
+                    .Where(d => d.ImplementationType == typeof(Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker)).ToList())
+                {
+                    services.Remove(descriptor);
+                }
             });
         }
     }

@@ -142,6 +142,10 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
         services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
         services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
+        // Spec 2026-11-10 (borrar clientes) A-9: borra de R2 los adjuntos que dejó un cliente borrado. Singleton: el estado es del proceso.
+        services.AddSingleton<CustomerDeletion.CustomerMediaPurgeProcessor>();
+        services.AddSingleton<CustomerDeletion.ICustomerMediaPurgeProcessor>(provider => provider.GetRequiredService<CustomerDeletion.CustomerMediaPurgeProcessor>());
+        services.AddHostedService<CustomerDeletion.CustomerMediaPurgeWorker>();
         // Spec 2026-10-29: el worker que le pide a Meta los contactos y el historial de cada importación Pending.
         services.TryAddSingleton(Coexistence.HistorySyncRequestSchedule.Default);
         services.AddSingleton<Coexistence.HistorySyncRequestProcessor>();
