@@ -74,6 +74,15 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-11-10 §4.1: borra un lote (hasta 100) elegido en la lista. Sin If-Match: el lote no tiene una versión única.
+        // Siempre 200 con las tres listas; 422 solo si la lista de ids es inválida.
+        group.MapPost("/bulk-delete", BulkDeleteCustomersAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerDelete)
+            .Accepts<BulkDeleteCustomersRequest>("application/json")
+            .Produces<BulkDeleteCustomersResult>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/", CreateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Accepts<CreateCustomerRequest>("application/json")
@@ -145,8 +154,9 @@ public static class CustomerEndpoints
         // que CAT-07 tuvo que corregir en producto despues. Sin permiso nuevo: reactivar es
         // administrar.
         //
-        // No hay DELETE. Un cliente lo referencian cotizaciones y documentos ya emitidos, y
-        // borrarlo en duro deja huerfano lo que ya se emitio; catalogo y empresas tampoco borran.
+        // Un cliente no se borra uno a uno: ver /bulk-delete arriba. Lo que ya se emitio (cotizaciones, pedidos,
+        // prestamos, contratos de servicio) bloquea el borrado en vez de quedar huerfano, y desactivar sigue siendo
+        // la salida para quien tiene historial.
         group.MapPost("/{customerId:guid}/activate", ActivateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Produces<CustomerResponse>()
@@ -277,6 +287,14 @@ public static class CustomerEndpoints
         Guid[]? mergedCustomerIds = null) =>
         Results.Ok(await dispatcher.QueryAsync(
             new GetCustomerMergePreviewQuery(tenantId, customerId, mergedCustomerIds), cancellationToken));
+
+    private static async Task<IResult> BulkDeleteCustomersAsync(
+        Guid tenantId,
+        BulkDeleteCustomersRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new BulkDeleteCustomersCommand(tenantId, request.CustomerIds ?? []), cancellationToken));
 
     private static async Task<IResult> MergeCustomersAsync(
         Guid tenantId,

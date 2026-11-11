@@ -41,6 +41,9 @@ public sealed class CustomerMergePreviewCompanyTests
 
     private sealed class StubReferences : ICustomerMergeReferences
     {
+        public Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task MoveAsync(Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

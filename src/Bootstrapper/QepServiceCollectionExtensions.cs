@@ -521,6 +521,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
+        // Spec 2026-11-10 (borrar clientes) §4.1: el borrado en lote.
+        services.AddScoped<
+            ICommandHandler<BulkDeleteCustomersCommand, BulkDeleteCustomersResult>,
+            BulkDeleteCustomersHandler>();
         services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
@@ -1241,6 +1245,9 @@ public static class QepServiceCollectionExtensions
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.
         services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
+        // Borrado de clientes (spec 2026-11-10 §4.2 y §4.3): los bloqueos y la limpieza en los otros módulos. Scoped como el
+        // CustomersDbContext sobre el que corre, para que todo quede en la transacción del lote.
+        services.AddScoped<ICustomerDeletionReferences, CustomerDeletionReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
@@ -1657,6 +1664,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-11-10 D-8: borrar es definitivo; sólo admin (el owner del tenant siempre lo es, `Membership.cs:529`).
+                CustomersPermissions.CustomerDelete,
                 // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
                 CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
@@ -2005,6 +2014,13 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerDelete,
+            "Borrar clientes",
+            "Permite borrar clientes de forma definitiva. No se puede deshacer.",
             "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
@@ -2616,6 +2632,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de borrar clientes (spec 2026-11-10 D-8). Sin esta política la ruta no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerDelete,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerDelete))
             // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
             // POST …/data-consent/revocations no resuelve y el síntoma es 500.
             .AddPolicy(

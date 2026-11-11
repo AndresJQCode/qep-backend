@@ -70,14 +70,144 @@ internal static class CustomerWriteDoubles
 
         public List<(Guid Tenant, string Action, string ResourceId, string Outcome)> BySystem { get; } = [];
 
+        /// <summary>Lo que se audita con foto (<c>changedFields</c>): el borrado de clientes.</summary>
+        public List<(Guid Tenant, Guid Actor, string Action, string ResourceId, string Outcome, IReadOnlyCollection<string> ChangedFields)> Detailed { get; } = [];
+
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Human.Add((tenantId, actorId, action, resourceId, outcome, source));
+
+        public void PublishWithChangedFields(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<string> changedFields) =>
+            Detailed.Add((tenantId, actorId, action, resourceId, outcome, changedFields));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             ByIntegration.Add((tenantId, action, resourceId, outcome));
 
         public void PublishBySystem(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             BySystem.Add((tenantId, action, resourceId, outcome));
+    }
+
+    /// <summary>La unidad de trabajo que anota en <paramref name="calls"/> cuándo abre, guarda y confirma: el borrado masivo
+    /// prueba el orden de sus pasos dentro de la transacción.</summary>
+    public sealed class RecordingUnitOfWork(List<string> calls) : ICustomersUnitOfWork
+    {
+        public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
+        {
+            calls.Add("save");
+            return Task.FromResult(1);
+        }
+
+        public Task<ICustomersTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+        {
+            calls.Add("begin");
+            return Task.FromResult<ICustomersTransaction>(new RecordingTransaction(calls));
+        }
+    }
+
+    public sealed class RecordingTransaction(List<string> calls) : ICustomersTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken)
+        {
+            calls.Add("commit");
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>Las referencias de otros módulos del borrado: bloqueos, conteos y claves de R2 los fija la prueba.</summary>
+    public sealed class DeletionReferences(List<string> calls) : ICustomerDeletionReferences
+    {
+        public Dictionary<Guid, IReadOnlyList<string>> Blockers { get; } = [];
+
+        public Dictionary<Guid, CustomerDeletionCounts> Counts { get; } = [];
+
+        public Dictionary<Guid, IReadOnlyList<string>> StorageKeys { get; } = [];
+
+        public List<Guid> Locked { get; } = [];
+
+        public List<Guid> Removed { get; } = [];
+
+        public Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("lock");
+            Locked.AddRange(ids);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyDictionary<Guid, IReadOnlyList<string>>> FindBlockersAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("find-blockers");
+            return Task.FromResult<IReadOnlyDictionary<Guid, IReadOnlyList<string>>>(
+                Blockers.Where(pair => ids.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+        }
+
+        public Task<CustomerDeletionOutcome> RemoveAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("remove");
+            Removed.AddRange(ids);
+            return Task.FromResult(new CustomerDeletionOutcome(
+                ids.ToDictionary(id => id, id => Counts.GetValueOrDefault(id) ?? new CustomerDeletionCounts(0, 0, 0, 0, 0)),
+                StorageKeys.Where(pair => ids.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value)));
+        }
+    }
+
+    /// <summary>El almacén de Customers del borrado: sólo encuentra a <see cref="Customers"/> del tenant y sin fusionar.</summary>
+    public sealed class DeletionStore(List<string> calls) : ICustomerDeletionStore
+    {
+        public List<Customer> Customers { get; } = [];
+
+        public Dictionary<Guid, int> MergedCounts { get; } = [];
+
+        /// <summary>Cuántos consentimientos tiene cada cliente; el que no está, ninguno (como el adaptador).</summary>
+        public Dictionary<Guid, int> ConsentCounts { get; } = [];
+
+        public List<(Guid CustomerId, string Name, string? PhoneE164)> Snapshots { get; } = [];
+
+        public List<Guid> Deleted { get; } = [];
+
+        public Task<IReadOnlyList<Customer>> FindDeletableAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("find-deletable");
+            return Task.FromResult<IReadOnlyList<Customer>>(Customers
+                .Where(customer => customer.TenantId == tenantId && !customer.IsMerged && ids.Contains(customer.Id.Value))
+                .ToArray());
+        }
+
+        public List<Guid> RowsLocked { get; } = [];
+
+        public Task LockRowsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("lock-rows");
+            RowsLocked.AddRange(ids);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyDictionary<Guid, int>> SnapshotConsentsAsync(
+            Guid tenantId, IReadOnlyCollection<(Guid CustomerId, string Name, string? PhoneE164)> customers, CancellationToken cancellationToken)
+        {
+            calls.Add("snapshot-consents");
+            Snapshots.AddRange(customers);
+            return Task.FromResult<IReadOnlyDictionary<Guid, int>>(ConsentCounts
+                .Where(pair => customers.Any(customer => customer.CustomerId == pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value));
+        }
+
+        public Task<IReadOnlyDictionary<Guid, int>> DeleteAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("delete");
+            Deleted.AddRange(ids);
+            return Task.FromResult<IReadOnlyDictionary<Guid, int>>(ids.ToDictionary(id => id, id => MergedCounts.GetValueOrDefault(id)));
+        }
+    }
+
+    /// <summary>Anota cada llamada tal cual, sin filtrar: quien decide no avisar sin claves es el handler.</summary>
+    public sealed class RecordingMediaRelease : ICustomerMediaReleasePublisher
+    {
+        public List<(Guid Tenant, Guid CustomerId, IReadOnlyCollection<string> StorageKeys)> Released { get; } = [];
+
+        public void Publish(Guid tenantId, Guid customerId, IReadOnlyCollection<string> storageKeys, DateTimeOffset occurredAt) =>
+            Released.Add((tenantId, customerId, storageKeys));
     }
 
     public sealed class UnitOfWork(Exception? failure = null) : ICustomersUnitOfWork

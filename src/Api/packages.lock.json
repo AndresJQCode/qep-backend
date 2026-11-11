@@ -229,7 +229,8 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
-          "BuildingBlocks.Domain": "[1.0.0, )"
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
         }
       },
       "buildingblocks.observability": {
@@ -622,6 +623,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",
           "Modules.Audit.Infrastructure": "[1.0.0, )",
@@ -659,6 +661,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Concentus": "[2.2.2, )",
           "Concentus.Oggfile": "[1.0.7, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
@@ -823,6 +826,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "DocumentFormat.OpenXml": "[3.1.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Quotations.Application": "[1.0.0, )",
@@ -888,6 +892,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "ClosedXML": "[0.105.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Audit.Domain": "[1.0.0, )",

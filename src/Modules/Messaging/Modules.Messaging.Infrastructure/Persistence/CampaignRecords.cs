@@ -19,7 +19,8 @@ internal sealed class CampaignRecipientRecord
 
     public Guid TenantId { get; set; }
 
-    public Guid CustomerId { get; set; }
+    // P10: nulo cuando se borró el cliente; la fila queda como histórico de la campaña y el despachador la salta como inalcanzable.
+    public Guid? CustomerId { get; set; }
 
     public string CustomerName { get; set; } = string.Empty;
 
