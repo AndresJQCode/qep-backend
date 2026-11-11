@@ -126,6 +126,13 @@ internal static class QuotationEditsApplication
             return;
         }
 
+        // Los mismos de antes: la foto se queda como se congeló, sin volver al catálogo.
+        if (WithholdingSelection.IsUnchanged(
+                ids, quotation.BillingWithholdings.Select(withholding => withholding.Rate), quotation.BillingAccount?.Country))
+        {
+            return;
+        }
+
         // La fecha sólo hace falta para resolver ids: vaciar no consulta ni el catálogo ni el calendario.
         IReadOnlyList<WithholdingRate> rates = ids.Count == 0
             ? []

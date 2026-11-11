@@ -64,6 +64,23 @@ public static class WithholdingSelection
         return rates;
     }
 
+    /// <summary>
+    /// Si los ids que llegan son los congelados, en el mismo orden (D17, D24): todo guardado reenvía los selectores que
+    /// tiene en pantalla, y volver a resolverlos leería el catálogo de hoy (un porcentaje editado, otra UVT) o haría 422
+    /// por una tasa desactivada después. Sólo cuenta como igual si las congeladas siguen siendo del país de la empresa:
+    /// si la empresa cambió de país, se resuelven y el 422 de <see cref="ResolveAsync"/> sigue en pie.
+    /// </summary>
+    public static bool IsUnchanged(
+        IReadOnlyCollection<Guid> ids, IEnumerable<WithholdingRate> frozen, string? companyCountry)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(frozen);
+        var rates = frozen.ToList();
+        var country = companyCountry?.Trim();
+        return ids.SequenceEqual(rates.Select(rate => rate.TaxRateId))
+            && rates.All(rate => string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static QuotationsDomainException Invalid(string codePrefix) =>
         new(
             $"{codePrefix}.billing.withholding_tax_rate_invalid",

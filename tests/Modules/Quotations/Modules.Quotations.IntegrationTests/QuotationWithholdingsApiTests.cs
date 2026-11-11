@@ -73,6 +73,27 @@ public sealed class QuotationWithholdingsApiTests
         Assert.True(saved.BillingWithRetention);
     }
 
+    // D17/D24: la tasa elegida queda congelada al elegirla. Reenviar los mismos selectores (lo que hace todo guardado)
+    // no vuelve a leer el catálogo: un porcentaje editado después no pisa la foto.
+    [Fact]
+    public async Task ResendingTheSameSelectorsKeepsTheFrozenRate()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var servicios = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente servicios 4 %", "Retefuente", 4m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
+        var created = await CreateWithLinesAsync(setup, clientId, quantity: 1m);
+        var selected = await ReadAsync(await PutAsync(setup, created, OwnBilling(setup, withholdingTaxRateIds: [servicios])));
+        await ChangeTaxRateAsync(factory, servicios, percentage: 6m);
+
+        var resaved = await ReadAsync(await PutAsync(setup, selected, OwnBilling(setup, withholdingTaxRateIds: [servicios])));
+
+        var applied = Assert.Single(resaved.Withholdings);
+        Assert.Equal((servicios, 4m, 100_000m, 4_000m), (applied.TaxRateId, applied.Percentage, applied.Base, applied.Amount));
+        Assert.Equal(4_000m, resaved.RetentionAmount);
+    }
+
     // Review Focus 2: el frontend viejo manda billingWithRetention y nunca billingWithholdingTaxRateIds. Lo guardado se
     // conserva, la respuesta nunca trae null con parte propia (su pantalla bloquea la conversión con null) y convertir
     // no queda bloqueado.

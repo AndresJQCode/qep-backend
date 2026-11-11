@@ -100,6 +100,28 @@ public sealed class OrderWithholdingsApiTests
         Assert.Equal(0m, cleared.Order.RetentionAmount);
     }
 
+    // D17/D21: las tasas del pedido quedaron congeladas. Reenviar las mismas (lo que hace todo guardado) no vuelve a leer
+    // el catálogo: una tasa desactivada después no hace 422 cada guardado ni cambia la foto.
+    [Fact]
+    public async Task ResendingTheSameRatesAfterDeactivatingOneKeepsTheFrozenPhoto()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetUpAsync(factory);
+        var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId, withholdingTaxRateIds: [retefuente]);
+        var quotation = await CreateSentQuotationAsync(setup.Client, factory, setup.TenantId, clientId, setup.ProductId);
+        var order = await ConvertAsync(setup, quotation.Id);
+        await ChangeTaxRateAsync(factory, retefuente, percentage: 3m, isActive: false);
+
+        var response = await PutEditsAsync(setup, order, Edits(setup, withholdingTaxRateIds: [retefuente]));
+
+        var saved = await ReadDetailAsync(response);
+        var applied = Assert.Single(saved.Order.Withholdings);
+        Assert.Equal((retefuente, 2.5m, 2_500m), (applied.TaxRateId, applied.Percentage, applied.Amount));
+        Assert.Equal(2_500m, saved.Order.RetentionAmount);
+    }
+
     // D22: fijar la empresa en la edición habilita los selectores. Un pedido con empresa española no acepta la Retefuente
     // colombiana; la misma edición con la empresa colombiana en el cuerpo sí.
     [Fact]

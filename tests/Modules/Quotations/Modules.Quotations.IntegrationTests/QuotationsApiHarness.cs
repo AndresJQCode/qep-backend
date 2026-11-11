@@ -443,6 +443,27 @@ internal static class QuotationsApiHarness
         return id;
     }
 
+    /// <summary>
+    /// Cambia una tasa del catálogo después de elegida, por SQL como lo haría su pantalla: el porcentaje y si está activa
+    /// (<c>null</c> deja lo actual). Para verificar que la foto congelada de un documento no se mueve.
+    /// </summary>
+    public static async Task ChangeTaxRateAsync(
+        QepApiFactory factory, Guid taxRateId, decimal? percentage = null, bool? isActive = null)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE catalog.tax_rates
+            SET percentage = COALESCE({percentage}, percentage),
+                is_active = COALESCE({isActive}, is_active),
+                version = version + 1,
+                updated_at = now()
+            WHERE id = {taxRateId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
     /// <summary>El valor de la unidad tributaria de un año (spec impuestos por tipo §7.3), por SQL: cargarlo por la API
     /// es de la consola del operador.</summary>
     public static async Task InsertTaxUnitValueAsync(QepApiFactory factory, string country, int year, decimal value)

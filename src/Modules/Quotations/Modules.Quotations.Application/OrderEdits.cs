@@ -142,7 +142,13 @@ internal static class OrderWithholdingEdits
         }
 
         string? withholdingsSummary = null;
-        if (edits.WithholdingTaxRateIds is { } ids)
+        // Los mismos de antes (también los heredados de la cotización): la foto se queda como se congeló, sin volver al
+        // catálogo ni recalcular la UVT con la fecha del pedido.
+        if (edits.WithholdingTaxRateIds is { } ids
+            && !WithholdingSelection.IsUnchanged(
+                ids,
+                order.Withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
+                order.BillingAccount?.Country))
         {
             // Vaciar no consulta ni el catálogo ni el calendario. La UVT es la del año del pedido (spec §7.3): la misma
             // fecha con la que nació.
