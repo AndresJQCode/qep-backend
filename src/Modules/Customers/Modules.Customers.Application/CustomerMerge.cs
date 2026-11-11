@@ -11,7 +11,7 @@ public static class CustomerMergeLimits
     public const int MaxMerged = 10;
 }
 
-/// <summary>Las ocho clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
+/// <summary>Las nueve clases que la fusión mueve al que queda, en el orden en que la confirmación las lista.</summary>
 public enum CustomerMergeMoveKind
 {
     Quotations,
@@ -22,6 +22,7 @@ public enum CustomerMergeMoveKind
     Notes,
     Addresses,
     Tags,
+    Contacts,
 }
 
 public sealed record GetCustomerMergePreviewQuery(Guid TenantId, Guid SurvivorId, IReadOnlyList<Guid>? MergedCustomerIds)
@@ -65,6 +66,7 @@ public sealed class GetCustomerMergePreviewHandler(
     ICustomerMergeStore mergeStore,
     ICustomerMergeReferences references,
     ICustomerTagRepository tags,
+    ICustomerCompanyDirectory companyDirectory,
     IExecutionContext executionContext,
     IValidator<GetCustomerMergePreviewQuery> validator)
     : IQueryHandler<GetCustomerMergePreviewQuery, CustomerMergePreviewResponse>
@@ -95,6 +97,15 @@ public sealed class GetCustomerMergePreviewHandler(
         var referenceCounts = await references.CountAsync(query.TenantId, moved, cancellationToken);
         var owned = await mergeStore.CountOwnedAsync(query.TenantId, moved, cancellationToken);
         var tagsGained = await CountTagsGainedAsync(query.TenantId, plan, cancellationToken);
+        // Con mergedIds y no con `moved`: los fusionados de la cadena (C → B) son tombstones y su company_id siempre es nulo.
+        var contactsMoved = await mergeStore.CountContactsMovedAsync(
+            query.TenantId, query.SurvivorId, mergedIds.ToArray(), cancellationToken);
+
+        // Nunca lanza: la pantalla avisa antes de confirmar y el POST de la fusión es quien lo rechaza con 422.
+        var survivorContacts = plan.SurvivorKeepsCompany
+            ? (await companyDirectory.CountContactsAsync(query.TenantId, [query.SurvivorId], cancellationToken))
+                .GetValueOrDefault(query.SurvivorId)
+            : 0;
 
         return new CustomerMergePreviewResponse(
             ToParty(survivor),
@@ -109,8 +120,10 @@ public sealed class GetCustomerMergePreviewHandler(
                 Move(CustomerMergeMoveKind.Notes, owned.Notes),
                 Move(CustomerMergeMoveKind.Addresses, owned.Addresses),
                 Move(CustomerMergeMoveKind.Tags, tagsGained),
+                Move(CustomerMergeMoveKind.Contacts, contactsMoved),
             ],
-            plan.FilledFields.Select(field => field.ToString()).ToArray());
+            plan.FilledFields.Select(field => field.ToString()).ToArray(),
+            plan.HasCompanyConflict(survivorContacts, contactsMoved));
     }
 
     private async Task<int> CountTagsGainedAsync(Guid tenantId, CustomerMergePlan plan, CancellationToken cancellationToken) =>
@@ -207,6 +220,7 @@ public sealed class MergeCustomersHandler(
     ICustomerMergeReferences references,
     ICustomerTagRepository tags,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     IClientClassificationRepository classificationRepository,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -221,6 +235,11 @@ public sealed class MergeCustomersHandler(
         var mergedIds = command.MergedCustomerIds!;
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+
+        // Las mismas filas que bloquea el vínculo, en el mismo orden (por id) y antes de leer nada: una fusión y un
+        // PUT …/company concurrentes se serializan, y el segundo ve lo que dejó el primero. Sin esto, el vínculo podría apuntar a
+        // un fusionado o dejar dos niveles. El mecanismo es FOR UPDATE de Postgres; dura lo que la transacción.
+        await repository.LockForMergeAsync(command.TenantId, [command.SurvivorId, .. mergedIds], mergedIds, cancellationToken);
 
         var survivor = await repository.FindAsync(command.TenantId, new CustomerId(command.SurvivorId), cancellationToken)
             ?? throw CustomerNotFound.For(command.SurvivorId);
@@ -238,6 +257,19 @@ public sealed class MergeCustomersHandler(
         }
 
         var plan = CustomerMergePlan.Create(survivor, merged);
+
+        // Dos niveles nunca: el que queda sigue siendo contacto de otra empresa y además tendría contactos. Antes de escribir.
+        if (plan.SurvivorKeepsCompany)
+        {
+            var own = await companyDirectory.CountContactsAsync(command.TenantId, [command.SurvivorId], cancellationToken);
+            var moving = await mergeStore.CountContactsMovedAsync(command.TenantId, command.SurvivorId, mergedIds.ToArray(), cancellationToken);
+            if (plan.HasCompanyConflict(own.GetValueOrDefault(command.SurvivorId), moving))
+            {
+                throw new CustomersDomainException(
+                    CustomersErrorCodes.MergeCompanyConflict,
+                    "The customer that remains is a contact and would end up with contacts too.");
+            }
+        }
 
         // D-F2: los que ya apuntaban a un fusionado (C → B) pasan a apuntar al que queda, y lo suyo también se mueve.
         var chain = await mergeStore.FindIdsMergedIntoAsync(command.TenantId, mergedIds.ToArray(), cancellationToken);
@@ -257,6 +289,7 @@ public sealed class MergeCustomersHandler(
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         await mergeStore.RepointMergedIntoAsync(command.TenantId, chain, survivor.Id.Value, cancellationToken);
+        await mergeStore.RepointContactsAsync(command.TenantId, survivor.Id.Value, mergedIds.ToArray(), cancellationToken);
 
         // Segundo SaveChanges: el que queda los toma, y las etiquetas cambian de dueño. Las de los fusionados se borran todas:
         // un fusionado no conserva etiquetas, y las que no cupieron vuelven en DroppedTags.
@@ -282,7 +315,7 @@ public sealed class MergeCustomersHandler(
         // Se relee sin tracking (FC-04 duda 1): MoveOwnedAsync es un ExecuteUpdate, así que la instancia cargada no ve las
         // direcciones que llegaron, y la respuesta tiene que traer la libreta entera.
         var fresh = (await repository.FindManyAsync(command.TenantId, [survivor.Id], cancellationToken))[survivor.Id];
-        var dto = await fresh.ToDtoAsync(geographyLookup, classificationRepository, tags, cancellationToken);
+        var dto = await fresh.ToDtoAsync(geographyLookup, classificationRepository, tags, companyDirectory, cancellationToken);
         return new CustomerMergeResult(dto, await DroppedAsync(command.TenantId, tagMerge.Dropped, cancellationToken));
     }
 

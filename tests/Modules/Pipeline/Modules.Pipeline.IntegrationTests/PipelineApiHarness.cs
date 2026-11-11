@@ -239,6 +239,13 @@ internal static class PipelineApiHarness
         return (ensured.CustomerId, refs[ensured.CustomerId].Name);
     }
 
+    /// <summary>Spec 2026-11-10: ata a la persona con su empresa como lo deja el vínculo (<c>company_id</c>); estas pruebas no ejercen
+    /// la ruta de Customers, sólo lo que Pipeline ve del vínculo.</summary>
+    public static async Task LinkToCompanyAsync(string connectionString, Guid contactId, Guid companyId) =>
+        Assert.Equal(1, await ExecuteAsync(connectionString,
+            "UPDATE customers.customers SET company_id = @company WHERE id = @contact",
+            ("company", companyId), ("contact", contactId)));
+
     /// <summary>Deja la fila como la deja la fusión (spec 2026-10-24 §3.2), copia de <c>CustomersApiHarness.MarkMergedAsync</c>:
     /// apunta al que queda, inactiva y con la versión subida. Para las pruebas que sólo necesitan leer un fusionado.</summary>
     public static async Task MarkMergedAsync(string connectionString, Guid mergedId, Guid survivorId) =>

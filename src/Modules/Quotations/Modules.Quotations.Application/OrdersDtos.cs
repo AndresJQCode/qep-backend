@@ -129,9 +129,11 @@ public sealed record CancelOrderRequest(string? Reason);
 /// que el backend resuelve contra lo que el pedido ya guarda, nunca un teléfono suelto. <b>El cuerpo
 /// entero es opcional</b>: un cuerpo requerido rompió el envío de la cotización con 500
 /// (<c>SendWorksWithoutABody</c>). <paramref name="ConnectionId"/> (spec 2026-11-09 D8): la conexión
-/// elegida cuando hay varias disponibles para pedidos, como en la cotización.
+/// elegida cuando hay varias disponibles para pedidos, como en la cotización. <paramref name="ContactId"/> y
+/// <paramref name="ThreadConnectionId"/> (spec 2026-11-10 §4.6): ver <see cref="SendQuotationRequest"/>.
 /// </summary>
-public sealed record SendOrderRequest(string? Recipient = null, Guid? ConnectionId = null);
+public sealed record SendOrderRequest(
+    string? Recipient = null, Guid? ConnectionId = null, Guid? ContactId = null, Guid? ThreadConnectionId = null);
 
 /// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
 /// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede
@@ -306,7 +308,9 @@ public sealed record OrderDetailResponse(
     IReadOnlyCollection<QuotationItemResponse> Items,
     SourceQuotationResponse? SourceQuotation,
     IReadOnlyCollection<OrderHistoryEntryResponse> History,
-    int[] AvailableFloors);
+    int[] AvailableFloors,
+    // Spec 2026-11-10 §4.6: como en QuotationResponse. Sólo en la respuesta HTTP: el DTO interno no los trae.
+    IReadOnlyList<ClientContactDto> ClientContacts);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

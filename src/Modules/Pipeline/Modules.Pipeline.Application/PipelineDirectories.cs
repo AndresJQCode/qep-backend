@@ -22,6 +22,9 @@ public interface IPipelineConversationDirectory
     Task<PipelineConversation?> FindAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-10 §4.5: la empresa de un cliente. <c>Name</c> ya es la etiqueta (A4: <c>BusinessName</c> o, si no hay, <c>Name</c>).</summary>
+public sealed record PipelineCompanyRef(Guid Id, string Name);
+
 /// <summary>D9: adaptador en Bootstrapper sobre <c>ICustomerWhatsAppDirectory.FindRefsAsync</c>. Un id de otro tenant no aparece.</summary>
 public interface IPipelineCustomerDirectory
 {
@@ -33,6 +36,12 @@ public interface IPipelineCustomerDirectory
     /// tenant). Un salto basta: la fusión reescribe la cadena (C → B → A queda C → A), así que nadie apunta a un fusionado.
     /// </summary>
     Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-10 §4.5: la empresa de ese cliente, ya pasada por <see cref="ResolveSurvivorAsync"/>; <c>null</c> si no tiene.</summary>
+    Task<Guid?> FindCompanyIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
+
+    /// <summary>Lo mismo que <see cref="FindCompanyIdAsync"/> con la etiqueta de la empresa (A4), para titular el negocio que nace en ella.</summary>
+    Task<PipelineCompanyRef?> FindCompanyAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken);
 }
 
 /// <summary>Mismo criterio que <c>IMessagingMemberNames</c>: nombre visible de la membresía o su correo, sólo para mostrar. Sólo las

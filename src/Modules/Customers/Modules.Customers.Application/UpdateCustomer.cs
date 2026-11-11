@@ -34,6 +34,7 @@ public sealed class UpdateCustomerHandler(
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -137,7 +138,7 @@ public sealed class UpdateCustomerHandler(
             await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, tagRepository, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -182,7 +183,7 @@ public sealed class UpdateCustomerHandler(
         await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
     }
 
     // Completar y editar guardan por separado y los dos pueden chocar con el indice de la identificacion: en ambos el

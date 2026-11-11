@@ -7,6 +7,14 @@ public static class CustomersErrorCodes
     public const string Merged = "customers.customer.merged";
     public const string Inactive = "customers.customer.inactive";
 
+    // Spec 2026-11-10: contactos de empresa. Todos 422.
+    public const string CompanyNotFound = "customers.customer.company_not_found";
+    public const string CompanyInactive = "customers.customer.company_inactive";
+    public const string CompanyIsSelf = "customers.customer.company_is_self";
+    public const string CompanyIsContact = "customers.customer.company_is_contact";
+    public const string HasContacts = "customers.customer.has_contacts";
+    public const string MergeCompanyConflict = "customers.customer.merge_company_conflict";
+
     /// <summary>Spec de ciudades 2026-10-26 §4.6: la ciudad del cliente ya no es la que se iba a corregir.</summary>
     public const string CityChanged = "customers.customer.city_changed";
 

@@ -9,7 +9,7 @@ namespace Modules.Customers.Infrastructure.Excel;
 /// Arma el Excel del padron con ClosedXML.
 ///
 /// Las columnas de <see cref="CustomerImportColumns"/> van primero y en su orden exacto (el CUC
-/// incluido), y las cuatro propias al final. Esa forma es deliberada: el importador ubica las
+/// incluido), después las opcionales (Empresa) y las cuatro propias al final. Esa forma es deliberada: el importador ubica las
 /// columnas **por nombre de cabecera** (ver <c>ClosedXmlCustomerImporter</c>), asi que un archivo
 /// exportado se puede corregir y volver a importar sin editarle la estructura, y las columnas de
 /// mas no le molestan.
@@ -35,6 +35,9 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     private static readonly IReadOnlyList<string> Columns =
     [
         .. CustomerImportColumns.Ordered,
+        // Spec 2026-11-10 §4.8: el documento de la empresa, con la cabecera que el importador lee, justo después de las de
+        // importación (las opcionales van tras las trece) y antes de las propias: «Tipo de persona» sigue siendo la última.
+        .. CustomerImportColumns.Optional,
         ActiveColumn,
         CreatedAtColumn,
         UpdatedAtColumn,
@@ -46,6 +49,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
 
     public CustomerExportFile Build(
         IReadOnlyList<CustomerDto> customers,
+        IReadOnlyDictionary<Guid, string> companyIdentificationNumbers,
         TenantCalendar calendar,
         string dateTimePattern,
         CancellationToken cancellationToken)
@@ -61,7 +65,13 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         for (var index = 0; index < customers.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            WriteRow(sheet, index + 2, customers[index], calendar, dateTimePattern);
+            WriteRow(
+                sheet,
+                index + 2,
+                customers[index],
+                companyIdentificationNumbers.GetValueOrDefault(customers[index].Id, string.Empty),
+                calendar,
+                dateTimePattern);
         }
 
         sheet.SheetView.FreezeRows(1);
@@ -84,9 +94,10 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // es un error de programacion (alguien sumo una columna a la importacion y no al export): falla
     // aca y no deja un archivo con las columnas corridas.
     private static void WriteRow(
-        IXLWorksheet sheet, int excelRow, CustomerDto customer, TenantCalendar calendar, string dateTimePattern)
+        IXLWorksheet sheet, int excelRow, CustomerDto customer, string companyIdentificationNumber,
+        TenantCalendar calendar, string dateTimePattern)
     {
-        var values = RowValues(customer, calendar, dateTimePattern);
+        var values = RowValues(customer, companyIdentificationNumber, calendar, dateTimePattern);
         for (var column = 0; column < Columns.Count; column++)
         {
             sheet.Cell(excelRow, column + 1).Value = values.TryGetValue(Columns[column], out var value)
@@ -99,7 +110,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
     // clasificacion y del departamento/ciudad, no sus ids. Un incompleto deja vacio lo que no tiene
     // (spec 2026-10-10 §5.2).
     private static Dictionary<string, string> RowValues(
-        CustomerDto customer, TenantCalendar calendar, string dateTimePattern) => new(StringComparer.Ordinal)
+        CustomerDto customer, string companyIdentificationNumber, TenantCalendar calendar, string dateTimePattern) =>
+        new(StringComparer.Ordinal)
     {
         [CustomerImportColumns.Cuc] = customer.Cuc ?? string.Empty,
         [CustomerImportColumns.Name] = customer.Name,
@@ -130,6 +142,7 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [UpdatedAtColumn] = calendar.ToLocal(customer.UpdatedAt).ToString(dateTimePattern, CultureInfo.InvariantCulture),
         [CompletenessColumn] = customer.IsComplete ? "Completa" : "Incompleta",
         [PersonTypeColumn] = customer.PersonType ?? string.Empty,
+        [CustomerImportColumns.Company] = companyIdentificationNumber,
     };
 
     private static void ApplyMinimumWidth(IXLColumns columns)

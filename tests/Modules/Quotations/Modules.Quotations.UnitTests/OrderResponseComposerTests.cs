@@ -35,9 +35,50 @@ public sealed class OrderResponseComposerTests
         Assert.Equal("Asesora Uno", response.AdvisorName);
     }
 
-    private static OrderResponseComposer Composer() =>
+    [Fact]
+    public async Task TheOrderDetailCarriesTheClientsContacts()
+    {
+        var laura = new QuotationClientContact(Guid.CreateVersion7(), "Laura Gómez", "3115550101");
+        var pedro = new QuotationClientContact(Guid.CreateVersion7(), "Pedro Ríos", "3125550102");
+
+        var response = await ComposeAsync(laura, pedro);
+
+        Assert.Equal(
+            [new ClientContactDto(laura.Id, "Laura Gómez", "3115550101"), new ClientContactDto(pedro.Id, "Pedro Ríos", "3125550102")],
+            response.ClientContacts);
+    }
+
+    [Fact]
+    public async Task AClientWithoutContactsCarriesAnEmptyList()
+    {
+        var response = await ComposeAsync();
+
+        Assert.NotNull(response.ClientContacts);
+        Assert.Empty(response.ClientContacts);
+    }
+
+    [Fact]
+    public async Task ContactsWithoutPhoneTravelWithPhoneNull()
+    {
+        var laura = new QuotationClientContact(Guid.CreateVersion7(), "Laura Gómez", null);
+
+        var response = await ComposeAsync(laura);
+
+        Assert.Equal(new ClientContactDto(laura.Id, "Laura Gómez", null), Assert.Single(response.ClientContacts));
+    }
+
+    private static async Task<OrderDetailResponse> ComposeAsync(params QuotationClientContact[] contacts)
+    {
+        var customers = new StubQuotationCustomerLookup(Customer);
+        customers.Contacts.AddRange(contacts);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto();
+        return await Composer(customers).ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+    }
+
+    private static OrderResponseComposer Composer(StubQuotationCustomerLookup? customers = null) =>
         new(
-            new StubQuotationCustomerLookup(Customer),
+            customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
