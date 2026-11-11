@@ -63,7 +63,7 @@ Hoy no hay forma de sacarlos. `Deactivate` (`Customer.cs:971`) los oculta, pero 
 | D-5 | Al borrar el cliente se borran sus conversaciones y mensajes. |
 | D-6 | Selección mixta: se borran los que se pueden; se informa cuáles no y por qué. |
 | D-7 | Ids explícitos, por página (máximo 100 por request). Nada de borrado por filtro. |
-| D-8 | Permiso nuevo `customers.customer.delete`, de entrada sólo en los roles owner y admin. |
+| D-8 | Permiso nuevo `customers.customer.delete`, de entrada sólo en el rol de sistema `admin`; el owner lo recibe por ahí, porque su membresía siempre conserva `admin` (no existe un rol `owner`, ver §8 D1). |
 | D-10 | El borrado es **limpieza de la lista**, no un mecanismo de habeas data. Por eso la auditoría (A-8) y el consentimiento (A-5) conservan la foto con datos personales. Atender una solicitud de eliminación de datos es otro trabajo. |
 | D-9 | Un cliente con alguna conversación **bloqueada** (`Conversation.BlockedAt` no nulo, `Conversation.cs:118-126`) no se borra. Para borrarlo, primero se desbloquea. Así el bloqueo nunca se pierde en silencio y no hace falta lista negra (D-4). |
 
@@ -176,7 +176,7 @@ conversación nueva. Es el comportamiento esperado; no hay que «arreglarlo».
 - **Rendimiento.** 100 clientes con cientos de mensajes cada uno es el caso normal. Nada de N+1 por mensaje.
 - **Migraciones.** Quitar el `RESTRICT` de `data_consents` y agregar las columnas de foto. El orden de deploy es backend
   primero; el frontend sin el endpoint sólo no muestra la acción (ver spec del frontend).
-- **Permiso.** `customers.customer.delete` se declara en `CustomersPermissions.cs`, se agrega a los roles owner y admin
+- **Permiso.** `customers.customer.delete` se declara en `CustomersPermissions.cs`, se agrega al rol `admin` (el owner lo recibe por su membresía)
   (roles de código, `QepServiceCollectionExtensions.cs`) y aparece en el editor de roles sólo con el módulo de
   clientes activo, como los demás.
 
@@ -199,4 +199,34 @@ conversación nueva. Es el comportamiento esperado; no hay que «arreglarlo».
 
 ## 8. Abierto
 
-- Si aparecen columnas con id de cliente no listadas en §4.3, se anotan aquí.
+Lo que apareció al construirlo (2026-11-11). Donde el plan y el código discreparon, ganó el código.
+
+### Discrepancias plan/spec contra el código
+
+- **D1.** No hay rol de sistema `owner` (`SystemRoleKeys`: admin, advisor, billing, cashier). El permiso va sólo a `admin`; el owner lo tiene por su membresía. D-8 y §5 corregidos arriba.
+- **D2.** `messaging.conversation_events` no existe: los eventos son filas de `messaging.messages` con `details`. Los de conversaciones borradas se van por `CASCADE`; los `CustomerChanged` de conversaciones que sobreviven quedan como historia.
+- **D3.** `audit.entries` no tiene columna de detalle: la foto del cliente borrado va en `changed_fields` como `clave=valor` (R5). Si el owner no lo acepta hace falta una columna en Audit.
+- **D4.** Al borrar las conversaciones, los conteos `Delivered`, `Read` y `Replied` de campañas pasadas bajan (se calculan uniendo `messages` y `conversations`); `Total`, `Sent`, `Failed`, `Skipped` y `Pending` no. Aceptado por el owner (R2). Congelarlos exigiría un cambio de esquema en Messaging.
+- **D5 / R4.** Una campaña `Draft`/`Scheduled` cuya única audiencia es el cliente conserva el id: `CK_campaigns_audience` exige audiencia no vacía y vaciarla daría 500. El congelado ignora ids que no existen.
+- **D6.** Columnas no listadas en §4.3, ver abajo.
+- **D7.** `data_consents.customer_id` es `NOT NULL` y su FK la creó una migración a mano: se quita la FK y la fila conserva el id, con `customer_name` y `customer_phone_e164` como foto tomada al borrar.
+- **D8.** El comentario de `CustomerEndpoints` «No hay DELETE» queda reemplazado por la decisión del owner del 2026-11-10.
+
+### Columnas encontradas más allá de §4.3
+
+| Columna / tabla | Acción |
+|---|---|
+| `billing.customer_messages.customer_id` | Sin tocar: sólo existe con cobros, y los cobros ya bloquean. |
+| `automations.conversation_runs`, `run_units`, `http_calls` | Se borran con la conversación. |
+| `messaging.automation_inbox` | Se borra con la conversación. |
+| `pipeline.deal_stage_history` | Se borra con el negocio. |
+| `pipeline.deals.origin_conversation_id` de negocios de **otros** clientes | Pasa a `NULL` al borrarse la conversación de origen (R11, A-7: sin ids muertos). |
+| `shopify.city_corrections`, `city_correction_jobs` | Quedan como están (R12): un trabajo pendiente ya termina en `CustomerNotFound` y la fusión tampoco los mueve. |
+
+### Escritores que no toman el candado (P13 / R13)
+
+El POS y los escritores del pipeline no toman `CustomerReferenceLock`. Una venta del POS creada mientras se borra puede conservar el id borrado (`pos.sales.customer_id`); la foto del cliente en la venta sigue mostrándose. Aceptado (R13).
+
+### Auditoría (R10)
+
+El port de consentimientos devuelve un conteo **por cliente**, y la auditoría de cada cliente escribe `dataConsents=<n>` en `changed_fields`: deja constancia de que el consentimiento se conservó (D-3).
