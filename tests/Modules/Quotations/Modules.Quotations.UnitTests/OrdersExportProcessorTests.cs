@@ -1614,13 +1614,13 @@ public sealed class OrdersExportProcessorTests
     public async Task FiltersWithWhatTheRequestStored()
     {
         var repository = new StubOrderListRepository(NewRow("PED-2026-0001"));
-        var job = NewJob(new OrdersExportFilters(ClientId, AdvisorId.Value, "approved", "fullpaymentreceived", From, To, null, "PED"));
+        var job = NewJob(new OrdersExportFilters(ClientId, AdvisorId.Value, "open", "fullpaymentreceived", From, To, null, "PED"));
 
         await NewProcessor(repository).ProcessAsync(job, TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Approved, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.FullPaymentReceived, FromUtc, BeforeUtc, "PED"),
             repository.LastExportSearch);
     }
 

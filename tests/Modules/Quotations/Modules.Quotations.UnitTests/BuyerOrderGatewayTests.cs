@@ -54,7 +54,7 @@ public sealed class BuyerOrderGatewayTests
         DateTimeOffset? createdAt = null,
         Guid? tenantId = null,
         OrderId? id = null,
-        OrderStatus status = OrderStatus.Pending,
+        bool paidMarked = false,
         OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)
     {
         var at = createdAt ?? Now.AddDays(-1);
@@ -67,9 +67,9 @@ public sealed class BuyerOrderGatewayTests
             order.SyncExternalPaymentStatus(payment, at);
         }
 
-        if (status == OrderStatus.Approved)
+        if (paidMarked)
         {
-            order.Approve(Advisor, at);
+            order.MarkPaid(Advisor, requirePaymentProof: false, at);
         }
 
         return order;
@@ -115,7 +115,7 @@ public sealed class BuyerOrderGatewayTests
         Assert.Equal(order.Id.Value, summary.Id);
         Assert.Equal(order.CreatedAt, summary.CreatedAt);
         Assert.Equal((order.Total, "COP"), (summary.Total, summary.Currency));
-        Assert.Equal("Pending", summary.Status);
+        Assert.Equal("Open", summary.Status);
         Assert.Equal("PaymentPending", summary.PaymentStatus);
         Assert.Equal(2, summary.LineCount);
         Assert.Equal("Aceite", summary.FirstLineName);
@@ -123,13 +123,13 @@ public sealed class BuyerOrderGatewayTests
     }
 
     [Theory]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PaymentPending, true)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PartialPaymentReceived, false)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.FullPaymentReceived, false)]
-    [InlineData(OrderStatus.Approved, OrderPaymentStatus.PaymentPending, false)]
-    public async Task ASummaryReportsCanCancelByRuleD5(OrderStatus status, OrderPaymentStatus payment, bool expected)
+    [InlineData(false, OrderPaymentStatus.PaymentPending, true)]
+    [InlineData(false, OrderPaymentStatus.PartialPaymentReceived, false)]
+    [InlineData(false, OrderPaymentStatus.FullPaymentReceived, false)]
+    [InlineData(true, OrderPaymentStatus.PaymentPending, false)]
+    public async Task ASummaryReportsCanCancelByRuleD5(bool paidMarked, OrderPaymentStatus payment, bool expected)
     {
-        var orders = new StubOrderListRepository(StoreOrder(Buyer, status: status, payment: payment));
+        var orders = new StubOrderListRepository(StoreOrder(Buyer, paidMarked: paidMarked, payment: payment));
 
         var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
 
@@ -235,16 +235,16 @@ public sealed class BuyerOrderGatewayTests
     }
 
     [Fact]
-    public async Task CancelOfAnApprovedOrderIsAConflictAndWritesNothing()
+    public async Task CancelOfAPaidMarkedOrderIsAConflictAndWritesNothing()
     {
-        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var order = StoreOrder(Buyer, paidMarked: true);
         var orders = new StubOrderListRepository(order);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
             Gateway(orders).CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
 
         Assert.Equal("order.order.not_cancellable_by_buyer", error.Code);
-        Assert.Equal(OrderStatus.Approved, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Empty(orders.History);
         Assert.Empty(_audit.Actions);
         Assert.Empty(_lifecycle.Published);
@@ -268,9 +268,9 @@ public sealed class BuyerOrderGatewayTests
     {
         var id = OrderId.New();
         var loaded = StoreOrder(Buyer, id: id);
-        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var paidMeanwhile = StoreOrder(Buyer, id: id, paidMarked: true);
         var orders = new StubOrderListRepository(loaded);
-        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        orders.QueueBuyerReads(loaded, paidMeanwhile);
         var unitOfWork = FailingUnitOfWork(orders, failures: 1);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>

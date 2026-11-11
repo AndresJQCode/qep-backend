@@ -8,9 +8,9 @@ namespace Modules.Quotations.Application;
 /// <summary>
 /// Sumar comprobantes a un pedido que ya existe, y corregir el monto de los que ya tenía
 /// cargados (a pedido, 2026-09), con el estado de pago que corresponda a lo cargado. Ruta
-/// hermana de <see cref="ApproveOrderCommand"/> y no un campo del PATCH que no existe: el pedido
+/// hermana de <see cref="CancelOrderCommand"/> y no un campo del PATCH que no existe: el pedido
 /// no se edita en general, esto es un único gesto puntual —"cargué o corregí lo que hacía
-/// falta"— para destrabar "Aprobar pedido" cuando el pago no había quedado completo o correcto.
+/// falta"— para destrabar el cobro cuando el pago no había quedado completo o correcto.
 /// </summary>
 public sealed record AddOrderPaymentProofsCommand(
     Guid TenantId,
@@ -128,7 +128,7 @@ public sealed class AddOrderPaymentProofsHandler(
         // Sólo se publica lo que de verdad cambia de archivo: un comprobante nuevo siempre, y uno
         // que se reemplaza (a pedido, 2026-09-15) — corregir sólo el monto no toca el archivo.
         // Antes del dominio y con rollback, igual que al convertir (P7): si otra persona acaba de
-        // aprobar el pedido, AddPaymentProofs lo rechaza con order.order.not_pending después de
+        // congelar el pedido, AddPaymentProofs lo rechaza con order.order.not_editable después de
         // copiar, y esas copias se borran.
         var copies = new PaymentProofCopies(paymentProofPublisher);
         // D19 (spec 2026-09-16): el archivo y la clave de cada comprobante que se reemplaza, capturados

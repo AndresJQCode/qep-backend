@@ -52,7 +52,7 @@ internal sealed class QuotationUserReferenceProbe(
                 await dbContext.Orders.AnyAsync(
                     order => order.AdvisorId == member ||
                         order.ConvertedBy == member ||
-                        order.ApprovedBy == member ||
+                        order.PaidMarkedBy == member ||
                         order.CancelledBy == member ||
                         order.InvoicedBy == member,
                     cancellationToken) ||

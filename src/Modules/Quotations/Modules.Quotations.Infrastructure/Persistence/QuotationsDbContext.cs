@@ -590,12 +590,6 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
-        order.Property(value => value.ApprovedAt).HasColumnName("approved_at");
-        order.Property(value => value.ApprovedBy)
-            .HasColumnName("approved_by")
-            .HasConversion(
-                id => id.HasValue ? id.Value.Value : (Guid?)null,
-                value => value.HasValue ? new MemberId(value.Value) : null);
         // Spec 2026-09-16: quién, cuándo y por qué se anuló. Nullables, porque un pedido vivo no
         // tiene nada que guardar acá; misma conversión nullable que approved_by.
         order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");

@@ -79,13 +79,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        collection.MapPost("/{orderId:guid}/approve", ApproveOrderAsync)
-            .RequireAuthorization(OrdersPermissions.OrderApprove)
-            .Produces<OrderResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         collection.MapPost("/{orderId:guid}/cancel", CancelOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderCancel)
             .Accepts<CancelOrderRequest>("application/json")
@@ -452,18 +445,6 @@ public static class OrderEndpoints
             new RecognizeOrderCarrierCommand(tenantId, orderId, request.CarrierId, request.RememberName),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
-    }
-
-    private static async Task<IResult> ApproveOrderAsync(
-        Guid tenantId,
-        Guid orderId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var order = await dispatcher.SendAsync(
-            new ApproveOrderCommand(tenantId, orderId),
-            cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
     }
 
     private static async Task<IResult> CancelOrderAsync(

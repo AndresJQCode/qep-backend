@@ -153,7 +153,7 @@ public sealed class ExportOrdersHandlerTests
 
         var accepted = await handler.HandleAsync(
             new ExportOrdersCommand(
-                TenantId, ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+                TenantId, ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026"),
             TestContext.Current.CancellationToken);
 
         var job = Assert.Single(queue.Jobs);
@@ -161,11 +161,11 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(ExportJobKind.Orders, job.Kind);
         Assert.Equal(SubjectId, job.RequestedBy);
         Assert.Equal(
-            new OrdersExportFilters(ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+            new OrdersExportFilters(ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026"),
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026"),
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026"),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }

@@ -6,7 +6,7 @@ using Modules.Tenancy.Domain;
 namespace Modules.Quotations.UnitTests;
 
 // Politica de campos del cliente: aprobar exige documento y ciudad de envio del cliente facturado segun la politica
-// del tenant. Estas pruebas fijan la regla; la del handler vive en ApproveOrderHandlerTests.
+// del tenant. Estas pruebas fijan la regla; la del handler vive en MarkOrderPaidHandlerTests.
 public sealed class BilledCustomerFieldsRequiredTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();

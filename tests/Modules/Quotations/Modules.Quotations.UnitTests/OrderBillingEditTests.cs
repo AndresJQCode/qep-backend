@@ -118,15 +118,15 @@ public sealed class OrderBillingEditTests
     }
 
     [Fact]
-    public void ANonPendingOrderCannotChangeItsBilling()
+    public void APreparedOrderCannotChangeItsBilling()
     {
         var order = NewOrder();
-        order.Approve(Advisor, Now);
+        order.Prepare(Advisor, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.SetBilling(Row(), false, false, false, false, Advisor, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     [Fact]

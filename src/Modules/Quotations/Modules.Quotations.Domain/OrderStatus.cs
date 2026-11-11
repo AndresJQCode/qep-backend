@@ -1,24 +1,19 @@
 namespace Modules.Quotations.Domain;
 
 /// <summary>
-/// Un pedido nace <see cref="Pending"/> y otra persona lo revisa antes de aprobarlo: quien
-/// convierte la cotización y quien da el visto bueno son roles distintos, y el estado es lo que
-/// hace visible ese paso intermedio.
+/// El estado del pedido es uno de cuatro ejes independientes (spec 2026-11-10), al estilo de Shopify: éste dice si
+/// al pedido le queda trabajo; el pago (<see cref="OrderPaymentStatus"/>), el envío (<see cref="OrderFulfillmentStatus"/>)
+/// y la marca de facturado (<c>Order.InvoicedAt</c>) van aparte.
 ///
-/// Los pedidos anteriores a esta separación quedaron en <see cref="Approved"/>: se crearon cuando
-/// convertir **era** aprobar, y reescribirlos diría que alguien los revisó.
+/// Todo pedido nace <see cref="Open"/>. <see cref="Archived"/> es «terminado»: sale de la vista por defecto y se
+/// desarchiva a mano. <see cref="Cancelled"/> es terminal y guarda quién, cuándo y por qué; no se anula un pedido
+/// facturado ni uno preparado, salvo la anulación que llega de la plataforma (<c>Order.CancelFromPlatform</c>).
 ///
-/// <see cref="Cancelled"/> (spec 2026-09-16) es terminal y se llega desde <see cref="Pending"/> y <see cref="Approved"/>: un
-/// pedido <see cref="Invoiced"/> no se anula, primero se revierte la facturación. El pedido no se
-/// borra, queda con quién, cuándo y por qué se anuló.
-///
-/// <see cref="Invoiced"/> (spec 2026-10-05) sólo se alcanza desde <see cref="Approved"/> y deja
-/// constancia de que la factura se hizo fuera de QEP; revertirlo lo devuelve a <see cref="Approved"/>.
+/// La columna guarda el nombre (<c>HasConversion&lt;string&gt;()</c>), así que el orden no importa para los datos.
 /// </summary>
 public enum OrderStatus
 {
-    Pending,
-    Approved,
-    Cancelled,
-    Invoiced
+    Open,
+    Archived,
+    Cancelled
 }

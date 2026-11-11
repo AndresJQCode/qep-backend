@@ -106,7 +106,7 @@ public sealed class BilledCustomerFieldsApiTests
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var stored = await dbContext.Orders.AsNoTracking().SingleAsync(
             row => row.Id == new OrderId(order.Order.Id), TestContext.Current.CancellationToken);
-        Assert.Equal(OrderStatus.Approved, stored.Status);
+        Assert.NotNull(stored.PaidMarkedAt);
         Assert.Equal(ShippingDetails.None, stored.ShippingDetails);
     }
 }

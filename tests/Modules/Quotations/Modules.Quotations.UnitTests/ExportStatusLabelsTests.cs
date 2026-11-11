@@ -30,12 +30,10 @@ public sealed class ExportStatusLabelsTests
         AssertLabels(
             new Dictionary<OrderStatus, string>
             {
-                [OrderStatus.Pending] = "Pendiente",
-                [OrderStatus.Approved] = "Aprobado",
+                [OrderStatus.Open] = "Abierto",
+                [OrderStatus.Archived] = "Archivado",
                 // Decisión 6 del spec 2026-09-16: la exportación muestra los anulados.
                 [OrderStatus.Cancelled] = "Anulado",
-                // Decisión 7 del spec 2026-10-05: y los facturados.
-                [OrderStatus.Invoiced] = "Facturado",
             },
             ExportStatusLabels.For);
 
@@ -48,6 +46,7 @@ public sealed class ExportStatusLabelsTests
                 [OrderPaymentStatus.FullPaymentReceived] = "Pago total",
                 [OrderPaymentStatus.PartialPaymentReceived] = "Pago parcial",
                 [OrderPaymentStatus.PaymentPending] = "Pago pendiente",
+                [OrderPaymentStatus.PendingVerification] = "Por verificar",
             },
             ExportStatusLabels.For);
 

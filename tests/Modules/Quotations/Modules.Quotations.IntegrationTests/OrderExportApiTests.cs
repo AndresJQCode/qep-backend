@@ -267,7 +267,7 @@ public sealed class OrderExportApiTests
         var first = await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 1);
         await CreateOrderAsync(client, factory, tenantId);
         var second = await ReadPendingBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
-        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Approved);
+        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Archived);
         var third = await ReadPendingBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
         var fourth = await ReadPendingBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
 
@@ -275,7 +275,7 @@ public sealed class OrderExportApiTests
         Assert.Empty(fourth);
     }
 
-    // El repositorio real, contra Postgres. `Pending` es el filtro que el pedido aprobado abandona.
+    // El repositorio real, contra Postgres. `Open` es el filtro que el pedido archivado abandona.
     private static async Task<IReadOnlyList<Order>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
@@ -288,7 +288,7 @@ public sealed class OrderExportApiTests
             clientId: null,
             clientIds: null,
             advisorId: null,
-            OrderStatus.Pending,
+            OrderStatus.Open,
             paymentStatus: null,
             now.AddDays(-7),
             now.AddDays(2),

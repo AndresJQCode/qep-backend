@@ -75,8 +75,6 @@ public static class OrderChangeSummary
         ? "Enviado por WhatsApp a facturación."
         : "Enviado por WhatsApp al cliente.";
 
-    public static string Approved() => "Aprobado.";
-
     public static string Cancelled(string reason) => Trim($"Anulado: {reason}");
 
     public static string Invoiced() => "Marcado como facturado.";

@@ -496,12 +496,12 @@ public sealed class ExternalOrderServiceTests
         var withoutParty = await FindStateAsync(factory, setup.TenantId, order.OrderId);
         await AttachAsync(factory, setup, order.OrderId, Party());
         var withParty = await FindStateAsync(factory, setup.TenantId, order.OrderId);
-        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET status = 'Approved', is_store_pickup = true WHERE id = @id", order.OrderId);
+        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET status = 'Archived', is_store_pickup = true WHERE id = @id", order.OrderId);
         var approvedPickup = await FindStateAsync(factory, setup.TenantId, order.OrderId);
 
-        Assert.Equal(new ExternalShippingState(OrderStatus.Pending, false, null, notes), withoutParty);
-        Assert.Equal(new ExternalShippingState(OrderStatus.Pending, false, Party(), "Shopify #3013"), withParty);
-        Assert.Equal((OrderStatus.Approved, true), (approvedPickup?.Status, approvedPickup?.IsStorePickup));
+        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, null, notes), withoutParty);
+        Assert.Equal(new ExternalShippingState(OrderStatus.Open, false, Party(), "Shopify #3013"), withParty);
+        Assert.Equal((OrderStatus.Archived, true), (approvedPickup?.Status, approvedPickup?.IsStorePickup));
         Assert.Null(await FindStateAsync(factory, Guid.CreateVersion7(), order.OrderId));
         Assert.Null(await FindStateAsync(factory, setup.TenantId, Guid.CreateVersion7()));
     }
@@ -519,7 +519,7 @@ public sealed class ExternalOrderServiceTests
         {
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             await using var approve = new NpgsqlCommand(
-                "UPDATE quotations.orders SET status = 'Approved' WHERE id = @id", connection);
+                "UPDATE quotations.orders SET status = 'Archived' WHERE id = @id", connection);
             approve.Parameters.AddWithValue("id", order.OrderId);
             await approve.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
@@ -530,7 +530,7 @@ public sealed class ExternalOrderServiceTests
             setup.TenantId, order.OrderId, Party(), RawAddressPrefix, TestContext.Current.CancellationToken);
 
         Assert.Equal(ExternalShippingOutcomeKind.NotPending, outcome.Kind);
-        Assert.Equal(OrderStatus.Approved, outcome.Status);
+        Assert.Equal(OrderStatus.Archived, outcome.Status);
         Assert.Equal((null, null, $"{RawAddressPrefix} Cra 5"), await ReadShippingAsync(database, order.OrderId));
     }
 

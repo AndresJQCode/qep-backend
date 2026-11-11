@@ -76,7 +76,7 @@ public enum ExternalShippingOutcomeKind
 
 /// <summary><see cref="Party"/> es la parte como quedó guardada (normalizada): la huella de Shopify sale de acá, nunca del
 /// borrador. <see cref="Status"/> viaja con <see cref="ExternalShippingOutcomeKind.NotPending"/>, para que el consumidor
-/// distinga un pedido aprobado de uno cancelado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
+/// distinga un pedido abierto pero congelado de uno cancelado o archivado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
 public sealed record ExternalShippingOutcome(ExternalShippingOutcomeKind Kind, ExternalShippingParty? Party, OrderStatus? Status);
 
 /// <summary>
@@ -296,7 +296,7 @@ public sealed class ExternalOrderService(
 
     private static ExternalShippingOutcomeKind? RefusalKind(string code) => code switch
     {
-        ExternalOrderErrors.NotPending => ExternalShippingOutcomeKind.NotPending,
+        ExternalOrderErrors.NotEditable => ExternalShippingOutcomeKind.NotPending,
         ExternalOrderErrors.SourceInvalid => ExternalShippingOutcomeKind.NotExternal,
         ExternalOrderErrors.StorePickup => ExternalShippingOutcomeKind.StorePickup,
         ExternalOrderErrors.ShippingPartyPresent => ExternalShippingOutcomeKind.ShippingPresent,

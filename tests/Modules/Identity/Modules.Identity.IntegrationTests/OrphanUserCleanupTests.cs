@@ -868,14 +868,14 @@ public sealed class OrphanUserCleanupTests
 
         if (approvedByMembershipId is { } approvedBy)
         {
-            order.Approve(new MemberId(approvedBy), occurredAt);
+            order.MarkPaid(new MemberId(approvedBy), requirePaymentProof: false, occurredAt);
         }
 
-        // Facturar exige Approved (spec 2026-10-05, decisión 1): quien pida invoicedBy tiene que
+        // Facturar exige pagado (spec 2026-11-10 §3.4, ajuste por defecto): quien pida invoicedBy tiene que
         // pedir también approvedBy.
         if (invoicedByMembershipId is { } invoicedBy)
         {
-            order.Invoice(new MemberId(invoicedBy), occurredAt);
+            order.Invoice(new MemberId(invoicedBy), requireFullPayment: true, occurredAt);
         }
 
         if (cancelledByMembershipId is { } cancelledBy)

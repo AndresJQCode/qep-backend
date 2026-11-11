@@ -27,10 +27,9 @@ public static class ExportStatusLabels
 
     public static string For(OrderStatus status) => status switch
     {
-        OrderStatus.Pending => "Pendiente",
-        OrderStatus.Approved => "Aprobado",
+        OrderStatus.Open => "Abierto",
+        OrderStatus.Archived => "Archivado",
         OrderStatus.Cancelled => "Anulado",
-        OrderStatus.Invoiced => "Facturado",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The order status has no export label."),
     };
 
@@ -39,6 +38,7 @@ public static class ExportStatusLabels
         OrderPaymentStatus.FullPaymentReceived => "Pago total",
         OrderPaymentStatus.PartialPaymentReceived => "Pago parcial",
         OrderPaymentStatus.PaymentPending => "Pago pendiente",
+        OrderPaymentStatus.PendingVerification => "Por verificar",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The payment status has no export label."),
     };
 }

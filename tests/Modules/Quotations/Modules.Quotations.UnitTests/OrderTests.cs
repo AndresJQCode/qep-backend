@@ -295,15 +295,15 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void ItemsCannotChangeOnceTheOrderIsApproved()
+    public void ItemsCannotChangeOnceTheOrderIsPrepared()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // Portado de QuotationProductSnapshotTests (spec 2026-10-15 §4.5): una línea que se suma al pedido
@@ -433,15 +433,16 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void CreateStartsPendingWithItsProofs()
+    public void CreateStartsOpenWithItsProofs()
     {
         var fileId = Guid.CreateVersion7();
         var order = NewOrder(proofs: [new OrderPaymentProofInput(fileId, 50_000m)]);
 
-        // Nace pendiente: quien la registra no es quien la aprueba.
-        Assert.Equal(OrderStatus.Pending, order.Status);
-        Assert.Null(order.ApprovedAt);
-        Assert.Null(order.ApprovedBy);
+        // Nace abierto y sin preparar: quien lo registra no es quien marca el pago.
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.Equal(OrderFulfillmentStatus.NotPrepared, order.FulfillmentStatus);
+        Assert.Null(order.PaidMarkedAt);
+        Assert.Null(order.PaidMarkedBy);
         Assert.Null(order.QuotationId);
         Assert.Equal(ConvertedBy, order.ConvertedBy);
         Assert.Equal(Now, order.ConvertedAt);
@@ -595,13 +596,13 @@ public sealed class OrderTests
         Assert.Equal("order.order.payment_proof_required", error.Code);
     }
 
-    // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó: sumarle
-    // comprobantes ahí adentro cambiaría lo que esa persona dio por bueno.
+    // Preparado, el pedido ya se despachó con lo que tenía (spec 2026-11-10 §3.6): sumarle
+    // comprobantes ahí adentro cambiaría lo que se dio por bueno.
     [Fact]
-    public void AddPaymentProofsRejectsAnAlreadyApprovedOrder()
+    public void AddPaymentProofsRejectsAPreparedOrder()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AddPaymentProofs(
@@ -611,7 +612,7 @@ public sealed class OrderTests
                 ConvertedBy,
                 Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // A pedido (2026-09): corregir un monto mal tipeado sin recrear el pedido ni el
@@ -723,14 +724,14 @@ public sealed class OrderTests
         Assert.Equal(5_000m, Assert.Single(order.PaymentProofs).Amount);
     }
 
-    // Aprobado, el pedido es el respaldo de un cobro que alguien ya reviso con esos montos:
-    // corregirlos ahi adentro cambiaria lo que esa persona dio por bueno.
+    // Preparado, el pedido está congelado (spec 2026-11-10 §3.6): corregir los montos ahí adentro
+    // cambiaría lo que se dio por bueno.
     [Fact]
-    public void AddPaymentProofsRejectsCorrectingAProofOnAnAlreadyApprovedOrder()
+    public void AddPaymentProofsRejectsCorrectingAProofOnAPreparedOrder()
     {
         var order = NewOrder();
         var proofId = Assert.Single(order.PaymentProofs).Id;
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AddPaymentProofs(
@@ -741,7 +742,7 @@ public sealed class OrderTests
                 Now.AddDays(1),
                 [new OrderPaymentProofAmountUpdate(proofId, 5_000m)]));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // A pedido (2026-09-15): reemplazar el archivo de un comprobante mal cargado, junto con la
@@ -815,19 +816,19 @@ public sealed class OrderTests
         Assert.Equal("order.payment_proof.not_found", error.Code);
     }
 
-    // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó con los comprobantes
-    // que tenía en ese momento.
+    // Preparado, el pedido está congelado con los comprobantes que tenía en ese momento
+    // (spec 2026-11-10 §3.6).
     [Fact]
-    public void RemovePaymentProofRejectsAnAlreadyApprovedOrder()
+    public void RemovePaymentProofRejectsAPreparedOrder()
     {
         var order = NewOrder();
         var proofId = Assert.Single(order.PaymentProofs).Id;
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // A pedido (2026-09): agregar un producto desde "Editar" pedido sube el total de la
@@ -882,19 +883,19 @@ public sealed class OrderTests
         Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
     }
 
-    // Aprobado, el pedido es el respaldo de un cobro que alguien ya revisó con el total que
-    // tenía en ese momento — este método no se llama en ese caso (el caso de uso que agrega el
+    // Preparado, el pedido está congelado con el total que tenía en ese momento — este método no se
+    // llama en ese caso (el caso de uso que agrega el
     // producto ya lo bloquea antes), pero el agregado se defiende igual.
     [Fact]
-    public void RecalculatePaymentStatusRejectsAnAlreadyApprovedOrder()
+    public void RecalculatePaymentStatusRejectsAPreparedOrder()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.RecalculatePaymentStatus(Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // Spec 2026-09-15, P5: cada comprobante guarda la clave de su copia pública, que le llega ya
@@ -957,10 +958,10 @@ public sealed class OrderTests
         Assert.Equal("payment-proofs/d.pdf", Assert.Single(order.PaymentProofs).PublicStorageKey);
     }
 
-    // Spec 2026-09-16 (anular un pedido), decisiones 1 y 2: se anula desde Pending, y queda
+    // Spec 2026-09-16 (anular un pedido), decisiones 1 y 2: se anula un abierto, y queda
     // quién, cuándo y por qué.
     [Fact]
-    public void CancelFromPendingRecordsWhoWhenAndWhy()
+    public void CancelFromOpenRecordsWhoWhenAndWhy()
     {
         var order = NewOrder();
         Assert.Null(order.CancelledAt);
@@ -979,20 +980,20 @@ public sealed class OrderTests
         Assert.Equal(2, order.Version);
     }
 
-    // Decisiones 1 y 2: un pedido aprobado por error también se anula, y anularlo no reescribe
-    // quién lo revisó ni cuándo.
+    // Decisiones 1 y 2: un pedido marcado pagado por error también se anula, y anularlo no reescribe
+    // quién lo marcó ni cuándo.
     [Fact]
-    public void CancelFromApprovedKeepsTheApproval()
+    public void CancelFromPaidKeepsThePaidMark()
     {
-        var order = NewOrder();
-        var approvedBy = new MemberId(Guid.CreateVersion7());
-        order.Approve(approvedBy, Now);
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
+        var paidBy = new MemberId(Guid.CreateVersion7());
+        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
 
-        order.Cancel(ConvertedBy, "Aprobado por error", Now.AddDays(1));
+        order.Cancel(ConvertedBy, "Pagado por error", Now.AddDays(1));
 
         Assert.Equal(OrderStatus.Cancelled, order.Status);
-        Assert.Equal(approvedBy, order.ApprovedBy);
-        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(paidBy, order.PaidMarkedBy);
+        Assert.Equal(Now, order.PaidMarkedAt);
         Assert.Equal(3, order.Version);
     }
 
@@ -1009,17 +1010,18 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void PendingApprovedAndInvoicedOrdersCanBeSent()
+    public void OpenPaidAndInvoicedOrdersCanBeSent()
     {
-        var order = NewOrder();
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
         order.EnsureSendable();
-        order.Approve(ConvertedBy, Now);
+        order.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
         order.EnsureSendable();
-        order.Invoice(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, requireFullPayment: true, Now);
 
         order.EnsureSendable();
 
-        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.True(order.IsInvoiced);
     }
 
     // Anular dos veces reescribiría quién, cuándo y por qué se anuló.
@@ -1051,7 +1053,7 @@ public sealed class OrderTests
             order.Cancel(ConvertedBy, reason, Now));
 
         Assert.Equal("order.order.cancellation_reason_required", error.Code);
-        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Null(order.CancelledAt);
     }
 
@@ -1064,7 +1066,7 @@ public sealed class OrderTests
             order.Cancel(ConvertedBy, new string('a', Order.CancellationReasonMaxLength + 1), Now));
 
         Assert.Equal("order.order.cancellation_reason_too_long", error.Code);
-        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
     }
 
     // El límite se mide sobre el motivo recortado, mismo criterio que las notas.
@@ -1079,10 +1081,9 @@ public sealed class OrderTests
         Assert.Equal(reason, order.CancellationReason);
     }
 
-    // Los guards existentes ya cubren un anulado: no es Pending, así que nada de lo que sólo se
-    // permite en Pending pasa (spec, «Dominio»).
+    // Un anulado no es Open, así que no se edita (spec 2026-11-10 §3.6) ni se marca pagado.
     [Fact]
-    public void ACancelledOrderRejectsEveryPendingOnlyChange()
+    public void ACancelledOrderRejectsEveryEditOnlyChange()
     {
         var order = NewOrder();
         var proofId = Assert.Single(order.PaymentProofs).Id;
@@ -1100,13 +1101,13 @@ public sealed class OrderTests
             order.RecalculatePaymentStatus(later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
-        var approve = Assert.Throws<QuotationsDomainException>(() =>
-            order.Approve(ConvertedBy, later));
+        var markPaid = Assert.Throws<QuotationsDomainException>(() =>
+            order.MarkPaid(ConvertedBy, requirePaymentProof: false, later));
 
-        Assert.Equal("order.order.not_pending", addProofs.Code);
-        Assert.Equal("order.order.not_pending", recalculate.Code);
-        Assert.Equal("order.order.not_pending", removeProof.Code);
-        Assert.Equal("order.order.not_pending", approve.Code);
+        Assert.Equal("order.order.not_editable", addProofs.Code);
+        Assert.Equal("order.order.not_editable", recalculate.Code);
+        Assert.Equal("order.order.not_editable", removeProof.Code);
+        Assert.Equal("order.order.not_open", markPaid.Code);
         Assert.Equal(OrderStatus.Cancelled, order.Status);
     }
 
@@ -1148,15 +1149,15 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void AttachPaymentProofsRejectsAnOrderThatIsNotPending()
+    public void AttachPaymentProofsRejectsAnOrderThatIsNotEditable()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AttachPaymentProofs([], ConvertedBy, Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     [Fact]
@@ -1211,15 +1212,15 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void CorrectPaymentProofsRejectsAnOrderThatIsNotPending()
+    public void CorrectPaymentProofsRejectsAnOrderThatIsNotEditable()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.CorrectPaymentProofs([], Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // Spec 2026-09-17: notes reemplaza el campo entero, y el guardado necesita saber si cambió para
@@ -1274,15 +1275,15 @@ public sealed class OrderTests
     }
 
     [Fact]
-    public void UpdateNotesRejectsAnOrderThatIsNotPending()
+    public void UpdateNotesRejectsAnOrderThatIsNotEditable()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.UpdateNotes("Otra nota", Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     // Spec 2026-10-26 §4.4 y §4.6: la parte de envío de un pedido externo y su ciudad corregible.
@@ -1362,17 +1363,17 @@ public sealed class OrderTests
         Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
     }
 
-    // Review Focus 3: sólo se agrega la parte mientras el pedido está pendiente.
+    // Review Focus 3: sólo se agrega la parte mientras el pedido se puede editar.
     [Fact]
-    public void AttachExternalShippingOnANonPendingOrderIsNotPending()
+    public void AttachExternalShippingOnAPreparedOrderIsNotEditable()
     {
         var order = NewShopifyOrder();
-        order.Approve(ConvertedBy, Now);
+        order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.AttachExternalShipping(ShippingParty(), RawAddressPrefix, Now.AddHours(1)));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
         Assert.Null(order.Shipping);
     }
 
@@ -1457,61 +1458,54 @@ public sealed class OrderTests
         Assert.Equal(ShippingParty(CityB), order.Shipping!.ToDetails());
     }
 
-    // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3: se factura un aprobado, queda quién
-    // y cuándo, y la aprobación no se toca.
+    // Spec 2026-10-05 (facturar un pedido), decisiones 1 y 3, con los ejes de 2026-11-10: facturar es una marca
+    // que deja quién y cuándo; no cambia el estado ni toca el pagado.
     [Fact]
-    public void InvoiceAnApprovedOrderRecordsWhoAndWhenAndKeepsTheApproval()
+    public void InvoiceAPaidOrderRecordsWhoAndWhenAndKeepsThePaidMark()
     {
-        var order = NewOrder();
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
         Assert.Null(order.InvoicedAt);
         Assert.Null(order.InvoicedBy);
-        var approvedBy = new MemberId(Guid.CreateVersion7());
-        order.Approve(approvedBy, Now);
+        var paidBy = new MemberId(Guid.CreateVersion7());
+        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
         var invoicedBy = new MemberId(Guid.CreateVersion7());
         var later = Now.AddDays(1);
 
-        order.Invoice(invoicedBy, later);
+        order.Invoice(invoicedBy, requireFullPayment: true, later);
 
-        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.True(order.IsInvoiced);
         Assert.Equal(later, order.InvoicedAt);
         Assert.Equal(invoicedBy, order.InvoicedBy);
-        Assert.Equal(approvedBy, order.ApprovedBy);
-        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(paidBy, order.PaidMarkedBy);
+        Assert.Equal(Now, order.PaidMarkedAt);
         Assert.Equal(later, order.UpdatedAt);
         Assert.Equal(3, order.Version);
     }
 
-    // Decisión 6: de momento facturar no mira el pago, igual que aprobar.
+    // Spec 2026-11-10 §3.4: sin el ajuste del tenant, facturar no mira el pago.
     [Fact]
-    public void InvoiceDoesNotRequireTheOrderToBePaid()
+    public void InvoiceWithoutTheFullPaymentRuleDoesNotRequireTheOrderToBePaid()
     {
         var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending, proofs: []);
-        order.Approve(ConvertedBy, Now);
 
-        order.Invoice(ConvertedBy, Now.AddDays(1));
+        order.Invoice(ConvertedBy, requireFullPayment: false, Now.AddDays(1));
 
-        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.True(order.IsInvoiced);
         Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
     }
 
-    // Decisión 1: sólo desde Approved. Desde Pending se saltaría la revisión; un anulado ya no es
-    // una venta.
+    // Un anulado ya no es una venta: no se factura.
     [Fact]
-    public void InvoiceRejectsAPendingOrACancelledOrder()
+    public void InvoiceRejectsACancelledOrder()
     {
-        var pending = NewOrder();
         var cancelled = NewOrder();
         cancelled.Cancel(ConvertedBy, "El cliente desistió", Now);
 
-        var fromPending = Assert.Throws<QuotationsDomainException>(() =>
-            pending.Invoice(ConvertedBy, Now));
         var fromCancelled = Assert.Throws<QuotationsDomainException>(() =>
-            cancelled.Invoice(ConvertedBy, Now));
+            cancelled.Invoice(ConvertedBy, requireFullPayment: false, Now));
 
-        Assert.Equal("order.order.not_approved", fromPending.Code);
-        Assert.Equal("order.order.not_approved", fromCancelled.Code);
-        Assert.Equal(OrderStatus.Pending, pending.Status);
-        Assert.Null(pending.InvoicedAt);
+        Assert.Equal("order.order.already_cancelled", fromCancelled.Code);
         Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
         Assert.Null(cancelled.InvoicedBy);
     }
@@ -1521,60 +1515,58 @@ public sealed class OrderTests
     public void InvoiceTwiceIsRejectedAndKeepsTheFirstInvoicing()
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
-        order.Invoice(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, requireFullPayment: true, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.Invoice(new MemberId(Guid.CreateVersion7()), Now.AddDays(1)));
+            order.Invoice(new MemberId(Guid.CreateVersion7()), requireFullPayment: true, Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_approved", error.Code);
+        Assert.Equal("order.order.already_invoiced", error.Code);
         Assert.Equal(ConvertedBy, order.InvoicedBy);
         Assert.Equal(Now, order.InvoicedAt);
-        Assert.Equal(3, order.Version);
+        Assert.Equal(2, order.Version);
     }
 
-    // Decisión 4: revertir vuelve a Approved y limpia las marcas. La aprobación queda.
+    // Decisión 4: revertir limpia las marcas de facturado. El estado y el pagado quedan.
     [Fact]
-    public void RevertInvoicingReturnsToApprovedWithoutTheMarks()
+    public void RevertInvoicingClearsTheMarksAndKeepsTheStatusAndThePaidMark()
     {
-        var order = NewOrder();
-        var approvedBy = new MemberId(Guid.CreateVersion7());
-        order.Approve(approvedBy, Now);
-        order.Invoice(ConvertedBy, Now.AddDays(1));
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
+        var paidBy = new MemberId(Guid.CreateVersion7());
+        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
+        order.Invoice(ConvertedBy, requireFullPayment: true, Now.AddDays(1));
         var later = Now.AddDays(2);
 
         order.RevertInvoicing(new MemberId(Guid.CreateVersion7()), later);
 
-        Assert.Equal(OrderStatus.Approved, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.False(order.IsInvoiced);
         Assert.Null(order.InvoicedAt);
         Assert.Null(order.InvoicedBy);
-        Assert.Equal(approvedBy, order.ApprovedBy);
-        Assert.Equal(Now, order.ApprovedAt);
+        Assert.Equal(paidBy, order.PaidMarkedBy);
+        Assert.Equal(Now, order.PaidMarkedAt);
         Assert.Equal(later, order.UpdatedAt);
         Assert.Equal(4, order.Version);
     }
 
-    // Review Focus 3: el pedido revertido es un Approved limpio. Se vuelve a facturar con el quién y
+    // Review Focus 3: el pedido revertido queda sin la marca. Se vuelve a facturar con el quién y
     // el cuándo nuevos, o se anula.
     [Fact]
     public void ARevertedOrderCanBeInvoicedAgainOrCancelled()
     {
         var reinvoiced = NewOrder();
-        reinvoiced.Approve(ConvertedBy, Now);
-        reinvoiced.Invoice(ConvertedBy, Now);
+        reinvoiced.Invoice(ConvertedBy, requireFullPayment: true, Now);
         reinvoiced.RevertInvoicing(ConvertedBy, Now.AddDays(1));
         var secondBiller = new MemberId(Guid.CreateVersion7());
         var later = Now.AddDays(2);
 
-        reinvoiced.Invoice(secondBiller, later);
+        reinvoiced.Invoice(secondBiller, requireFullPayment: true, later);
 
-        Assert.Equal(OrderStatus.Invoiced, reinvoiced.Status);
+        Assert.True(reinvoiced.IsInvoiced);
         Assert.Equal(secondBiller, reinvoiced.InvoicedBy);
         Assert.Equal(later, reinvoiced.InvoicedAt);
 
         var cancelled = NewOrder();
-        cancelled.Approve(ConvertedBy, Now);
-        cancelled.Invoice(ConvertedBy, Now);
+        cancelled.Invoice(ConvertedBy, requireFullPayment: true, Now);
         cancelled.RevertInvoicing(ConvertedBy, Now.AddDays(1));
 
         cancelled.Cancel(ConvertedBy, "Facturado por error", later);
@@ -1586,24 +1578,24 @@ public sealed class OrderTests
     [Fact]
     public void RevertInvoicingRejectsAnOrderThatIsNotInvoiced()
     {
-        var pending = NewOrder();
-        var approved = NewOrder();
-        approved.Approve(ConvertedBy, Now);
+        var open = NewOrder();
+        var paid = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
+        paid.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
         var cancelled = NewOrder();
         cancelled.Cancel(ConvertedBy, "El cliente desistió", Now);
 
-        var fromPending = Assert.Throws<QuotationsDomainException>(() =>
-            pending.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
-        var fromApproved = Assert.Throws<QuotationsDomainException>(() =>
-            approved.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
+        var fromOpen = Assert.Throws<QuotationsDomainException>(() =>
+            open.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
+        var fromPaid = Assert.Throws<QuotationsDomainException>(() =>
+            paid.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
         var fromCancelled = Assert.Throws<QuotationsDomainException>(() =>
             cancelled.RevertInvoicing(ConvertedBy, Now.AddDays(1)));
 
-        Assert.Equal("order.order.not_invoiced", fromPending.Code);
-        Assert.Equal("order.order.not_invoiced", fromApproved.Code);
+        Assert.Equal("order.order.not_invoiced", fromOpen.Code);
+        Assert.Equal("order.order.not_invoiced", fromPaid.Code);
         Assert.Equal("order.order.not_invoiced", fromCancelled.Code);
-        Assert.Equal(OrderStatus.Approved, approved.Status);
-        Assert.Equal(2, approved.Version);
+        Assert.Equal(OrderStatus.Open, paid.Status);
+        Assert.Equal(2, paid.Version);
     }
 
     // Decisión 2: un facturado no se anula. El guard va antes que already_cancelled y que las reglas
@@ -1615,27 +1607,26 @@ public sealed class OrderTests
     public void CancelAnInvoicedOrderIsRejectedBeforeLookingAtTheReason(string? reason)
     {
         var order = NewOrder();
-        order.Approve(ConvertedBy, Now);
-        order.Invoice(ConvertedBy, Now);
+        order.Invoice(ConvertedBy, requireFullPayment: true, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.Cancel(ConvertedBy, reason, Now.AddDays(1)));
 
         Assert.Equal("order.order.already_invoiced", error.Code);
-        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Null(order.CancelledAt);
         Assert.Null(order.CancellationReason);
     }
 
-    // Los guards existentes ya cubren un facturado: no es Pending, así que nada de lo que sólo se
-    // permite en Pending pasa (spec, «Dominio»). Tampoco se vuelve a aprobar.
+    // Spec 2026-11-10 §3.6: facturado congela, así que nada de lo que sólo se permite mientras el pedido
+    // se edita pasa. Tampoco se vuelve a marcar pagado: ya lo está.
     [Fact]
-    public void AnInvoicedOrderRejectsEveryPendingOnlyChange()
+    public void AnInvoicedOrderRejectsEveryEditOnlyChange()
     {
-        var order = NewOrder();
+        var order = NewOrder(paymentStatus: OrderPaymentStatus.PaymentPending);
         var proofId = Assert.Single(order.PaymentProofs).Id;
-        order.Approve(ConvertedBy, Now);
-        order.Invoice(ConvertedBy, Now);
+        order.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
+        order.Invoice(ConvertedBy, requireFullPayment: true, Now);
         var later = Now.AddDays(1);
 
         var addProofs = Assert.Throws<QuotationsDomainException>(() =>
@@ -1649,8 +1640,8 @@ public sealed class OrderTests
             order.RecalculatePaymentStatus(later));
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
-        var approve = Assert.Throws<QuotationsDomainException>(() =>
-            order.Approve(ConvertedBy, later));
+        var markPaid = Assert.Throws<QuotationsDomainException>(() =>
+            order.MarkPaid(ConvertedBy, requirePaymentProof: false, later));
         var attach = Assert.Throws<QuotationsDomainException>(() =>
             order.AttachPaymentProofs([], ConvertedBy, later));
         var correct = Assert.Throws<QuotationsDomainException>(() =>
@@ -1658,14 +1649,14 @@ public sealed class OrderTests
         var notes = Assert.Throws<QuotationsDomainException>(() =>
             order.UpdateNotes("Otra nota", later));
 
-        Assert.Equal("order.order.not_pending", addProofs.Code);
-        Assert.Equal("order.order.not_pending", recalculate.Code);
-        Assert.Equal("order.order.not_pending", removeProof.Code);
-        Assert.Equal("order.order.not_pending", approve.Code);
-        Assert.Equal("order.order.not_pending", attach.Code);
-        Assert.Equal("order.order.not_pending", correct.Code);
-        Assert.Equal("order.order.not_pending", notes.Code);
-        Assert.Equal(OrderStatus.Invoiced, order.Status);
+        Assert.Equal("order.order.not_editable", addProofs.Code);
+        Assert.Equal("order.order.not_editable", recalculate.Code);
+        Assert.Equal("order.order.not_editable", removeProof.Code);
+        Assert.Equal("order.order.already_paid", markPaid.Code);
+        Assert.Equal("order.order.not_editable", attach.Code);
+        Assert.Equal("order.order.not_editable", correct.Code);
+        Assert.Equal("order.order.not_editable", notes.Code);
+        Assert.True(order.IsInvoiced);
         Assert.Equal(3, order.Version);
     }
 
@@ -1804,34 +1795,41 @@ public sealed class OrderTests
     }
 
     [Theory]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PaymentPending, true)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PartialPaymentReceived, false)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.FullPaymentReceived, false)]
-    [InlineData(OrderStatus.Approved, OrderPaymentStatus.PaymentPending, false)]
-    [InlineData(OrderStatus.Cancelled, OrderPaymentStatus.PaymentPending, false)]
-    [InlineData(OrderStatus.Invoiced, OrderPaymentStatus.PaymentPending, false)]
-    public void CanBeCancelledByBuyerCoversStatusByPayment(OrderStatus status, OrderPaymentStatus payment, bool expected)
+    [InlineData("open", OrderPaymentStatus.PaymentPending, true)]
+    [InlineData("open", OrderPaymentStatus.PartialPaymentReceived, false)]
+    [InlineData("open", OrderPaymentStatus.FullPaymentReceived, false)]
+    [InlineData("paid", OrderPaymentStatus.PaymentPending, false)]
+    [InlineData("cancelled", OrderPaymentStatus.PaymentPending, false)]
+    [InlineData("invoiced", OrderPaymentStatus.PaymentPending, false)]
+    [InlineData("prepared", OrderPaymentStatus.PaymentPending, false)]
+    [InlineData("archived", OrderPaymentStatus.PaymentPending, false)]
+    public void CanBeCancelledByBuyerCoversStatusByPayment(string step, OrderPaymentStatus payment, bool expected)
     {
         var order = NewBuyerStoreOrder(Guid.CreateVersion7(), payment);
-        MoveTo(order, status);
+        MoveTo(order, step);
         Assert.Equal(expected, order.CanBeCancelledByBuyer);
     }
 
-    private static void MoveTo(Order order, OrderStatus status)
+    // Lleva el pedido por un eje (spec 2026-11-10): «open» lo deja como nació.
+    private static void MoveTo(Order order, string step)
     {
-        if (status is OrderStatus.Approved or OrderStatus.Invoiced)
+        switch (step)
         {
-            order.Approve(Advisor, Now);
-        }
-
-        if (status == OrderStatus.Invoiced)
-        {
-            order.Invoice(Advisor, Now);
-        }
-
-        if (status == OrderStatus.Cancelled)
-        {
-            order.Cancel(Advisor, "Prueba", Now);
+            case "paid":
+                order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+                break;
+            case "invoiced":
+                order.Invoice(Advisor, requireFullPayment: false, Now);
+                break;
+            case "prepared":
+                order.Prepare(Advisor, Now);
+                break;
+            case "archived":
+                order.Archive(Advisor, Now);
+                break;
+            case "cancelled":
+                order.Cancel(Advisor, "Prueba", Now);
+                break;
         }
     }
 
@@ -1862,14 +1860,16 @@ public sealed class OrderTests
     }
 
     [Theory]
-    [InlineData(OrderStatus.Approved)]
-    [InlineData(OrderStatus.Cancelled)]
-    [InlineData(OrderStatus.Invoiced)]
-    public void CancelByBuyerRejectsAnOrderThatIsNoLongerPending(OrderStatus status)
+    [InlineData("paid")]
+    [InlineData("cancelled")]
+    [InlineData("invoiced")]
+    [InlineData("prepared")]
+    [InlineData("archived")]
+    public void CancelByBuyerRejectsAnOrderSomeoneAlreadyTouched(string step)
     {
         var buyer = Guid.CreateVersion7();
         var order = NewBuyerStoreOrder(buyer);
-        MoveTo(order, status);
+        MoveTo(order, step);
         AssertNotCancellableByBuyer(order, buyer);
     }
 

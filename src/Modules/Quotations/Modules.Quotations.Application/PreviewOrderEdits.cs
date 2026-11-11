@@ -53,11 +53,11 @@ public sealed class PreviewOrderEditsHandler(
         var order = await orderRepository.FindUntrackedByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "An order can only be edited while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "An order can only be edited while it is open, not prepared and not invoiced.");
         }
 
         var storedVersion = order.Version;

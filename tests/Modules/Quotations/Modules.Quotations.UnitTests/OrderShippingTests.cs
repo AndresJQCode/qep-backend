@@ -178,15 +178,15 @@ public sealed class OrderShippingTests
     }
 
     [Fact]
-    public void SetShippingOnlyWhilePending()
+    public void SetShippingOnlyWhileEditable()
     {
         var order = NewOrder(ShippingDetails.None);
-        order.Approve(Advisor, Now);
+        order.Prepare(Advisor, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.SetShipping(ShippingDetails.None, Advisor, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     private static Order NewExternal(

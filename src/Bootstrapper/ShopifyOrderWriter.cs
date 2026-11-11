@@ -69,7 +69,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         }
         catch (QuotationsDomainException error)
         {
-            // order.order.not_pending y order.order.payment_has_proofs (H5): después de aprobar, o con comprobantes propios, el
+            // order.order.not_editable y order.order.payment_has_proofs (H5): con el pedido congelado, o con comprobantes propios, el
             // pago lo lleva QEP. Va a last_error del espejo y no se reintenta.
             return ShopifyOrderOutcome.Ignored(error.Code);
         }

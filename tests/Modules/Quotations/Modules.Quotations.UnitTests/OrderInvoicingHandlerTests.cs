@@ -22,9 +22,9 @@ public sealed class OrderInvoicingHandlerTests
     private static readonly DateTimeOffset Now = new(2026, 10, 5, 15, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task InvoiceWithOnlyTheApprovePermissionIsForbiddenAndLeavesTheOrderApproved()
+    public async Task InvoiceWithOnlyTheApprovePermissionIsForbiddenAndLeavesTheOrderUninvoiced()
     {
-        var row = NewApprovedRow();
+        var row = NewPaidRow();
         var audit = new RecordingQuotationAuditPublisher();
         var handler = NewInvoiceHandler(
             row, audit, new GrantedPermissionsExecutionContext(
@@ -36,7 +36,7 @@ public sealed class OrderInvoicingHandlerTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(OrderStatus.Approved, row.Status);
+        Assert.Equal(OrderStatus.Open, row.Status);
         Assert.Null(row.InvoicedAt);
         Assert.Empty(audit.Actions);
     }
@@ -44,7 +44,7 @@ public sealed class OrderInvoicingHandlerTests
     [Fact]
     public async Task InvoiceWithTheInvoicePermissionRecordsTheMembershipAndAudits()
     {
-        var row = NewApprovedRow();
+        var row = NewPaidRow();
         var audit = new RecordingQuotationAuditPublisher();
         var handler = NewInvoiceHandler(
             row, audit, new GrantedPermissionsExecutionContext(
@@ -54,7 +54,7 @@ public sealed class OrderInvoicingHandlerTests
             new InvoiceOrderCommand(TenantId, row.Id.Value),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal("Invoiced", invoiced.Status);
+        Assert.Equal("Open", invoiced.Status);
         Assert.Equal(Now, invoiced.InvoicedAt);
         Assert.Equal(BillerId.Value, invoiced.InvoicedBy);
         Assert.Equal(["quotation.order.invoiced"], audit.Actions);
@@ -75,13 +75,13 @@ public sealed class OrderInvoicingHandlerTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("authorization.denied", error.Code);
-        Assert.Equal(OrderStatus.Invoiced, row.Status);
+        Assert.True(row.IsInvoiced);
         Assert.Equal(BillerId, row.InvoicedBy);
         Assert.Empty(audit.Actions);
     }
 
     [Fact]
-    public async Task RevertWithTheInvoicePermissionReturnsTheOrderApprovedAndAudits()
+    public async Task RevertWithTheInvoicePermissionClearsTheMarkKeepsTheStatusAndAudits()
     {
         var row = NewInvoicedRow();
         var audit = new RecordingQuotationAuditPublisher();
@@ -93,7 +93,7 @@ public sealed class OrderInvoicingHandlerTests
             new RevertOrderInvoicingCommand(TenantId, row.Id.Value),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal("Approved", reverted.Status);
+        Assert.Equal("Open", reverted.Status);
         Assert.Null(reverted.InvoicedAt);
         Assert.Null(reverted.InvoicedBy);
         Assert.Equal(["quotation.order.invoice_reverted"], audit.Actions);
@@ -123,20 +123,20 @@ public sealed class OrderInvoicingHandlerTests
             executionContext,
             new FixedClock(Now));
 
-    private static Order NewApprovedRow()
+    private static Order NewPaidRow()
     {
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now,
-            paymentStatus: OrderPaymentStatus.FullPaymentReceived,
+            paymentStatus: OrderPaymentStatus.PaymentPending,
             proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
-        order.Approve(AdvisorId, Now);
+        order.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
         return order;
     }
 
     private static Order NewInvoicedRow()
     {
-        var row = NewApprovedRow();
-        row.Invoice(BillerId, Now);
+        var row = NewPaidRow();
+        row.Invoice(BillerId, requireFullPayment: true, Now);
         return row;
     }
 

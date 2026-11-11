@@ -741,9 +741,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderByIdQuery, OrderDetailDto>,
             GetOrderByIdHandler>();
         services.AddScoped<
-            ICommandHandler<ApproveOrderCommand, OrderDto>,
-            ApproveOrderHandler>();
-        services.AddScoped<
             ICommandHandler<CancelOrderCommand, OrderDto>,
             CancelOrderHandler>();
         services.AddScoped<
