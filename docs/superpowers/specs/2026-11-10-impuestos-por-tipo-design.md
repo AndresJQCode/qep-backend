@@ -326,8 +326,11 @@ documentDate)` y `.ForRatesAsync(tenantId, taxRateIds, documentDate)`. `Quotatio
   sin retenciones» queda cubierto para filas antiguas con `BillingAccount` nulo, si existen [pendiente de verificación, §15].
 - **Fijar o cambiar la empresa de un pedido `Pending`** (D22): NUEVO `Order.SetBillingAccount(QuotationBillingAccount)` en la
   edición del pedido (`SaveOrderEdits`, `PreviewOrderEdits`), validado contra la empresa como en la cotización
-  (`IQuotationCompanyLookup`). Cambiar la moneda con la cuenta no reprecia (mismo criterio que la cotización,
-  `Quotation.cs:263-275`) [asistente]. Al cambiar de país, aplica D23.
+  (`IQuotationCompanyLookup`). **La cuenta no puede cambiar la moneda del pedido**: una cuenta en otra moneda es 422
+  `order.billing.currency_change_not_allowed` [owner, 2026-11-10, plan P10]. Cambiar la moneda sin repreciar dejaría los importes
+  rotulados en otra moneda, y repreciar un pedido de Shopify cambiaría lo que la plataforma cobró. Esto reemplaza el criterio
+  anterior («cambiar la moneda con la cuenta no reprecia», como la cotización en `Quotation.cs:263-275`), que sigue valiendo sólo para
+  la cotización. Al cambiar de país, aplica D23.
 - **Pendiente de verificación:** si algún tenant no tiene empresas facturadoras (no podría enviar cotizaciones después del
   despliegue).
 
@@ -508,6 +511,7 @@ En `QuotationDto` (`QuotationsDtos.cs:32-75`) y el detalle del pedido (`OrdersDt
 | `catalog.tax_unit.country_without_unit` | escribir un valor para un país sin unidad tributaria |
 | `catalog.tax_unit.year_out_of_range` | año fuera de 2000…año actual + 1 |
 | `catalog.tax_unit.value_invalid` | valor `<= 0` |
+| `order.billing.currency_change_not_allowed` | la cuenta de cobro de la edición de un pedido `Pending` tiene otra moneda que el pedido (§7.7; owner, 2026-11-10, plan P10) |
 
 Existentes que se reutilizan: `catalog.tax_rate.in_use` (ahora también por clientes), `catalog.tax_rate.not_found`,
 `catalog.tax_rate.percentage_out_of_range`, `quotation.billing.account_required` (ahora también al enviar),
