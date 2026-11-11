@@ -290,6 +290,7 @@ public sealed class PublicBuyerOrdersApiTests
             Assert.Equal(1, (int)item["lineCount"]!);
             Assert.Equal("Camiseta", (string)item["firstLineName"]!);
             Assert.True((bool)item["canCancel"]!);
+            Assert.False((bool)item["isStorePickup"]!);
         }
     }
 
@@ -303,6 +304,8 @@ public sealed class PublicBuyerOrdersApiTests
         var markedPaid = await SeedBuyerOrderAsync(rig, account);
         await MarkPartiallyPaidAsync(rig, paid);
         await MarkPaidAsync(rig, markedPaid);
+        // Owner 2026-11-11: la lista dice si se recoge en tienda («Listo para recoger» frente a «Enviado»).
+        await rig.ExecuteAsync("UPDATE quotations.orders SET is_store_pickup = true WHERE id = @order", ("order", open));
 
         var list = await OkAsync(await BuyerGetAsync(rig, "/orders", session));
 
@@ -315,10 +318,13 @@ public sealed class PublicBuyerOrdersApiTests
         Assert.False((bool)items[markedPaid]["canCancel"]!);
         Assert.Equal("Open", (string)items[markedPaid]["status"]!);
         Assert.Equal("FullPaymentReceived", (string)items[markedPaid]["paymentStatus"]!);
+        Assert.True((bool)items[open]["isStorePickup"]!);
+        Assert.False((bool)items[paid]["isStorePickup"]!);
         foreach (var (id, item) in items)
         {
             var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{id}", session));
             Assert.Equal((bool)item["canCancel"]!, (bool)detail["canCancel"]!);
+            Assert.Equal((bool)item["isStorePickup"]!, (bool)detail["isStorePickup"]!);
             Assert.Equal((string)item["status"]!, (string)detail["status"]!);
             Assert.Equal((string)item["paymentStatus"]!, (string)detail["paymentStatus"]!);
             Assert.Equal((string)item["number"]!, (string)detail["number"]!);

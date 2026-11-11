@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
 using Modules.Buyers.Application;
@@ -8,6 +9,7 @@ public sealed class BuyerOrdersHandlersTests
 {
     private const string Host = "acme.lulocrm.com";
     private static readonly Guid TenantId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     [Fact]
     public async Task ListPassesTheStorefrontTenantAndTheSessionAccount()
@@ -17,6 +19,26 @@ public sealed class BuyerOrdersHandlersTests
         await handlerFor.List.HandleAsync(new ListBuyerOrdersQuery(Host, token, 2, 20), TestContext.Current.CancellationToken);
 
         Assert.Equal((TenantId, accountId, 2, 20), orders.LastList);
+    }
+
+    // Owner 2026-11-11: la lista lleva isStorePickup para que la tienda muestre «Listo para recoger» o «Enviado».
+    [Fact]
+    public async Task ListCarriesIsStorePickupAsCamelCase()
+    {
+        var (handlerFor, orders, token, _) = await ArrangeAsync();
+        orders.Items =
+        [
+            new BuyerOrderSummaryDto(
+                Guid.NewGuid(), "P-1", DateTimeOffset.UnixEpoch, "Open", "PaymentPending", "Prepared", false, 10m, "COP", 1,
+                "Camisa", false, IsStorePickup: true),
+        ];
+
+        var page = await handlerFor.List.HandleAsync(new ListBuyerOrdersQuery(Host, token, 1, 20), TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(page.Items);
+        Assert.True(item.IsStorePickup);
+        var json = JsonSerializer.SerializeToElement(item, WebJson);
+        Assert.True(json.GetProperty("isStorePickup").GetBoolean());
     }
 
     [Theory]
@@ -135,12 +157,13 @@ public sealed class BuyerOrdersHandlersTests
         public (Guid, Guid, int, int)? LastList { get; private set; }
         public BuyerOrderDetailDto? Detail { get; set; } = Sample();
         public Exception? Failure { get; set; }
+        public IReadOnlyList<BuyerOrderSummaryDto> Items { get; set; } = [];
 
         public Task<BuyerOrderPageDto> ListAsync(Guid tenantId, Guid accountId, int page, int pageSize, CancellationToken cancellationToken)
         {
             Calls++;
             LastList = (tenantId, accountId, page, pageSize);
-            return Task.FromResult(new BuyerOrderPageDto([], page, pageSize, 0));
+            return Task.FromResult(new BuyerOrderPageDto(Items, page, pageSize, Items.Count));
         }
 
         public Task<BuyerOrderDetailDto?> FindAsync(Guid tenantId, Guid accountId, Guid orderId, CancellationToken cancellationToken)

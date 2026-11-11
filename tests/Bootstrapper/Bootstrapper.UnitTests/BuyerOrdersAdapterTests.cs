@@ -37,7 +37,9 @@ public sealed class BuyerOrdersAdapterTests
 
         public Task<BuyerOrderPage> ListAsync(Guid tenantId, Guid buyerAccountId, int page, int pageSize, CancellationToken cancellationToken) =>
             Task.FromResult(new BuyerOrderPage(
-                [new BuyerOrderSummary(OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true)],
+                [new BuyerOrderSummary(
+                    OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true,
+                    IsStorePickup: true)],
                 page, pageSize, 7));
 
         public Task<BuyerOrderDetail?> FindAsync(Guid tenantId, Guid buyerAccountId, Guid orderId, CancellationToken cancellationToken) =>
@@ -172,7 +174,8 @@ public sealed class BuyerOrdersAdapterTests
         var item = Assert.Single(page.Items);
         Assert.Equal(
             new BuyerOrderSummaryDto(
-                OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true),
+                OrderId, "PED-1", Created, "Cancelled", "PaymentPending", "Prepared", true, 119.5m, "COP", 2, "Camisa", true,
+                IsStorePickup: true),
             item);
     }
 

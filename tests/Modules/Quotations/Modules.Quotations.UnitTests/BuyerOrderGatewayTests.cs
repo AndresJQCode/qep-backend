@@ -141,6 +141,28 @@ public sealed class BuyerOrderGatewayTests
         Assert.True(summary.CanCancel);
     }
 
+    // Owner 2026-11-11: la lista dice si el pedido se recoge en tienda, para que un pedido preparado muestre
+    // «Listo para recoger» o «Enviado» sin abrir el detalle.
+    [Fact]
+    public async Task ASummarySaysWhetherTheOrderIsPickedUpAtTheStore()
+    {
+        var billing = ColombianParty();
+        var pickup = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0009", Header(),
+            new QuotationParties(
+                billing, ShippingOf(billing), IsStorePickup: true, BillingWithRetention: false, BillingVatSurplus: false),
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+        pickup.LinkBuyerAccount(Buyer);
+        var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
+        var orders = new StubOrderListRepository(pickup, shipped);
+
+        var items = (await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items;
+
+        Assert.Equal(
+            [("PED-2026-0009", true), ("PED-2026-0010", false)],
+            items.Select(item => (item.Number, item.IsStorePickup)));
+    }
+
     // Spec 2026-11-10 §9: el comprador ve los cuatro ejes, sin capa de compatibilidad.
     [Fact]
     public async Task TheBuyerSeesTheFourAxes()

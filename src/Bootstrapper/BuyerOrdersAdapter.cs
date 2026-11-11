@@ -39,7 +39,7 @@ internal sealed class BuyerOrdersAdapter(IServiceScopeFactory scopes) : IBuyerOr
     private static BuyerOrderSummaryDto ToSummary(BuyerOrderSummary order) =>
         new(
             order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.FulfillmentStatus, order.Invoiced,
-            order.Total, order.Currency, order.LineCount, order.FirstLineName, order.CanCancel);
+            order.Total, order.Currency, order.LineCount, order.FirstLineName, order.CanCancel, order.IsStorePickup);
 
     private static BuyerOrderDetailDto ToDetail(BuyerOrderDetail order) =>
         new(
