@@ -17,13 +17,16 @@ internal sealed class ServiceContractsUnitOfWork(ServiceContractsDbContext dbCon
 
     public void Clear() => dbContext.ChangeTracker.Clear();
 
-    // Borrar clientes (spec 2026-11-10, P1/P2): guardar un servicio es escribir una referencia a customers.customers, que no
+    // Borrar clientes (spec 2026-11-10, P1/P2): guardar un servicio o un perfil de cobro es escribir una referencia a customers.customers, que no
     // tiene FK. CustomerReferenceWrites toma el candado compartido de cada cliente y, ya con él, comprueba que la fila exista,
     // todo dentro de la transacción que guarda: si el borrado ganó la carrera, el candado espera a su commit y la comprobación
     // ve el cliente ya borrado.
     private static readonly CustomerReferenceSource[] CustomerReferenceSources =
     [
         new(typeof(ServiceContract), nameof(ServiceContract.CustomerId), ServiceContractsErrorCodes.CustomerNotFound),
+        // Final review (R7 revocado): PUT /customers/{id}/profile crea un perfil sin servicio, y el borrado lo borra (§4.3). Sin el
+        // candado, un perfil creado durante el borrado quedaría huérfano.
+        new(typeof(CustomerBillingProfile), nameof(CustomerBillingProfile.CustomerId), ServiceContractsErrorCodes.CustomerNotFound),
     ];
 
     private Task<int> SaveHoldingCustomerReferencesAsync(CancellationToken cancellationToken) =>

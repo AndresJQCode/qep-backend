@@ -106,6 +106,39 @@ public sealed class CustomerReferenceLockApiTests
             connectionString, "SELECT count(*) FROM billing.customer_profiles WHERE customer_id = @id", customerId));
     }
 
+    // Final review R7: PUT /customers/{id}/profile crea un perfil sin servicio, y el perfil también es una referencia al cliente
+    // (el borrado lo borra, §4.3). Crearlo mientras el borrado tiene el candado espera y, al despertar, ve el cliente borrado.
+    [Fact]
+    public async Task CreatingAProfileWaitsForTheDeletionAndThenFails()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _d = database;
+        using var _f = factory;
+        var connectionString = database.GetConnectionString();
+        using var manager = CreateManager(factory);
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Panaderia La Esquina", "+573001234567", "pan@example.com");
+        var admin = await SeedMemberAsync(factory, $"ana-{Guid.NewGuid():N}@example.com", "Ana Admin", "admin");
+        // Calentamiento, como en la prueba del servicio: sin él la espera podría ser arranque en frío y no el candado.
+        (await manager.GetAsync($"{ServiceContractsUrl()}/services", TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var (connection, transaction) = await HoldExclusiveAsync(connectionString, Tenant, customerId);
+        await using var _c = connection;
+        await using var _t = transaction;
+
+        var put = manager.PutAsJsonAsync(
+            $"{ServiceContractsUrl()}/customers/{customerId}/profile",
+            new { channel = "WhatsApp", assigneeMemberId = admin },
+            TestContext.Current.CancellationToken);
+
+        Assert.NotSame(put, await Task.WhenAny(put, Task.Delay(NoAnswerWindow, TestContext.Current.CancellationToken)));
+        await DeleteCustomerAndCommitAsync(connection, transaction, customerId);
+
+        var response = await put;
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(ServiceContractsErrorCodes.CustomerNotFound, await CodeOfAsync(response));
+        Assert.Equal(0, await CountAsync(
+            connectionString, "SELECT count(*) FROM billing.customer_profiles WHERE customer_id = @id", customerId));
+    }
+
     [Fact]
     public async Task WithoutADeletionNothingChanges()
     {
