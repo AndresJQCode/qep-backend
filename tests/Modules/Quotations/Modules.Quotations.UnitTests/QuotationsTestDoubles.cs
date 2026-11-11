@@ -878,6 +878,18 @@ public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = nu
         DefaultFreightChargeMode = settings.Default;
         return Task.CompletedTask;
     }
+
+    /// <summary>Los del owner, como un tenant que nunca los tocó (spec 2026-11-10 §6).</summary>
+    public OrderSettings OrderSettings { get; set; } = OrderSettings.Default;
+
+    public Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(OrderSettings);
+
+    public Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken)
+    {
+        OrderSettings = settings;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>

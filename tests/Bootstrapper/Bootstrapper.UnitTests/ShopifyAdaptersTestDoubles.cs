@@ -51,6 +51,12 @@ internal sealed class FakeQuotationSettingsStore(Guid? freightTaxRateId) : IQuot
 
     public Task SetFreightChargeModesAsync(Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRepository

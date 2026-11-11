@@ -159,13 +159,13 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("advisor_id");
 
-                    b.Property<DateTimeOffset?>("ApprovedAt")
+                    b.Property<DateTimeOffset?>("ArchivedAt")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("approved_at");
+                        .HasColumnName("archived_at");
 
-                    b.Property<Guid?>("ApprovedBy")
+                    b.Property<Guid?>("ArchivedBy")
                         .HasColumnType("uuid")
-                        .HasColumnName("approved_by");
+                        .HasColumnName("archived_by");
 
                     b.Property<bool>("BillingUsesBusinessName")
                         .HasColumnType("boolean")
@@ -289,6 +289,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasDefaultValue(0)
                         .HasColumnName("freight_tax_percentage");
 
+                    b.Property<string>("FulfillmentStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("NotPrepared")
+                        .HasColumnName("fulfillment_status");
+
                     b.Property<int?>("GlobalScaleFloor")
                         .HasColumnType("integer")
                         .HasColumnName("global_scale_floor");
@@ -324,6 +332,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("order_number");
 
+                    b.Property<DateTimeOffset?>("PaidMarkedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_marked_at");
+
+                    b.Property<Guid?>("PaidMarkedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("paid_marked_by");
+
                     b.Property<bool?>("PartyVatSurplus")
                         .HasColumnType("boolean")
                         .HasColumnName("party_vat_surplus");
@@ -342,6 +358,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("payment_status");
+
+                    b.Property<DateTimeOffset?>("PreparedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("prepared_at");
+
+                    b.Property<Guid?>("PreparedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prepared_by");
 
                     b.Property<Guid?>("QuotationId")
                         .HasColumnType("uuid")
@@ -1390,6 +1414,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<bool>("AutoArchiveOrders")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_archive_orders");
+
                     b.Property<string>("DefaultFreightChargeMode")
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)")
@@ -1409,6 +1437,14 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<int>("MinimumUnits")
                         .HasColumnType("integer")
                         .HasColumnName("minimum_units");
+
+                    b.Property<bool>("RequireFullPaymentToInvoice")
+                        .HasColumnType("boolean")
+                        .HasColumnName("require_full_payment_to_invoice");
+
+                    b.Property<bool>("RequirePaymentProofToMarkPaid")
+                        .HasColumnType("boolean")
+                        .HasColumnName("require_payment_proof_to_mark_paid");
 
                     b.HasKey("TenantId");
 

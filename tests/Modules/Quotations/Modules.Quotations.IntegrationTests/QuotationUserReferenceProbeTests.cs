@@ -48,6 +48,46 @@ public sealed class QuotationUserReferenceProbeTests
         Assert.Equal((true, true, false), (byAdvisor, byHistory, byNothing));
     }
 
+    // Spec 2026-11-10: quien marcó pagado, preparado o archivado también referencia a la membresía.
+    [Fact]
+    public async Task APaidPreparedOrArchivedMarkKeepsTheMember()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var orderId = await CreateManualOrderAsync(client, tenantId);
+        var stranger = Guid.CreateVersion7();
+        var owner = await ScalarGuidAsync(connectionString, "SELECT advisor_id FROM quotations.orders WHERE id = @order", orderId);
+        await ExecuteAsync(connectionString,
+            "UPDATE quotations.orders SET advisor_id = @stranger, converted_by = @stranger WHERE id = @order; " +
+            "UPDATE quotations.order_history SET member_id = @stranger WHERE order_id = @order",
+            stranger, orderId);
+
+        var results = new List<bool>();
+        foreach (var column in new[] { "paid_marked_by", "prepared_by", "archived_by" })
+        {
+            // Acá @stranger es el dueño: sólo la columna de la vuelta apunta a él.
+            await ExecuteAsync(connectionString,
+                "UPDATE quotations.orders SET paid_marked_by = NULL, prepared_by = NULL, archived_by = NULL WHERE id = @order; " +
+                $"UPDATE quotations.orders SET {column} = @stranger WHERE id = @order",
+                owner, orderId);
+            results.Add(await HasReferencesAsync(factory, ownerUserId));
+        }
+
+        Assert.Equal([true, true, true], results);
+    }
+
+    private static async Task<Guid> ScalarGuidAsync(string connectionString, string sql, Guid orderId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("order", orderId);
+        return (Guid)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
     private static async Task<Guid> CreateManualOrderAsync(HttpClient client, Guid tenantId)
     {
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
