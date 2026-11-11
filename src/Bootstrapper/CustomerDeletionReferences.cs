@@ -42,9 +42,9 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class CustomerDeletionReferences(CustomersDbContext customers) : ICustomerDeletionReferences
 {
-    // CK_messages_event_shape: dirección 3 es un evento de la conversación (asignada, resuelta…), no un mensaje que alguien
-    // escribió. La auditoría cuenta mensajes, así que los eventos no entran.
-    private const int EventDirection = 3;
+    // CK_messages_event_shape: MessageDirection.System es un evento de la conversación (asignada, resuelta…), no un mensaje que
+    // alguien escribió. La auditoría cuenta mensajes, así que los eventos no entran.
+    private const int EventDirection = (int)MessageDirection.System;
 
     public async Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {

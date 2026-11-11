@@ -83,5 +83,7 @@ public sealed class CampaignRecipientWithoutCustomerTests
         Assert.Equal("Skipped", await ScalarAsync<string>(connectionString, "SELECT status FROM messaging.campaign_recipients WHERE customer_name = 'Ana'"));
         Assert.Equal("unreachable", await ScalarAsync<string>(connectionString, "SELECT failure_code FROM messaging.campaign_recipients WHERE customer_name = 'Ana'"));
         Assert.Equal(0, await ScalarAsync<int>(connectionString, "SELECT count(*)::int FROM messaging.conversations"));
+        // Inalcanzable de verdad: ni una llamada de envío a Meta.
+        Assert.DoesNotContain(pod.MetaHandler.Requests, request => request.Uri!.AbsolutePath.EndsWith("/messages", StringComparison.Ordinal));
     }
 }

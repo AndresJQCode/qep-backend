@@ -180,7 +180,7 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba).</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10.</summary>
     [Fact]
     public void PermissionDiscoveryFindsTheSeventyFiveConstants()
     {

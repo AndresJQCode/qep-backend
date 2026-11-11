@@ -53,6 +53,11 @@ public sealed class CustomerReferenceLockApiTests
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
+    // Calentamiento: la primera petición a un módulo en una fábrica nueva arma su modelo de EF y tarda más que la ventana de
+    // espera. Sin esto la escritura podría "esperar" por arranque en frío y la prueba pasaría aunque el candado no existiera.
+    private static async Task WarmUpAsync(HttpClient client, string url) =>
+        (await client.GetAsync(url, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+
     private static async Task<string> CodeOfAsync(HttpResponseMessage response)
     {
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
@@ -68,6 +73,7 @@ public sealed class CustomerReferenceLockApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        await WarmUpAsync(client, QuotationsUrl(tenantId));
         var (connection, transaction) = await HoldExclusiveAsync(connectionString, tenantId, customerId);
         await using var _c = connection;
         await using var _t = transaction;
@@ -102,6 +108,7 @@ public sealed class CustomerReferenceLockApiTests
             customerId, "Transferencia", "Pedido de mostrador", false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
             [new OrderEditItemRequest(productId, 3m)], "PaymentPending", []);
+        await WarmUpAsync(client, $"/api/v1/tenants/{tenantId}/orders");
         var (connection, transaction) = await HoldExclusiveAsync(connectionString, tenantId, customerId);
         await using var _c = connection;
         await using var _t = transaction;
