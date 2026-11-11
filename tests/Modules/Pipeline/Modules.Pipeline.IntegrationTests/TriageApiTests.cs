@@ -59,6 +59,29 @@ public sealed class TriageApiTests
             "SELECT count(*) FROM audit.entries WHERE tenant_id = @t AND action = 'pipeline.triage.created'", ("t", setup.Tenant.TenantId)));
     }
 
+    // Spec 2026-11-10 §4.5: el negocio nace en la empresa del contacto; la decisión conserva a la persona.
+    [Fact]
+    public async Task TriageOnAContactsConversationCreatesTheDealOnTheCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (personId, _) = await SeedCustomerAsync(factory, setup.Tenant.TenantId, "Laura");
+        var (companyId, companyName) = await SeedCustomerAsync(factory, setup.Tenant.TenantId, "Droguería Central");
+        await LinkToCompanyAsync(connectionString, personId, companyId);
+        var conversationId = await SeedConversationAsync(factory, connectionString, setup.Tenant.TenantId, personId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+
+        var response = await DecideAsync(setup, conversationId, new DecideTriageRequest("create", null, null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = (await response.Content.ReadFromJsonAsync<TriageResultDto>(Ct))!;
+        Assert.Equal((companyId, (Guid?)conversationId, companyName), (result.Deal!.CustomerId, result.Deal.OriginConversationId, result.Deal.Title));
+        Assert.Equal(personId, await ScalarAsync<Guid>(connectionString,
+            "SELECT customer_id FROM pipeline.triage_decisions WHERE conversation_id = @c", ("c", conversationId)));
+    }
+
     // D38: dos asesores deciden la misma conversación a la vez. Gana uno; el otro sale not_pending (si llegó después del
     // commit) o already_decided (si chocó con el índice), y queda un solo negocio.
     [Fact]

@@ -326,8 +326,11 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
+    public Dictionary<Guid, Guid> SurvivorsById { get; } = [];
+
     public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(SurvivorsById.TryGetValue(customerId, out var survivor) ? survivor : (Guid?)null);
 }
 
 internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
