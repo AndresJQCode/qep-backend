@@ -123,6 +123,18 @@ internal static class CustomerWriteDoubles
         public void Remove(ClientClassification classification) => throw new NotSupportedException();
     }
 
+    /// <summary>El catálogo de impuestos que ven los handlers de cliente: sólo responde por las tasas que la prueba carga.</summary>
+    public sealed class TaxRates(params CustomerTaxRateRef[] rates) : ICustomerTaxRateLookup
+    {
+        public Task<IReadOnlyDictionary<Guid, CustomerTaxRateRef>> FindManyAsync(
+            Guid tenantId, IReadOnlyCollection<Guid> taxRateIds, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CustomerTaxRateRef>>(
+                rates.Where(rate => taxRateIds.Contains(rate.Id)).ToDictionary(rate => rate.Id));
+
+        public Task<IReadOnlyList<CustomerTaxRateRef>> ListWithholdingAsync(Guid tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CustomerTaxRateRef>>([.. rates.Where(rate => rate.IsActive && rate.Withholds)]);
+    }
+
     public sealed class Geography(List<string> calls) : ICustomerGeographyLookup
     {
         public Task<CustomerCityRef?> FindCityAsync(Guid cityId, CancellationToken cancellationToken)
@@ -208,6 +220,9 @@ internal static class CustomerWriteDoubles
             throw new NotSupportedException();
 
         public Task<bool> AnyWithClassificationAsync(Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) =>

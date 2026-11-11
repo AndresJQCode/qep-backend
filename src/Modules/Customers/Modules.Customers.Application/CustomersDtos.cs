@@ -89,7 +89,26 @@ public sealed record CustomerDto(
     /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; <c>null</c> es «sin tipo».</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención asignadas, con lo que la ficha pinta. <c>null</c> se
+    /// lee como vacío. <see cref="WithRetention"/> se deriva de ellas.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}
+
+/// <summary>
+/// Una tasa de retención asignada a un cliente, con los datos del catálogo que la ficha necesita para pintarla sin otra
+/// llamada (BFF). <c>Type</c> es <c>"Retefuente"</c> o <c>"ReteICA"</c>.
+/// </summary>
+public sealed record CustomerWithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive);
 
 /// <summary>
 /// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
@@ -127,7 +146,12 @@ public sealed record CustomerResponse(
     /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: viaja siempre, vacía si el cliente no retiene.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -207,10 +231,14 @@ public sealed record CreateCustomerRequest(
     /// ignorada si lo es.</summary>
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -224,10 +252,14 @@ public sealed record UpdateCustomerRequest(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -507,4 +539,8 @@ public sealed record CustomerMergeResponse(
     MarketingConsentDto MarketingConsent,
     CustomerMergedIntoDto? MergedInto,
     string? PersonType,
-    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);
+    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags,
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}

@@ -93,6 +93,16 @@ public interface ICustomerRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// ¿Algún cliente del tenant tiene asignada esta tasa de retención? Catalog la usa (por el puerto
+    /// <c>ITaxRateCustomerUsage</c>) para no desactivar ni borrar una tasa «en uso»: sin FK entre esquemas, es la única
+    /// barrera. Cuenta también a los fusionados: su ficha sigue leyéndose y pinta la tasa.
+    /// </summary>
+    Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Cuales de estas identificaciones ya existen en el tenant, en una sola consulta, junto con
     /// el <see cref="CustomerId"/> que ya la usa. La usa la importacion masiva (Fase 5) para el
     /// chequeo de duplicados **contra la base** de todas las filas que pasaron la validacion de

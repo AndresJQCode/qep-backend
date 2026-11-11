@@ -32,51 +32,86 @@ internal static class CustomerMapping
         CustomerCityRef? city,
         ClientClassification? classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
-        IReadOnlyCollection<TagDto> tags) => new(
-        customer.Id.Value,
-        customer.Cuc,
-        customer.Name,
-        customer.BusinessName,
-        customer.IdentificationType?.ToWireValue(),
-        customer.IdentificationNumber,
-        customer.Phone,
-        customer.Email,
-        // `address`/`city`/`department` describen el **domicilio del cliente** (spec 2026-09-18):
-        // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
-        // y marcar otra como principal no mueve estos tres campos.
-        customer.Address,
-        customer.Country,
-        // `city`/`department` viajan resueltos **solo** para un cliente colombiano. Uno de afuera
-        // no tiene fila en geography.cities: su ciudad es `cityName`, texto libre. Quien pinte la
-        // ficha usa `city?.Name ?? cityName`.
-        city is null
-            ? null
-            : new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
-        city is null
-            ? null
-            : new CustomerDepartmentDto(
-                city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
-        customer.CityName,
-        // Spec 2026-10-10 §5.2: un incompleto no tiene clasificación y viaja en null.
-        classification?.ToDto(),
-        customer.Addresses
-            .OrderByDescending(address => address.IsPrincipal)
-            .ThenBy(address => address.Name)
-            .Select(address => ToAddressDto(address, citiesById))
-            .ToArray(),
-        // Interino hasta la Tarea 8: el valor se deriva de las tasas asignadas.
-        false,
-        customer.VatSurplus,
-        customer.IsActive,
-        customer.CreatedAt,
-        customer.UpdatedAt,
-        customer.IsComplete,
-        // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
-        // piden y pasan una colección vacía.
-        tags,
-        customer.ToConsentDto(),
-        customer.InstagramUsername,
-        PersonType: customer.PersonType?.ToWireValue());
+        IReadOnlyCollection<TagDto> tags,
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById)
+    {
+        var withholdingTaxRates = ToWithholdingDtos(customer, taxRatesById);
+        return new CustomerDto(
+            customer.Id.Value,
+            customer.Cuc,
+            customer.Name,
+            customer.BusinessName,
+            customer.IdentificationType?.ToWireValue(),
+            customer.IdentificationNumber,
+            customer.Phone,
+            customer.Email,
+            // `address`/`city`/`department` describen el **domicilio del cliente** (spec 2026-09-18):
+            // donde esta, lo que la ficha muestra arriba. Las direcciones de envio van en `addresses`,
+            // y marcar otra como principal no mueve estos tres campos.
+            customer.Address,
+            customer.Country,
+            // `city`/`department` viajan resueltos **solo** para un cliente colombiano. Uno de afuera
+            // no tiene fila en geography.cities: su ciudad es `cityName`, texto libre. Quien pinte la
+            // ficha usa `city?.Name ?? cityName`.
+            city is null
+                ? null
+                : new CustomerCityDto(city.CityId, city.CityDivipolaCode, city.CityName),
+            city is null
+                ? null
+                : new CustomerDepartmentDto(
+                    city.DepartmentId, city.DepartmentDivipolaCode, city.DepartmentName),
+            customer.CityName,
+            // Spec 2026-10-10 §5.2: un incompleto no tiene clasificación y viaja en null.
+            classification?.ToDto(),
+            customer.Addresses
+                .OrderByDescending(address => address.IsPrincipal)
+                .ThenBy(address => address.Name)
+                .Select(address => ToAddressDto(address, citiesById))
+                .ToArray(),
+            // Derivado (spec impuestos por tipo §9.2): retiene quien tiene una Retefuente asignada. Una sola ReteICA no alcanza,
+            // igual que en el cálculo de la cotización.
+            withholdingTaxRates.Any(rate => rate.Type == RetefuenteType),
+            customer.VatSurplus,
+            customer.IsActive,
+            customer.CreatedAt,
+            customer.UpdatedAt,
+            customer.IsComplete,
+            // Spec 2026-10-11 §4.2: la ficha y la modal se dibujan con un solo GET. El listado y el Excel no las
+            // piden y pasan una colección vacía.
+            tags,
+            customer.ToConsentDto(),
+            customer.InstagramUsername,
+            PersonType: customer.PersonType?.ToWireValue(),
+            WithholdingTaxRates: withholdingTaxRates);
+    }
+
+    private const string RetefuenteType = "Retefuente";
+
+    // Del id guardado a lo que la ficha pinta. Un id que el catálogo ya no devuelve no puede pasar (la tasa «en uso» no se
+    // desactiva ni se borra), pero si pasara, se prefiere omitirlo a tirar la ficha entera. Orden estable: país, tipo, nombre.
+    private static CustomerWithholdingTaxRateDto[] ToWithholdingDtos(
+        Customer customer, IReadOnlyDictionary<Guid, CustomerTaxRateRef> taxRatesById) =>
+        [.. customer.WithholdingTaxRateIds
+            .Where(taxRatesById.ContainsKey)
+            .Select(id => taxRatesById[id])
+            .OrderBy(rate => rate.Country, StringComparer.Ordinal)
+            .ThenBy(rate => rate.Type, StringComparer.Ordinal)
+            .ThenBy(rate => rate.Name, StringComparer.Ordinal)
+            .Select(rate => new CustomerWithholdingTaxRateDto(
+                rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage, rate.IsActive))];
+
+    /// <summary>
+    /// Las tasas de todos los clientes dados, con una sola consulta al catálogo (el listado y el Excel no pueden ir de a una).
+    /// </summary>
+    public static Task<IReadOnlyDictionary<Guid, CustomerTaxRateRef>> FindTaxRatesAsync(
+        ICustomerTaxRateLookup taxRateLookup,
+        Guid tenantId,
+        IEnumerable<Customer> customers,
+        CancellationToken cancellationToken) =>
+        taxRateLookup.FindManyAsync(
+            tenantId,
+            [.. customers.SelectMany(customer => customer.WithholdingTaxRateIds).Distinct()],
+            cancellationToken);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
@@ -132,6 +167,7 @@ internal static class CustomerMapping
         ICustomerGeographyLookup geographyLookup,
         IClientClassificationRepository classificationRepository,
         ICustomerTagRepository tagRepository,
+        ICustomerTaxRateLookup taxRateLookup,
         CancellationToken cancellationToken)
     {
         // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
@@ -156,7 +192,9 @@ internal static class CustomerMapping
             .Select(item => item.ToDto())
             .ToArray();
 
-        return customer.ToDto(city, classification, citiesById, tags);
+        var taxRatesById = await FindTaxRatesAsync(taxRateLookup, customer.TenantId, [customer], cancellationToken);
+
+        return customer.ToDto(city, classification, citiesById, tags, taxRatesById);
     }
 
     /// <summary>

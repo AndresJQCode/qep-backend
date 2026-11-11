@@ -238,6 +238,9 @@ public sealed class PosCustomerLookupTests
         public Task<bool> AnyWithClassificationAsync(
             Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
             Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
 

@@ -427,7 +427,6 @@ public sealed class CustomerProvisioning(
             cityId,
             cityName,
             data.ClassificationId,
-            false, // interino hasta la Tarea 8
             customer.VatSurplus);
     }
 
@@ -543,7 +542,6 @@ public sealed class CustomerProvisioning(
             data.CityId,
             data.CityName,
             data.ClassificationId,
-            WithRetention: false,
             VatSurplus: false);
 
     // CustomerWriteRules ya no exige la ciudad (spec 2026-11-09): la exige la política del tenant. Una venta externa sin

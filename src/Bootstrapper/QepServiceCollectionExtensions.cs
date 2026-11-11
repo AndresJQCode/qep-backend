@@ -1528,6 +1528,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
         // Impuestos por tipo (spec 2026-11-10 §7.2): Catalog verifica el país de una tasa contra las empresas del tenant.
         services.AddScoped<ITaxRateCountrySource, TaxRateCountrySource>();
+        // Impuestos por tipo (spec 2026-11-10 §7.4): Customers valida y pinta las retenciones de un cliente contra el
+        // catálogo, y Catalog sabe si una tasa está asignada a algún cliente. Dos puertos, un adaptador por lado.
+        services.AddScoped<ICustomerTaxRateLookup, CustomerTaxRateLookup>();
+        services.AddScoped<ITaxRateCustomerUsage, TaxRateCustomerUsage>();
         // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
         // lo usan crear, guardar y previsualizar la cotización y el pedido.
         services.AddScoped<ShippingResolver>();

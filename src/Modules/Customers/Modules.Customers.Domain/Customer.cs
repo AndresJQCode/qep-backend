@@ -842,8 +842,6 @@ public sealed class Customer
         }
     }
 
-    // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
-    // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.
     /// <summary>
     /// Reemplaza las tasas de retención del cliente. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
     /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio.
@@ -876,6 +874,8 @@ public sealed class Customer
         return true;
     }
 
+    // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
+    // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.
     private void Touch(DateTimeOffset occurredAt)
     {
         Version++;

@@ -37,7 +37,6 @@ public sealed class QuotationCustomerAddressRefTests
             new CustomerCommercialInfo
             {
                 ClassificationId = new ClientClassificationId(Guid.Parse("01900000-0000-7000-8000-000000000020")),
-                WithRetention = false,
                 VatSurplus = false
             },
             Now);

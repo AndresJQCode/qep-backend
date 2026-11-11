@@ -82,6 +82,7 @@ public sealed class ListCustomersHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerTaxRateLookup taxRateLookup,
     IExecutionContext executionContext,
     IValidator<ListCustomersQuery> validator)
     : IQueryHandler<ListCustomersQuery, CustomerPage>
@@ -177,6 +178,10 @@ public sealed class ListCustomersHandler(
         var classificationsById = classifications.ToDictionary(
             classification => classification.Id);
 
+        // Una sola consulta al catálogo para toda la página, no una por cliente.
+        var taxRatesById = await CustomerMapping.FindTaxRatesAsync(
+            taxRateLookup, tenantId, customers, cancellationToken);
+
         var items = new List<CustomerDto>(customers.Count);
         foreach (var customer in customers)
         {
@@ -191,7 +196,7 @@ public sealed class ListCustomersHandler(
                         $"'{customer.Id}' was not found.");
             }
 
-            items.Add(customer.ToDto(city, classification, citiesById, []));
+            items.Add(customer.ToDto(city, classification, citiesById, [], taxRatesById));
         }
 
         return items;

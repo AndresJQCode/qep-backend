@@ -329,6 +329,21 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
                     customer.ClassificationId == classificationId,
                 cancellationToken);
 
+    // La tabla de asignaciones tiene el índice (tenant_id, tax_rate_id) justo para esta pregunta. Sin filtro por fusionado:
+    // la ficha de un fusionado sigue leyéndose y pinta sus tasas.
+    public Task<bool> AnyWithTaxRateAsync(
+        Guid tenantId,
+        Guid taxRateId,
+        CancellationToken cancellationToken) =>
+        dbContext.Customers
+            .AsNoTracking()
+            .AnyAsync(
+                customer =>
+                    customer.TenantId == tenantId &&
+                    EF.Property<List<CustomerTaxRate>>(customer, "_withholdingTaxRates")
+                        .Any(rate => rate.TaxRateId == taxRateId),
+                cancellationToken);
+
     public async Task<IReadOnlyDictionary<(IdentificationType Type, string Number), CustomerId>>
         FindExistingIdentificationsAsync(
             Guid tenantId,

@@ -305,7 +305,8 @@ public static class CustomerEndpoints
             survivor.MarketingConsent,
             survivor.MergedInto,
             survivor.PersonType,
-            result.DroppedTags));
+            result.DroppedTags,
+            survivor.WithholdingTaxRates));
     }
 
     private static async Task<IResult> CreateCustomerAsync(
@@ -328,9 +329,9 @@ public static class CustomerEndpoints
                 request.CityId,
                 request.CityName,
                 request.ClassificationId,
-                request.WithRetention,
                 request.VatSurplus,
-                request.PersonType),
+                request.PersonType,
+                request.WithholdingTaxRateIds),
             cancellationToken);
 
         return Results.Created(
@@ -360,9 +361,9 @@ public static class CustomerEndpoints
                 request.CityId,
                 request.CityName,
                 request.ClassificationId,
-                request.WithRetention,
                 request.VatSurplus,
-                request.PersonType),
+                request.PersonType,
+                request.WithholdingTaxRateIds),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -587,7 +588,8 @@ public static class CustomerEndpoints
         customer.Tags,
         customer.MarketingConsent,
         customer.MergedInto,
-        customer.PersonType);
+        customer.PersonType,
+        customer.WithholdingTaxRates);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
