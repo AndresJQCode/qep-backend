@@ -42,7 +42,7 @@ public sealed class OrderDraftBuilderPersonTypeTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>
             {
                 [CompanyId] = new(
-                    CompanyId, "Mi empresa", "800111222", "NIT", true, null, null,
+                    CompanyId, "Mi empresa", "800111222", "NIT", "CO", true, null, null,
                     [new QuotationCompanyAccountRef("Bancolombia", "7542", "COP")])
             }),
             new StubQuotationProductPricingLookup(new QuotationVariantPricingRef(

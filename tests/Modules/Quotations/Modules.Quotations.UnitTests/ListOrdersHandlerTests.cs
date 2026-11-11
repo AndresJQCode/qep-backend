@@ -285,7 +285,7 @@ public sealed class ListOrdersHandlerTests
         Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null, defaultCurrency: "COP",
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [], AdvisorId, Now);
 
     // Un pedido manual con una línea cuyo precio con IVA da el total pedido: 2 unidades a total/2.
     private static Order NewRow(string orderNumber, Guid clientId, decimal total = 23_800m) =>

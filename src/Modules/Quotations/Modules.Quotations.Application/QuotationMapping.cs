@@ -27,7 +27,9 @@ internal static class QuotationMapping
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
         quotation.BillingUsesBusinessName,
-        quotation.PartyWithRetention,
+        // Interino hasta la Tarea 13 (contrato): con parte propia, si hay algún selector elegido; nunca null
+        // con parte propia, porque el frontend viejo bloquea la conversión con null.
+        quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
         quotation.PartyVatSurplus,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
@@ -157,6 +159,7 @@ internal static class QuotationMapping
                 request.BillingUsesBusinessName,
                 request.IsStorePickup,
                 request.BillsToFinalConsumer,
+                // Lo lee sólo el pedido (Order, hasta la Tarea 12): la cotización lo ignora.
                 request.BillingWithRetention,
                 request.BillingVatSurplus);
 

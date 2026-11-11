@@ -170,7 +170,7 @@ public sealed class PreviewNewQuotationHandlerTests
         new(
             new StubQuotationRepository(Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, new MemberId(MembershipId),
-                null, null, null, QuotationParties.Empty, null, "COP", false, false,
+                null, null, null, QuotationParties.Empty, null, "COP", false, [],
                 new MemberId(MembershipId), Now)),
             new NoOpQuotationsUnitOfWork(),
             new NoOpQuotationAuditPublisher(),

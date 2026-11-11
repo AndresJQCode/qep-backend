@@ -342,7 +342,8 @@ public sealed record QuotationHeaderSnapshot(
         quotation.Currency,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
-        quotation.PartyWithRetention,
+        // Interino hasta la Tarea 15, que compara los selectores: si hay alguno elegido con parte propia.
+        quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
         quotation.PartyVatSurplus,
         quotation.GlobalScaleFloor,
         quotation.IsRetail,

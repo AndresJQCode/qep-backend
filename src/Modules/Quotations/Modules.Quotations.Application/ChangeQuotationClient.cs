@@ -68,8 +68,9 @@ public sealed class ChangeQuotationClientHandler(
         var now = clock.UtcNow;
         quotation.ChangeClient(
             command.ClientId,
-            customer.WithRetention,
             customer.VatSurplus,
+            // Interino hasta la Tarea 13 del plan de impuestos por tipo, que recopia las tasas del cliente nuevo.
+            [],
             updatedBy,
             now);
 

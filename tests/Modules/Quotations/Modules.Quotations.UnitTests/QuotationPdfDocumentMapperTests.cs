@@ -439,7 +439,7 @@ public sealed class QuotationPdfDocumentMapperTests
     {
         var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123", "COP");
         var company = new QuotationCompanyRef(
-            account.CompanyId, "Empresa", "B12345678", "NIF", true, null, null, []);
+            account.CompanyId, "Empresa", "B12345678", "NIF", "ES", true, null, null, []);
 
         Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
         Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);

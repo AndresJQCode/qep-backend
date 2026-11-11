@@ -534,10 +534,11 @@ public sealed class SendQuotationHandlerTests
             billing is null
                 ? QuotationParties.Empty
                 : new QuotationParties(billing, null),
-            billingAccount: null,
+            // Enviar exige empresa facturadora (spec impuestos por tipo §7.7).
+            OrderBuilders.BillingAccount,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
         quotation.AddItem(

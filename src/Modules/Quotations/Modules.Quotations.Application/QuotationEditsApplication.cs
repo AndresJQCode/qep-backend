@@ -27,7 +27,6 @@ internal static class QuotationEditsApplication
         Quotation quotation,
         IQuotationEdits edits,
         Guid tenantId,
-        IQuotationCustomerLookup customerLookup,
         IQuotationCompanyLookup companyLookup,
         IQuotationProductPricingLookup pricingLookup,
         IQuotationSettingsStore settingsStore,
@@ -37,14 +36,6 @@ internal static class QuotationEditsApplication
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
-        // — ver Quotation.RefreshCustomerTaxProfile. Una sola vez para todo el guardado.
-        var customer = await customerLookup.FindAsync(tenantId, quotation.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
-
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
             companyLookup, tenantId, edits.BillingAccount, cancellationToken);
 

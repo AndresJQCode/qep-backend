@@ -60,8 +60,8 @@ public sealed class QuotationPricingRecalculationTests
                 Currency = currency
             },
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 

@@ -1304,6 +1304,7 @@ internal static class OrderBuilders
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     public static Order Pending(

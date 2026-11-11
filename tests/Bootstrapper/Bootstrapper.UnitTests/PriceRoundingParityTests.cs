@@ -36,7 +36,7 @@ public sealed class PriceRoundingParityTests
 
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), Advisor, null, null, null,
-            QuotationParties.Empty, null, currency, false, false, Advisor, Now);
+            QuotationParties.Empty, null, currency, false, [], Advisor, Now);
         quotation.UsePriceRounding(rule, Now);
         quotation.AddItem(QuotationItemId.New(), variant, variant, quantity, price, discount, 0, Advisor, Now);
         var quotationItem = Assert.Single(quotation.Items);

@@ -37,7 +37,7 @@ public sealed class BillingPersonTypeRequirementTests
         return Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null, parties,
-            null, "COP", false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
+            null, "COP", false, [], new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
     }
 
     [Fact]

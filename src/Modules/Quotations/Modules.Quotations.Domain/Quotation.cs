@@ -31,6 +31,8 @@ public sealed class Quotation
 
     private readonly List<QuotationParty> _parties = [];
 
+    private readonly List<DocumentWithholding> _withholdings = [];
+
     // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
     // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
     private int? _priceRoundingDecimals;
@@ -55,11 +57,12 @@ public sealed class Quotation
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
         string defaultCurrency,
-        bool customerWithRetention,
         bool customerVatSurplus,
+        IReadOnlyList<WithholdingRate> customerWithholdings,
         MemberId createdBy,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(customerWithholdings);
         Id = id;
         TenantId = tenantId;
         QuotationNumber = NormalizeQuotationNumber(quotationNumber);
@@ -77,14 +80,14 @@ public sealed class Quotation
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
-        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // The billing account rules when there is one; otherwise the tenant default, read and
         // normalised against the catalogue by CreateQuotationHandler (this assembly cannot see it).
         Currency = BillingAccount?.Currency ?? defaultCurrency;
-        CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
+        // La foto del cliente, de todos sus países (D16); los selectores de facturación propia nacen vacíos.
+        ReplaceWithholdings(WithholdingSource.Customer, customerWithholdings);
         CreatedBy = createdBy;
         UpdatedAt = occurredAt;
         Version = 1;
@@ -162,24 +165,16 @@ public sealed class Quotation
     /// lo facturado, no lo cobrado en efectivo (ver <see cref="NetTotal"/>).</summary>
     public decimal Total { get; private set; }
 
-    /// <summary>Copia de <c>Customer.WithRetention</c>, resuelta al crear la cotización y
-    /// vuelta a tomar del cliente maestro mientras sigue editable (<see cref="QuotationStatus.Draft"/>/
-    /// <see cref="QuotationStatus.Sent"/>, ver <see cref="RefreshCustomerTaxProfile"/>) — a
-    /// diferencia de los overrides de facturación/entrega de abajo (una decisión manual de
-    /// quien cotiza), esto es un hecho del cliente que puede cambiar, y no un valor a congelar
-    /// a propósito. Se fija tal cual quedó una vez Voided o Expired. La usa
-    /// <see cref="RecalculateTotals"/> para <see cref="RetentionAmount"/>.</summary>
-    public bool CustomerWithRetention { get; private set; }
-
-    /// <summary>Igual criterio que <see cref="CustomerWithRetention"/> pero para
-    /// <c>Customer.VatSurplus</c>. La usa <see cref="RecalculateTotals"/> para eximir de IVA a
-    /// esta cotización entera.</summary>
+    /// <summary>Copia de <c>Customer.VatSurplus</c>, congelada al crear la cotización como las tasas del
+    /// cliente (spec impuestos por tipo D24): editar al cliente después no la mueve. Sólo la recopia
+    /// <see cref="ChangeClient"/>. La usa <see cref="RecalculateTotals"/> para eximir de IVA a esta
+    /// cotización entera.</summary>
     public bool CustomerVatSurplus { get; private set; }
 
-    /// <summary>Retención en la fuente: <c>round(Subtotal * 0.025)</c> cuando
-    /// <see cref="AppliesRetention"/>, si no 0 (también 0 en USD). Informativo hacia <see cref="Total"/> (que
-    /// sigue siendo lo facturado) pero resta hacia <see cref="NetTotal"/> — es lo que el cliente
-    /// le retiene al vendedor, no algo que la cotización deje de facturar.</summary>
+    /// <summary>La suma de las retenciones aplicadas (<see cref="AppliedWithholdings"/>), 0 si no aplica
+    /// ninguna. Informativo hacia <see cref="Total"/> (que sigue siendo lo facturado) pero resta hacia
+    /// <see cref="NetTotal"/> — es lo que el cliente le retiene al vendedor, no algo que la cotización deje
+    /// de facturar.</summary>
     public decimal RetentionAmount { get; private set; }
 
     /// <summary>Total - RetentionAmount: lo que efectivamente se cobra en efectivo. Igual a
@@ -343,40 +338,46 @@ public sealed class Quotation
     /// manda las dos cosas dice dos nombres distintos para la misma factura, y elegir uno en
     /// silencio escondería el error de quien lo mandó.
     ///
-    /// Apaga la retención y el excedente de IVA (<see cref="AppliesRetention"/>,
-    /// <see cref="AppliesVatSurplus"/>) sin tocar <see cref="CustomerWithRetention"/> ni
-    /// <see cref="CustomerVatSurplus"/>: desmarcarlo los restituye sin volver a consultar al
-    /// cliente.
+    /// Apaga las retenciones y el excedente de IVA (<see cref="AppliedWithholdings"/>,
+    /// <see cref="AppliesVatSurplus"/>) sin tocar la foto de tasas ni <see cref="CustomerVatSurplus"/>:
+    /// desmarcarlo los restituye sin volver a consultar al cliente.
     /// </summary>
     public bool BillsToFinalConsumer { get; private set; }
 
-    /// <summary>Si quien recibe la factura practica retención en la fuente, cuando
-    /// <see cref="Billing"/> trae datos propios — nadie más lo sabe con datos propios, así que se
-    /// pregunta al armar la cotización (<see cref="QuotationParties.BillingWithRetention"/>). Null
-    /// mientras <see cref="Billing"/> sigue los del cliente (ahí manda
-    /// <see cref="CustomerWithRetention"/>) o mientras no se contestó. Es lo que usa
-    /// <see cref="AppliesRetention"/> cuando hay parte propia.</summary>
-    public bool? PartyWithRetention { get; private set; }
-
-    /// <summary>Mismo criterio que <see cref="PartyWithRetention"/> pero para el excedente de IVA
-    /// (<see cref="QuotationParties.BillingVatSurplus"/> / <see cref="CustomerVatSurplus"/>).</summary>
+    /// <summary>Si quien recibe la factura tiene excedente de IVA, cuando <see cref="Billing"/> trae datos
+    /// propios — nadie más lo sabe con datos propios, así que se pregunta al armar la cotización
+    /// (<see cref="QuotationParties.BillingVatSurplus"/>). Null mientras <see cref="Billing"/> sigue los del
+    /// cliente (ahí manda <see cref="CustomerVatSurplus"/>) o mientras no se contestó.</summary>
     public bool? PartyVatSurplus { get; private set; }
 
-    /// <summary>Si la retención en la fuente se aplica a esta cotización. Con datos propios de
-    /// facturación manda lo que se contestó ahí (<see cref="PartyWithRetention"/>, false mientras
-    /// no se conteste); con los datos del cliente, manda <see cref="CustomerWithRetention"/>. En
-    /// ambos casos, no a consumidor final, y nunca fuera de COP: ahí el IVA no se discrimina
-    /// (<see cref="QuotationItem.TaxAmount"/>), así que no hay base sin IVA sobre la cual retener
-    /// (owner, 2026-10-14). Es lo que usa <see cref="RecalculateTotals"/>.</summary>
-    public bool AppliesRetention =>
-        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
-        && !BillsToFinalConsumer
-        && QuotationItem.ItemizesTaxIn(Currency);
+    /// <summary>
+    /// La foto de las tasas de retención (spec impuestos por tipo §7.5, D17): las del cliente
+    /// (<see cref="WithholdingSource.Customer"/>, copiadas al crear y sólo recopiadas por
+    /// <see cref="ChangeClient"/>) y las de los selectores de facturación propia
+    /// (<see cref="WithholdingSource.Billing"/>, <see cref="SetBillingWithholdings"/>). Las dos fuentes
+    /// conviven: pasar de un modo de facturación al otro no borra la del otro modo. Cada fila guarda lo que
+    /// dio el último recálculo.
+    /// </summary>
+    public IReadOnlyCollection<DocumentWithholding> Withholdings => _withholdings;
 
-    /// <summary>Si el excedente de IVA exime a esta cotización, con el mismo criterio de fuente
-    /// que <see cref="AppliesRetention"/> pero para <see cref="PartyVatSurplus"/> /
-    /// <see cref="CustomerVatSurplus"/>. Es lo que usa <see cref="RecalculateTotals"/> y lo que
-    /// tiene que leer quien imprima "exento".</summary>
+    /// <summary>Las tasas del cliente, en el orden en que llegaron.</summary>
+    public IEnumerable<DocumentWithholding> CustomerWithholdings => WithholdingsOf(WithholdingSource.Customer);
+
+    /// <summary>Lo elegido en los selectores de facturación propia, en el orden en que llegó.</summary>
+    public IEnumerable<DocumentWithholding> BillingWithholdings => WithholdingsOf(WithholdingSource.Billing);
+
+    /// <summary>Las retenciones que aplicaron en el último recálculo, de la fuente vigente: los selectores
+    /// con parte de facturación propia, las del cliente si no.</summary>
+    public IEnumerable<DocumentWithholding> AppliedWithholdings =>
+        WithholdingsOf(ActiveWithholdingSource).Where(withholding => withholding.Applied);
+
+    private WithholdingSource ActiveWithholdingSource =>
+        Billing is not null ? WithholdingSource.Billing : WithholdingSource.Customer;
+
+    /// <summary>Si el excedente de IVA exime a esta cotización: con datos propios de facturación manda
+    /// <see cref="PartyVatSurplus"/> (false mientras no se conteste), con los del cliente
+    /// <see cref="CustomerVatSurplus"/>; nunca a consumidor final. Es lo que usa
+    /// <see cref="RecalculateTotals"/> y lo que tiene que leer quien imprima "exento".</summary>
     public bool AppliesVatSurplus =>
         (Billing is not null ? PartyVatSurplus ?? false : CustomerVatSurplus) && !BillsToFinalConsumer;
 
@@ -415,8 +416,8 @@ public sealed class Quotation
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
         string defaultCurrency,
-        bool customerWithRetention,
         bool customerVatSurplus,
+        IReadOnlyList<WithholdingRate> customerWithholdings,
         MemberId createdBy,
         DateTimeOffset occurredAt) =>
         new(
@@ -431,8 +432,8 @@ public sealed class Quotation
             parties,
             billingAccount,
             defaultCurrency,
-            customerWithRetention,
             customerVatSurplus,
+            customerWithholdings,
             createdBy,
             occurredAt);
 
@@ -677,10 +678,64 @@ public sealed class Quotation
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
-        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
+        // Las retenciones no se tocan acá: volver a los datos del cliente deja guardados los selectores
+        // (spec §7.5, «no borra la foto del otro modo»), y los selectores los fija SetBillingWithholdings.
         ApplyBillingAccount(billingAccount, repricing, occurredAt);
         Touch(updatedBy, occurredAt);
+    }
+
+    /// <summary>
+    /// Fija lo elegido en los selectores de retención de la facturación propia (spec §7.5, D23), ya resuelto
+    /// contra el catálogo por la aplicación (<c>WithholdingSelection</c>, plan P11). El agregado vuelve a
+    /// exigir lo que guarda: parte de facturación propia, empresa facturadora, cada tasa de su país y una por
+    /// tipo.
+    ///
+    /// Una lista vacía siempre se acepta y vacía los selectores (ruling C9): un borrador con facturación
+    /// propia se puede guardar antes de elegir la empresa, y sin empresa no hay selectores.
+    ///
+    /// Devuelve si cambió algo; si no, no toca la versión.
+    /// </summary>
+    public bool SetBillingWithholdings(
+        IReadOnlyList<WithholdingRate> rates,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(rates);
+        EnsureEditable();
+        if (rates.Count > 0)
+        {
+            EnsureSelectableWithholdings(rates);
+        }
+
+        if (BillingWithholdings.Select(withholding => withholding.Rate).SequenceEqual(rates))
+        {
+            return false;
+        }
+
+        ReplaceWithholdings(WithholdingSource.Billing, rates);
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates)
+    {
+        // Sin parte propia no hay selectores, y sin empresa no hay país contra el cual validarlos.
+        if (Billing is null
+            || BillingAccount?.Country is not { } country
+            || rates.Any(rate => !string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.withholding_tax_rate_invalid",
+                "Every selected withholding tax rate must belong to the billing company's country.");
+        }
+
+        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.withholding_type_repeated",
+                "Only one withholding tax rate per type can be selected.");
+        }
     }
 
     /// <summary>
@@ -742,19 +797,21 @@ public sealed class Quotation
     /// en varios lugares. Se habilita a pedido, y lo que arrastra está acá y no repartido en el
     /// caso de uso — las dos partes vuelven a "los datos del cliente" (las que había copiaron al
     /// cliente viejo: dejarlas sería facturarle a uno y entregarle a otro sin que nadie lo pidiera)
-    /// y el snapshot de retención/excedente de IVA pasa a ser el del cliente nuevo, así que los
-    /// totales cambian.
+    /// y la foto de tasas de retención y el excedente de IVA pasan a ser los del cliente nuevo (spec
+    /// impuestos por tipo §7.6, la única recopia del cliente en una cotización), así que los totales
+    /// cambian. Los selectores de facturación propia se vacían: se eligieron para otro cliente.
     ///
     /// Lo que **no** cambia: el número de cotización y sus líneas de producto. El número ya se
     /// emitió una vez y las líneas no dependen del cliente.
     /// </summary>
     public void ChangeClient(
         Guid clientId,
-        bool customerWithRetention,
         bool customerVatSurplus,
+        IReadOnlyList<WithholdingRate> customerWithholdings,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(customerWithholdings);
         EnsureEditable();
 
         ClientId = EnsureValidClientId(clientId);
@@ -762,14 +819,14 @@ public sealed class Quotation
         // El cliente nuevo puede no ser una empresa: la eleccion de nombre vuelve al default.
         BillingUsesBusinessName = false;
         // Facturar a consumidor final se decidió mirando al cliente anterior: el nuevo arranca
-        // con la facturación por defecto, y con su retención/excedente de IVA aplicados.
+        // con la facturación por defecto, y con sus retenciones y su excedente de IVA aplicados.
         BillsToFinalConsumer = false;
-        // Las partes se resetean a Empty arriba: sin fila de facturación propia, estos dos
-        // vuelven a "sin contestar" — lo que responda el cliente nuevo lo trae CustomerWithRetention.
-        PartyWithRetention = null;
+        // Las partes se resetean a Empty arriba: sin fila de facturación propia, el excedente vuelve a
+        // "sin contestar" — lo que responda el cliente nuevo lo trae CustomerVatSurplus.
         PartyVatSurplus = null;
-        CustomerWithRetention = customerWithRetention;
         CustomerVatSurplus = customerVatSurplus;
+        ReplaceWithholdings(WithholdingSource.Customer, customerWithholdings);
+        ReplaceWithholdings(WithholdingSource.Billing, []);
         Touch(updatedBy, occurredAt);
     }
 
@@ -858,6 +915,16 @@ public sealed class Quotation
             throw new QuotationsDomainException(
                 "quotation.quotation.valid_until_required",
                 "A quotation must have a validity date before it can be sent.");
+        }
+
+        // Sin empresa facturadora no hay país, y sin país no se sabe qué retenciones aplican (spec impuestos
+        // por tipo §7.7): la cotización que le llega al cliente tiene que decir lo que va a cobrar. Guardar un
+        // borrador sin ella sigue permitido.
+        if (BillingAccount is null)
+        {
+            throw new QuotationsDomainException(
+                "quotation.billing.account_required",
+                "A quotation must have a billing account before it can be sent.");
         }
 
         // Una cotización que le llega al cliente facturada a otra persona sin su documento es una
@@ -964,15 +1031,15 @@ public sealed class Quotation
         // no se puede (owner, 2026-09-26). Ver EnsureBillingIdentified.
         EnsureBillingIdentified();
 
-        // Con datos propios de facturación nadie más dice si hay retención o excedente de IVA:
-        // null es "todavía no se contestó", y un pedido no puede nacer con esa pregunta abierta
-        // (a diferencia de con los datos del cliente, donde CustomerWithRetention/VatSurplus ya
-        // la responden).
-        if (Billing is not null && (PartyWithRetention is null || PartyVatSurplus is null))
+        // Con datos propios de facturación nadie más dice si hay excedente de IVA: null es "todavía no se
+        // contestó", y un pedido no puede nacer con esa pregunta abierta (con los datos del cliente,
+        // CustomerVatSurplus ya la responde). Las retenciones no se preguntan: selectores vacíos son una
+        // respuesta válida y no bloquean (spec impuestos por tipo §7.8).
+        if (Billing is not null && PartyVatSurplus is null)
         {
             throw new QuotationsDomainException(
                 "quotation.billing.tax_profile_required",
-                "The billing party must state whether it applies withholding tax and VAT surplus before converting to an order.");
+                "The billing party must state whether it has VAT surplus before converting to an order.");
         }
     }
 
@@ -990,35 +1057,7 @@ public sealed class Quotation
         && (Billing is not { } billing || billing.IsComplete)
         && (Shipping is not { } shipping || shipping.IsComplete)
         && !BillingLacksIdentification
-        && (Billing is null || (PartyWithRetention is not null && PartyVatSurplus is not null));
-
-    /// <summary>
-    /// Vuelve a tomar del cliente maestro <see cref="CustomerWithRetention"/> y
-    /// <see cref="CustomerVatSurplus"/> mientras la cotización sigue editable (Draft o Sent).
-    /// Silencioso a propósito (no valida ni lanza) para poder llamarse también desde una
-    /// lectura: una vez Voided, Expired o Converted la cotización queda tal cual quedó, sin
-    /// excepción, y nada la vuelve a tocar. En Converted eso importa doble: sus totales son los
-    /// que heredó el pedido.
-    ///
-    /// **No pasa por <c>Touch</c>, y eso es carga estructural, no un olvido:** mover
-    /// <see cref="UpdatedAt"/> acá dejaría <see cref="HasChangesSinceSent"/> en <c>true</c> por
-    /// el solo hecho de abrir la cotización después de que su cliente cambió de perfil fiscal,
-    /// y el gate de <see cref="EnsureConvertibleToOrder"/> pediría reenviarla sin que nadie la
-    /// haya editado.
-    /// </summary>
-    public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)
-    {
-        if (Status is not (QuotationStatus.Draft or QuotationStatus.Sent)) return;
-        if (CustomerWithRetention == customerWithRetention &&
-            CustomerVatSurplus == customerVatSurplus)
-        {
-            return;
-        }
-
-        CustomerWithRetention = customerWithRetention;
-        CustomerVatSurplus = customerVatSurplus;
-        RecalculateTotals();
-    }
+        && (Billing is null || PartyVatSurplus is not null);
 
     /// <summary>
     /// Reescribe el descuento de varias líneas de una sola vez y rehace los totales.
@@ -1163,6 +1202,33 @@ public sealed class Quotation
     private QuotationParty? FindParty(QuotationPartyRole role) =>
         _parties.FirstOrDefault(party => party.Role == role);
 
+    private IEnumerable<DocumentWithholding> WithholdingsOf(WithholdingSource source) =>
+        _withholdings.Where(withholding => withholding.Source == source).OrderBy(withholding => withholding.Position);
+
+    // Reemplaza la fuente entera conservando las filas que ya existen en su posición (cambian de valores, no de
+    // identidad): borrar y volver a agregar la misma clave (cotización, fuente, posición) en un agregado ya
+    // rastreado no es algo que EF traduzca bien. La posición es el orden de llegada.
+    private void ReplaceWithholdings(WithholdingSource source, IReadOnlyList<WithholdingRate> rates)
+    {
+        var existing = WithholdingsOf(source).ToList();
+        for (var position = 0; position < rates.Count; position++)
+        {
+            if (position < existing.Count)
+            {
+                existing[position].Replace(rates[position]);
+            }
+            else
+            {
+                _withholdings.Add(new DocumentWithholding(source, (short)position, rates[position]));
+            }
+        }
+
+        foreach (var extra in existing.Skip(rates.Count))
+        {
+            _withholdings.Remove(extra);
+        }
+    }
+
     private QuotationItem FindItem(QuotationItemId itemId) =>
         _items.FirstOrDefault(item => item.Id == itemId)
             ?? throw new QuotationsDomainException(
@@ -1179,13 +1245,21 @@ public sealed class Quotation
 
     // La aritmética vive en DocumentTotals (spec 2026-10-15 §4.3): el pedido suma con la misma
     // regla, y un cambio de redondeo cambia los dos documentos a la vez.
+    // Las retenciones: la regla de candidatas (spec §7.5 pasos 1–4) vive en WithholdingCandidates, compartida
+    // con el pedido; cada fila de la foto se liquida otra vez, también las que no aplican.
     private void RecalculateTotals()
     {
+        var activeSource = ActiveWithholdingSource;
         var totals = DocumentTotals.Compute(
             _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
-            AppliesRetention ? [WithholdingRate.LegacyRetefuente] : []);
+            WithholdingCandidates.For(
+                WithholdingsOf(activeSource).Select(withholding => withholding.Rate),
+                BillsToFinalConsumer,
+                BillingAccount,
+                Currency));
+        DocumentWithholding.SettleAll(_withholdings, activeSource, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;

@@ -14,8 +14,9 @@ namespace Modules.Quotations.Domain;
 /// referencia entre módulos.
 ///
 /// Nulo es válido y es el estado inicial: una cotización en borrador todavía no eligió con qué
-/// cuenta se cobra, y <c>EnsureSendable</c> no lo exige a propósito. Quien sí lo exige es
-/// <c>EnsureConvertibleToOrder</c>: un pedido tiene que decir a dónde se paga.
+/// cuenta se cobra, y se puede guardar así. Lo exigen <c>EnsureSendable</c> (spec impuestos por tipo
+/// §7.7: sin empresa no hay país, y sin país no se sabe qué retenciones aplican) y
+/// <c>EnsureConvertibleToOrder</c> (un pedido tiene que decir a dónde se paga).
 /// </summary>
 public sealed record QuotationBillingAccount
 {
@@ -28,6 +29,13 @@ public sealed record QuotationBillingAccount
     /// <summary>Código ISO 4217 de tres letras, en mayúsculas.</summary>
     public required string Currency { get; init; }
 
+    /// <summary>
+    /// El país de la empresa (ISO 3166-1 alfa-2, en mayúsculas), congelado con la cuenta (plan P1): decide qué
+    /// retenciones aplican (spec §7.5) y los montos se recalculan en cada edición, sin poder ir a Companies.
+    /// Null en una cuenta armada sin él; ahí no aplica ninguna retención.
+    /// </summary>
+    public string? Country { get; init; }
+
     // Espejan los anchos de companies.company_bank_accounts: esto es una copia de esa fila y no
     // puede aceptar más de lo que el original acepta.
     public const int BankNameMaxLength = 120;
@@ -35,6 +43,8 @@ public sealed record QuotationBillingAccount
     public const int AccountNumberMaxLength = 32;
 
     public const int CurrencyLength = 3;
+
+    public const int CountryLength = 2;
 
     internal QuotationBillingAccount Normalized() => new()
     {
@@ -57,7 +67,8 @@ public sealed record QuotationBillingAccount
             "The billing account number is required.",
             "quotation.billing.account_number_too_long",
             $"The billing account number cannot exceed {AccountNumberMaxLength} characters."),
-        Currency = NormalizeCurrency(Currency)
+        Currency = NormalizeCurrency(Currency),
+        Country = string.IsNullOrWhiteSpace(Country) ? null : Country.Trim().ToUpperInvariant()
     };
 
     private static string NormalizeRequired(

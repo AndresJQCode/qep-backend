@@ -16,6 +16,7 @@ public sealed class OrderTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
@@ -160,7 +161,7 @@ public sealed class OrderTests
                     CityId = Guid.CreateVersion7(),
                 },
                 null, BillingWithRetention: false, BillingVatSurplus: false),
-            Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
@@ -422,7 +423,7 @@ public sealed class OrderTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             }),
-            Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {

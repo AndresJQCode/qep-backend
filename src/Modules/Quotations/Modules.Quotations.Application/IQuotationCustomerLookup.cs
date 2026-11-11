@@ -62,9 +62,10 @@ public interface IQuotationCustomerLookup
 // que el backend pueda mandar la plantilla de Zenvia sin una segunda ida y vuelta al módulo
 // Customers. Phone/Address quedan nullable porque lo son en el agregado `Customer` — el
 // llamador decide qué hacer si faltan (SendQuotation.cs lo trata como "no se puede enviar").
-// WithRetention/VatSurplus se agregan para el snapshot de totales al crear la cotizacion
-// (Quotation.CustomerWithRetention/CustomerVatSurplus): igual criterio que Name/Phone/Address
-// arriba, un pass-through desde Customer para no ir y volver al modulo por dos booleanos.
+// VatSurplus es el excedente de IVA que la cotizacion congela al crearse (Quotation.CustomerVatSurplus):
+// igual criterio que Name/Phone/Address arriba, un pass-through desde Customer. WithRetention ya no es un
+// dato del cliente: el adaptador lo deriva de sus tasas asignadas (alguna Retefuente) y sólo lo lee la
+// respuesta (client.withRetention, para el frontend viejo) y el pedido hasta la Tarea 14.
 // Cuc es nulo en un cliente incompleto (spec 2026-10-10 §6.2); QuotationCustomerEligibility lo rechaza.
 public sealed record QuotationCustomerRef(
     Guid Id,

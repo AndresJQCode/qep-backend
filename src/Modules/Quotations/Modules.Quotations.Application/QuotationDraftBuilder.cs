@@ -75,7 +75,8 @@ public sealed class QuotationDraftBuilder(
             var empty = Quotation.Create(
                 QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
                 validUntil, null, null, QuotationParties.Empty, null, defaultCurrency,
-                customer.WithRetention, customer.VatSurplus, input.AdvisorId, input.Now);
+                // Interino hasta la Tarea 13 del plan de impuestos por tipo, que congela las tasas del cliente.
+                customer.VatSurplus, [], input.AdvisorId, input.Now);
             return new QuotationDraft(empty, customer.Name);
         }
 
@@ -85,10 +86,10 @@ public sealed class QuotationDraftBuilder(
         var quotation = Quotation.Create(
             QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
             validUntil, edits.PaymentMethod, edits.Notes, QuotationParties.Empty, billingAccount, defaultCurrency,
-            customer.WithRetention, customer.VatSurplus, input.AdvisorId, input.Now);
+            customer.VatSurplus, [], input.AdvisorId, input.Now);
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
-            quotation, new ResolvedEdits(edits, validUntil), input.TenantId, customerLookup, companyLookup,
+            quotation, new ResolvedEdits(edits, validUntil), input.TenantId, companyLookup,
             pricingLookup, settingsStore, priceRounding, shippingResolver, input.AdvisorId, input.Now, cancellationToken);
 
         // El resumen del encabezado se ignora a propósito: el encabezado es parte de la creación (§7.4).

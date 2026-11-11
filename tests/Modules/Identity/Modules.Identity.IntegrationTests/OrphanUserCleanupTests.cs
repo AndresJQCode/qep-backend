@@ -821,8 +821,8 @@ public sealed class OrphanUserCleanupTests
             defaultCurrency: "COP",
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             advisor,
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);

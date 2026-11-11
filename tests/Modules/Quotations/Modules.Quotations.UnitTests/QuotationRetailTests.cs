@@ -40,8 +40,8 @@ public sealed class QuotationRetailTests
             QuotationParties.Empty,
             billingAccount,
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 

@@ -43,7 +43,8 @@ internal static class QuotationBillingAccountResolver
             CompanyId = verified.CompanyId,
             BankName = request.BankName,
             AccountNumber = request.AccountNumber,
-            Currency = verified.Currency
+            Currency = verified.Currency,
+            Country = verified.Country
         };
     }
 }

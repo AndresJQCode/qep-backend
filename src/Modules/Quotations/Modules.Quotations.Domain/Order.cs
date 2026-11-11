@@ -1,4 +1,5 @@
 using BuildingBlocks.Domain.Pricing;
+using BuildingBlocks.Domain.Taxes;
 
 namespace Modules.Quotations.Domain;
 
@@ -299,7 +300,9 @@ public sealed class Order
 
     public OrderParty? Shipping => _parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
 
-    /// <summary>Misma regla que <see cref="Quotation.AppliesRetention"/>.</summary>
+    /// <summary>La regla de antes, interina hasta que el pedido congele sus propias tasas (Tarea 12): con parte
+    /// propia manda <see cref="PartyWithRetention"/>, si no <see cref="CustomerWithRetention"/>; nunca a
+    /// consumidor final ni fuera de COP.</summary>
     public bool AppliesRetention =>
         (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
         && !BillsToFinalConsumer
@@ -340,7 +343,9 @@ public sealed class Order
             quotation.PaymentMethod,
             quotation.IsRetail,
             quotation.GlobalScaleFloor,
-            quotation.CustomerWithRetention,
+            // Interino hasta la Tarea 12, que copia la foto de la cotización tal cual: la cotización ya no
+            // guarda los dos booleanos, así que se derivan de sus tasas congeladas.
+            quotation.CustomerWithholdings.Any(withholding => withholding.Type == TaxCountries.RetefuenteType),
             quotation.CustomerVatSurplus);
         var parties = new QuotationParties(
             quotation.Billing?.ToDetails(),
@@ -348,7 +353,7 @@ public sealed class Order
             quotation.BillingUsesBusinessName,
             quotation.IsStorePickup,
             quotation.BillsToFinalConsumer,
-            quotation.PartyWithRetention,
+            quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
             quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
