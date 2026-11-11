@@ -269,10 +269,13 @@ internal static class CustomerWriteDoubles
             IdentificationNumberLookups.Add(numbers);
             return Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>>(
                 Everyone(tenantId)
-                    .Where(item => item.MergedIntoId is null && item.IdentificationNumber is not null && numbers.Contains(item.IdentificationNumber))
+                    .Where(item => (IncludeMergedInNumberLookup || item.MergedIntoId is null) && item.IdentificationNumber is not null && numbers.Contains(item.IdentificationNumber))
                     .GroupBy(item => item.IdentificationNumber!)
                     .ToDictionary(group => group.Key, group => (IReadOnlyList<CustomerId>)group.Select(item => item.Id).ToArray()));
         }
+
+        /// <summary>Para simular la carrera en que una empresa se fusiona entre la búsqueda por número y la lectura de la fila.</summary>
+        public bool IncludeMergedInNumberLookup { get; set; }
 
         /// <summary>Los números que se pidieron en cada <see cref="FindIdsByIdentificationNumberAsync"/>: el lote es uno solo por archivo.</summary>
         public List<IReadOnlyCollection<string>> IdentificationNumberLookups { get; } = [];

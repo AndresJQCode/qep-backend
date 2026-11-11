@@ -192,6 +192,21 @@ public sealed class SendQuotationHandlerTests
         Assert.Equal("quotation.quotation.recipient_invalid", error.Code);
     }
 
+    // Enum.TryParse leería "2" como Contact: el valor numérico tiene que ser el mismo 422 de un nombre desconocido.
+    [Theory]
+    [InlineData("1")]
+    [InlineData("2")]
+    public async Task ANumericRecipientIsRejectedAsInvalid(string recipient)
+    {
+        var harness = NewHandler(billing: BillingParty);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(
+                NewCommand(recipient), TestContext.Current.CancellationToken));
+
+        Assert.Equal("quotation.quotation.recipient_invalid", error.Code);
+    }
+
     // El envio por WhatsApp y la firma de la URL son efectos externos irreversibles: si el
     // agregado no puede pasar a Sent, no se puede haber mandado nada. Sin este guard el cliente
     // recibia la cotizacion y el sistema la dejaba en borrador -- el estado a medias que el

@@ -818,18 +818,17 @@ public sealed class ImportCustomersHandler(
 
     /// <summary>
     /// Los ids que el vínculo bloquea (<see cref="ICustomerRepository.LockForCompanyLinkAsync"/>): los dueños de cada número
-    /// nombrado —las posibles empresas—, los clientes existentes que la fila quiere volver contactos, y los existentes que el
-    /// archivo nombra por el documento que traen. Todo en una sola llamada, que ordena por id.
+    /// nombrado —las posibles empresas— y todos los clientes existentes que el archivo actualiza. Todo en una sola llamada, que ordena por id.
     /// </summary>
     private static Guid[] LockIdsFor(
         List<CandidateRow> candidates, IReadOnlyDictionary<string, IReadOnlyList<CustomerId>> ownersByNumber)
     {
-        var named = candidates.Select(candidate => candidate.CompanyNumber).OfType<string>().ToHashSet();
         var ids = new HashSet<Guid>(ownersByNumber.Values.SelectMany(owners => owners).Select(id => id.Value));
         foreach (var candidate in candidates)
         {
-            if (candidate.TargetId is { } targetId
-                && (candidate.CompanyNumber is not null || (candidate.Number is { } number && named.Contains(number))))
+            // Todo cliente que el archivo actualiza, no sólo los que se vuelven contactos: una operación concurrente que
+            // bloquee estas filas en otro orden (otra importación, una fusión) se serializa con ésta en vez de abrazarse.
+            if (candidate.TargetId is { } targetId)
             {
                 ids.Add(targetId.Value);
             }
@@ -963,6 +962,11 @@ public sealed class ImportCustomersHandler(
             var companyId = elsewhere[0];
             if (!outside.TryGetValue(companyId, out var company))
             {
+                Reject(row, "company_not_found", "No customer in this tenant or in this file has that document number.");
+            }
+            else if (company.IsMerged)
+            {
+                // Como Customer.LinkToCompany: una empresa fusionada ya no existe, ni siquiera para el no-op de abajo.
                 Reject(row, "company_not_found", "No customer in this tenant or in this file has that document number.");
             }
             else if (current?.CompanyId == companyId)

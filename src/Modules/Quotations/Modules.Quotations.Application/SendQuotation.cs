@@ -299,7 +299,10 @@ public sealed class SendQuotationHandler(
             return (QuotationRecipient.Customer, customer.Phone, customer.Name, customer.Id, null);
         }
 
-        if (!Enum.TryParse<QuotationRecipient>(recipient, ignoreCase: true, out var parsed))
+        // Por nombre y no con Enum.TryParse, que también acepta "2" y lo leería como Contact.
+        var name = Enum.GetNames<QuotationRecipient>()
+            .FirstOrDefault(value => string.Equals(value, recipient.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (name is null || !Enum.TryParse<QuotationRecipient>(name, out var parsed))
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.recipient_invalid",
@@ -313,7 +316,7 @@ public sealed class SendQuotationHandler(
 
         if (parsed == QuotationRecipient.Contact)
         {
-            // Ya se resolvió contra el puerto antes del try. Sin él (un valor numérico que Enum.TryParse aceptó) es el mismo 422.
+            // Ya se resolvió contra el puerto antes del try; sin él es el mismo 422.
             var resolved = contact ?? throw new QuotationsDomainException(
                 "quotation.quotation.contact_not_of_client", "The contact does not belong to the client of this document.");
             return (QuotationRecipient.Contact, resolved.Phone, resolved.Name, resolved.Id, resolved.Name);

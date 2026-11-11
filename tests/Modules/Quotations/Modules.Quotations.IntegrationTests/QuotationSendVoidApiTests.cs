@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Modules.Customers.Application;
 using Modules.Quotations.Application;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
@@ -337,6 +339,50 @@ public sealed class QuotationSendVoidApiTests
                 await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         }
 
+        Assert.Empty(factory.WhatsAppSender.Messages);
+        // Rechazado antes de intentar el envío: tampoco deja una línea «SendFailed» en el historial.
+        var history = await client.GetFromJsonAsync<QuotationHistoryResponse>(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/history", TestContext.Current.CancellationToken);
+        Assert.NotNull(history);
+        Assert.DoesNotContain(history.Items, entry => entry.EventType == "SendFailed");
+    }
+
+    [Fact]
+    public async Task AMergedContactIs422ContactNotOfClientAndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, [.. ManagerPermissions, CustomersPermissions.CustomerMerge]);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        var survivorId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura G.");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+
+        // El contacto se fusiona en otro cliente: queda marcado como fusionado y ya no es de la empresa.
+        var customersUrl = $"/api/v1/tenants/{tenantId}/customers";
+        var preview = await client.GetFromJsonAsync<JsonElement>(
+            $"{customersUrl}/{survivorId}/merge-preview?mergedCustomerIds={contactId}", TestContext.Current.CancellationToken);
+        var version = preview.GetProperty("survivor").GetProperty("version").GetInt64();
+        using var merge = new HttpRequestMessage(HttpMethod.Post, $"{customersUrl}/{survivorId}/merge")
+        {
+            Content = JsonContent.Create(new { mergedCustomerIds = new[] { contactId } }),
+        };
+        merge.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        var merged = await client.SendAsync(merge, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, merged.StatusCode);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "quotation.quotation.contact_not_of_client",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         Assert.Empty(factory.WhatsAppSender.Messages);
     }
 

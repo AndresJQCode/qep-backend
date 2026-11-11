@@ -351,6 +351,41 @@ public sealed class ImportCustomersCompanyTests
     }
 
     [Fact]
+    public async Task EveryCustomerTheFileUpdatesIsInTheSingleOrderedLockCall()
+    {
+        var company = Existing("CLI08000001", "Verde SAS", "900111111");
+        var plain = Existing("CLI08000002", "Plano SAS", "900333333");
+        var bed = new Bed(company, plain);
+
+        // La fila 2 actualiza a un cliente sin celda «Empresa» (ni nadie que la nombre): igual entra en el bloqueo.
+        var response = await bed.ImportAsync(
+            Row(2, "Plano SAS", "900333333", cuc: "CLI08000002"),
+            Row(3, "Ana", "1010", "900111111", type: "CC"));
+
+        Assert.Empty(response.Errors);
+        var locked = Assert.Single(bed.Repository.LockCalls);
+        Assert.Contains(plain.Id.Value, locked);
+        Assert.Contains(company.Id.Value, locked);
+    }
+
+    [Fact]
+    public async Task AMergedCompanyIsCompanyNotFoundEvenWhenTheRowIsAlreadyLinkedToIt()
+    {
+        var company = Existing("CLI08000001", "Verde SAS", "900111111");
+        var survivor = Existing("CLI08000002", "Otra SAS", "900222222");
+        var person = Existing("CLI08000003", "Ana", "1010", IdentificationType.Cc);
+        person.LinkToCompany(company, false, CustomerWriteDoubles.Now);
+        CustomerMergePlan.Create(survivor, [company]).MarkMerged(CustomerWriteDoubles.Now);
+        var bed = new Bed(company, survivor, person);
+        bed.Repository.IncludeMergedInNumberLookup = true;
+
+        var response = await bed.ImportAsync(Row(2, "Ana", "1010", "900111111", cuc: "CLI08000003", type: "CC"));
+
+        Assert.Equal("customers.import.row.company_not_found", ErrorOf(response, 2).Code);
+        Assert.Equal(0, response.ImportedCount);
+    }
+
+    [Fact]
     public async Task AFileWithoutAnyCompanyCellNeitherLocksNorOpensATransaction()
     {
         var bed = new Bed();
