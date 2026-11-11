@@ -39,7 +39,8 @@ public sealed class QuotationDraftBuilder(
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
-    ITenantDefaultCurrency tenantDefaultCurrency)
+    ITenantDefaultCurrency tenantDefaultCurrency,
+    IQuotationWithholdingLookup withholdingLookup)
 {
     /// <summary>El número del cálculo previo. El handler lo borra antes de responder.</summary>
     public const string PreviewQuotationNumber = "PREVIEW";
@@ -68,6 +69,11 @@ public sealed class QuotationDraftBuilder(
         // distinta cada día. Y antes de ApplyAsync, porque UpdateDetails con null la borra.
         var validUntil = edits.ValidUntil ?? input.Today.AddDays(DefaultValidityDays);
 
+        // Las tasas del cliente, de todos sus países (D16, D17), con la UVT del hoy del tenant: es la fecha del
+        // documento que nace. Quedan congeladas; sólo ChangeClient las vuelve a copiar.
+        var customerWithholdings = await withholdingLookup.ForCustomerAsync(
+            input.TenantId, input.ClientId, country: null, input.Today, cancellationToken);
+
         // Ruling L1: el contrato de antes, { clientId }, deja exactamente lo de antes —versión 1 incluida—, así
         // que no pasa por UpdateDetails, que sube la versión.
         if (IsOnlyTheClient(edits))
@@ -75,8 +81,7 @@ public sealed class QuotationDraftBuilder(
             var empty = Quotation.Create(
                 QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
                 validUntil, null, null, QuotationParties.Empty, null, defaultCurrency,
-                // Interino hasta la Tarea 13 del plan de impuestos por tipo, que congela las tasas del cliente.
-                customer.VatSurplus, [], input.AdvisorId, input.Now);
+                customer.VatSurplus, customerWithholdings, input.AdvisorId, input.Now);
             return new QuotationDraft(empty, customer.Name);
         }
 
@@ -86,11 +91,13 @@ public sealed class QuotationDraftBuilder(
         var quotation = Quotation.Create(
             QuotationId.New(), input.TenantId, input.QuotationNumber, input.ClientId, input.AdvisorId,
             validUntil, edits.PaymentMethod, edits.Notes, QuotationParties.Empty, billingAccount, defaultCurrency,
-            customer.VatSurplus, [], input.AdvisorId, input.Now);
+            customer.VatSurplus, customerWithholdings, input.AdvisorId, input.Now);
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, new ResolvedEdits(edits, validUntil), input.TenantId, companyLookup,
-            pricingLookup, settingsStore, priceRounding, shippingResolver, input.AdvisorId, input.Now, cancellationToken);
+            pricingLookup, settingsStore, priceRounding, shippingResolver,
+            new QuotationWithholdingContext(withholdingLookup, _ => Task.FromResult(input.Today)),
+            input.AdvisorId, input.Now, cancellationToken);
 
         // El resumen del encabezado se ignora a propósito: el encabezado es parte de la creación (§7.4).
         return new QuotationDraft(quotation, customer.Name) { ItemEdits = outcome.ItemEdits };

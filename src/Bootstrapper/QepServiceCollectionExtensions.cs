@@ -1526,6 +1526,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
         services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
+        // Impuestos por tipo (spec 2026-11-10 §7.5): las retenciones que congela un documento, con las tasas y la UVT de
+        // Catalog y las tasas asignadas al cliente de Customers.
+        services.AddScoped<IQuotationWithholdingLookup, QuotationWithholdingLookup>();
         // Impuestos por tipo (spec 2026-11-10 §7.2): Catalog verifica el país de una tasa contra las empresas del tenant.
         services.AddScoped<ITaxRateCountrySource, TaxRateCountrySource>();
         // Impuestos por tipo (spec 2026-11-10 §7.4): Customers valida y pinta las retenciones de un cliente contra el

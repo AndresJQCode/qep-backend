@@ -806,7 +806,10 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             [],
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
-            quotation.FreightTaxAmount));
+            quotation.FreightTaxAmount,
+            [],
+            [],
+            []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
     // way the real composer does, against the defaults a tenant without settings reads.
@@ -1486,5 +1489,53 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
         }
 
         return all;
+    }
+}
+
+/// <summary>El catálogo de tasas de retención y las asignadas a cada cliente, en memoria. Las fotos salen tal cual:
+/// la resolución de la UVT es del adaptador y se prueba en Bootstrapper.</summary>
+internal sealed class StubQuotationWithholdingLookup : IQuotationWithholdingLookup
+{
+    private readonly Dictionary<Guid, WithholdingRateCandidate> _catalog = [];
+    private readonly Dictionary<Guid, IReadOnlyList<Guid>> _customerRates = [];
+
+    /// <summary>Las fechas con que se preguntó, para probar qué fecha del documento llega.</summary>
+    public List<DateOnly> RequestedDates { get; } = [];
+
+    public StubQuotationWithholdingLookup WithRate(WithholdingRate rate, bool isActive = true, bool withholds = true)
+    {
+        _catalog[rate.TaxRateId] = new WithholdingRateCandidate(rate, isActive, withholds);
+        return this;
+    }
+
+    public StubQuotationWithholdingLookup WithCustomer(Guid customerId, params WithholdingRate[] rates)
+    {
+        foreach (var rate in rates)
+        {
+            WithRate(rate);
+        }
+
+        _customerRates[customerId] = [.. rates.Select(rate => rate.TaxRateId)];
+        return this;
+    }
+
+    public Task<IReadOnlyList<WithholdingRate>> ForCustomerAsync(
+        Guid tenantId, Guid customerId, string? country, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        RequestedDates.Add(documentDate);
+        IReadOnlyList<WithholdingRate> rates = [.. _customerRates.GetValueOrDefault(customerId, [])
+            .Select(id => _catalog[id].Rate)
+            .Where(rate => country is null || string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase))];
+        return Task.FromResult(rates);
+    }
+
+    public Task<IReadOnlyDictionary<Guid, WithholdingRateCandidate>> ForRatesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taxRateIds, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        RequestedDates.Add(documentDate);
+        IReadOnlyDictionary<Guid, WithholdingRateCandidate> found = _catalog
+            .Where(entry => taxRateIds.Contains(entry.Key))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
+        return Task.FromResult(found);
     }
 }

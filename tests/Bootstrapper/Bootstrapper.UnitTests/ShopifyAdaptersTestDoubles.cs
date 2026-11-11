@@ -58,8 +58,13 @@ internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRe
     public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
         Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
 
-    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public int ListCalls { get; private set; }
+
+    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<TaxRate>>([.. rates.Where(rate => rate.TenantId == tenantId)]);
+    }
 
     public Task<TaxRate?> FindByNameAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();

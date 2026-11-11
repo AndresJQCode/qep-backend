@@ -539,5 +539,9 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
         new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
         0m,
-        0m);
+        0m,
+        // Sin retenciones: la fila por retención del PDF es la Tarea 16.
+        [],
+        [],
+        []);
 }

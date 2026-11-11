@@ -103,8 +103,27 @@ public sealed class QuotationResponseComposer(
             AvailableFloors(quotation, products),
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
-            quotation.FreightTaxAmount);
+            quotation.FreightTaxAmount,
+            [.. quotation.Withholdings.Select(ToWithholdingResponse)],
+            [.. quotation.CustomerWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
+            [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)]);
     }
+
+    // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los va a pintar igual (Tarea 14).
+    internal static WithholdingResponse ToWithholdingResponse(WithholdingDto withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.MinimumBase,
+        withholding.MinimumBaseUnit,
+        withholding.TaxUnitValue,
+        withholding.Base,
+        withholding.Amount);
+
+    internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
+        new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage);
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización

@@ -51,6 +51,8 @@ public sealed class SaveQuotationHandler(
     ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
     ShippingResolver shippingResolver,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
@@ -88,7 +90,9 @@ public sealed class SaveQuotationHandler(
 
         var outcome = await QuotationEditsApplication.ApplyAsync(
             quotation, command, command.TenantId, companyLookup, pricingLookup, settingsStore, priceRounding,
-            shippingResolver, updatedBy, now, cancellationToken);
+            shippingResolver,
+            QuotationWithholdingContext.For(withholdingLookup, tenantClock, command.TenantId, quotation),
+            updatedBy, now, cancellationToken);
         // UpdateDetails no lo exige para que el cálculo previo, que comparte ApplyAsync, no falle
         // mientras la persona escribe. El guardado sí: nada se persiste si esto lanza. El
         // validador ya lo frena antes con el campo en `errors`; esto es el respaldo del dominio.

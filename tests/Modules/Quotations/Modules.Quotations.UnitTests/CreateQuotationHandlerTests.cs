@@ -239,7 +239,8 @@ public sealed class CreateQuotationHandlerTests
             settings,
             new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
-            defaultCurrency ?? new FixedTenantDefaultCurrency());
+            defaultCurrency ?? new FixedTenantDefaultCurrency(),
+            new StubQuotationWithholdingLookup());
 
         return new(
             repository ?? EmptyRepository(),
