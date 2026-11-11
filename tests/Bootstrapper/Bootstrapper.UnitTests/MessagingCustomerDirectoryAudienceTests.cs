@@ -18,6 +18,10 @@ public sealed class MessagingCustomerDirectoryAudienceTests
             Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchActiveAsync(
+            Guid tenantId, IReadOnlyCollection<string> e164, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<string>> FindPhonesByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

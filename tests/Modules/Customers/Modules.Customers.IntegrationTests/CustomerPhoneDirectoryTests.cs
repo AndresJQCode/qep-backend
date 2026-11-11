@@ -94,6 +94,58 @@ public sealed class CustomerPhoneDirectoryTests
         Assert.Equal(new CustomerPhoneMatch(survivor.Id, "Quien Queda", true), matches["+573009999999"]);
     }
 
+    // Spec 2026-11-10: se filtra antes de elegir; un inactivo viejo no esconde al activo.
+    [Fact]
+    public async Task MatchActiveFiltersBeforePickingTheOldest()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var mine = CreateManager(factory);
+        var city = await EnsureCityAsync(mine);
+        var classification = await CreateClassificationAsync(mine);
+        var oldInactive = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Viejo Inactivo", "900.111.111-1", "300 123 4567");
+        var newActive = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Nuevo Activo", "900.222.222-2", "300 123 4567");
+        var onlyInactive = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Solo Inactivo", "900.333.333-3", "300 555 0000");
+        var onlyMerged = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Solo Fusionado", "900.444.444-4", "300 777 0000");
+        var survivor = await CreateWithPhoneAsync(mine, city.CityId, classification.Id, "Quien Queda", "900.555.555-5", "300 999 9999");
+        var connectionString = database.GetConnectionString();
+        await MarkMergedAsync(connectionString, onlyMerged.Id, survivor.Id);
+        // El fusionado vuelve a is_active = true para que lo descarte el filtro de fusionados y no el de activos.
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE customers.customers SET is_active = false WHERE id = ANY(@ids)",
+            ("ids", new[] { oldInactive.Id, onlyInactive.Id }));
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE customers.customers SET is_active = true WHERE id = @id",
+            ("id", onlyMerged.Id));
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE customers.customers SET created_at = created_at - interval '1 day' WHERE id = @id",
+            ("id", oldInactive.Id));
+
+        var matches = await MatchActiveAsync(factory, ["+573001234567", "+573005550000", "+573007770000"]);
+
+        var match = Assert.Single(matches);
+        Assert.Equal("+573001234567", match.Key);
+        Assert.Equal(new CustomerPhoneMatch(newActive.Id, "Nuevo Activo", true), match.Value);
+    }
+
+    [Fact]
+    public async Task MatchActiveStaysWithinTheTenantAndAnswersNothingForNothing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var theirs = CreateOtherTenantManager(factory);
+        var theirCity = await EnsureCityAsync(theirs);
+        var theirClassification = await CreateClassificationAsync(theirs, "Mediano", "CLI", OtherTenantId);
+        await CreateWithPhoneAsync(
+            theirs, theirCity.CityId, theirClassification.Id, "Ajeno", "900.333.333-3", "300 123 4567", OtherTenantId);
+
+        Assert.Empty(await MatchActiveAsync(factory, ["+573001234567"]));
+        Assert.Empty(await MatchActiveAsync(factory, []));
+    }
+
     [Fact]
     public async Task ListByPhoneReturnsEveryCustomerOfTheNumberOldestFirstWithinTheTenant()
     {
@@ -253,6 +305,14 @@ public sealed class CustomerPhoneDirectoryTests
         await using var scope = factory.Services.CreateAsyncScope();
         var directory = scope.ServiceProvider.GetRequiredService<ICustomerPhoneDirectory>();
         return await directory.MatchAsync(Guid.Parse(TenantId), phones, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, CustomerPhoneMatch>> MatchActiveAsync(
+        QepApiFactory factory, IReadOnlyCollection<string> phones)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<ICustomerPhoneDirectory>();
+        return await directory.MatchActiveAsync(Guid.Parse(TenantId), phones, TestContext.Current.CancellationToken);
     }
 
     private static async Task<IReadOnlyList<CustomerPhoneMatch>> ListByPhoneAsync(QepApiFactory factory, string e164, int take)
