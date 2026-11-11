@@ -210,8 +210,14 @@ public sealed record SharedContactDto(
     string? Name, string? Organization, IReadOnlyList<SharedContactPhoneDto> Phones, IReadOnlyList<SharedContactEmailDto> Emails);
 
 /// <summary>Un teléfono de la tarjeta. Meta puede mandar <c>phone</c> sin <c>wa_id</c> (el número no tiene WhatsApp) o al revés;
-/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.</summary>
-public sealed record SharedContactPhoneDto(string? Phone, string? WaId, string? Type);
+/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.
+/// Spec 2026-11-10, BFF: la tarjeta tiene que saber si el número ya es un cliente (<c>Customer</c>, por la regla de
+/// <c>ResolveSharedPhonesAsync</c>: activo y no fusionado) para ofrecer «Escribirle» o «Agregar como contacto», y el formulario de cliente
+/// pide el país y el número nacional por separado (<c>Country</c> y <c>NationalNumber</c>; su campo sólo acepta dígitos). Prellenar el
+/// <c>waId</c> entero con país <c>CO</c> deja <c>PhoneE164</c> en <c>null</c> y <c>StartConversation</c> falla con
+/// <c>422 messaging.customer.unreachable</c>. Los tres son <c>null</c> sin <c>waId</c> o si el número no es válido.</summary>
+public sealed record SharedContactPhoneDto(
+    string? Phone, string? WaId, string? Type, CustomerRefDto? Customer = null, string? Country = null, string? NationalNumber = null);
 
 /// <summary>Un correo de la tarjeta; <c>Type</c> es el de Meta (<c>HOME</c>, <c>WORK</c>), tal cual.</summary>
 public sealed record SharedContactEmailDto(string Email, string? Type);
