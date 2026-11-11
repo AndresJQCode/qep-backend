@@ -39,8 +39,18 @@ internal static class CoexistenceIngestion
         // OrderBy es estable: dos mensajes del mismo segundo conservan el orden en que Meta los mandó.
         var ordered = messages.OrderBy(message => message.OccurredAt).ToList();
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Borrar clientes (A-12 y P4): el candado compartido del cliente, y el cliente comprobado, antes de crear la conversación con
+        // él o de colgarle mensajes; también el del cliente que la conversación ya tenía, que es el que conserva el COALESCE de
+        // UpdateSummaryAsync. Si el borrado ganó, CustomerVanishedException deshace el hilo entero y la entrega se reintenta: el
+        // reintento ya no encuentra ni la conversación ni el cliente, y crea los nuevos (D-4).
+        if (customerId is { } held)
+        {
+            await MessagingCustomerReferenceLock.HoldOrVanishAsync(dbContext, tenantId, held, cancellationToken);
+        }
+
         var (conversationId, created) = await FindOrCreateAsync(
             dbContext, tenantId, connectionId, waId, customerId, source, ordered[0].OccurredAt, now, cancellationToken);
+        await MessagingCustomerReferenceLock.HoldConversationCustomerAsync(dbContext, tenantId, conversationId, customerId, cancellationToken);
 
         var changed = created;
         // La marca durable de lo importado (decisión del owner del 2026-10-30): un eco es tráfico en vivo y no la lleva.

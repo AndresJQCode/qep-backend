@@ -49,7 +49,7 @@ internal static class InboundIngestion
         ConversationChannel channel, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var (conversationId, _) = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+        var (conversationId, _) = await ResolveHoldingCustomerAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
         var messageId = Guid.CreateVersion7();
         var kind = MessageColumnCodes.ToCode(message.Kind);
         var inserted = await dbContext.Database.SqlQuery<Guid>(
@@ -100,8 +100,8 @@ internal static class InboundIngestion
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-        // 1. La conversación (spec 2026-10-10 §8.1).
-        var conversation = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+        // 1. La conversación (spec 2026-10-10 §8.1), con el candado de su cliente tomado (A-12 y P4).
+        var conversation = await ResolveHoldingCustomerAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
         var conversationId = conversation.Id;
 
         // 2. El mensaje; un reenvío no inserta nada. reply_to_wamid guarda la cita tal cual y reply_to_message_id la
@@ -248,6 +248,37 @@ internal static class InboundIngestion
             INSERT INTO messaging.message_media (message_id, mime_type, file_name, meta_media_id, sha256, attempts, next_attempt_at, last_error, source_url)
             VALUES ({messageId}, {media.MimeType}, {media.FileName}, {metaMediaId}, {media.Sha256}, 0, {nextAttemptAt}, {lastError}, {media.SourceUrl})
             """, cancellationToken);
+    }
+
+    /// <summary>
+    /// Borrar clientes (A-12 y P4): la conversación con el candado compartido de su cliente tomado y el cliente comprobado, en la
+    /// transacción de la ingesta y antes de escribir nada que lo referencie (el <c>INSERT</c> de la conversación nueva, el
+    /// <c>COALESCE(customer_id, …)</c> y el mensaje que cuelga de ella). Dos clientes posibles: el resuelto afuera, que se toma antes de
+    /// crear la conversación con él, y el que la conversación ya tenía, que es el que el <c>COALESCE</c> conserva. Si el borrado ganó la
+    /// carrera, <see cref="CustomerVanishedException"/> deshace la transacción entera y la entrega se reintenta: el reintento ya no
+    /// encuentra ni la conversación ni el cliente, y crea los nuevos (D-4).
+    /// </summary>
+    private static async Task<(Guid Id, bool Created)> ResolveHoldingCustomerAsync(
+        MessagingDbContext dbContext, Guid tenantId, Guid connectionId, InboundMessage message, InboundContext context, DateTimeOffset now,
+        ConversationChannel channel, CancellationToken cancellationToken)
+    {
+        if (context.CustomerId is { } customerId)
+        {
+            await MessagingCustomerReferenceLock.HoldOrVanishAsync(dbContext, tenantId, customerId, cancellationToken);
+        }
+
+        var conversation = await ResolveConversationAsync(dbContext, tenantId, connectionId, message, context, now, channel, cancellationToken);
+        // Sin cliente resuelto afuera es porque la conversación ya tenía uno (InboundContext.None). Si aun así se acaba de crear, la de
+        // antes desapareció entre la preparación y esta transacción (el borrado se la llevó con su cliente): se reintenta, y la
+        // preparación de la próxima vuelta resuelve el cliente que corresponde, en vez de dejar una conversación sin cliente.
+        if (conversation.Created && context.CustomerId is null)
+        {
+            throw new CustomerVanishedException("The conversation that already had a customer was deleted before the inbound was ingested.");
+        }
+
+        await MessagingCustomerReferenceLock.HoldConversationCustomerAsync(
+            dbContext, tenantId, conversation.Id, context.CustomerId, cancellationToken);
+        return conversation;
     }
 
     /// <summary>Spec 2026-10-10 §8.1, sentencia 1: por BSUID; si no, adopción de la fila vieja por teléfono; si no, crear

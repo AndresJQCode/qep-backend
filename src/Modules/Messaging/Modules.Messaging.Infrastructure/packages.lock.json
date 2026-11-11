@@ -225,6 +225,13 @@
       "buildingblocks.domain": {
         "type": "Project"
       },
+      "buildingblocks.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "modules.audit.application": {
         "type": "Project",
         "dependencies": {
