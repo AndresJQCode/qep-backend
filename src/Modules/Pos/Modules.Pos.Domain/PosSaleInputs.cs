@@ -3,6 +3,8 @@ namespace Modules.Pos.Domain;
 /// <summary>Una línea ya resuelta contra el catálogo: el precio y la tasa son los de ahora.</summary>
 /// <param name="VariantId">La variante que se vende (spec 2026-10-20 §4): la línea es por variante.</param>
 /// <param name="ProductId">El producto dueño de la variante, para agrupar por producto en reportes.</param>
+/// <param name="UnitCost">El costo unitario manual del catálogo en la moneda de la caja, o null si la
+/// variante no tiene (spec 2026-11-10 §4.2). Nunca sale en una respuesta del POS.</param>
 /// <param name="ProductName">El nombre visible de la variante; la línea lo recorta a
 /// <see cref="PosSaleLine.ProductNameMaxLength"/>.</param>
 public sealed record PosSaleLineInput(
@@ -13,7 +15,8 @@ public sealed record PosSaleLineInput(
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountPercentage,
-    int TaxPercentage);
+    int TaxPercentage,
+    decimal? UnitCost = null);
 
 /// <summary>Cash trae sólo Tendered (el Amount lo calcula el dominio); Card/Transfer traen Amount.</summary>
 public sealed record PosPaymentInput(
