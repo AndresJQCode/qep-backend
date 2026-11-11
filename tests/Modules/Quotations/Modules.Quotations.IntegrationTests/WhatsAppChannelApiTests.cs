@@ -99,8 +99,8 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, ownerUserId, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
-        var first = await CreateQuotationAsync(owner, tenantId, clientId);
-        var second = await CreateQuotationAsync(owner, tenantId, clientId);
+        var first = await CreateSendableQuotationAsync(owner, tenantId, clientId);
+        var second = await CreateSendableQuotationAsync(owner, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var asking = await SendAsync(owner, tenantId, first.Id);
@@ -129,8 +129,8 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, owner) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = owner;
         var clientId = await CreateActiveCustomerAsync(owner, tenantId);
-        var first = await CreateQuotationAsync(owner, tenantId, clientId);
-        var second = await CreateQuotationAsync(owner, tenantId, clientId);
+        var first = await CreateSendableQuotationAsync(owner, tenantId, clientId);
+        var second = await CreateSendableQuotationAsync(owner, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
         using (var chosen = await SendAsync(owner, tenantId, first.Id, RecordingWhatsAppChannelDirectory.Meta.ConnectionId))
         {
@@ -173,7 +173,7 @@ public sealed class WhatsAppChannelApiTests
         var quotations = new List<QuotationResponse>();
         for (var index = 0; index < 3; index++)
         {
-            quotations.Add(await CreateQuotationAsync(owner, tenantId, clientId));
+            quotations.Add(await CreateSendableQuotationAsync(owner, tenantId, clientId));
         }
 
         var a = RecordingWhatsAppChannelDirectory.Default;
@@ -211,7 +211,7 @@ public sealed class WhatsAppChannelApiTests
         var quotations = new List<QuotationResponse>();
         for (var index = 0; index < 3; index++)
         {
-            quotations.Add(await CreateQuotationAsync(owner, tenantId, clientId));
+            quotations.Add(await CreateSendableQuotationAsync(owner, tenantId, clientId));
         }
 
         var a = RecordingWhatsAppChannelDirectory.Default;
@@ -427,7 +427,7 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, OwnerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var response = await PutChannelAsync(client, tenantId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
@@ -516,7 +516,7 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, advisor) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = advisor;
         var clientId = await CreateActiveCustomerAsync(advisor, tenantId);
-        var quotation = await CreateQuotationAsync(advisor, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(advisor, tenantId, clientId);
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
 
         using var put = await PutChannelAsync(advisor, tenantId, RecordingWhatsAppChannelDirectory.Meta.ConnectionId);
@@ -541,7 +541,7 @@ public sealed class WhatsAppChannelApiTests
     {
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        return (tenantId, await CreateQuotationAsync(client, tenantId, clientId), client);
+        return (tenantId, await CreateSendableQuotationAsync(client, tenantId, clientId), client);
     }
 
     // Otro miembro activo del mismo tenant: se invita con el set por defecto del stub (que trae los permisos de Tenancy)
