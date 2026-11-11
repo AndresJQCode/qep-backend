@@ -58,6 +58,17 @@ public static class CustomerImportColumns
     /// </summary>
     public const string VatSurplus = "Excedente Iva";
 
+    /// <summary>
+    /// Spec 2026-11-10 §4.8: el número de documento de la empresa del cliente. Opcional y **fuera de <see cref="Ordered"/>** a
+    /// propósito: el importador rechaza el archivo entero si falta alguna cabecera de <see cref="Ordered"/>, y un Excel anterior a
+    /// esta columna tiene que seguir siendo válido (se lee como «sin empresa»). Va siempre al final en lo que se escribe.
+    /// </summary>
+    public const string Company = "Empresa";
+
+    /// <summary>Las columnas que el importador lee si la cabecera las trae y que la plantilla, las filas a corregir y la
+    /// exportación escriben después de <see cref="Ordered"/>.</summary>
+    public static readonly IReadOnlyList<string> Optional = [Company];
+
     public static readonly IReadOnlyList<string> Ordered =
     [
         Cuc,
@@ -100,7 +111,9 @@ public sealed record ExcelCustomerRow(
     string? City,
     string? Classification,
     string? WithRetention,
-    string? VatSurplus);
+    string? VatSurplus,
+    // Último y con valor por defecto: null cuando el archivo no trae la cabecera o la celda está vacía.
+    string? CompanyIdentificationNumber = null);
 
 /// <summary>
 /// El resultado de parsear un Excel: si la cabecera trae las trece columnas esperadas y, si las

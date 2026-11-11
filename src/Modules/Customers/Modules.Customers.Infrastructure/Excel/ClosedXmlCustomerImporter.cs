@@ -47,6 +47,15 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             indexes[expected] = index;
         }
 
+        // Las opcionales no hacen inválido el archivo si faltan: un Excel anterior a la columna «Empresa» se lee como «sin empresa».
+        foreach (var optional in CustomerImportColumns.Optional)
+        {
+            if (columnByName.TryGetValue(optional, out var index))
+            {
+                indexes[optional] = index;
+            }
+        }
+
         var rows = new List<ExcelCustomerRow>();
         var lastRow = worksheet.LastRowUsed()?.RowNumber() ?? 1;
         for (var rowNumber = 2; rowNumber <= lastRow; rowNumber++)
@@ -67,6 +76,9 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var classification = Cell(row, indexes, CustomerImportColumns.Classification);
             var withRetention = Cell(row, indexes, CustomerImportColumns.WithRetention);
             var vatSurplus = Cell(row, indexes, CustomerImportColumns.VatSurplus);
+            var company = indexes.ContainsKey(CustomerImportColumns.Company)
+                ? Cell(row, indexes, CustomerImportColumns.Company)
+                : null;
 
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
             // entre los datos y el final de la hoja), no una fila de datos que haya que reportar
@@ -75,7 +87,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && withRetention is null && vatSurplus is null)
+                classification is null && withRetention is null && vatSurplus is null && company is null)
             {
                 continue;
             }
@@ -94,7 +106,8 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 city,
                 classification,
                 withRetention,
-                vatSurplus));
+                vatSurplus,
+                company));
         }
 
         return new ExcelCustomerImportFile(true, rows);

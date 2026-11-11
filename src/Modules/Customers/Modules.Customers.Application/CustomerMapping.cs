@@ -32,7 +32,10 @@ internal static class CustomerMapping
         CustomerCityRef? city,
         ClientClassification? classification,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById,
-        IReadOnlyCollection<TagDto> tags) => new(
+        IReadOnlyCollection<TagDto> tags,
+        CustomerCompanyDto? company = null,
+        int contactCount = 0,
+        IReadOnlyList<CustomerContactDto>? contacts = null) => new(
         customer.Id.Value,
         customer.Cuc,
         customer.Name,
@@ -75,7 +78,10 @@ internal static class CustomerMapping
         tags,
         customer.ToConsentDto(),
         customer.InstagramUsername,
-        PersonType: customer.PersonType?.ToWireValue());
+        PersonType: customer.PersonType?.ToWireValue(),
+        Company: company,
+        ContactCount: contactCount,
+        Contacts: contacts);
 
     // La FK de base garantiza que la ciudad de cada direccion exista, asi que un miss aca es
     // corrupcion de datos: se prefiere un nombre vacio a tirar la ficha entera abajo, que es lo
@@ -131,6 +137,7 @@ internal static class CustomerMapping
         ICustomerGeographyLookup geographyLookup,
         IClientClassificationRepository classificationRepository,
         ICustomerTagRepository tagRepository,
+        ICustomerCompanyDirectory companyDirectory,
         CancellationToken cancellationToken)
     {
         // Las ciudades del domicilio y de todas las direcciones de envio de una vez: el domicilio
@@ -155,7 +162,58 @@ internal static class CustomerMapping
             .Select(item => item.ToDto())
             .ToArray();
 
-        return customer.ToDto(city, classification, citiesById, tags);
+        // Spec 2026-11-10 (ruling P4): la empresa —y, en la tarea de contactos, la lista de contactos y su conteo— se llena aquí
+        // y no en cada handler, para que ninguna respuesta de la ficha salga sin ella. Una consulta, acotada al tenant.
+        var company = await ResolveCompanyAsync(customer, companyDirectory, cancellationToken);
+        var (contacts, contactCount) = await ResolveContactsAsync(customer, companyDirectory, cancellationToken);
+
+        return customer.ToDto(city, classification, citiesById, tags, company, contactCount, contacts);
+    }
+
+    // Spec 2026-11-10 §4.2 (ruling P4): los contactos de una empresa viajan en toda respuesta de la ficha, no sólo en el GET, para
+    // que un PUT no deje a la caché del frontend sin ellos. Un contacto no tiene contactos (A2): no hay a quién preguntar. Se
+    // cuenta primero y se lista sólo si hay: la mayoría de los clientes no son empresa.
+    private static async Task<(IReadOnlyList<CustomerContactDto> Contacts, int Count)> ResolveContactsAsync(
+        Customer customer,
+        ICustomerCompanyDirectory companyDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (customer.CompanyId is not null)
+        {
+            return ([], 0);
+        }
+
+        var counts = await companyDirectory.CountContactsAsync(
+            customer.TenantId, [customer.Id.Value], cancellationToken);
+        if (!counts.TryGetValue(customer.Id.Value, out var count) || count == 0)
+        {
+            return ([], 0);
+        }
+
+        var contacts = await companyDirectory.ListContactsAsync(
+            customer.TenantId, customer.Id.Value, CustomerContactsLimits.MaxInDetail, cancellationToken);
+        return (contacts
+            .Select(contact => new CustomerContactDto(
+                contact.Id, contact.Name, contact.Phone, contact.Email, contact.IsComplete, contact.IsActive))
+            .ToArray(), count);
+    }
+
+    private static async Task<CustomerCompanyDto?> ResolveCompanyAsync(
+        Customer customer,
+        ICustomerCompanyDirectory companyDirectory,
+        CancellationToken cancellationToken)
+    {
+        // Sin vínculo no hay a quién preguntar: el directorio sólo devuelve contactos con empresa.
+        if (customer.CompanyId is null)
+        {
+            return null;
+        }
+
+        var companies = await companyDirectory.FindCompaniesAsync(
+            customer.TenantId, [customer.Id.Value], cancellationToken);
+        return companies.TryGetValue(customer.Id.Value, out var company)
+            ? new CustomerCompanyDto(company.Id, company.Name, company.IsComplete, company.IsActive)
+            : null;
     }
 
     /// <summary>

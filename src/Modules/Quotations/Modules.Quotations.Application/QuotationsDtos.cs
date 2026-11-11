@@ -435,11 +435,17 @@ public sealed record SaveQuotationRequest(
 /// <c>ConnectionId</c> (spec 2026-10-21 §4.2) es la conexión de WhatsApp por la que sale, y sólo hace falta cuando el
 /// tenant tiene varias disponibles y todavía no eligió: esa primera elección se guarda con el envío. Con una elección
 /// ya guardada, mandar otra es <c>channel_already_set</c>; el cambio se hace desde Configuración.
+///
+/// Spec 2026-11-10 §4.6: <c>Recipient: "Contact"</c> manda al contacto <c>ContactId</c> de la empresa de la cotización.
+/// <c>ThreadConnectionId</c> es la conexión del hilo desde el que se manda: no pasa por la elección guardada ni la cambia, y
+/// sólo se considera con <c>Contact</c>.
 /// </summary>
 public sealed record SendQuotationRequest(
     Guid? PdfFileId = null,
     string? Recipient = null,
-    Guid? ConnectionId = null);
+    Guid? ConnectionId = null,
+    Guid? ContactId = null,
+    Guid? ThreadConnectionId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
@@ -594,7 +600,14 @@ public sealed record QuotationResponse(
     /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
-    decimal FreightTaxAmount);
+    decimal FreightTaxAmount,
+    /// <summary>Spec 2026-11-10 §4.6: los contactos sin fusionar de la empresa del cliente, para elegir a quién se envía el
+    /// documento. Siempre presente: vacío si el cliente no tiene o si él mismo es un contacto. Lo llena el compositor.</summary>
+    IReadOnlyList<ClientContactDto> ClientContacts);
+
+/// <summary>Un contacto de la empresa del cliente tal como lo ve el diálogo de envío (spec 2026-11-10 §4.6). El teléfono es el de su
+/// ficha y puede faltar: ese contacto se muestra pero no se puede elegir.</summary>
+public sealed record ClientContactDto(Guid Id, string Name, string? Phone);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
