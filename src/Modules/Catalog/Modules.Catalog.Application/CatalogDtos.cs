@@ -351,7 +351,7 @@ public sealed record UpdateProductRequest(
 public sealed record TaxRateDto(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
@@ -359,7 +359,7 @@ public sealed record TaxRateDto(
 public sealed record TaxRateResponse(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

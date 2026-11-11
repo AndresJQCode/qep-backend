@@ -18,6 +18,6 @@ internal sealed class QuotationTaxRateLookup(ITaxRateRepository repository) : IQ
         var taxRate = await repository.FindAsync(tenantId, new TaxRateId(taxRateId), cancellationToken);
         return taxRate is null
             ? null
-            : new QuotationTaxRateRef(taxRate.Id.Value, taxRate.Name, taxRate.Percentage, taxRate.IsActive);
+            : new QuotationTaxRateRef(taxRate.Id.Value, taxRate.Name, taxRate.VatPercentage, taxRate.IsActive);
     }
 }

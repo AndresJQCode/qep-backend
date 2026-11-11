@@ -1,5 +1,6 @@
 using BuildingBlocks.Application;
 using FluentValidation;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
 
@@ -47,7 +48,7 @@ public sealed class CreateTaxRateHandler(
 
         var now = clock.UtcNow;
         var taxRate = TaxRate.Create(
-            TaxRateId.New(), command.TenantId, command.Name, command.Percentage, now);
+            TaxRateId.New(), command.TenantId, command.Name, command.Percentage, TaxCountries.IvaType, "CO", null, now);
 
         repository.Add(taxRate);
         auditPublisher.Publish(

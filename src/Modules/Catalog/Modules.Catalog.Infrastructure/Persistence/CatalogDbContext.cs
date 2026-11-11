@@ -365,7 +365,22 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(TaxRate.NameMaxLength);
-        taxRate.Property(value => value.Percentage).HasColumnName("percentage");
+        taxRate.Property(value => value.Percentage)
+            .HasColumnName("percentage")
+            .HasPrecision(6, 3);
+        taxRate.Property(value => value.Type)
+            .HasColumnName("type")
+            .HasMaxLength(TaxRate.TypeMaxLength);
+        taxRate.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxRate.CountryLength)
+            .IsFixedLength();
+        taxRate.Property(value => value.MinimumBase)
+            .HasColumnName("minimum_base")
+            .HasPrecision(14, 2);
+        taxRate.Ignore(value => value.Behavior);
+        taxRate.Ignore(value => value.Withholds);
+        taxRate.Ignore(value => value.VatPercentage);
         taxRate.Property(value => value.IsActive).HasColumnName("is_active");
         taxRate.Property(value => value.Version)
             .HasColumnName("version")

@@ -495,7 +495,7 @@ public sealed class TaxRateApiTests
         Assert.Equal(HttpStatusCode.OK, deactivate.StatusCode);
 
         // Recién ahora escribe el primero, sobre una copia que ya no refleja la base.
-        stale.Update("IVA reducido", 5, DateTimeOffset.UtcNow);
+        stale.Update("IVA reducido", 5, null, DateTimeOffset.UtcNow);
 
         await Assert.ThrowsAsync<RequestConcurrencyException>(
             () => unitOfWork.SaveChangesAsync(TestContext.Current.CancellationToken));

@@ -32,7 +32,7 @@ internal sealed class ShopifyProductLookup(IProductRepository products, ITaxRate
                 if (!percentages.TryGetValue(rateId, out percentage))
                 {
                     // Sin tasa, o con una inexistente, cotiza con 0 % (QuotationProductPricingResolver).
-                    percentage = (await taxRates.FindAsync(tenantId, rateId, cancellationToken))?.Percentage ?? 0;
+                    percentage = (await taxRates.FindAsync(tenantId, rateId, cancellationToken))?.VatPercentage ?? 0;
                     percentages[rateId] = percentage;
                 }
             }

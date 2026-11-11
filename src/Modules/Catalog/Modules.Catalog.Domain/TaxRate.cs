@@ -1,3 +1,5 @@
+using BuildingBlocks.Domain.Taxes;
+
 namespace Modules.Catalog.Domain;
 
 /// <summary>
@@ -12,26 +14,42 @@ public sealed class TaxRate
     // volver como 500 server.unexpected.
     public const int NameMaxLength = 120;
 
-    // P-008, decidido por el owner el 2026-08-10: el porcentaje es entero de 0 decimales. No
-    // admite retenciones con fracción, y eso está declarado como límite de alcance en el gate.
+    // P-008 (2026-08-10) fijó el porcentaje en entero de 0 decimales. Reabierto por el owner el
+    // 2026-11-10 (D15): el IVA sigue entero, pero las retenciones admiten hasta
+    // TaxCountries.MaxFractionDigits decimales (0,966 % del ReteICA, 2,5 % de la retefuente).
     public const int MinPercentage = 0;
     public const int MaxPercentage = 100;
 
+    // Espejan los anchos de catalog.tax_rates.type y .country, por la misma razón que NameMaxLength.
+    public const int TypeMaxLength = 32;
+    public const int CountryLength = 2;
+
     // EF Core materializa por acá. El código nunca construye el agregado así:
     // Create es el único punto de entrada, y es el que hace cumplir los invariantes.
-    private TaxRate() => Name = string.Empty;
+    private TaxRate()
+    {
+        Name = string.Empty;
+        Type = string.Empty;
+        Country = string.Empty;
+    }
 
     private TaxRate(
         TaxRateId id,
         Guid tenantId,
         string name,
-        int percentage,
+        decimal percentage,
+        string type,
+        string country,
+        decimal? minimumBase,
         DateTimeOffset occurredAt)
     {
         Id = id;
         TenantId = tenantId;
         Name = name;
         Percentage = percentage;
+        Type = type;
+        Country = country;
+        MinimumBase = minimumBase;
         IsActive = true;
         Version = 1;
         CreatedAt = occurredAt;
@@ -45,8 +63,40 @@ public sealed class TaxRate
     /// <summary>Único por tenant; la unicidad vive en IX_tax_rates_tenant_name.</summary>
     public string Name { get; private set; }
 
-    /// <summary>Entero de 0 a 100, sin decimales (P-008).</summary>
-    public int Percentage { get; private set; }
+    /// <summary>
+    /// De 0 a 100. Entero para los tipos que no admiten fracción (IVA); hasta
+    /// <see cref="TaxCountries.MaxFractionDigits"/> decimales para los que retienen (D15).
+    /// </summary>
+    public decimal Percentage { get; private set; }
+
+    /// <summary>"IVA", "Retefuente", "ReteICA"…: un tipo de <see cref="TaxCountries"/>. No cambia tras crear.</summary>
+    public string Type { get; private set; }
+
+    /// <summary>ISO 3166-1 alfa-2 del país cuyos tipos rigen esta tasa. No cambia tras crear.</summary>
+    public string Country { get; private set; }
+
+    /// <summary>
+    /// Base mínima (en la unidad tributaria del país, o en moneda si no tiene) desde la cual aplica una
+    /// retención. Null = aplica siempre. Sólo la admiten los tipos con <c>AllowsMinimumBase</c>.
+    /// </summary>
+    public decimal? MinimumBase { get; private set; }
+
+    /// <summary>Lo calcula el tipo, no se guarda: EF lo ignora.</summary>
+    public TaxBehavior Behavior =>
+        TaxCountries.FindType(Country, Type)?.Behavior
+        ?? throw new InvalidOperationException($"Unknown tax type '{Type}' for country '{Country}'.");
+
+    public bool Withholds => Behavior == TaxBehavior.Withholds;
+
+    /// <summary>
+    /// El porcentaje como entero, para los adaptadores de líneas, que sólo reciben tasas de IVA. Lanza si la
+    /// tasa retiene o tiene fracción: esos casos no deben llegar a una línea.
+    /// </summary>
+    public int VatPercentage =>
+        Behavior == TaxBehavior.Adds && Percentage == decimal.Truncate(Percentage)
+            ? (int)Percentage
+            : throw new InvalidOperationException(
+                "Only a whole-number tax rate that adds can be read as a VAT percentage.");
 
     public bool IsActive { get; private set; }
 
@@ -68,16 +118,40 @@ public sealed class TaxRate
         TaxRateId id,
         Guid tenantId,
         string name,
-        int percentage,
-        DateTimeOffset occurredAt) =>
-        new(id, tenantId, NormalizeName(name), EnsurePercentageInRange(percentage), occurredAt);
+        decimal percentage,
+        string type,
+        string country,
+        decimal? minimumBase,
+        DateTimeOffset occurredAt)
+    {
+        // El país sólo se normaliza; si no existe, FindType no halla el tipo y sale type_invalid.
+        // country_not_available es de Application (spec §7.2).
+        var normalizedCountry = country?.Trim().ToUpperInvariant() ?? string.Empty;
+        var definition = TaxCountries.FindType(normalizedCountry, type)
+            ?? throw new CatalogDomainException(
+                "catalog.tax_rate.type_invalid",
+                $"The tax type '{type}' does not exist for country '{normalizedCountry}'.");
 
-    public void Update(string name, int percentage, DateTimeOffset occurredAt)
+        return new(
+            id,
+            tenantId,
+            NormalizeName(name),
+            EnsureValidPercentage(percentage, definition),
+            definition.Type,
+            normalizedCountry,
+            EnsureValidMinimumBase(minimumBase, definition),
+            occurredAt);
+    }
+
+    // El tipo y el país no se editan: cambiarlos reinterpretaría cada documento que ya usa la tasa.
+    public void Update(string name, decimal percentage, decimal? minimumBase, DateTimeOffset occurredAt)
     {
         EnsureActive();
 
+        var definition = TaxCountries.FindType(Country, Type)!;
         Name = NormalizeName(name);
-        Percentage = EnsurePercentageInRange(percentage);
+        Percentage = EnsureValidPercentage(percentage, definition);
+        MinimumBase = EnsureValidMinimumBase(minimumBase, definition);
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -128,13 +202,54 @@ public sealed class TaxRate
     }
 
     // Los extremos son válidos: 0 es el exento colombiano y 100 es el límite superior. Por eso
-    // la comparación es contra el rango cerrado y no contra el abierto.
-    private static int EnsurePercentageInRange(int percentage) =>
-        percentage is < MinPercentage or > MaxPercentage
-            ? throw new CatalogDomainException(
+    // la comparación es contra el rango cerrado y no contra el abierto. Después del rango, la
+    // forma: sin fracción para el IVA y hasta MaxFractionDigits decimales para las retenciones
+    // (los ceros finales no cuentan: 0,9660 tiene tres).
+    private static decimal EnsureValidPercentage(decimal percentage, TaxTypeDefinition definition)
+    {
+        if (percentage is < MinPercentage or > MaxPercentage)
+        {
+            throw new CatalogDomainException(
                 "catalog.tax_rate.percentage_out_of_range",
-                $"The tax rate percentage must be between {MinPercentage} and {MaxPercentage}.")
-            : percentage;
+                $"The tax rate percentage must be between {MinPercentage} and {MaxPercentage}.");
+        }
+
+        if (!definition.AllowsFraction)
+        {
+            return percentage == decimal.Truncate(percentage)
+                ? percentage
+                : throw new CatalogDomainException(
+                    "catalog.tax_rate.percentage_not_integer",
+                    $"The {definition.Type} percentage must be a whole number.");
+        }
+
+        return percentage == decimal.Round(percentage, TaxCountries.MaxFractionDigits)
+            ? percentage
+            : throw new CatalogDomainException(
+                "catalog.tax_rate.percentage_too_precise",
+                $"The tax rate percentage admits at most {TaxCountries.MaxFractionDigits} decimals.");
+    }
+
+    private static decimal? EnsureValidMinimumBase(decimal? minimumBase, TaxTypeDefinition definition)
+    {
+        if (minimumBase is null)
+        {
+            return null;
+        }
+
+        if (!definition.AllowsMinimumBase)
+        {
+            throw new CatalogDomainException(
+                "catalog.tax_rate.minimum_base_not_allowed",
+                $"The {definition.Type} tax type does not admit a minimum base.");
+        }
+
+        return minimumBase < 0
+            ? throw new CatalogDomainException(
+                "catalog.tax_rate.minimum_base_invalid",
+                "The minimum base cannot be negative.")
+            : minimumBase;
+    }
 
     // Recortar espacios es parte del invariante, no higiene del llamador: el índice único trata
     // " IVA general" e "IVA general" como dos nombres distintos, cosa que nadie leyendo la

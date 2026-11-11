@@ -46,7 +46,7 @@ public sealed class UpdateTaxRateHandler(
             ?? throw TaxRateNotFound.For(command.TaxRateId);
 
         var now = clock.UtcNow;
-        taxRate.Update(command.Name, command.Percentage, now);
+        taxRate.Update(command.Name, command.Percentage, taxRate.MinimumBase, now);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,
