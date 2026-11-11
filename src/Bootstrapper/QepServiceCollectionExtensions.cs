@@ -810,6 +810,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,
+            GetOrderSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateOrderSettingsCommand, OrderSettingsDto>,
+            UpdateOrderSettingsHandler>();
         // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
         services.AddScoped<
             IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
