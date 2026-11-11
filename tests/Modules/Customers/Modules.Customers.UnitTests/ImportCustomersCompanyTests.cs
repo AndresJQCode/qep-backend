@@ -182,6 +182,22 @@ public sealed class ImportCustomersCompanyTests
         Assert.Empty(bed.Repository.Added);
     }
 
+    [Fact]
+    public async Task ANumberOfANewRowAndOfAnExistingCustomerOfAnotherTypeIsAmbiguous()
+    {
+        var bed = new Bed(Existing("CLI08000002", "Verde Persona", "900111111", IdentificationType.Cc));
+
+        var response = await bed.ImportAsync(
+            Row(2, "Verde SAS", "900111111"),
+            Row(3, "Ana", "1010", "900111111", type: "CC"));
+
+        var error = ErrorOf(response, 3);
+        Assert.Equal("customers.import.row.company_ambiguous", error.Code);
+        Assert.Equal(Field, error.Field);
+        Assert.DoesNotContain(bed.Repository.Added, customer => customer.Name == "Ana");
+        Assert.All(bed.Repository.Added, customer => Assert.Null(customer.CompanyId));
+    }
+
     [Theory]
     [InlineData("inactive", "customers.import.row.company_inactive")]
     [InlineData("self", "customers.import.row.company_is_self")]
