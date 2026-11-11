@@ -9,10 +9,13 @@ public readonly record struct LineAmountsView(decimal Subtotal, decimal Discount
 /// los dos.
 ///
 /// Un cliente con excedente de IVA no paga IVA en el documento, cualquiera sea la tasa de cada
-/// línea: el impuesto de cada línea queda intacto, pero el encabezado lo ignora entero. La
-/// retención en la fuente es el 2,5 % de lo facturado sin IVA y resta del neto a cobrar, no del
-/// total: el total sigue siendo lo facturado. El IVA del envío sigue la misma regla del excedente, y la retención
-/// se calcula sobre el subtotal de los productos, nunca sobre el envío.
+/// línea: el impuesto de cada línea queda intacto, pero el encabezado lo ignora entero. El IVA del
+/// envío sigue la misma regla del excedente.
+///
+/// Las retenciones salen de las tasas congeladas del documento (spec 2026-11-10 §7.5), que llegan ya
+/// filtradas por fuente, país, moneda y consumidor final. Cada una se calcula sobre el subtotal de los
+/// productos, sin IVA y nunca sobre el envío, y aplica si no tiene base mínima o si el subtotal alcanza
+/// su umbral. Restan del neto a cobrar, no del total: el total sigue siendo lo facturado.
 /// </summary>
 public readonly record struct DocumentTotals(
     decimal Subtotal,
@@ -23,9 +26,11 @@ public readonly record struct DocumentTotals(
     decimal RetentionAmount,
     decimal NetTotal,
     decimal FreightSubtotal = 0m,
-    decimal FreightTaxAmount = 0m)
+    decimal FreightTaxAmount = 0m,
+    IReadOnlyList<AppliedWithholding>? Withholdings = null)
 {
-    public const decimal RetentionRate = 0.025m;
+    /// <summary>Las tasas que aplicaron, en el orden en que llegaron. Un <c>default</c> se lee vacío.</summary>
+    public IReadOnlyList<AppliedWithholding> Withholdings { get => field ?? []; init; } = Withholdings;
 
     /// <summary>
     /// Lo que se factura por los productos, sin el envío. El envío viaja en sus propios campos para que
@@ -33,10 +38,13 @@ public readonly record struct DocumentTotals(
     /// </summary>
     public decimal ProductsTotal => Subtotal + TaxAmount;
 
-    public static DocumentTotals Zero { get; } = new(0m, 0m, 0m, 0m, 0m, 0m, 0m);
+    public static DocumentTotals Zero { get; } = new(0m, 0m, 0m, 0m, 0m, 0m, 0m, Withholdings: []);
 
     public static DocumentTotals Compute(
-        IEnumerable<LineAmountsView> lines, FreightAmounts freight, bool appliesVatSurplus, bool appliesRetention)
+        IEnumerable<LineAmountsView> lines,
+        FreightAmounts freight,
+        bool appliesVatSurplus,
+        IReadOnlyList<WithholdingRate> withholdings)
     {
         var materialized = lines as IReadOnlyCollection<LineAmountsView> ?? lines.ToArray();
         var subtotal = Round(materialized.Sum(line => line.Subtotal));
@@ -46,8 +54,20 @@ public readonly record struct DocumentTotals(
         var taxPercentage = subtotal > 0 ? Round(tax / subtotal * 100m) : 0m;
         var freightTax = appliesVatSurplus ? 0m : freight.TaxAmount;
         var total = subtotal + tax + freight.Subtotal + freightTax;
-        var retention = appliesRetention ? Round(subtotal * RetentionRate) : 0m;
-        return new DocumentTotals(subtotal, discount, tax, taxPercentage, total, retention, total - retention, freight.Subtotal, freightTax);
+        var applied = Withhold(subtotal, withholdings);
+        var retention = applied.Sum(withholding => withholding.Amount);
+        return new DocumentTotals(
+            subtotal, discount, tax, taxPercentage, total, retention, total - retention, freight.Subtotal, freightTax, applied);
+    }
+
+    // El umbral se compara sin redondear y es inclusivo; sólo el monto va a dos decimales (spec §7.5).
+    private static AppliedWithholding[] Withhold(decimal productsSubtotal, IReadOnlyList<WithholdingRate> rates)
+    {
+        var applied = rates
+            .Where(rate => rate.Threshold is { } threshold && productsSubtotal >= threshold)
+            .Select(rate => new AppliedWithholding(rate, productsSubtotal, Round(productsSubtotal * rate.Percentage / 100m)))
+            .ToArray();
+        return applied.Length == 0 ? [] : applied;
     }
 
     private static decimal Round(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);

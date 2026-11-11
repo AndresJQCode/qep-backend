@@ -1318,7 +1318,7 @@ public sealed class Order
             _items.Select(item => item.Amounts),
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
-            AppliesRetention);
+            AppliesRetention ? [WithholdingRate.LegacyRetefuente] : []);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;

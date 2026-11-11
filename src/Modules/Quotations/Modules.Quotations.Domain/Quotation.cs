@@ -1185,7 +1185,7 @@ public sealed class Quotation
             _items.Select(item => new LineAmountsView(item.Subtotal, item.DiscountAmount, item.TaxAmount)),
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
-            AppliesRetention);
+            AppliesRetention ? [WithholdingRate.LegacyRetefuente] : []);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;
