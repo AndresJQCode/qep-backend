@@ -59,7 +59,7 @@
 1. **Frontend viejo durante el despliegue** (B3): el owner apagó los precios y otro guardado llega sin `showPrices` → sigue `false`, sin 422. Lo amarran la Tarea 2 unitaria (`AnAbsentShowPricesKeepsAStoredFalse`) e integración (`ShowPricesRoundTripsAndAnAbsentValueKeepsIt`).
 2. **Primer guardado de una tienda nueva con `showPrices: false`** (B1): se relee `false`, no `true`. Lo amarran la Tarea 1 (`ANewStoreSavedWithShowPricesFalseReadsBackFalse`, más la comprobación de mutación sin el centinela) y la Tarea 2 (`TheFirstSaveOfANewStoreKeepsShowPricesFalse`).
 3. **`PUT` que sólo cambia el interruptor** (B2): escribe, sube `Version` y audita `["showPrices"]`; repetirlo no escribe. Lo amarran la Tarea 1 (`ChangingOnlyShowPricesBumpsTheVersion`) y la Tarea 2 (`TogglingOnlyShowPricesAuditsIt`).
-4. **`showPrices` que no es booleano** (`"no"`): responde 400 del deserializador y el valor guardado no cambia; nunca se lee como `false`. Lo amarra la Tarea 2 (`ANonBooleanShowPricesIs400AndChangesNothing`).
+4. **`showPrices` que no es booleano** (`"no"`): se rechaza (status >= 400, sin fijar el código: el repo mapea `BadHttpRequestException` a 500) y nada cambia; nunca se lee como `false`. Lo amarra la Tarea 2 (`ANonBooleanShowPricesIsRejectedAndChangesNothing`).
 5. **Publicar una tienda con precios ocultos**: publicar no reinicia el ajuste, la tienda pública trae `showPrices: false` y el catálogo y la cotización del carrito siguen trayendo montos. Lo amarra la Tarea 3 (`AHiddenPricesStoreStillReturnsAmounts`).
 
 ---
@@ -136,7 +136,7 @@
 - [ ] **Step 2: Write the failing integration tests** en `StoreSettingsApiTests` (`StoreSettingsFixture`; `fixture.Body()` **no** trae `showPrices`, así que es el cuerpo de un frontend viejo). Lee el campo con `(bool?)json["showPrices"]` para que su ausencia falle como `null` y no como excepción:
   - `ShowPricesRoundTripsAndAnAbsentValueKeepsIt` — `SaveAsync(Body(b => b["showPrices"] = false))` → `false`; `GetAsync()` → `false`; `PutAsync(Body(), ifMatch: "1")` → 200 y `false`; `PutAsync(Body(b => b["showPrices"] = null), ifMatch: "1")` → `false`; `PutAsync(Body(b => b["showPrices"] = true), ifMatch: "1")` → `true` y `version == 2`.
   - `TheFirstSaveOfANewStoreKeepsShowPricesFalse` (B1 por HTTP) — `SaveAsync(Body(b => b["showPrices"] = false))` con `ifMatch: "0"`, y el `GET` siguiente → `false`.
-  - `ANonBooleanShowPricesIs400AndChangesNothing` — `SaveAsync(Body())`; `PutAsync(Body(b => b["showPrices"] = "no"), ifMatch: "1")` → `HttpStatusCode.BadRequest`; el `GET` → `showPrices == true`, `version == 1`.
+  - `ANonBooleanShowPricesIsRejectedAndChangesNothing` — `SaveAsync(Body())`; `PutAsync(Body(b => b["showPrices"] = "no"), ifMatch: "1")` → status >= 400; el `GET` → `showPrices == true`, `version == 1`.
   - En `ANeverSavedStoreReadsAsDefaultsWithVersionZero` agrega `Assert.Equal(true, (bool?)settings["showPrices"])`.
 - [ ] **Step 3: Run unit tests, expect FAIL (compilación)**
   `dotnet test tests/Modules/Store/Modules.Store.UnitTests --filter "FullyQualifiedName~StoreSettingsHandlerTests|FullyQualifiedName~UpdateStoreSettingsValidatorTests"`
@@ -145,7 +145,7 @@
   `$env:Seed__Enabled = "false"`
   `dotnet test tests/Modules/Store/Modules.Store.IntegrationTests --filter "FullyQualifiedName~StoreSettingsApiTests" -- xUnit.MaxParallelThreads=4`
   Esperado: `Assert.Equal() Failure` con `Actual: null` en cada lectura de `showPrices`, y en
-  `ANonBooleanShowPricesIs400AndChangesNothing` un `OK` donde se esperaba `BadRequest` (el binding todavía ignora el campo).
+  `ANonBooleanShowPricesIsRejectedAndChangesNothing` un `OK` donde se esperaba un rechazo (el binding todavía ignora el campo).
 - [ ] **Step 5: Implement.**
   - `StoreSettingsRequest`: `bool? ShowPrices` al final, con comentario: ausente o `null` conserva el valor guardado, a propósito fuera de la regla de `StoreDtos.cs:6-7`; un frontend en producción durante el despliegue no conoce el campo, y un 422 trabaría cada guardado o un `null` leído como `false` apagaría los precios (spec §4.3).
   - Handler: último argumento de `StoreSettingsInput` = `body.ShowPrices ?? store.ShowPrices` (reemplaza P3). El validador no cambia.

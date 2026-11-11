@@ -74,6 +74,7 @@ public sealed class StoreSettingsComposer(
                 .ToList(),
             store.PrimaryCurrency,
             store.PricingMode.ToString(),
+            store.ShowPrices,
             store.SalesCountries.ToList(),
             featured,
             store.AdvisorMembershipId,
