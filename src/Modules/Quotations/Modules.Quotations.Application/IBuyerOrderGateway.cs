@@ -110,7 +110,7 @@ public sealed class BuyerOrderGateway(
     public async Task<BuyerOrderDetail?> FindAsync(
         Guid tenantId, Guid buyerAccountId, Guid orderId, CancellationToken cancellationToken) =>
         await FindOwnedAsync(tenantId, buyerAccountId, new OrderId(orderId), cancellationToken) is { } order
-            ? await ToDetailAsync(order, cancellationToken)
+            ? ToDetail(order, await ResolvePlacesAsync(order, cancellationToken))
             : null;
 
     public async Task<BuyerOrderDetail?> CancelAsync(
@@ -125,8 +125,10 @@ public sealed class BuyerOrderGateway(
 
         try
         {
+            // Los nombres se resuelven antes de anular: si el lookup falla, el pedido queda intacto.
+            var places = await ResolvePlacesIfCancellableAsync(order, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, order, cancellationToken);
-            return await ToDetailAsync(order, cancellationToken);
+            return ToDetail(order, places);
         }
         catch (RequestConcurrencyException)
         {
@@ -143,8 +145,10 @@ public sealed class BuyerOrderGateway(
 
         try
         {
+            // Del pedido que se anula, no del primero: el releído puede traer ediciones del asesor.
+            var places = await ResolvePlacesIfCancellableAsync(reread, cancellationToken);
             await CancelAndSaveAsync(tenantId, buyerAccountId, reread, cancellationToken);
-            return await ToDetailAsync(reread, cancellationToken);
+            return ToDetail(reread, places);
         }
         catch (RequestConcurrencyException exception)
         {
@@ -249,12 +253,28 @@ public sealed class BuyerOrderGateway(
             FirstLineName(order),
             order.CanBeCancelledByBuyer);
 
-    private async Task<BuyerOrderDetail> ToDetailAsync(Order order, CancellationToken cancellationToken)
+    private sealed record Places(
+        IReadOnlyDictionary<Guid, string> Departments, IReadOnlyDictionary<Guid, string> Cities);
+
+    // Sólo se muestra la parte que corresponde; la facturación que no se muestra no se consulta.
+    private static (BilledPartySource BilledTo, OrderParty? Billing, OrderParty? Shipping) PartiesShown(Order order)
     {
-        // Sólo se muestra la parte que corresponde; la facturación que no se muestra no se consulta.
         var billedTo = OrderBilledParty.SourceFor(order.BillsToFinalConsumer, order.Billing);
-        var billingParty = billedTo == BilledPartySource.BillingParty ? order.Billing : null;
-        var shippingParty = order.IsStorePickup ? null : order.Shipping;
+        return (
+            billedTo,
+            billedTo == BilledPartySource.BillingParty ? order.Billing : null,
+            order.IsStorePickup ? null : order.Shipping);
+    }
+
+    // Un pedido que ya no se puede anular responde 409 sin tocar Geography: CancelAndSaveAsync lo rechaza.
+    private async Task<Places> ResolvePlacesIfCancellableAsync(Order order, CancellationToken cancellationToken) =>
+        order.CanBeCancelledByBuyer
+            ? await ResolvePlacesAsync(order, cancellationToken)
+            : new Places(new Dictionary<Guid, string>(), new Dictionary<Guid, string>());
+
+    private async Task<Places> ResolvePlacesAsync(Order order, CancellationToken cancellationToken)
+    {
+        var (_, billingParty, shippingParty) = PartiesShown(order);
 
         // Un diccionario por llamada y sólo si hay ids: facturación y envío en la misma ciudad piden una vez. Una
         // excepción del lookup sale tal cual; nunca se disfraza de nombre nulo.
@@ -265,6 +285,14 @@ public sealed class BuyerOrderGateway(
             colombian.Select(party => party!.DepartmentId), geography.FindDepartmentNamesAsync, cancellationToken);
         var cities = await NamesAsync(
             colombian.Select(party => party!.CityId), geography.FindCityNamesAsync, cancellationToken);
+        return new Places(departments, cities);
+    }
+
+    private static BuyerOrderDetail ToDetail(Order order, Places places)
+    {
+        var (billedTo, billingParty, shippingParty) = PartiesShown(order);
+        var departments = places.Departments;
+        var cities = places.Cities;
 
         var appliesVatSurplus = order.AppliesVatSurplus;
         return new BuyerOrderDetail(

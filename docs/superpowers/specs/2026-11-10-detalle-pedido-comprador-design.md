@@ -244,7 +244,8 @@ scope propio del adaptador; el lookup usa los repositorios de Geography, con su 
 Sin cambios respecto del spec anterior: sesión antes de leer (401); el pedido se busca por `(TenantId, BuyerAccountId,
 OrderId)` y se re-chequea en memoria; todo lo demás es el mismo 404 `order.order.not_found`. Un fallo del lookup de
 Geography (excepción) se propaga como 500: no se disfraza de nombre `null`, que no se distinguiría de un id inexistente
-**[decisión del agente]**.
+**[decisión del agente]**. Al anular, los nombres se resuelven antes de anular, así que un fallo del lookup deja el
+pedido intacto (también en el reintento por concurrencia, sobre el pedido releído).
 
 ### 4.6 Modo catálogo: dónde se quitan los montos (D6)
 

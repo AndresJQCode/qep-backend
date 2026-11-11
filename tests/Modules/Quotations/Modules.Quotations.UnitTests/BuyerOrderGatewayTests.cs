@@ -644,19 +644,101 @@ public sealed class BuyerOrderGatewayTests
         Assert.Equal("geography down", error.Message);
     }
 
-    private sealed class ThrowingGeographyLookup : IQuotationGeographyLookup
+    [Fact]
+    public async Task ALookupFailureLeavesTheOrderUncancelled()
     {
+        var order = StoreOrder(Buyer);
+        var orders = new StubOrderListRepository(order);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 0);
+        var gateway = Gateway(orders, unitOfWork, new ThrowingGeographyLookup());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal("geography down", error.Message);
+        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Equal(0, unitOfWork.SaveCalls);
+        Assert.Empty(orders.History);
+        Assert.Empty(_audit.Actions);
+        Assert.Empty(_lifecycle.Published);
+    }
+
+    [Fact]
+    public async Task ALookupFailureOnTheRetryLeavesTheRereadOrderUncancelled()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(Buyer, id: id);
+        var editedMeanwhile = StoreOrder(Buyer, id: id);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueBuyerReads(loaded, editedMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+        // allowedCalls: 2 = una consulta de departamento y una de ciudad por intento; el primer intento pasa y el
+        // reintento falla.
+        var gateway = Gateway(orders, unitOfWork, new ThrowingGeographyLookup(allowedCalls: 2));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
+
+        Assert.Equal("geography down", error.Message);
+        Assert.Equal(OrderStatus.Pending, editedMeanwhile.Status);
+        Assert.Equal(1, unitOfWork.SaveCalls);
+        Assert.Empty(orders.History);
+        Assert.Empty(_audit.Actions);
+        Assert.Empty(_lifecycle.Published);
+    }
+
+    [Fact]
+    public async Task ANonCancellableOrderWithAFailingLookupStillGetsTheConflictAndMakesNoLookups()
+    {
+        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var geography = new ThrowingGeographyLookup();
+        var gateway = Gateway(new StubOrderListRepository(order), geography: geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(0, geography.Calls);
+    }
+
+    [Fact]
+    public async Task ARereadOrderThatIsNoLongerCancellableGetsTheConflictWithoutLookups()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(Buyer, id: id);
+        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+        var geography = new ThrowingGeographyLookup(allowedCalls: 2);
+        var gateway = Gateway(orders, unitOfWork, geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(2, geography.Calls);
+    }
+
+    private sealed class ThrowingGeographyLookup(int allowedCalls = 0) : IQuotationGeographyLookup
+    {
+        private int _calls;
+
+        public int Calls => _calls;
+
         public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
-            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("geography down");
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => Call();
 
         public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
-            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("geography down");
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => Call();
 
         public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
-            IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("geography down");
+            IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
+
+        private Task<IReadOnlyDictionary<Guid, string>> Call() =>
+            ++_calls > allowedCalls
+                ? throw new InvalidOperationException("geography down")
+                : Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
     }
 
     /// <summary>Lanza la excepción de concurrencia en los primeros <paramref name="failures"/> guardados y avisa cada
