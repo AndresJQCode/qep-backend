@@ -216,6 +216,20 @@ public sealed class OrderPaymentCalculationTests
         Assert.Null(order.PaidMarkedAt);
     }
 
+    // Una marca de pagado describe un pagado: si la plataforma lo saca de pagado, la marca se va con él.
+    [Fact]
+    public void SyncFromThePlatformOutOfPaidClearsThePaidMark()
+    {
+        var order = ExternalOrder();
+        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, autoArchive: false, Now);
+
+        Assert.Equal(OrderPaymentStatus.PaymentPending, order.PaymentStatus);
+        Assert.Null(order.PaidMarkedBy);
+        Assert.Null(order.PaidMarkedAt);
+    }
+
     [Fact]
     public void SyncFromThePlatformArchivesAPreparedOrderWhenTheTenantAutoArchives()
     {

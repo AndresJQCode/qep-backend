@@ -1267,7 +1267,8 @@ public sealed class Order
     /// El estado de pago que avisa la plataforma (spec de Shopify §6.3), sólo si el pedido no tiene comprobantes
     /// propios; con comprobantes, el estado lo gobiernan ellos. La plataforma manda sobre sus pedidos: un pedido
     /// preparado o archivado también lo recibe (un contraentrega se prepara y se cobra después). Sólo lo rechazan
-    /// uno anulado o facturado. No toca la marca de pagado: no lo marcó una persona.
+    /// uno anulado o facturado. Al llevarlo a pagado no pone la marca de pagado (no lo marcó una persona); al sacarlo de
+    /// pagado limpia la que hubiera.
     ///
     /// Con <paramref name="autoArchive"/> (el ajuste del tenant), un pedido que queda pagado y ya estaba preparado se
     /// archiva sin persona detrás. Devuelve <c>true</c> si lo archivó.
@@ -1294,6 +1295,13 @@ public sealed class Order
         }
 
         PaymentStatus = status;
+        if (status != OrderPaymentStatus.FullPaymentReceived)
+        {
+            // Una marca de pagado describe un pagado: si el pago sale de ahí, la marca se va con él.
+            PaidMarkedBy = null;
+            PaidMarkedAt = null;
+        }
+
         UpdatedAt = occurredAt;
         Version++;
         return autoArchive && ArchiveIfSettled(archivedBy: null, occurredAt);
