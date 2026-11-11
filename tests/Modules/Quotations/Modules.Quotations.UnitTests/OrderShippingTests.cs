@@ -20,7 +20,7 @@ public sealed class OrderShippingTests
         Country = "CO",
     };
 
-    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, false);
+    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, []);
 
     private static OrderLineInput Line =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));

@@ -83,7 +83,7 @@ internal static class OrderBillingEdits
 
         var before = OrderChangeSummary.BillingLabel(order);
         var changed = order.SetBilling(
-            party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName, billing.BillingWithRetention,
+            party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName,
             billing.BillingVatSurplus, updatedBy, now,
             enforceCompleteness: strict);
         return changed ? OrderChangeSummary.BillingChanged(before, OrderChangeSummary.BillingLabel(order)) : null;

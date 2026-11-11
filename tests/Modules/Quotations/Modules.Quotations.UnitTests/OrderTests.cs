@@ -20,7 +20,7 @@ public sealed class OrderTests
     };
 
     private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
-        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, withRetention, false);
+        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, false, TestWithholdings.Customer(withRetention));
 
     private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m, decimal discount = 0m) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -384,7 +384,7 @@ public sealed class OrderTests
         var item = Assert.Single(order.Items);
         Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
         Assert.Equal("Bodega", order.Shipping!.Name);
-        Assert.True(order.AppliesRetention);
+        Assert.NotEmpty(order.AppliedWithholdings);
     }
 
     [Fact]

@@ -233,10 +233,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("customer_vat_surplus");
 
-                    b.Property<bool>("CustomerWithRetention")
-                        .HasColumnType("boolean")
-                        .HasColumnName("customer_with_retention");
-
                     b.Property<decimal>("DiscountAmount")
                         .HasPrecision(14, 2)
                         .HasColumnType("numeric(14,2)")
@@ -328,10 +324,6 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("party_vat_surplus");
 
-                    b.Property<bool?>("PartyWithRetention")
-                        .HasColumnType("boolean")
-                        .HasColumnName("party_with_retention");
-
                     b.Property<string>("PaymentMethod")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
@@ -410,6 +402,16 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)")
                         .HasColumnName("price_rounding_mode");
+
+                    b.Property<bool>("customer_with_retention")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("customer_with_retention");
+
+                    b.Property<bool?>("party_with_retention")
+                        .HasColumnType("boolean")
+                        .HasColumnName("party_with_retention");
 
                     b.HasKey("Id");
 
@@ -1501,6 +1503,89 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasForeignKey("QuotationId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.OwnsMany("Modules.Quotations.Domain.DocumentWithholding", "Withholdings", b1 =>
+                        {
+                            b1.Property<Guid>("DocumentId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("document_id");
+
+                            b1.Property<string>("Source")
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("source");
+
+                            b1.Property<short>("Position")
+                                .HasColumnType("smallint")
+                                .HasColumnName("position");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(14, 2)
+                                .HasColumnType("numeric(14,2)")
+                                .HasColumnName("amount");
+
+                            b1.Property<bool>("Applied")
+                                .HasColumnType("boolean")
+                                .HasColumnName("applied");
+
+                            b1.Property<decimal>("BaseAmount")
+                                .HasPrecision(14, 2)
+                                .HasColumnType("numeric(14,2)")
+                                .HasColumnName("base_amount");
+
+                            b1.Property<string>("Country")
+                                .IsRequired()
+                                .HasMaxLength(2)
+                                .HasColumnType("char(2)")
+                                .HasColumnName("country");
+
+                            b1.Property<decimal?>("MinimumBase")
+                                .HasPrecision(14, 2)
+                                .HasColumnType("numeric(14,2)")
+                                .HasColumnName("minimum_base");
+
+                            b1.Property<string>("MinimumBaseUnit")
+                                .HasMaxLength(8)
+                                .HasColumnType("character varying(8)")
+                                .HasColumnName("minimum_base_unit");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("name");
+
+                            b1.Property<decimal>("Percentage")
+                                .HasPrecision(6, 3)
+                                .HasColumnType("numeric(6,3)")
+                                .HasColumnName("percentage");
+
+                            b1.Property<Guid>("TaxRateId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tax_rate_id");
+
+                            b1.Property<decimal?>("TaxUnitValue")
+                                .HasPrecision(14, 2)
+                                .HasColumnType("numeric(14,2)")
+                                .HasColumnName("tax_unit_value");
+
+                            b1.Property<string>("Type")
+                                .IsRequired()
+                                .HasMaxLength(32)
+                                .HasColumnType("character varying(32)")
+                                .HasColumnName("type");
+
+                            b1.HasKey("DocumentId", "Source", "Position")
+                                .HasName("PK_order_withholdings");
+
+                            b1.ToTable("order_withholdings", "quotations", t =>
+                                {
+                                    t.HasCheckConstraint("CK_order_withholdings_source", "source IN ('Document')");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("DocumentId");
+                        });
+
                     b.OwnsOne("Modules.Quotations.Domain.QuotationBillingAccount", "BillingAccount", b1 =>
                         {
                             b1.Property<Guid>("OrderId")
@@ -1543,6 +1628,8 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
 
                     b.Navigation("BillingAccount")
                         .IsRequired();
+
+                    b.Navigation("Withholdings");
                 });
 
             modelBuilder.Entity("Modules.Quotations.Domain.OrderHistoryEntry", b =>

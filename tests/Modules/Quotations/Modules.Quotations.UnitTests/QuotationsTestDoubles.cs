@@ -1321,7 +1321,7 @@ internal static class OrderBuilders
             OrderId.New(),
             tenantId,
             orderNumber,
-            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, []),
             parties ?? QuotationParties.Empty,
             BillingAccount,
             shipping ?? ShippingDetails.None,

@@ -610,9 +610,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
         order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");
         order.Property(value => value.BillsToFinalConsumer).HasColumnName("bills_to_final_consumer");
-        order.Property(value => value.PartyWithRetention).HasColumnName("party_with_retention");
+        // Plan impuestos por tipo P5, igual que en la cotización: las dos columnas de la retención de antes quedan como
+        // propiedades sombra (la retención sale de order_withholdings), con DEFAULT para que el INSERT nuevo no falle
+        // por NOT NULL. Las quita la migración de contrato.
+        order.Property<bool?>("party_with_retention").HasColumnName("party_with_retention");
         order.Property(value => value.PartyVatSurplus).HasColumnName("party_vat_surplus");
-        order.Property(value => value.CustomerWithRetention).HasColumnName("customer_with_retention");
+        order.Property<bool>("customer_with_retention")
+            .HasColumnName("customer_with_retention")
+            .HasDefaultValue(false);
         order.Property(value => value.CustomerVatSurplus).HasColumnName("customer_vat_surplus");
         order.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         order.Property(value => value.TaxPercentage).HasColumnName("tax_percentage").HasPrecision(5, 2);
@@ -642,6 +647,19 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Navigation(value => value.BillingAccount).IsRequired();
         order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5): misma forma que la de la
+        // cotización, con una sola fuente ('Document').
+        order.Ignore(value => value.AppliedWithholdings);
+        order.OwnsMany(value => value.Withholdings, withholding =>
+        {
+            withholding.ToTable("order_withholdings", "quotations", table =>
+                table.HasCheckConstraint("CK_order_withholdings_source", "source IN ('Document')"));
+            ConfigureWithholding<Order, OrderId>(withholding, "PK_order_withholdings");
+        });
+        order.Navigation(value => value.Withholdings)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()

@@ -293,7 +293,7 @@ public sealed class ListOrdersHandlerTests
             OrderId.New(),
             TenantId,
             orderNumber,
-            new OrderHeader(clientId, AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(clientId, AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {

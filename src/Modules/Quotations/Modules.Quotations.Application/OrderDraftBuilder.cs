@@ -124,8 +124,9 @@ public sealed class OrderDraftBuilder(
             input.PaymentMethod,
             input.IsRetail,
             input.GlobalScaleFloor,
-            customer.WithRetention,
-            customer.VatSurplus);
+            customer.VatSurplus,
+            // Interino hasta la Tarea 14, que congela las tasas del cliente del país de la empresa.
+            Withholdings: []);
         return (header, input.Parties.ToDomain(), lines);
     }
 

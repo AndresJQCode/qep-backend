@@ -170,7 +170,9 @@ public sealed class ExternalOrderService(
         var advisor = new MemberId(draft.AdvisorMembershipId);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, draft.PaymentMethod, IsRetail: false,
-            GlobalScaleFloor: null, customer.WithRetention, customer.VatSurplus);
+            GlobalScaleFloor: null, customer.VatSurplus,
+            // Interino hasta la Tarea 14, que congela las tasas del cliente del país de la empresa.
+            Withholdings: []);
 
         var committed = await KeyedOrderCommit.CommitAsync(
             orderRepository, unitOfWork, numberGenerator, numberingFormats, tenantClock, draft.TenantId, externalKey,

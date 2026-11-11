@@ -32,7 +32,6 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
-    IQuotationCustomerLookup customerLookup,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
@@ -61,12 +60,6 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         var storedVersion = order.Version;
-        var customer = await customerLookup.FindAsync(query.TenantId, order.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
-
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;

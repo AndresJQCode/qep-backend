@@ -25,7 +25,7 @@ public sealed class BuyerOrderGatewayTests
     };
 
     private static OrderHeader Header() =>
-        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, false);
+        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, []);
 
     private static OrderLineInput Line(string name) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", name));

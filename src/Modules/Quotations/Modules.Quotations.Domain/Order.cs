@@ -1,5 +1,4 @@
 using BuildingBlocks.Domain.Pricing;
-using BuildingBlocks.Domain.Taxes;
 
 namespace Modules.Quotations.Domain;
 
@@ -41,6 +40,7 @@ public sealed class Order
     private readonly List<OrderPaymentProof> _paymentProofs = [];
     private readonly List<OrderItem> _items = [];
     private readonly List<OrderParty> _parties = [];
+    private readonly List<DocumentWithholding> _withholdings = [];
 
     // La regla con que se preció el documento (spec 2026-10-27 §4). Nulas en un documento anterior a la
     // regla: se leen con la de siempre de su moneda (D4). EF las materializa por el campo.
@@ -84,14 +84,14 @@ public sealed class Order
         IsRetail = header.IsRetail;
         EnsureGlobalScaleFloorAllowed(header.GlobalScaleFloor, header.IsRetail);
         GlobalScaleFloor = header.GlobalScaleFloor;
-        CustomerWithRetention = header.CustomerWithRetention;
         CustomerVatSurplus = header.CustomerVatSurplus;
+        ArgumentNullException.ThrowIfNull(header.Withholdings);
+        ReplaceWithholdings(header.Withholdings);
         EnsureBillingIsConsistent(parties.BillsToFinalConsumer, parties.Billing is not null, parties.BillingUsesBusinessName);
         AssignParties(parties);
         BillingUsesBusinessName = parties.BillingUsesBusinessName;
         IsStorePickup = parties.IsStorePickup;
         BillsToFinalConsumer = parties.BillsToFinalConsumer;
-        PartyWithRetention = parties.Billing is null ? null : parties.BillingWithRetention;
         PartyVatSurplus = parties.Billing is null ? null : parties.BillingVatSurplus;
         BillingAccount = billingAccount?.Normalized();
         // La misma regla que Quotation: la cuenta fija la moneda y, sin ella, manda la del encabezado, que
@@ -200,13 +200,23 @@ public sealed class Order
 
     public bool BillsToFinalConsumer { get; private set; }
 
-    public bool? PartyWithRetention { get; private set; }
-
     public bool? PartyVatSurplus { get; private set; }
 
-    public bool CustomerWithRetention { get; private set; }
-
+    /// <summary>El excedente de IVA del cliente, congelado al crear (spec impuestos por tipo D24): editar la ficha
+    /// del cliente después no lo mueve.</summary>
     public bool CustomerVatSurplus { get; private set; }
+
+    /// <summary>
+    /// La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5). Una sola fuente,
+    /// <see cref="WithholdingSource.Document"/>: al convertir hereda la fuente vigente de la cotización, al crear a mano
+    /// o desde una integración trae las del cliente, y mientras sigue <see cref="OrderStatus.Pending"/> la reemplazan los
+    /// selectores (<see cref="SetWithholdings"/>, D21). Se guardan también las que no aplican.
+    /// </summary>
+    public IReadOnlyCollection<DocumentWithholding> Withholdings => _withholdings;
+
+    /// <summary>Las que aplicaron en el último recálculo, en su orden; su suma es <see cref="RetentionAmount"/>.</summary>
+    public IEnumerable<DocumentWithholding> AppliedWithholdings =>
+        _withholdings.Where(withholding => withholding.Applied).OrderBy(withholding => withholding.Position);
 
     public decimal Subtotal { get; private set; }
 
@@ -300,14 +310,6 @@ public sealed class Order
 
     public OrderParty? Shipping => _parties.FirstOrDefault(party => party.Role == QuotationPartyRole.Shipping);
 
-    /// <summary>La regla de antes, interina hasta que el pedido congele sus propias tasas (Tarea 12): con parte
-    /// propia manda <see cref="PartyWithRetention"/>, si no <see cref="CustomerWithRetention"/>; nunca a
-    /// consumidor final ni fuera de COP.</summary>
-    public bool AppliesRetention =>
-        (Billing is not null ? PartyWithRetention ?? false : CustomerWithRetention)
-        && !BillsToFinalConsumer
-        && QuotationItem.ItemizesTaxIn(Currency);
-
     /// <summary>Misma regla que <see cref="Quotation.AppliesVatSurplus"/>.</summary>
     public bool AppliesVatSurplus =>
         (Billing is not null ? PartyVatSurplus ?? false : CustomerVatSurplus) && !BillsToFinalConsumer;
@@ -343,18 +345,18 @@ public sealed class Order
             quotation.PaymentMethod,
             quotation.IsRetail,
             quotation.GlobalScaleFloor,
-            // Interino hasta la Tarea 12, que copia la foto de la cotización tal cual: la cotización ya no
-            // guarda los dos booleanos, así que se derivan de sus tasas congeladas.
-            quotation.CustomerWithholdings.Any(withholding => withholding.Type == TaxCountries.RetefuenteType),
-            quotation.CustomerVatSurplus);
+            quotation.CustomerVatSurplus,
+            // Hereda la fuente vigente de la cotización tal cual (spec §7.5): con parte propia, sus selectores; si no,
+            // la foto del cliente. La otra fuente no viaja: el pedido tiene una sola.
+            [.. (quotation.Billing is not null ? quotation.BillingWithholdings : quotation.CustomerWithholdings)
+                .Select(withholding => withholding.Rate)]);
         var parties = new QuotationParties(
             quotation.Billing?.ToDetails(),
             quotation.Shipping?.ToDetails(),
             quotation.BillingUsesBusinessName,
             quotation.IsStorePickup,
             quotation.BillsToFinalConsumer,
-            quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
-            quotation.PartyVatSurplus);
+            BillingVatSurplus: quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
             quotation.BillingAccount, paymentStatus, notes ?? quotation.Notes, convertedBy, occurredAt);
@@ -526,7 +528,7 @@ public sealed class Order
         DateTimeOffset occurredAt)
     {
         var nobody = new MemberId(Guid.Empty);
-        var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, false);
+        var header = new OrderHeader(Guid.Empty, nobody, currency, null, isRetail, null, false, []);
         return Build(
             OrderId.New(), tenantId, "STORE-QUOTE", OrderSource.Store, null, header, QuotationParties.Empty, null,
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt,
@@ -581,7 +583,7 @@ public sealed class Order
                 "An order needs at least one product.");
         }
 
-        EnsureBillingRules(Billing, PartyWithRetention, PartyVatSurplus);
+        EnsureBillingRules(Billing, PartyVatSurplus);
 
         if (Shipping is { } shipping && !shipping.IsComplete)
         {
@@ -593,7 +595,7 @@ public sealed class Order
 
     // Las reglas de facturación del alta, compartidas con SetBilling para que editar no pueda dejar un
     // pedido que crear habría rechazado (spec 2026-10-26).
-    private static void EnsureBillingRules(OrderParty? billing, bool? partyWithRetention, bool? partyVatSurplus)
+    private static void EnsureBillingRules(OrderParty? billing, bool? partyVatSurplus)
     {
         if (billing is null)
         {
@@ -615,27 +617,29 @@ public sealed class Order
                 "A billing party with its own name requires an identification number.");
         }
 
-        if (partyWithRetention is null || partyVatSurplus is null)
+        // Sólo el excedente de IVA se pregunta (spec impuestos por tipo §7.8): las retenciones son selectores, y
+        // ninguno elegido es una respuesta válida.
+        if (partyVatSurplus is null)
         {
             throw new QuotationsDomainException(
                 "order.billing.tax_profile_required",
-                "The billing party must state whether it applies withholding tax and VAT surplus.");
+                "The billing party must state whether it has VAT surplus.");
         }
     }
 
     /// <summary>
     /// Cambia a quién se le factura en un pedido pendiente (spec 2026-10-26): la fila de facturación, el
-    /// consumidor final, la razón social y el perfil fiscal de la fila. La fila existente se <b>modifica</b>
+    /// consumidor final, la razón social y el excedente de IVA de la fila. La fila existente se <b>modifica</b>
     /// y no se reemplaza: borrar y re-crear en el mismo guardado choca con <c>IX_order_parties_order_role</c>.
     /// Devuelve <c>false</c>, sin tocar la versión, si nada cambió. Con <paramref name="enforceCompleteness"/> en
     /// <c>false</c> (el cálculo previo, que se hace mientras la persona teclea) se omiten las exigencias de fila
-    /// completa, identificación y perfil fiscal; la consistencia con el consumidor final sigue.
+    /// completa, identificación y excedente de IVA; la consistencia con el consumidor final sigue. Las retenciones
+    /// no cambian acá: el pedido tiene una sola fuente y la cambia <see cref="SetWithholdings"/>.
     /// </summary>
     public bool SetBilling(
         QuotationPartyDetails? billing,
         bool billsToFinalConsumer,
         bool billingUsesBusinessName,
-        bool? partyWithRetention,
         bool? partyVatSurplus,
         MemberId updatedBy,
         DateTimeOffset occurredAt,
@@ -646,11 +650,10 @@ public sealed class Order
 
         // La fila candidata se arma aparte para validar lo normalizado antes de mutar nada.
         var candidate = billing is null ? null : OrderParty.Create(Id, QuotationPartyRole.Billing, billing);
-        var withRetention = billing is null ? null : partyWithRetention;
         var vatSurplus = billing is null ? null : partyVatSurplus;
         if (enforceCompleteness)
         {
-            EnsureBillingRules(candidate, withRetention, vatSurplus);
+            EnsureBillingRules(candidate, vatSurplus);
         }
 
         var current = Billing;
@@ -658,7 +661,6 @@ public sealed class Order
             && (current is null) == (candidate is null)
             && BillsToFinalConsumer == billsToFinalConsumer
             && BillingUsesBusinessName == billingUsesBusinessName
-            && PartyWithRetention == withRetention
             && PartyVatSurplus == vatSurplus)
         {
             return false;
@@ -682,8 +684,93 @@ public sealed class Order
 
         BillsToFinalConsumer = billsToFinalConsumer;
         BillingUsesBusinessName = billingUsesBusinessName;
-        PartyWithRetention = withRetention;
         PartyVatSurplus = vatSurplus;
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    /// <summary>
+    /// Reemplaza las tasas de retención de un pedido <see cref="OrderStatus.Pending"/> por las de los selectores
+    /// (spec impuestos por tipo D21): una por tipo, ya resueltas contra el catálogo por la aplicación. Cambia sólo
+    /// este pedido, nunca la ficha del cliente. El agregado vuelve a exigir lo que guarda: empresa facturadora, cada
+    /// tasa de su país y una por tipo. Una lista vacía siempre se acepta y deja el pedido sin retenciones.
+    ///
+    /// Devuelve si cambió algo; si no, no toca la versión.
+    /// </summary>
+    public bool SetWithholdings(
+        IReadOnlyList<WithholdingRate> rates,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(rates);
+        EnsurePending("The withholdings can only change while the order is pending.");
+        if (rates.Count > 0)
+        {
+            EnsureSelectableWithholdings(rates);
+        }
+
+        if (_withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate)
+            .SequenceEqual(rates))
+        {
+            return false;
+        }
+
+        ReplaceWithholdings(rates);
+        Touch(updatedBy, occurredAt);
+        return true;
+    }
+
+    private void EnsureSelectableWithholdings(IReadOnlyList<WithholdingRate> rates)
+    {
+        // Sin empresa no hay país contra el cual validarlos (D22: fijar la empresa habilita los selectores).
+        if (BillingAccount?.Country is not { } country
+            || rates.Any(rate => !string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new QuotationsDomainException(
+                "order.billing.withholding_tax_rate_invalid",
+                "Every selected withholding tax rate must belong to the billing company's country.");
+        }
+
+        if (rates.GroupBy(rate => rate.Type, StringComparer.Ordinal).Any(group => group.Count() > 1))
+        {
+            throw new QuotationsDomainException(
+                "order.billing.withholding_type_repeated",
+                "Only one withholding tax rate per type can be selected.");
+        }
+    }
+
+    /// <summary>
+    /// Fija o cambia la empresa y la cuenta con la que se cobra un pedido <see cref="OrderStatus.Pending"/> (spec
+    /// impuestos por tipo D22). Con la empresa llega el país, y con el país las retenciones que aplican; una tasa de
+    /// otro país deja de aplicar (D23). La aplicación ya validó la cuenta contra la empresa.
+    ///
+    /// No cambia la moneda (plan P10, aprobado por el owner): cambiarla sin repreciar dejaría los importes rotulados
+    /// en otra moneda, y repreciar un pedido externo cambiaría lo que la plataforma cobró. Una cuenta en otra moneda
+    /// es <c>order.billing.currency_change_not_allowed</c>.
+    ///
+    /// Devuelve si cambió algo; si no, no toca la versión.
+    /// </summary>
+    public bool SetBillingAccount(
+        QuotationBillingAccount billingAccount,
+        MemberId updatedBy,
+        DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(billingAccount);
+        EnsurePending("The billing account can only change while the order is pending.");
+        var normalized = billingAccount.Normalized();
+        if (normalized == BillingAccount)
+        {
+            return false;
+        }
+
+        if (!string.Equals(normalized.Currency, Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new QuotationsDomainException(
+                "order.billing.currency_change_not_allowed",
+                "The billing account must use the order's currency.");
+        }
+
+        BillingAccount = normalized;
         Touch(updatedBy, occurredAt);
         return true;
     }
@@ -848,23 +935,6 @@ public sealed class Order
             }
         }
 
-        RecalculateTotals();
-    }
-
-    public void RefreshCustomerTaxProfile(bool customerWithRetention, bool customerVatSurplus)
-    {
-        if (Status != OrderStatus.Pending)
-        {
-            return;
-        }
-
-        if (CustomerWithRetention == customerWithRetention && CustomerVatSurplus == customerVatSurplus)
-        {
-            return;
-        }
-
-        CustomerWithRetention = customerWithRetention;
-        CustomerVatSurplus = customerVatSurplus;
         RecalculateTotals();
     }
 
@@ -1317,13 +1387,20 @@ public sealed class Order
         Version++;
     }
 
+    // Misma aritmética y misma regla de candidatas que la cotización (DocumentTotals, WithholdingCandidates): cada
+    // fila de la foto se liquida otra vez, también las que no aplican.
     private void RecalculateTotals()
     {
         var totals = DocumentTotals.Compute(
             _items.Select(item => item.Amounts),
             FreightAmounts.For(FreightChargeMode, FreightAmount, FreightTaxPercentage, Currency, PriceRounding),
             AppliesVatSurplus,
-            AppliesRetention ? [WithholdingRate.LegacyRetefuente] : []);
+            WithholdingCandidates.For(
+                _withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
+                BillsToFinalConsumer,
+                BillingAccount,
+                Currency));
+        DocumentWithholding.SettleAll(_withholdings, WithholdingSource.Document, totals.Withholdings);
         Subtotal = totals.Subtotal;
         DiscountAmount = totals.DiscountAmount;
         TaxAmount = totals.TaxAmount;
@@ -1333,6 +1410,30 @@ public sealed class Order
         NetTotal = totals.NetTotal;
         FreightSubtotal = totals.FreightSubtotal;
         FreightTaxAmount = totals.FreightTaxAmount;
+    }
+
+    // Reemplaza la foto conservando las filas que ya existen en su posición (cambian de valores, no de identidad),
+    // igual que la cotización: borrar y volver a agregar la misma clave (pedido, fuente, posición) en un agregado ya
+    // rastreado no es algo que EF traduzca bien. La posición es el orden de llegada.
+    private void ReplaceWithholdings(IReadOnlyList<WithholdingRate> rates)
+    {
+        var existing = _withholdings.OrderBy(withholding => withholding.Position).ToList();
+        for (var position = 0; position < rates.Count; position++)
+        {
+            if (position < existing.Count)
+            {
+                existing[position].Replace(rates[position]);
+            }
+            else
+            {
+                _withholdings.Add(new DocumentWithholding(WithholdingSource.Document, (short)position, rates[position]));
+            }
+        }
+
+        foreach (var extra in existing.Skip(rates.Count))
+        {
+            _withholdings.Remove(extra);
+        }
     }
 
     private void AssignParties(QuotationParties parties)

@@ -27,7 +27,7 @@ public sealed class OrderItemEditsTests
     private static Order PendingOrder(params (Guid ProductId, decimal Quantity, decimal UnitPrice, QuotationProductSnapshot? Product)[] lines) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             lines.Select(line => new OrderLineInput(line.ProductId, line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
             OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
@@ -276,7 +276,7 @@ public sealed class OrderItemEditsTests
     {
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0)],
             OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
@@ -310,7 +310,7 @@ public sealed class OrderItemEditsTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(CamisetaM, Camiseta, 1m, 30_000m, 0m, 0),

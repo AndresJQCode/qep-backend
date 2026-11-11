@@ -162,7 +162,7 @@ public sealed class StoreOrderGatewayTests
         Assert.Equal(
             ("Portería", "Carrera 9 # 8-7", second.CityId, second.DepartmentId),
             (order.Shipping!.Name, order.Shipping.Address, order.Shipping.CityId, order.Shipping.DepartmentId));
-        Assert.Equal((true, true), (order.PartyWithRetention, order.PartyVatSurplus));
+        Assert.True(order.PartyVatSurplus);
     }
 
     [Fact]
@@ -215,7 +215,9 @@ public sealed class StoreOrderGatewayTests
         });
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
-        Assert.True(order.AppliesRetention);
+        // Rojo hasta la Tarea 14: el pedido de la tienda congela las tasas del cliente (D16, excepción), ya no el viejo
+        // BillingWithRetention del borrador.
+        Assert.NotEmpty(order.AppliedWithholdings);
         // La cotización no conoce al comprador, así que no retiene: el neto del pedido es lo que se aparta.
         Assert.NotEqual(quote.Total, order.NetTotal);
     }

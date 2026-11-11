@@ -179,7 +179,9 @@ public sealed class StoreOrderGateway(
         var advisor = new MemberId(draft.AdvisorMembershipId);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, null, draft.IsRetail, GlobalScaleFloor: null,
-            customer.WithRetention, customer.VatSurplus);
+            customer.VatSurplus,
+            // Interino hasta la Tarea 14, que congela las tasas del cliente del país de la empresa (D16, excepción).
+            Withholdings: []);
         var parties = new QuotationPartiesRequest(
                 Billing: ToParty(draft.Billing),
                 Shipping: ToParty(draft.Shipping),

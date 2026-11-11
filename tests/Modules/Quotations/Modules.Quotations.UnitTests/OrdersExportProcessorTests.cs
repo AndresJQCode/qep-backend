@@ -2718,6 +2718,7 @@ public sealed class OrdersExportProcessorTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     // Un pedido manual (spec 2026-10-15 §6.4): todo lo que el Excel lee vive en el pedido, así que
@@ -2750,7 +2751,7 @@ public sealed class OrdersExportProcessorTests
             OrderId.New(),
             TenantId,
             orderNumber,
-            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, customerWithRetention, false),
+            new OrderHeader(ClientId, AdvisorId, "COP", paymentMethod, IsRetail: false, null, false, TestWithholdings.Customer(customerWithRetention)),
             parties ?? QuotationParties.Empty,
             billingAccount ?? DefaultBillingAccount,
             shipping ?? ShippingDetails.None,

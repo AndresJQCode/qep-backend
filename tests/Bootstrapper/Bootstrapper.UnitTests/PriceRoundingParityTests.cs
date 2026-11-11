@@ -43,7 +43,7 @@ public sealed class PriceRoundingParityTests
 
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), Advisor, currency, null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), Advisor, currency, null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {

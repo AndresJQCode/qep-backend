@@ -33,11 +33,6 @@ public sealed record WithholdingRate(
         { } money when TaxCountries.Find(Country)?.TaxUnitName is null => money,
         _ => null,
     };
-
-    // Interino: la retención fija de antes (2,5 % sin base) mientras Quotation y Order siguen leyendo
-    // AppliesRetention. Las Tareas 11 y 12 la reemplazan por la foto congelada y la borran.
-    internal static WithholdingRate LegacyRetefuente { get; } =
-        new(Guid.Empty, "Retefuente 2,5 %", TaxCountries.RetefuenteType, TaxCountries.Colombia.Country, 2.5m, null, null, null);
 }
 
 /// <summary>Una tasa que sí aplicó al documento, con la base sobre la que se calculó y su monto.</summary>

@@ -22,7 +22,9 @@ internal static class OrderMapping
         order.BillingUsesBusinessName,
         order.IsStorePickup,
         order.BillsToFinalConsumer,
-        order.PartyWithRetention,
+        // Derivado para el frontend viejo (spec impuestos por tipo §9.3): con parte propia, si el pedido tiene alguna
+        // tasa; sin ella, null. Interino hasta la Tarea 14, que agrega las tasas a la respuesta.
+        order.Billing is null ? null : order.Withholdings.Count > 0,
         order.PartyVatSurplus,
         order.AppliesVatSurplus,
         order.Subtotal,

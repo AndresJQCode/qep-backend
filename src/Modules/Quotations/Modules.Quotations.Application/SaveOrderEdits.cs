@@ -40,7 +40,6 @@ public sealed class SaveOrderEditsHandler(
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     IQuotationProductLookup productLookup,
-    IQuotationCustomerLookup customerLookup,
     IQuotationFileLookup fileLookup,
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
@@ -77,13 +76,6 @@ public sealed class SaveOrderEditsHandler(
             throw new RequestConcurrencyException(
                 "concurrency.conflict",
                 "The order changed after it was loaded.");
-        }
-
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular.
-        var customer = await customerLookup.FindAsync(command.TenantId, order.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
         }
 
         foreach (var addition in command.Proofs.Add)

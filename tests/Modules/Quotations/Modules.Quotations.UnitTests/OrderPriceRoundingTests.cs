@@ -62,7 +62,7 @@ public sealed class OrderPriceRoundingTests
         var variantId = Guid.CreateVersion7();
         return Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {

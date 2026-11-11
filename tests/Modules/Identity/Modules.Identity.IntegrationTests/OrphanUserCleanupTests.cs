@@ -849,7 +849,7 @@ public sealed class OrphanUserCleanupTests
             OrderId.New(),
             tenantId,
             $"PED-{Guid.NewGuid():N}"[..20],
-            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
