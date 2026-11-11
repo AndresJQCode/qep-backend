@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Quotations.Application;
 using Modules.Quotations.Infrastructure.Persistence;
-using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -41,8 +40,8 @@ public sealed class OrderStatusActionsApiTests
         var paid = await PostActionAsync(client, tenantId, order.Id, "mark-paid");
         Assert.Equal(("Open", "FullPaymentReceived"), (paid.Status, paid.PaymentStatus));
 
-        await PostActionAsync(client, tenantId, order.Id, "prepare");
-        Assert.Equal("Prepared", await FulfillmentStatusAsync(database.GetConnectionString(), order.Id));
+        var prepared = await PostActionAsync(client, tenantId, order.Id, "prepare");
+        Assert.Equal("Prepared", prepared.FulfillmentStatus);
 
         var invoiced = await PostActionAsync(client, tenantId, order.Id, "invoice");
         Assert.NotNull(invoiced.InvoicedAt);
@@ -197,7 +196,7 @@ public sealed class OrderStatusActionsApiTests
                 .Where(expected.Contains)
                 .ToArray());
         Assert.Equal("Open", detail.Order.Status);
-        Assert.Equal("NotPrepared", await FulfillmentStatusAsync(database.GetConnectionString(), order.Id));
+        Assert.Equal("NotPrepared", detail.Order.FulfillmentStatus);
     }
 
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con un
@@ -237,17 +236,6 @@ public sealed class OrderStatusActionsApiTests
             OrderByIdUrl(tenantId, orderId), TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         return detail;
-    }
-
-    // El DTO todavía no expone el envío (Tarea 6): se lee de la columna.
-    private static async Task<string> FulfillmentStatusAsync(string connectionString, Guid orderId)
-    {
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync(TestContext.Current.CancellationToken);
-        await using var command = new NpgsqlCommand(
-            "SELECT fulfillment_status FROM quotations.orders WHERE id = @id", connection);
-        command.Parameters.AddWithValue("id", orderId);
-        return (string)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
     private static async Task AssertDomainRejectionAsync(HttpResponseMessage response, string code)

@@ -1434,9 +1434,9 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken));
 
         Assert.Equal("Cancelled", cancelled.Status);
-        Assert.NotNull(cancelled.ApprovedAt);
-        Assert.Equal(approved.ApprovedAt, cancelled.ApprovedAt);
-        Assert.Equal(approved.ApprovedBy, cancelled.ApprovedBy);
+        Assert.NotNull(cancelled.PaidMarkedAt);
+        Assert.Equal(approved.PaidMarkedAt, cancelled.PaidMarkedAt);
+        Assert.Equal(approved.PaidMarkedBy, cancelled.PaidMarkedBy);
         Assert.Equal("Aprobado por error", cancelled.CancellationReason);
     }
 
@@ -1493,7 +1493,7 @@ public sealed class OrderApiTests
             TestContext.Current.CancellationToken));
 
         Assert.Equal("Approved", approved.Status);
-        Assert.NotNull(approved.ApprovedAt);
+        Assert.NotNull(approved.PaidMarkedAt);
     }
 
     // Spec 2026-10-26: con OnOrderApproval, aprobar un pedido sin fila de facturación lee el cliente vigente a
@@ -1663,8 +1663,8 @@ public sealed class OrderApiTests
         var order = JsonSerializer.Deserialize<OrderResponse>(body, JsonSerializerOptions.Web);
         Assert.NotNull(order);
         Assert.Equal(approved.Id, order.Id);
-        Assert.Equal(approved.ApprovedAt, order.ApprovedAt);
-        Assert.Equal(approved.ApprovedBy, order.ApprovedBy);
+        Assert.Equal(approved.PaidMarkedAt, order.PaidMarkedAt);
+        Assert.Equal(approved.PaidMarkedBy, order.PaidMarkedBy);
         Assert.Equal(approved.Version + 1, order.Version);
 
         var fetched = await GetOrderByQuotationAsync(client, tenantId, order.QuotationId!.Value);
@@ -1712,8 +1712,8 @@ public sealed class OrderApiTests
 
         var reverted = JsonSerializer.Deserialize<OrderResponse>(body, JsonSerializerOptions.Web);
         Assert.NotNull(reverted);
-        Assert.Equal(approved.ApprovedAt, reverted.ApprovedAt);
-        Assert.Equal(approved.ApprovedBy, reverted.ApprovedBy);
+        Assert.Equal(approved.PaidMarkedAt, reverted.PaidMarkedAt);
+        Assert.Equal(approved.PaidMarkedBy, reverted.PaidMarkedBy);
 
         var revertedAudit = Assert.Single(
             await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"),

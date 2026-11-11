@@ -40,6 +40,52 @@ public sealed class OrderExportApiTests
         Assert.Equal(ownerUserId, job.RequestedBy);
     }
 
+    // Spec 2026-11-10 §5: el archivo es «lo que estoy viendo». Sin estado no trae archivados, y el envío y la marca de
+    // facturado filtran como en la tabla.
+    [Fact]
+    public async Task TheExportHonoursTheNewFiltersAndHidesArchived()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var archived = await CreateOrderAsync(client, factory, tenantId);
+        var prepared = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{archived.Id}/archive", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{prepared.Id}/prepare", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, string.Empty));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&status=Archived"));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&fulfillmentStatus=Prepared"));
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, "&invoiced=false"));
+
+        var noneInvoiced = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&invoiced=true", content: null, TestContext.Current.CancellationToken);
+        var problem = await noneInvoiced.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.export.empty", problem?.Code);
+
+        var invalid = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&fulfillmentStatus=Shipped", content: null, TestContext.Current.CancellationToken);
+        problem = await invalid.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.order.fulfillment_status_invalid", problem?.Code);
+    }
+
+    private static async Task<int?> ExportedRowsAsync(HttpClient client, QepApiFactory factory, Guid tenantId, string filters)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}{filters}", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        return (await FindExportJobAsync(factory, accepted.JobId)).RowCount;
+    }
+
     [Fact]
     public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
     {
@@ -290,6 +336,8 @@ public sealed class OrderExportApiTests
             advisorId: null,
             OrderStatus.Open,
             paymentStatus: null,
+            fulfillmentStatus: null,
+            invoiced: null,
             now.AddDays(-7),
             now.AddDays(2),
             orderNumber: null,

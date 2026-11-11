@@ -2078,20 +2078,20 @@ public static class QepServiceCollectionExtensions
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
-        // persona ya aprobó.
+        // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderCancel,
             "Anular pedidos",
-            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
             RequiredModules: [ModuleKeys.Orders]));
-        // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
-        // de QEP (spec 2026-10-05).
+        // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
+        // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderInvoice,
             "Facturar pedidos",
-            "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
+            "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));

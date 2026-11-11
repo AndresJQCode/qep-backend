@@ -50,6 +50,17 @@ public sealed class ExportStatusLabelsTests
             },
             ExportStatusLabels.For);
 
+    // order-list.ts (frontend), las etiquetas del envío (spec 2026-11-10 §5)
+    [Fact]
+    public void EveryFulfillmentStatusHasTheLabelOfTheOrdersTable() =>
+        AssertLabels(
+            new Dictionary<OrderFulfillmentStatus, string>
+            {
+                [OrderFulfillmentStatus.NotPrepared] = "Sin preparar",
+                [OrderFulfillmentStatus.Prepared] = "Preparado",
+            },
+            ExportStatusLabels.For);
+
     private static void AssertLabels<TStatus>(
         IReadOnlyDictionary<TStatus, string> expected, Func<TStatus, string> label)
         where TStatus : struct, Enum =>

@@ -11,7 +11,7 @@ namespace Modules.Quotations.Application;
 /// es contrato, y el diccionario de la pantalla lo tiene el frontend.
 ///
 /// La rama por defecto tira a propósito: un estado nuevo sin etiqueta rompe acá, y
-/// ExportStatusLabelsTests recorre los tres enums para que eso se vea en CI y no en producción.
+/// ExportStatusLabelsTests recorre los cuatro enums para que eso se vea en CI y no en producción.
 /// </summary>
 public static class ExportStatusLabels
 {
@@ -31,6 +31,13 @@ public static class ExportStatusLabels
         OrderStatus.Archived => "Archivado",
         OrderStatus.Cancelled => "Anulado",
         _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The order status has no export label."),
+    };
+
+    public static string For(OrderFulfillmentStatus status) => status switch
+    {
+        OrderFulfillmentStatus.NotPrepared => "Sin preparar",
+        OrderFulfillmentStatus.Prepared => "Preparado",
+        _ => throw new ArgumentOutOfRangeException(nameof(status), status, "The fulfillment status has no export label."),
     };
 
     public static string For(OrderPaymentStatus status) => status switch

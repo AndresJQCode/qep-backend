@@ -247,6 +247,57 @@ public sealed class OrderContractApiTests
         }
     }
 
+    // Spec 2026-11-10 §5, como lo lee el frontend: los ejes, quién y cuándo de cada marca y el saldo, con estos
+    // nombres; los de la aprobación ya no viajan.
+    [Fact]
+    public async Task TheDetailCarriesTheNewAxesAndTheBalance()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ApproverPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var proofFileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var proofAmount = Math.Round(quotation.NetTotal, 0, MidpointRounding.AwayFromZero) - 10_000m;
+        var converted = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest(null, [new OrderPaymentProofRequest(proofFileId, proofAmount)]),
+            TestContext.Current.CancellationToken);
+        converted.EnsureSuccessStatusCode();
+        using var created = JsonDocument.Parse(await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var orderId = created.RootElement.GetProperty("order").GetProperty("id").GetGuid();
+        foreach (var action in new[] { "mark-paid", "prepare" })
+        {
+            (await client.PostAsync(
+                $"/api/v1/tenants/{tenantId}/orders/{orderId}/{action}", content: null, TestContext.Current.CancellationToken))
+                .EnsureSuccessStatusCode();
+        }
+
+        using var detail = await GetJsonAsync(client, $"/api/v1/tenants/{tenantId}/orders/{orderId}");
+
+        var order = detail.RootElement.GetProperty("order");
+        Assert.Equal("Open", order.GetProperty("status").GetString());
+        Assert.Equal("FullPaymentReceived", order.GetProperty("paymentStatus").GetString());
+        Assert.Equal("Prepared", order.GetProperty("fulfillmentStatus").GetString());
+        Assert.False(order.GetProperty("invoiced").GetBoolean());
+        Assert.Equal(JsonValueKind.String, order.GetProperty("paidMarkedAt").ValueKind);
+        Assert.Equal(JsonValueKind.String, order.GetProperty("paidMarkedBy").ValueKind);
+        Assert.Equal(JsonValueKind.String, order.GetProperty("preparedAt").ValueKind);
+        Assert.Equal(JsonValueKind.String, order.GetProperty("preparedBy").ValueKind);
+        Assert.Equal(JsonValueKind.Null, order.GetProperty("archivedAt").ValueKind);
+        Assert.Equal(JsonValueKind.Null, order.GetProperty("archivedBy").ValueKind);
+        Assert.Equal(10_000m, order.GetProperty("balance").GetDecimal());
+        Assert.False(order.TryGetProperty("approvedAt", out var ignoredApprovedAt));
+        Assert.False(order.TryGetProperty("approvedBy", out var ignoredApprovedBy));
+
+        using var list = await GetJsonAsync(client, $"/api/v1/tenants/{tenantId}/orders");
+        var row = Assert.Single(list.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("Prepared", row.GetProperty("fulfillmentStatus").GetString());
+        Assert.False(row.GetProperty("invoiced").GetBoolean());
+    }
+
     private static async Task<JsonDocument> GetJsonAsync(HttpClient client, string url)
     {
         var response = await client.GetAsync(url, TestContext.Current.CancellationToken);

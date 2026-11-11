@@ -15,6 +15,8 @@ internal static class OrderMapping
         order.AdvisorId.Value,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.Currency,
         order.IsRetail,
@@ -55,7 +57,12 @@ internal static class OrderMapping
         order.ShippingDtoOf(),
         order.FreightSubtotal,
         order.FreightTaxAmount,
-        order.ExternalShippingTitle);
+        order.ExternalShippingTitle,
+        order.PreparedAt,
+        order.PreparedBy?.Value,
+        order.ArchivedAt,
+        order.ArchivedBy?.Value,
+        order.Balance);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -83,6 +90,8 @@ internal static class OrderMapping
         advisorName,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,

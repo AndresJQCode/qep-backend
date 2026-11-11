@@ -902,7 +902,9 @@ internal sealed record RecordedOrderExportSearch(
     DateTimeOffset? ConvertedFrom,
     DateTimeOffset? ConvertedBefore,
     string? OrderNumber,
-    OrderSource? Source = null);
+    OrderSource? Source = null,
+    OrderFulfillmentStatus? FulfillmentStatus = null,
+    bool? Invoiced = null);
 
 /// <summary>Devuelve los pedidos sembrados y anota con que filtro se la llamo — lo que las pruebas
 /// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL. Desde el
@@ -915,6 +917,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
 
     public OrderSource? LastSource { get; private set; }
+
+    public OrderFulfillmentStatus? LastFulfillmentStatus { get; private set; }
+
+    public bool? LastInvoiced { get; private set; }
 
     public int AnyCalls { get; private set; }
 
@@ -971,6 +977,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -982,6 +990,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         LastClientIds = clientIds;
         LastSearchRange = (convertedFrom, convertedBefore);
         LastSource = source;
+        LastFulfillmentStatus = fulfillmentStatus;
+        LastInvoiced = invoiced;
         return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
 
@@ -1041,6 +1051,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -1049,7 +1061,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            fulfillmentStatus, invoiced);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
@@ -1060,6 +1073,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -1071,7 +1086,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            fulfillmentStatus, invoiced);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba

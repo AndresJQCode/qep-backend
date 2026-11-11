@@ -105,6 +105,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -114,7 +116,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source);
         var total = await orders.CountAsync(cancellationToken);
         var items = await orders
             .OrderByDescending(order => order.ConvertedAt)
@@ -159,12 +161,14 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
         OrderSource? source,
         CancellationToken cancellationToken) =>
-        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source)
+        Filtered(tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source)
             .AnyAsync(cancellationToken);
 
     public async Task<IReadOnlyList<Order>> ListForExportAsync(
@@ -174,6 +178,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -183,7 +189,7 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         CancellationToken cancellationToken)
     {
         var orders = Filtered(
-            tenantId, clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            tenantId, clientId, clientIds, advisorId, status, paymentStatus, fulfillmentStatus, invoiced, convertedFrom, convertedBefore, orderNumber, source);
         if (after is not null)
         {
             var convertedAt = after.ConvertedAt;
@@ -209,6 +215,8 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -217,9 +225,21 @@ internal sealed class OrderRepository(QuotationsDbContext dbContext) : IOrderRep
         var orders = dbContext.Orders
             .AsNoTracking()
             .Where(order => order.TenantId == tenantId);
-        if (status is { } orderStatus)
+        // Sin filtro de estado, los archivados no salen (spec 2026-11-10 §5): el listado es lo pendiente de trabajar.
+        orders = status is { } orderStatus
+            ? orders.Where(order => order.Status == orderStatus)
+            : orders.Where(order => order.Status != OrderStatus.Archived);
+
+        if (fulfillmentStatus is { } orderFulfillmentStatus)
         {
-            orders = orders.Where(order => order.Status == orderStatus);
+            orders = orders.Where(order => order.FulfillmentStatus == orderFulfillmentStatus);
+        }
+
+        if (invoiced is { } isInvoiced)
+        {
+            orders = isInvoiced
+                ? orders.Where(order => order.InvoicedAt != null)
+                : orders.Where(order => order.InvoicedAt == null);
         }
 
         if (paymentStatus is { } orderPaymentStatus)

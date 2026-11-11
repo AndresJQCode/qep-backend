@@ -188,12 +188,14 @@ public static class OrderEndpoints
         string? source = null,
         int page = 1,
         int pageSize = QuotationPaging.DefaultPageSize,
-        string? timeZone = null)
+        string? timeZone = null,
+        string? fulfillmentStatus = null,
+        string? invoiced = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, page, pageSize, timeZone),
+                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced),
             cancellationToken);
         return Results.Ok(new OrdersPageResponse(
             result.Items.Select(ToListItemResponse).ToArray(),
@@ -215,12 +217,14 @@ public static class OrderEndpoints
         string? clientCuc = null,
         string? orderNumber = null,
         string? source = null,
-        string? timeZone = null)
+        string? timeZone = null,
+        string? fulfillmentStatus = null,
+        string? invoiced = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, timeZone),
+                clientCuc, orderNumber, source, timeZone, fulfillmentStatus, invoiced),
             cancellationToken);
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
     }
@@ -248,6 +252,8 @@ public static class OrderEndpoints
         order.AdvisorName,
         order.Status,
         order.PaymentStatus,
+        order.FulfillmentStatus,
+        order.Invoiced,
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,
