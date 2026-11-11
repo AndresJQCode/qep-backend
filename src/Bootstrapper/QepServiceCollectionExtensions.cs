@@ -1737,7 +1737,11 @@ public static class QepServiceCollectionExtensions
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
-                ApiAccessPermissions.ApiKeyManage
+                ApiAccessPermissions.ApiKeyManage,
+                // Spec 2026-11-10 §5: el costo y el margen son dato comercial sensible; de fábrica sólo en admin.
+                CatalogPermissions.ProductCostRead,
+                CatalogPermissions.ProductCostManage,
+                ReportingPermissions.MarginRead
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1950,6 +1954,20 @@ public static class QepServiceCollectionExtensions
             "high",
             RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductCostRead,
+            "Ver costos de productos",
+            "Permite ver el costo unitario de las variantes.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductCostManage,
+            "Gestionar costos de productos",
+            "Permite escribir y borrar el costo unitario de las variantes.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
+        services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
@@ -2124,6 +2142,13 @@ public static class QepServiceCollectionExtensions
             "Reporting",
             "medium",
             RequiredModules: [ModuleKeys.Reporting]));
+        services.AddSingleton(new PermissionDefinition(
+            ReportingPermissions.MarginRead,
+            "Reporte de margen",
+            "Permite consultar ventas netas, costo y margen bruto por producto.",
+            "Reporting",
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -2573,6 +2598,12 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.ProductManage,
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
             .AddPolicy(
+                CatalogPermissions.ProductCostRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostRead))
+            .AddPolicy(
+                CatalogPermissions.ProductCostManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostManage))
+            .AddPolicy(
                 CompaniesPermissions.CompanyRead,
                 policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyRead))
             .AddPolicy(
@@ -2691,6 +2722,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 ReportingPermissions.AllAdvisorsRead,
                 policy => AddPermissionRequirement(policy, ReportingPermissions.AllAdvisorsRead))
+            .AddPolicy(
+                ReportingPermissions.MarginRead,
+                policy => AddPermissionRequirement(policy, ReportingPermissions.MarginRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogRead,
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))

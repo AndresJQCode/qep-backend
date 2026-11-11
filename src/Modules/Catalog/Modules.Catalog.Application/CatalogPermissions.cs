@@ -17,4 +17,8 @@ public static class CatalogPermissions
     public const string ProductManage = "catalog.product.manage";
     public const string TaxRateRead = "catalog.tax_rate.read";
     public const string TaxRateManage = "catalog.tax_rate.manage";
+
+    // El costo unitario de una variante es dato comercial sensible: sólo admin de fábrica.
+    public const string ProductCostRead = "catalog.product_cost.read";
+    public const string ProductCostManage = "catalog.product_cost.manage";
 }
