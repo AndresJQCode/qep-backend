@@ -49,6 +49,8 @@ public static class CustomersInfrastructureExtensions
         // El adaptador que sube a R2 no vive aca sino en el composition root: necesita
         // Modules.Storage, y este modulo no lo referencia.
         services.AddScoped<ICustomerExportEventPublisher, CustomerExportEventPublisher>();
+        // Spec 2026-11-10 (borrar clientes) A-9: los adjuntos de un cliente borrado salen a R2 por el outbox.
+        services.AddScoped<ICustomerMediaReleasePublisher, CustomerMediaReleasePublisher>();
 
         // Spec 2026-10-09 §6.5: phone_e164 para que Messaging empareje por teléfono.
         services.AddSingleton<IPhoneNumberNormalizer, LibPhoneNumberNormalizer>();

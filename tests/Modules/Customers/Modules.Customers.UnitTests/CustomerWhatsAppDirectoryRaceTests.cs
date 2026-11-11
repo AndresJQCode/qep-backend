@@ -31,6 +31,10 @@ public sealed class CustomerWhatsAppDirectoryRaceTests
         {
         }
 
+        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<string> changedFields)
+        {
+        }
+
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt)
         {
         }
