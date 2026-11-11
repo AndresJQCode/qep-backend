@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Quotations.Application;
@@ -79,11 +80,107 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
+    // Borrar clientes (spec 2026-11-10, P1/P2): guardar una cotización o un pedido con cliente es escribir una
+    // referencia a customers.customers, que no tiene FK. Para que el borrado en bloque no deje una referencia
+    // huérfana, el escritor toma el candado compartido del cliente y, ya con él, comprueba que la fila exista, todo
+    // dentro de la transacción que guarda. Si el borrado ganó la carrera, el candado espera a su commit y la
+    // comprobación ve el cliente ya borrado. Pasan por aquí todos los caminos de escritura, incluido el
+    // IExternalOrderWriter (Shopify y tienda pública), porque comparten esta unidad de trabajo.
+    private async Task<int> SaveHoldingCustomerReferencesAsync(CancellationToken cancellationToken)
+    {
+        var references = PendingCustomerReferences();
+        if (references.Count == 0)
+        {
+            return await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        // Con transacción abierta (el handler ya la trajo por el contador de numeración) el candado queda en ella.
+        // Sin ella, el candado de transacción se soltaría al terminar su propia sentencia: se abre una aquí.
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await HoldCustomerReferencesAsync(references, cancellationToken);
+            return await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await HoldCustomerReferencesAsync(references, cancellationToken);
+        var saved = await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return saved;
+    }
+
+    // Clientes distintos y no vacíos de toda cotización o pedido nuevo, o con ClientId modificado, ordenados para
+    // tomar los candados siempre en el mismo orden. Un pedido manual sin cliente (Guid.Empty) no referencia a nadie.
+    private List<CustomerReference> PendingCustomerReferences()
+    {
+        var found = new Dictionary<(Guid TenantId, Guid ClientId), string>();
+
+        foreach (var entry in dbContext.ChangeTracker.Entries())
+        {
+            if (entry.Entity is not (Quotation or Order)
+                || entry.State is not (EntityState.Added or EntityState.Modified))
+            {
+                continue;
+            }
+
+            var clientId = entry.Property(nameof(Quotation.ClientId));
+            if (entry.State == EntityState.Modified && !clientId.IsModified)
+            {
+                continue;
+            }
+
+            var id = (Guid)clientId.CurrentValue!;
+            if (id == Guid.Empty)
+            {
+                continue;
+            }
+
+            var tenantId = (Guid)entry.Property(nameof(Quotation.TenantId)).CurrentValue!;
+            var code = entry.Entity is Quotation
+                ? "quotation.quotation.client_not_found"
+                : "order.order.client_not_found";
+            // Si el mismo cliente aparece en una cotización y en un pedido, gana el código de la cotización.
+            if (!found.TryGetValue((tenantId, id), out var existing) || existing.StartsWith("order.", StringComparison.Ordinal))
+            {
+                found[(tenantId, id)] = code;
+            }
+        }
+
+        return found
+            .OrderBy(pair => pair.Key.TenantId)
+            .ThenBy(pair => pair.Key.ClientId)
+            .Select(pair => new CustomerReference(pair.Key.TenantId, pair.Key.ClientId, pair.Value))
+            .ToList();
+    }
+
+    private async Task HoldCustomerReferencesAsync(
+        List<CustomerReference> references, CancellationToken cancellationToken)
+    {
+        foreach (var reference in references)
+        {
+            // Primero el candado y después la lectura (P1): al revés, se vería un cliente a punto de desaparecer.
+            await dbContext.Database.ExecuteSqlAsync(
+                CustomerReferenceLock.Shared(reference.TenantId, reference.CustomerId), cancellationToken);
+
+            var exists = await dbContext.Database
+                .SqlQuery<bool>(CustomerReferenceLock.Exists(reference.TenantId, reference.CustomerId))
+                .SingleAsync(cancellationToken);
+            if (!exists)
+            {
+                throw new QuotationsDomainException(
+                    reference.NotFoundCode,
+                    $"Client '{reference.CustomerId}' was not found in this tenant.");
+            }
+        }
+    }
+
+    private sealed record CustomerReference(Guid TenantId, Guid CustomerId, string NotFoundCode);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await dbContext.SaveChangesAsync(cancellationToken);
+            return await SaveHoldingCustomerReferencesAsync(cancellationToken);
         }
         // Antes que DbUpdateException porque DbUpdateConcurrencyException hereda de ella: al
         // reves, el filtro de indice unico la dejaria pasar sin traducir y saldria como 500.
