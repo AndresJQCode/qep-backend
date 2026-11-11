@@ -100,7 +100,7 @@ internal sealed class QuotationCustomerLookup(
             // la cotizacion y al pedido, y lo que viaja en el WhatsApp. La principal sigue yendo
             // primera en Addresses, que es lo que el selector de envio preselecciona.
             customer.Address,
-            customer.WithRetention,
+            false, // interino hasta la Tarea 14: la retención sale de las tasas asignadas
             customer.VatSurplus,
             customer.Email,
             contactCity?.CityId,

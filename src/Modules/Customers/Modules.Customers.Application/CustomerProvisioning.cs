@@ -427,7 +427,7 @@ public sealed class CustomerProvisioning(
             cityId,
             cityName,
             data.ClassificationId,
-            customer.WithRetention,
+            false, // interino hasta la Tarea 8
             customer.VatSurplus);
     }
 
@@ -609,7 +609,7 @@ public sealed class CustomerProvisioning(
                 CityId = command.CityId,
                 CityName = command.CityName
             },
-            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention, command.VatSurplus));
+            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.VatSurplus));
     }
 
     // Spec de ciudades §4.4 / §4.6: el cliente sigue como lo dejó la importación, o no se toca. La versión es la marca de

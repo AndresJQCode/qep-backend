@@ -674,7 +674,6 @@ public sealed class ImportCustomersHandler(
                     new CustomerCommercialInfo
                     {
                         ClassificationId = classification?.Id,
-                        WithRetention = candidate.WithRetention,
                         VatSurplus = candidate.VatSurplus
                     },
                     classification?.Prefix,
@@ -717,7 +716,6 @@ public sealed class ImportCustomersHandler(
                 new CustomerCommercialInfo
                 {
                     ClassificationId = candidate.Classification?.Id,
-                    WithRetention = candidate.WithRetention,
                     VatSurplus = candidate.VatSurplus
                 },
                 now,

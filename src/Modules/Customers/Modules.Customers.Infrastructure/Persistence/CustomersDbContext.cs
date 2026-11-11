@@ -197,7 +197,10 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasConversion(new ValueConverter<MarketingConsentSource, string>(
                 source => source.ToWireValue(), wire => MarketingConsentSourceParser.Parse(wire)));
 
-        customer.Property(value => value.WithRetention).HasColumnName("with_retention");
+        // Sombra hasta la migración de contrato (spec §11.5): la retención ya no es un booleano del dominio (son tasas
+        // asignadas, customer_tax_rates), pero la columna es NOT NULL y el binario viejo todavía la lee y la escribe durante
+        // el despliegue. El DEFAULT hace que el INSERT nuevo, que no la nombra, no falle.
+        customer.Property<bool>("with_retention").HasColumnName("with_retention").HasDefaultValue(false);
         customer.Property(value => value.VatSurplus).HasColumnName("vat_surplus");
         customer.Property(value => value.Version)
             .HasColumnName("version")
@@ -230,6 +233,22 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // IReadOnlyCollection y EF no puede escribir en ella.
         customer.Navigation(value => value.Addresses)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // Las retenciones asignadas: sólo el id de la tasa, sin FK a catalog (Customers nunca referencia Catalog). El
+        // índice (tenant_id, tax_rate_id) responde «¿alguien usa esta tasa?» sin recorrer la tabla.
+        customer.OwnsMany<CustomerTaxRate>("_withholdingTaxRates", rate =>
+        {
+            rate.ToTable("customer_tax_rates", "customers");
+            rate.WithOwner().HasForeignKey("CustomerId");
+            rate.Property<CustomerId>("CustomerId")
+                .HasColumnName("customer_id")
+                .HasConversion(id => id.Value, value => new CustomerId(value));
+            rate.Property(value => value.TenantId).HasColumnName("tenant_id");
+            rate.Property(value => value.TaxRateId).HasColumnName("tax_rate_id");
+            rate.HasKey("CustomerId", nameof(CustomerTaxRate.TaxRateId)).HasName("PK_customer_tax_rates");
+            rate.HasIndex(value => new { value.TenantId, value.TaxRateId })
+                .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");
+        });
 
         // Con nombre: sin él, EF funde este índice con IX_customers_tenant_incomplete (misma columna) y
         // el segundo pisa el filtro del primero.

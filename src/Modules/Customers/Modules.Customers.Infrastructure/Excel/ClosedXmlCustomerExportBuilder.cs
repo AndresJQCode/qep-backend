@@ -119,7 +119,8 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
         // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
         // que abre el archivo.
-        [CustomerImportColumns.WithRetention] = customer.WithRetention ? "Si" : "No",
+        // Interino hasta la Tarea 9: la columna se reescribe con las tasas asignadas.
+        [CustomerImportColumns.WithRetention] = "No",
         [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
         [ActiveColumn] = customer.IsActive ? "Si" : "No",
         // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración

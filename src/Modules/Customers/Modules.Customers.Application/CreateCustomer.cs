@@ -121,7 +121,7 @@ public sealed class CreateCustomerHandler(
                 CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             now,
             phoneNormalizer);
 

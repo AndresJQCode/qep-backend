@@ -64,7 +64,8 @@ internal static class CustomerMapping
             .ThenBy(address => address.Name)
             .Select(address => ToAddressDto(address, citiesById))
             .ToArray(),
-        customer.WithRetention,
+        // Interino hasta la Tarea 8: el valor se deriva de las tasas asignadas.
+        false,
         customer.VatSurplus,
         customer.IsActive,
         customer.CreatedAt,
@@ -176,12 +177,10 @@ internal static class CustomerMapping
 
     public static CustomerCommercialInfo ToCommercialInfo(
         Guid? classificationId,
-        bool withRetention,
         bool vatSurplus) =>
         new()
         {
             ClassificationId = classificationId is { } id ? new ClientClassificationId(id) : null,
-            WithRetention = withRetention,
             VatSurplus = vatSurplus
         };
 }

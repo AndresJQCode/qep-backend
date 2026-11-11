@@ -123,7 +123,7 @@ public sealed class UpdateCustomerHandler(
                     CityName = command.CityName
                 },
                 CustomerMapping.ToCommercialInfo(
-                    command.ClassificationId, command.WithRetention, command.VatSurplus),
+                    command.ClassificationId, command.VatSurplus),
                 now,
                 phoneNormalizer);
             // D-A9: completar se audita aparte de una edicion.
@@ -167,7 +167,7 @@ public sealed class UpdateCustomerHandler(
                 CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             classification?.Prefix,
             now,
             phoneNormalizer);
