@@ -172,6 +172,12 @@ namespace Modules.Store.Infrastructure.Persistence.Migrations
                         .HasColumnName("sales_countries")
                         .HasDefaultValueSql("'{}'");
 
+                    b.Property<bool>("ShowPrices")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("show_prices");
+
                     b.Property<string>("Slug")
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)")
