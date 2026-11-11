@@ -840,12 +840,17 @@ public sealed class OrderExportApiTests
 
     /// <summary>Un pedido convertido hoy, sin comprobantes (pago pendiente), mismo camino que
     /// OrderListApiTests.ConvertToOrderAsync. Con <paramref name="isStorePickup"/> la cotización
-    /// nace de recogida en tienda (spec 2026-10-05).</summary>
+    /// nace de recogida en tienda (spec 2026-10-05). Con <paramref name="withRetention"/> el cliente tiene una
+    /// Retefuente del 2,5 % asignada (spec impuestos por tipo §7.4), que la cotización congela y el pedido hereda.</summary>
     private static async Task<OrderResponse> CreateOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, string? identificationNumber = null,
         Guid? taxRateId = null, bool isStorePickup = false, bool withRetention = false)
     {
-        var customerId = await CreateActiveCustomerAsync(client, tenantId, identificationNumber, withRetention);
+        IReadOnlyList<Guid>? rates = withRetention
+            ? [await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m)]
+            : null;
+        var customerId = await CreateActiveCustomerAsync(
+            client, tenantId, identificationNumber, withholdingTaxRateIds: rates);
         var productId = await CreateProductWithScalesAsync(client, tenantId, taxRateId: taxRateId);
         var quotation = await CreateSentQuotationAsync(
             client, factory, tenantId, customerId, productId,
