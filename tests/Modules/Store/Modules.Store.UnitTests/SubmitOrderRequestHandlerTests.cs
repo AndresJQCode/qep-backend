@@ -115,13 +115,12 @@ public sealed class SubmitOrderRequestHandlerTests
     public async Task AnExistingCompleteCustomerIsUsedUntouched()
     {
         var rig = new CheckoutRig();
-        rig.Customers.ByDocument = new StoreCustomerRef(ExistingCustomerId, true, WithRetention: true, VatSurplus: true);
+        rig.Customers.ByDocument = new StoreCustomerRef(ExistingCustomerId, true, VatSurplus: true);
 
         await rig.SubmitAsync(CheckoutRig.Body());
 
         var draft = Assert.Single(rig.Orders.Drafts);
         Assert.Equal(ExistingCustomerId, draft.ClientId);
-        Assert.True(draft.BillingWithRetention);
         Assert.True(draft.BillingVatSurplus);
         Assert.Empty(rig.Customers.CreateCalls);
         Assert.Empty(rig.Customers.CompleteCalls);
@@ -132,7 +131,7 @@ public sealed class SubmitOrderRequestHandlerTests
     public async Task AnExistingIncompleteCustomerIsCompleted()
     {
         var rig = new CheckoutRig();
-        rig.Customers.ByDocument = new StoreCustomerRef(ExistingCustomerId, false, false, false);
+        rig.Customers.ByDocument = new StoreCustomerRef(ExistingCustomerId, false, false);
 
         await rig.SubmitAsync(CheckoutRig.Body());
 
@@ -196,7 +195,7 @@ public sealed class SubmitOrderRequestHandlerTests
     {
         var rig = new CheckoutRig();
         rig.Customers.CreateOutcome = StoreCustomerCreationOutcome.ExistingByDocument;
-        rig.Customers.CreatedCustomer = new StoreCustomerRef(ExistingCustomerId, false, false, false);
+        rig.Customers.CreatedCustomer = new StoreCustomerRef(ExistingCustomerId, false, false);
 
         await rig.SubmitAsync(CheckoutRig.Body());
 

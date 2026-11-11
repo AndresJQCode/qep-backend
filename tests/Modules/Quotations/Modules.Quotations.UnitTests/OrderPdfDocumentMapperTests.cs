@@ -201,7 +201,7 @@ public sealed class OrderPdfDocumentMapperTests
             [], new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), Guid.CreateVersion7(), null, null, null,
             null, null, null, null, null,
             new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero),
-            1, [], shipping, 12605.04m, 2394.96m);
+            1, [], shipping, 12605.04m, 2394.96m, [], [], []);
         var client = new QuotationClientResponse(
             order.ClientId, "CUC-0042", "Comercializadora del Norte S.A.S.", "3001234567", "compras@ejemplo.co",
             "Calle 100 #15-20", Guid.CreateVersion7(), "Bogotá", Guid.CreateVersion7(), "Cundinamarca", null, false, false,

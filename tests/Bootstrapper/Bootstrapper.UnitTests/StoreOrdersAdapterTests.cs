@@ -83,7 +83,6 @@ public sealed class StoreOrdersAdapterTests
             new StoreBillingAccount(Guid.NewGuid(), "Bancolombia", "7542", "COP"),
             party,
             party,
-            BillingWithRetention: false,
             BillingVatSurplus: false,
             [new StoreOrderLineInput(Guid.NewGuid(), 2m)],
             Notes: null);

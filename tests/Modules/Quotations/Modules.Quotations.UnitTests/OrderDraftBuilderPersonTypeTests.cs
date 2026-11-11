@@ -57,7 +57,9 @@ public sealed class OrderDraftBuilderPersonTypeTests
             {
                 Regional = new(
                     "America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal, "CO", requirement)
-            });
+            },
+            new StubQuotationWithholdingLookup(),
+            new FixedTenantClock(Now));
     }
 
     [Fact]

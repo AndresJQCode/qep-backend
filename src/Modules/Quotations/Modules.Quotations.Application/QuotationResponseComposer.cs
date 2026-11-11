@@ -109,7 +109,7 @@ public sealed class QuotationResponseComposer(
             [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)]);
     }
 
-    // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los va a pintar igual (Tarea 14).
+    // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los pinta igual (OrderResponses).
     internal static WithholdingResponse ToWithholdingResponse(WithholdingDto withholding) => new(
         withholding.TaxRateId,
         withholding.Name,

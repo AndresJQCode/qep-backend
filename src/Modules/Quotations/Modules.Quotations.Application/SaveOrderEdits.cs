@@ -21,7 +21,9 @@ public sealed record SaveOrderEditsCommand(
     int? GlobalScaleFloor,
     bool IsRetail,
     ShippingRequest? Shipping = null,
-    OrderBillingEditRequest? Billing = null) : ICommand<OrderDetailDto>, IOrderEdits;
+    OrderBillingEditRequest? Billing = null,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    QuotationBillingAccountRequest? BillingAccount = null) : ICommand<OrderDetailDto>, IOrderEdits;
 
 public sealed class SaveOrderEditsValidator : OrderEditsValidator<SaveOrderEditsCommand>
 {
@@ -48,7 +50,10 @@ public sealed class SaveOrderEditsHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<SaveOrderEditsCommand> validator)
+    IValidator<SaveOrderEditsCommand> validator,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -175,6 +180,15 @@ public sealed class SaveOrderEditsHandler(
 
             var billingChanged = billingSummary is not null;
 
+            // La empresa y los selectores de retención (spec impuestos por tipo D21, D22), también antes de recalcular el
+            // estado de pago: una retención baja el neto que los comprobantes cubren.
+            var withholdingEdits = await OrderWithholdingEdits.ApplyAsync(
+                order, command,
+                new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, command.TenantId),
+                updatedBy, now, cancellationToken);
+            var accountChanged = withholdingEdits.BillingAccountSummary is not null;
+            var withholdingsChanged = withholdingEdits.WithholdingsSummary is not null;
+
             // El envío con la moneda y la recogida del pedido, que no cambian después de creado (P5). Antes de
             // RecalculatePaymentStatus, más abajo: un envío cobrado sube el neto que los comprobantes cubren.
             var shippingBefore = order.ShippingDetails;
@@ -192,7 +206,7 @@ public sealed class SaveOrderEditsHandler(
 
             var proofsChanged = removedProofIds.Length > 0 || corrections.Count > 0 || attachedInputs.Length > 0;
             if (itemEdits.Count == 0 && !proofsChanged && !notesChanged && !floorChanged && !retailChanged
-                && !shippingChanged && !billingChanged)
+                && !shippingChanged && !billingChanged && !accountChanged && !withholdingsChanged)
             {
                 // Nada cambió: ni versión nueva ni historial. El cliente recibe lo que ya tenía.
                 return await OrderDetails.LoadAsync(
@@ -249,6 +263,26 @@ public sealed class SaveOrderEditsHandler(
                     billingSummary!, now));
                 auditPublisher.Publish(
                     command.TenantId, executionContext.SubjectId, "quotation.order.billing_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            if (accountChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    withholdingEdits.BillingAccountSummary!, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.billing_account_changed",
+                    order.Id.ToString(), "success", now);
+            }
+
+            if (withholdingsChanged)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PartiesChanged, updatedBy,
+                    withholdingEdits.WithholdingsSummary!, now));
+                auditPublisher.Publish(
+                    command.TenantId, executionContext.SubjectId, "quotation.order.withholdings_changed",
                     order.Id.ToString(), "success", now);
             }
 

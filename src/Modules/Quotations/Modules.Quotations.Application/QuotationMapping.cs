@@ -180,10 +180,9 @@ internal static class QuotationMapping
                 request.BillingUsesBusinessName,
                 request.IsStorePickup,
                 request.BillsToFinalConsumer,
-                // La cotización lo ignora (sus selectores son BillingWithholdingTaxRateIds, que no van al dominio por
-                // acá: QuotationEditsApplication los resuelve contra el catálogo). Se va con la Tarea 14.
-                request.BillingWithRetention,
-                request.BillingVatSurplus);
+                // BillingWithRetention del cuerpo no baja al dominio (spec impuestos por tipo §9.3): las retenciones
+                // salen de la foto de tasas, no de un interruptor.
+                BillingVatSurplus: request.BillingVatSurplus);
 
     internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null

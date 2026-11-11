@@ -283,7 +283,7 @@ public sealed record QuotationPartiesRequest(
     bool BillsToFinalConsumer = false,
     /// <summary>Se ignora (spec impuestos por tipo §9.3): lo manda el frontend viejo y la cotización ya no lo lee. Las
     /// retenciones de la facturación propia son <see cref="BillingWithholdingTaxRateIds"/>. Se queda en el record
-    /// mientras el pedido lo siga leyendo (Tarea 14).</summary>
+    /// sólo para que el cuerpo del frontend viejo siga deserializando.</summary>
     bool? BillingWithRetention = null,
     /// <summary>Con <c>Billing</c> propio, si esa facturación tiene excedente de IVA. Null es "todavía no se
     /// contestó" y deja la cotización inconvertible a pedido (<c>quotation.billing.tax_profile_required</c>).</summary>

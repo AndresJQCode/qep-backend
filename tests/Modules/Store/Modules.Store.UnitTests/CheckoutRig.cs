@@ -119,9 +119,9 @@ internal sealed class FakeCustomers(CallLog log) : IStoreCustomerDirectory
     public StoreCustomerCreationOutcome CreateOutcome { get; set; } = StoreCustomerCreationOutcome.Created;
 
     /// <summary>Lo que devuelve el alta con <c>Created</c> o <c>ExistingByDocument</c>.</summary>
-    public StoreCustomerRef CreatedCustomer { get; set; } = new(CreatedId, true, false, false);
+    public StoreCustomerRef CreatedCustomer { get; set; } = new(CreatedId, true, false);
 
-    public StoreCustomerRef CreatedIncomplete { get; set; } = new(IncompleteId, false, false, false);
+    public StoreCustomerRef CreatedIncomplete { get; set; } = new(IncompleteId, false, false);
 
     /// <summary>Lo que devuelve el completado; null = el mismo cliente, ya completo.</summary>
     public StoreCustomerRef? Completed { get; set; }
@@ -168,7 +168,7 @@ internal sealed class FakeCustomers(CallLog log) : IStoreCustomerDirectory
     {
         log.Entries.Add("customers.complete");
         CompleteCalls.Add((actorUserId, customerId, billing));
-        return Task.FromResult(Completed ?? new StoreCustomerRef(customerId, true, false, false));
+        return Task.FromResult(Completed ?? new StoreCustomerRef(customerId, true, false));
     }
 
     public Task<IReadOnlyList<StoreAddressOutcome>> EnsureAddressesAsync(

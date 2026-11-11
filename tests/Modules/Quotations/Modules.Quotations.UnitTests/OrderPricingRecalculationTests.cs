@@ -182,7 +182,7 @@ public sealed class OrderPricingRecalculationTests
             };
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,
-                new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
+                new QuotationParties(details, details, BillingVatSurplus: false), account,
                 lines, null, AdvisorId, Now, "store-checkout:1");
         }
 

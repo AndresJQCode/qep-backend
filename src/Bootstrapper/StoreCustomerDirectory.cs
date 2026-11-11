@@ -180,7 +180,7 @@ internal sealed class StoreCustomerDirectory(
             : null;
 
     private static StoreCustomerRef ToRef(Customer customer) =>
-        new(customer.Id.Value, customer.IsComplete, false /* interino hasta la Tarea 14 */, customer.VatSurplus);
+        new(customer.Id.Value, customer.IsComplete, customer.VatSurplus);
 
     // Un tipo que no es de la lista no tiene a quién encontrar (Parse lanzaría).
     private static (IdentificationType Type, string Number)? TryKey(string? type, string? number)

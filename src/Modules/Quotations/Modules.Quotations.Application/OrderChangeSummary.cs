@@ -70,6 +70,31 @@ public static class OrderChangeSummary
             ? Trim($"Editó los datos de facturación de {after}.")
             : Trim($"Cambió la facturación de {before} a {after}.");
 
+    /// <summary>La cuenta de cobro como la reconoce una persona: banco y número. <c>null</c> sin cuenta.</summary>
+    public static string? BillingAccountLabel(QuotationBillingAccount? account) =>
+        account is null ? null : $"{account.BankName} {account.AccountNumber}";
+
+    /// <summary>La empresa y la cuenta con que se cobra un pedido pendiente (spec impuestos por tipo D22).</summary>
+    public static string BillingAccountChanged(string? before, string after) =>
+        before is null
+            ? Trim($"Fijó la cuenta de cobro en {after}.")
+            : Trim($"Cambió la cuenta de cobro de {before} a {after}.");
+
+    /// <summary>Las tasas de retención vigentes del pedido, por nombre y en su orden; «ninguna» sin tasas.</summary>
+    public static string WithholdingsLabel(Order order)
+    {
+        ArgumentNullException.ThrowIfNull(order);
+        var names = order.Withholdings
+            .OrderBy(withholding => withholding.Position)
+            .Select(withholding => withholding.Name)
+            .ToArray();
+        return names.Length == 0 ? "ninguna" : string.Join(", ", names);
+    }
+
+    /// <summary>Los selectores de retención de un pedido pendiente (spec impuestos por tipo D21).</summary>
+    public static string WithholdingsChanged(string before, string after) =>
+        Trim($"Cambió las retenciones de {before} a {after}.");
+
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
     public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
         ? "Enviado por WhatsApp a facturación."

@@ -34,12 +34,11 @@ public sealed class StoreOrderGatewayTests
         StoreOrderParty billing,
         StoreOrderParty? shipping = null,
         Guid? clientRequestId = null,
-        decimal quantity = 2m,
-        bool withRetention = false) =>
+        decimal quantity = 2m) =>
         new(
             tenantId, clientRequestId ?? Guid.CreateVersion7(), clientId, advisorId, IsRetail: true,
             new QuotationBillingAccountRequest(account.CompanyId, account.BankName, account.AccountNumber, account.Currency),
-            billing, shipping ?? billing, withRetention, BillingVatSurplus: false,
+            billing, shipping ?? billing, BillingVatSurplus: false,
             [new StoreQuoteLine(variantId, quantity)], "Entregar en portería");
 
     private static async Task<Guid> AdvisorAsync(QepApiFactory factory, Guid tenantId, Guid ownerUserId)
@@ -147,7 +146,7 @@ public sealed class StoreOrderGatewayTests
         var shipping = ColombianParty(second) with { Name = "Portería", Address = "Carrera 9 # 8-7" };
 
         var draft = Draft(
-            tenantId, customerId, advisorId, account, variantId, billing, shipping, withRetention: true) with
+            tenantId, customerId, advisorId, account, variantId, billing, shipping) with
         {
             BillingVatSurplus = true,
         };
@@ -195,7 +194,9 @@ public sealed class StoreOrderGatewayTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        // El cliente practica retención: tiene una Retefuente asignada (spec impuestos por tipo §7.4).
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
         var variantId = await CreateProductWithScalesAsync(client, tenantId);
         var account = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
@@ -209,17 +210,78 @@ public sealed class StoreOrderGatewayTests
             var created = await gateway.CreateAsync(
                 Draft(
                     tenantId, customerId, advisorId, account, variantId,
-                    ColombianParty(city, "CC", "1020304050"), quantity: 10m, withRetention: true),
+                    ColombianParty(city, "CC", "1020304050"), quantity: 10m),
                 TestContext.Current.CancellationToken);
             return (quoted, created);
         });
 
         var order = await LoadOrderAsync(factory, tenantId, result.OrderId);
-        // Rojo hasta la Tarea 14: el pedido de la tienda congela las tasas del cliente (D16, excepción), ya no el viejo
-        // BillingWithRetention del borrador.
+        // El pedido de la tienda congela las tasas del cliente (D16, excepción), no un interruptor del borrador.
         Assert.NotEmpty(order.AppliedWithholdings);
         // La cotización no conoce al comprador, así que no retiene: el neto del pedido es lo que se aparta.
         Assert.NotEqual(quote.Total, order.NetTotal);
+    }
+
+    // Spec impuestos por tipo D16, excepción de la tienda: el pedido siempre trae parte de facturación propia, pero sus
+    // tasas son las del cliente, no selectores vacíos. Y sólo las del país de la empresa: con una empresa española la
+    // Retefuente colombiana no viaja y el pedido entra igual.
+    [Fact]
+    public async Task StoreOrderTakesCustomerRatesDespiteOwnBilling()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var customerId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
+        var variantId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
+        var colombian = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var spanish = await CreateSpanishCompanyAsync(client, tenantId);
+        var advisorId = await AdvisorAsync(factory, tenantId, ownerUserId);
+        var (city, _) = await EnsureCityIdsInTwoDepartmentsAsync(client);
+        var billing = ColombianParty(city, "CC", "1020304050");
+
+        var withColombian = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, colombian, variantId, billing, quantity: 1m),
+            TestContext.Current.CancellationToken));
+        var withSpanish = await WithGatewayAsync(factory, gateway => gateway.CreateAsync(
+            Draft(tenantId, customerId, advisorId, spanish, variantId, billing, quantity: 1m),
+            TestContext.Current.CancellationToken));
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(tenantId)}/{withColombian.OrderId}", TestContext.Current.CancellationToken);
+        Assert.NotNull(detail);
+        Assert.Single(detail.Order.Parties, party => party.Role == "Billing");
+        Assert.Equal(new[] { retefuente }, detail.Order.BillingWithholdingTaxRates.Select(rate => rate.Id).ToArray());
+        Assert.Equal((retefuente, 2_500m), (Assert.Single(detail.Order.Withholdings).TaxRateId, detail.Order.RetentionAmount));
+        // Con parte propia, derivado de las tasas vigentes; nunca null.
+        Assert.True(detail.Order.BillingWithRetention);
+        var foreign = await LoadOrderAsync(factory, tenantId, withSpanish.OrderId);
+        Assert.Empty(foreign.Withholdings);
+        Assert.Equal(foreign.Total, foreign.NetTotal);
+    }
+
+    // Una empresa de afuera con cuenta en pesos: otro país sin cambiar la moneda del pedido.
+    private static async Task<(Guid CompanyId, string BankName, string AccountNumber, string Currency)> CreateSpanishCompanyAsync(
+        HttpClient client, Guid tenantId)
+    {
+        const string bankName = "Santander";
+        var accountNumber = $"ES-{Random.Shared.Next(100000, 999999)}";
+        var response = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/companies",
+            new
+            {
+                name = "Iberia S.L.",
+                bankAccounts = new[] { new { bankName, accountNumber, currency = "COP" } },
+                taxId = $"B{Random.Shared.Next(10000000, 99999999)}",
+                country = "ES",
+                documentType = "NIF",
+                cityName = "Madrid",
+            },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return (json.RootElement.GetProperty("id").GetGuid(), bankName, accountNumber, "COP");
     }
 
     [Fact]

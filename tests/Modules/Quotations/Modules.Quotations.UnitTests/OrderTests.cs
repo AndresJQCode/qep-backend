@@ -112,7 +112,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -135,7 +135,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -160,7 +160,7 @@ public sealed class OrderTests
                     DepartmentId = Guid.CreateVersion7(),
                     CityId = Guid.CreateVersion7(),
                 },
-                null, BillingWithRetention: false, BillingVatSurplus: false),
+                null, BillingVatSurplus: false),
             Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
@@ -1789,7 +1789,7 @@ public sealed class OrderTests
             CityId = Guid.CreateVersion7(),
         };
         var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
-        return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
+        return new QuotationParties(billing, shipping, BillingVatSurplus: false);
     }
 
     private static Order NewBuyerStoreOrder(Guid? buyer, OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)

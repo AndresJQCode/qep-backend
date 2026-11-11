@@ -196,7 +196,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
@@ -271,7 +270,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         Assert.Equal("Distribuciones Andinas S.A.S.", await BillingNameAsync(parties, DefaultCustomer));
@@ -395,7 +393,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         await NewProcessor(new StubOrderListRepository(NewRow("PED-2026-0001", parties: parties)), writer)
@@ -413,7 +410,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S."),
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         Assert.Equal(string.Empty, await BillingNumberAsync(parties, legacy: row => typeof(OrderParty)
@@ -760,7 +756,6 @@ public sealed class OrdersExportProcessorTests
         new(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = personType },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     [Fact]
@@ -921,7 +916,6 @@ public sealed class OrdersExportProcessorTests
                 DepartmentId = BillingDepartmentId,
             },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     private static async Task<IReadOnlyList<ExportCell>> CustomerAndBillingCellsAsync(
@@ -978,7 +972,6 @@ public sealed class OrdersExportProcessorTests
         var parties = new QuotationParties(
             Billing: CompleteBillingParty("Distribuciones Andinas S.A.S.") with { PersonType = PartyPersonType.Juridica },
             Shipping: null,
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
         var cells = await CustomerAndBillingCellsAsync(parties, CustomerWithFullData);
@@ -1115,7 +1108,6 @@ public sealed class OrdersExportProcessorTests
         new(
             Billing: null,
             Shipping: CompleteShippingParty("Bodega Sur", ShippingCityId) with { DepartmentId = ShippingDepartmentId },
-            BillingWithRetention: false,
             BillingVatSurplus: false);
 
     private static async Task<IReadOnlyList<ExportCell>> ShippingCellsAsync(
@@ -2674,7 +2666,6 @@ public sealed class OrdersExportProcessorTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = CityId,
             },
-            BillingWithRetention: false,
             BillingVatSurplus: false);
         var row = NewRow(
             "PED-2026-0007",

@@ -124,6 +124,9 @@ public static class OrderResponses
                 .ToArray(),
             OrderShippingResponse.From(order.Shipping, order.ExternalShippingTitle),
             order.FreightSubtotal,
-            order.FreightTaxAmount);
+            order.FreightTaxAmount,
+            [.. order.Withholdings.Select(QuotationResponseComposer.ToWithholdingResponse)],
+            [.. order.CustomerWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)],
+            [.. order.BillingWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)]);
     }
 }

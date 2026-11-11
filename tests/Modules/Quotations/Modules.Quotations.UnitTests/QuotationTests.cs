@@ -1279,7 +1279,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, completeParty,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1459,7 +1459,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, Shipping: null,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1531,7 +1531,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, Shipping: null,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);

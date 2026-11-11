@@ -45,7 +45,7 @@ public sealed class BuyerOrderGatewayTests
             CityId = Guid.CreateVersion7(),
         };
         var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
-        return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
+        return new QuotationParties(billing, shipping, BillingVatSurplus: false);
     }
 
     private static Order StoreOrder(

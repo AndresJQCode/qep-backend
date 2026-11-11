@@ -263,7 +263,6 @@ public sealed class ApproveOrderHandlerTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             },
-            BillingWithRetention = false,
             BillingVatSurplus = false,
         };
 

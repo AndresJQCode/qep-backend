@@ -476,7 +476,7 @@ public sealed class SendOrderHandlerTests
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
             parties: billing is null
                 ? null
-                : new QuotationParties(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
+                : new QuotationParties(billing, null, BillingVatSurplus: false));
         if (status is OrderStatus.Approved or OrderStatus.Invoiced)
         {
             order.Approve(AdvisorId, Now.AddHours(-3));

@@ -16,7 +16,9 @@ public sealed record PreviewOrderEditsQuery(
     int? GlobalScaleFloor,
     bool IsRetail,
     ShippingRequest? Shipping = null,
-    OrderBillingEditRequest? Billing = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    OrderBillingEditRequest? Billing = null,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    QuotationBillingAccountRequest? BillingAccount = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -36,7 +38,10 @@ public sealed class PreviewOrderEditsHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewOrderEditsQuery> validator)
+    IValidator<PreviewOrderEditsQuery> validator,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -99,6 +104,13 @@ public sealed class PreviewOrderEditsHandler(
         // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.
         OrderBillingEdits.Apply(
             order, query.Billing, tenantCountry: null, strict: false, updatedBy, now);
+
+        // Las mismas reglas que el guardado (D21–D23): una tasa de otro país es 422 también acá, para que la vista previa
+        // no muestre una retención que el guardado rechazaría.
+        await OrderWithholdingEdits.ApplyAsync(
+            order, query,
+            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, query.TenantId),
+            updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(

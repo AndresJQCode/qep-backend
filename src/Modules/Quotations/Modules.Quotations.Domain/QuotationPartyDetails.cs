@@ -235,14 +235,6 @@ public sealed record QuotationParties(
     /// combinación — son dos nombres distintos para la misma factura y no hay uno que gane.
     /// </summary>
     bool BillsToFinalConsumer = false,
-    /// <summary>
-    /// Si quien recibe la factura —cuando <see cref="Billing"/> trae datos propios— practica
-    /// retención en la fuente. <b>Sólo lo lee el pedido</b> (<c>Order</c>), interino hasta la Tarea 12
-    /// del plan de impuestos por tipo, que lo borra: la cotización lo ignora, sus retenciones salen de la
-    /// foto de tasas (<see cref="Quotation.SetBillingWithholdings"/>). Se ignora cuando
-    /// <see cref="Billing"/> es null.
-    /// </summary>
-    bool? BillingWithRetention = null,
     /// <summary>Si quien recibe la factura —cuando <see cref="Billing"/> trae datos propios— tiene
     /// excedente de IVA. Con los datos del cliente lo dice el cliente (<c>Customer.VatSurplus</c> /
     /// <see cref="Quotation.CustomerVatSurplus"/>); con datos propios hay que preguntarlo — <c>null</c>

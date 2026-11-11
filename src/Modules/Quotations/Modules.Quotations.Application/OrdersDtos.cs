@@ -69,7 +69,14 @@ public sealed record OrderDto(
     decimal FreightTaxAmount,
     /// <summary>Cómo llamó la tienda al envío (spec de Shopify §6.2.5); null fuera del camino externo. En la
     /// respuesta viaja dentro de <c>shipping</c> (<see cref="OrderShippingResponse"/>).</summary>
-    string? ExternalShippingTitle);
+    string? ExternalShippingTitle,
+    /// <summary>Sólo las retenciones que aplicaron (spec impuestos por tipo §9.3); su suma es <c>RetentionAmount</c>.</summary>
+    IReadOnlyList<WithholdingDto> Withholdings,
+    /// <summary>Siempre vacía: el pedido tiene una sola fuente de tasas y viaja en
+    /// <see cref="BillingWithholdingTaxRates"/>. Está para que la forma sea la de la cotización.</summary>
+    IReadOnlyList<WithholdingTaxRateDto> CustomerWithholdingTaxRates,
+    /// <summary>Las tasas vigentes del pedido, apliquen o no: lo que prellena los selectores de la edición (D21).</summary>
+    IReadOnlyList<WithholdingTaxRateDto> BillingWithholdingTaxRates);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -163,7 +170,15 @@ public sealed record SaveOrderEditsRequest(
     /// <summary>A quién se le factura (spec 2026-10-26). <b>Ausente deja la facturación</b>: un frontend viejo
     /// no la borra (Desvío 6). Presente, reemplaza el bloque entero: sin <c>Party</c> ni consumidor final
     /// factura a los datos del cliente.</summary>
-    OrderBillingEditRequest? Billing = null);
+    OrderBillingEditRequest? Billing = null,
+    /// <summary>Los selectores de retención del pedido pendiente (spec impuestos por tipo D21, §9.3): ids de tasas
+    /// activas, que retienen, del país de la empresa facturadora, una por tipo. <b>Ausente o null conserva</b> las del
+    /// pedido; una lista vacía las quita. Reemplazan las del pedido, nunca las del cliente.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Fija o cambia la empresa y la cuenta con que se cobra el pedido pendiente (D22), misma forma que en la
+    /// cotización. <b>Ausente o null conserva</b> la guardada. En otra moneda es
+    /// <c>order.billing.currency_change_not_allowed</c> (plan P10).</summary>
+    QuotationBillingAccountRequest? BillingAccount = null);
 
 /// <summary>El bloque de facturación de «Editar pedido»: la parte propia (o ninguna), el consumidor final,
 /// la razón social del cliente y el perfil fiscal de la parte, como en <see cref="QuotationPartiesRequest"/>.</summary>
@@ -171,6 +186,8 @@ public sealed record OrderBillingEditRequest(
     QuotationPartyRequest? Party,
     bool BillsToFinalConsumer = false,
     bool BillingUsesBusinessName = false,
+    /// <summary>Se ignora (spec impuestos por tipo §9.3): lo manda el frontend viejo. Las retenciones del pedido son
+    /// <see cref="SaveOrderEditsRequest.WithholdingTaxRateIds"/>.</summary>
     bool? BillingWithRetention = null,
     bool? BillingVatSurplus = null);
 
@@ -260,7 +277,13 @@ public sealed record OrderResponse(
     /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
-    decimal FreightTaxAmount);
+    decimal FreightTaxAmount,
+    /// <summary>Ver <see cref="OrderDto.Withholdings"/>.</summary>
+    IReadOnlyList<WithholdingResponse> Withholdings,
+    /// <summary>Siempre vacía en el pedido; ver <see cref="OrderDto.CustomerWithholdingTaxRates"/>.</summary>
+    IReadOnlyList<WithholdingTaxRateResponse> CustomerWithholdingTaxRates,
+    /// <summary>Las tasas vigentes del pedido; ver <see cref="OrderDto.BillingWithholdingTaxRates"/>.</summary>
+    IReadOnlyList<WithholdingTaxRateResponse> BillingWithholdingTaxRates);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
