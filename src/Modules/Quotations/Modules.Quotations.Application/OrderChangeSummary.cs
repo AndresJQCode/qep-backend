@@ -71,9 +71,12 @@ public static class OrderChangeSummary
             : Trim($"Cambió la facturación de {before} a {after}.");
 
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
-    public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
-        ? "Enviado por WhatsApp a facturación."
-        : "Enviado por WhatsApp al cliente.";
+    public static string Sent(QuotationRecipient recipient, string? contactName = null) => recipient switch
+    {
+        QuotationRecipient.Billing => "Enviado por WhatsApp a facturación.",
+        QuotationRecipient.Contact when contactName is not null => Trim($"Enviado por WhatsApp a {contactName}."),
+        _ => "Enviado por WhatsApp al cliente.",
+    };
 
     public static string Approved() => "Aprobado.";
 

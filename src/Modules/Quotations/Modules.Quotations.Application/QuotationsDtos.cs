@@ -435,11 +435,17 @@ public sealed record SaveQuotationRequest(
 /// <c>ConnectionId</c> (spec 2026-10-21 §4.2) es la conexión de WhatsApp por la que sale, y sólo hace falta cuando el
 /// tenant tiene varias disponibles y todavía no eligió: esa primera elección se guarda con el envío. Con una elección
 /// ya guardada, mandar otra es <c>channel_already_set</c>; el cambio se hace desde Configuración.
+///
+/// Spec 2026-11-10 §4.6: <c>Recipient: "Contact"</c> manda al contacto <c>ContactId</c> de la empresa de la cotización.
+/// <c>ThreadConnectionId</c> es la conexión del hilo desde el que se manda: no pasa por la elección guardada ni la cambia, y
+/// sólo se considera con <c>Contact</c>.
 /// </summary>
 public sealed record SendQuotationRequest(
     Guid? PdfFileId = null,
     string? Recipient = null,
-    Guid? ConnectionId = null);
+    Guid? ConnectionId = null,
+    Guid? ContactId = null,
+    Guid? ThreadConnectionId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a

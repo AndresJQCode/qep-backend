@@ -335,7 +335,9 @@ internal static class QuotationsApiHarness
         bool withRetention = false,
         bool vatSurplus = false,
         string? personType = null,
-        bool withDocument = true)
+        bool withDocument = true,
+        string name = "Verde Esencial S.A.S.",
+        string? phone = "310 935 2187")
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -344,11 +346,11 @@ internal static class QuotationsApiHarness
             $"/api/v1/tenants/{tenantId}/customers",
             new
             {
-                name = "Verde Esencial S.A.S.",
+                name,
                 identificationType = withDocument ? "NIT" : null,
                 identificationNumber = !withDocument ? null : identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
-                phone = "310 935 2187",
+                phone,
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 // Desde ff107a7 el pais es obligatorio en el alta y en el PUT, que reemplaza el
@@ -368,6 +370,17 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body.Id;
+    }
+
+    /// <summary>Spec 2026-11-10 §4.1: <c>contactId</c> pasa a ser contacto de <c>companyId</c>
+    /// (<c>PUT /customers/{id}/company</c>). Sin ligar, un cliente es una empresa o una persona suelta.</summary>
+    public static async Task LinkContactAsync(HttpClient client, Guid tenantId, Guid contactId, Guid companyId)
+    {
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers/{contactId}/company",
+            new { companyId },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     /// <summary>Prende o apaga retención/excedente de IVA de un cliente ya creado -- para probar

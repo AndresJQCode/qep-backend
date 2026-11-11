@@ -251,6 +251,33 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
 
     public int FindManyCalls { get; private set; }
 
+    /// <summary>Los contactos (sin fusionar) del cliente base, tal como los entrega el puerto. Un id que no está acá es
+    /// "no es contacto de este cliente": de otra empresa, de otro tenant, fusionado o el propio cliente. El doble no
+    /// reimplementa esa exclusión (es del puerto de Customers), sólo responde lo que el puerto respondería.</summary>
+    public List<QuotationClientContact> Contacts { get; } = [];
+
+    public int FindContactCalls { get; private set; }
+
+    public int ListContactsCalls { get; private set; }
+
+    public Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken)
+    {
+        FindContactCalls++;
+        return Task.FromResult(
+            clientId == customer.Id
+                ? Contacts.FirstOrDefault(contact => contact.Id == contactId)
+                : null);
+    }
+
+    public Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        ListContactsCalls++;
+        return Task.FromResult<IReadOnlyList<QuotationClientContact>>(
+            clientId == customer.Id ? [.. Contacts] : []);
+    }
+
     public Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
     {

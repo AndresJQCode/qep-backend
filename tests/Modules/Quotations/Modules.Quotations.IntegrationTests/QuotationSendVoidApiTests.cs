@@ -287,4 +287,80 @@ public sealed class QuotationSendVoidApiTests
     /// <summary>Las extensiones de ProblemDetails llegan aplanadas en la raíz
     /// (ApiExceptionHandler).</summary>
     private sealed record ProblemPayload(string Code);
+
+    // Spec 2026-11-10 §4.6: el destinatario Contact llega al contacto de la empresa, con su teléfono, su nombre y su ficha.
+    [Fact]
+    public async Task SendingToAContactDeliversToThatContact()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = Assert.Single(factory.WhatsAppSender.Messages);
+        Assert.Equal(("311 555 0101", "Laura Gómez", (Guid?)contactId), (message.ToPhone, message.FullName, message.CustomerId));
+    }
+
+    [Fact]
+    public async Task AContactOfAnotherClientIs422AndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
+        var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+
+        foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
+        {
+            var response = await client.PostAsJsonAsync(
+                $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+                new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Contains(
+                "quotation.quotation.contact_not_of_client",
+                await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.Empty(factory.WhatsAppSender.Messages);
+    }
+
+    [Fact]
+    public async Task AContactWithoutPhoneIs422RecipientMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: null);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
+            new SendQuotationRequest(Recipient: "Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "quotation.whatsapp.recipient_missing",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(factory.WhatsAppSender.Messages);
+    }
 }
