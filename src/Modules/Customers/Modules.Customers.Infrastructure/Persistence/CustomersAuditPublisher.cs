@@ -21,7 +21,7 @@ internal sealed class CustomersAuditPublisher(CustomersDbContext dbContext)
         string? source = null) =>
         Add(tenantId, actorId, "Human", action, resourceId, outcome, occurredAt, source, []);
 
-    public void Publish(
+    public void PublishWithChangedFields(
         Guid tenantId,
         Guid actorId,
         string action,

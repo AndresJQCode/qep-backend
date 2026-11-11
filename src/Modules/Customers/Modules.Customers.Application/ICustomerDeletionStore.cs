@@ -14,9 +14,10 @@ public interface ICustomerDeletionStore
 
     /// <summary>
     /// A-5: escribe la foto (nombre y teléfono) en el consentimiento de datos de estos clientes, que se conserva con el
-    /// <c>customer_id</c> colgante. Devuelve cuántas filas tocó.
+    /// <c>customer_id</c> colgante. Devuelve cuántas filas tocó de cada cliente (el <c>dataConsents=</c> de la auditoría);
+    /// un cliente sin consentimientos puede no aparecer.
     /// </summary>
-    Task<int> SnapshotConsentsAsync(
+    Task<IReadOnlyDictionary<Guid, int>> SnapshotConsentsAsync(
         Guid tenantId,
         IReadOnlyCollection<(Guid CustomerId, string Name, string? PhoneE164)> customers,
         CancellationToken cancellationToken);

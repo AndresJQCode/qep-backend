@@ -76,7 +76,7 @@ internal static class CustomerWriteDoubles
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Human.Add((tenantId, actorId, action, resourceId, outcome, source));
 
-        public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<string> changedFields) =>
+        public void PublishWithChangedFields(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<string> changedFields) =>
             Detailed.Add((tenantId, actorId, action, resourceId, outcome, changedFields));
 
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
@@ -159,6 +159,9 @@ internal static class CustomerWriteDoubles
 
         public Dictionary<Guid, int> MergedCounts { get; } = [];
 
+        /// <summary>Cuántos consentimientos tiene cada cliente; el que no está, ninguno (como el adaptador).</summary>
+        public Dictionary<Guid, int> ConsentCounts { get; } = [];
+
         public List<(Guid CustomerId, string Name, string? PhoneE164)> Snapshots { get; } = [];
 
         public List<Guid> Deleted { get; } = [];
@@ -171,12 +174,14 @@ internal static class CustomerWriteDoubles
                 .ToArray());
         }
 
-        public Task<int> SnapshotConsentsAsync(
+        public Task<IReadOnlyDictionary<Guid, int>> SnapshotConsentsAsync(
             Guid tenantId, IReadOnlyCollection<(Guid CustomerId, string Name, string? PhoneE164)> customers, CancellationToken cancellationToken)
         {
             calls.Add("snapshot-consents");
             Snapshots.AddRange(customers);
-            return Task.FromResult(0);
+            return Task.FromResult<IReadOnlyDictionary<Guid, int>>(ConsentCounts
+                .Where(pair => customers.Any(customer => customer.CustomerId == pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value));
         }
 
         public Task<IReadOnlyDictionary<Guid, int>> DeleteAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)

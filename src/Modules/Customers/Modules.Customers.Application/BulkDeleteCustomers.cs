@@ -98,7 +98,7 @@ public sealed class BulkDeleteCustomersHandler(
         var deletableIds = deletable.Select(customer => customer.Id.Value).ToArray();
 
         // La foto del consentimiento va antes de borrar: después ya no hay de dónde sacar nombre y teléfono (A-5).
-        await store.SnapshotConsentsAsync(
+        var consents = await store.SnapshotConsentsAsync(
             command.TenantId,
             deletable.Select(customer => (customer.Id.Value, customer.Name, customer.PhoneE164)).ToArray(),
             cancellationToken);
@@ -109,14 +109,14 @@ public sealed class BulkDeleteCustomersHandler(
         foreach (var customer in deletable)
         {
             var id = customer.Id.Value;
-            auditPublisher.Publish(
+            auditPublisher.PublishWithChangedFields(
                 command.TenantId,
                 executionContext.SubjectId,
                 CustomerAuditActions.Deleted,
                 customer.Id.ToString(),
                 "success",
                 now,
-                Snapshot(customer, outcome.Counts.GetValueOrDefault(id), merged.GetValueOrDefault(id)));
+                Snapshot(customer, outcome.Counts.GetValueOrDefault(id), consents.GetValueOrDefault(id), merged.GetValueOrDefault(id)));
 
             // Sin claves no hay nada que purgar en R2, y un evento vacío sólo le daría trabajo al consumidor.
             if (outcome.StorageKeys.GetValueOrDefault(id) is { Count: > 0 } keys)
@@ -146,7 +146,7 @@ public sealed class BulkDeleteCustomersHandler(
     /// A-8: la auditoría es lo único que queda del cliente, así que lleva su foto y lo que se llevó, como cadenas
     /// <c>clave=valor</c> en <c>changedFields</c>. Una clave sin valor no se escribe.
     /// </summary>
-    private static List<string> Snapshot(Customer customer, CustomerDeletionCounts? counts, int merged)
+    private static List<string> Snapshot(Customer customer, CustomerDeletionCounts? counts, int dataConsents, int merged)
     {
         var fields = new List<string> { $"name={customer.Name}" };
         if (customer.PhoneE164 is { } phone)
@@ -166,6 +166,12 @@ public sealed class BulkDeleteCustomersHandler(
             fields.Add($"deals={counts.Deals}");
             fields.Add($"posSales={counts.PosSales}");
             fields.Add($"campaignRecipients={counts.CampaignRecipients}");
+        }
+
+        // Sin consentimientos no hay nada que contar: la clave no se escribe.
+        if (dataConsents > 0)
+        {
+            fields.Add($"dataConsents={dataConsents}");
         }
 
         fields.Add($"merged={merged}");

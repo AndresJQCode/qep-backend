@@ -18,11 +18,13 @@ public interface ICustomersAuditPublisher
         string? source = null);
 
     /// <summary>
-    /// Spec 2026-11-10 (borrar clientes) A-8: lo mismo que la otra sobrecarga, con lo que va a
+    /// Spec 2026-11-10 (borrar clientes) A-8: lo mismo que <see cref="Publish"/>, con lo que va a
     /// <c>audit.entries.changed_fields</c>. El borrado la usa para guardar la foto del cliente como cadenas
-    /// <c>clave=valor</c>: la tabla de auditoría no tiene otra columna de detalle.
+    /// <c>clave=valor</c>: la tabla de auditoría no tiene otra columna de detalle. Lleva otro nombre y no es una
+    /// sobrecarga de <see cref="Publish"/>: con un <c>null</c> como séptimo argumento las dos serían candidatas y la
+    /// llamada no compilaría por ambigua.
     /// </summary>
-    void Publish(
+    void PublishWithChangedFields(
         Guid tenantId,
         Guid actorId,
         string action,

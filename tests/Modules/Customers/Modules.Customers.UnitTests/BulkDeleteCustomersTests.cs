@@ -166,6 +166,7 @@ public sealed class BulkDeleteCustomersTests
         var bruno = bed.Known(DeletableCustomer("Bruno"));
         bed.References.Counts[ana.Id.Value] = new CustomerDeletionCounts(2, 7, 1, 0, 3);
         bed.Store.MergedCounts[ana.Id.Value] = 1;
+        bed.Store.ConsentCounts[ana.Id.Value] = 1;
 
         await bed.RunAsync(ana.Id.Value, bruno.Id.Value);
 
@@ -182,6 +183,10 @@ public sealed class BulkDeleteCustomersTests
         Assert.Contains("conversations=2", entry.ChangedFields);
         Assert.Contains("messages=7", entry.ChangedFields);
         Assert.Contains("merged=1", entry.ChangedFields);
+        Assert.Contains("dataConsents=1", entry.ChangedFields);
+        // Sin consentimientos la clave no se escribe: no hay valor que guardar.
+        var brunoEntry = Assert.Single(bed.Audit.Detailed, item => item.ResourceId == bruno.Id.ToString());
+        Assert.DoesNotContain(brunoEntry.ChangedFields, field => field.StartsWith("dataConsents=", StringComparison.Ordinal));
         Assert.Empty(bed.Audit.Human);
     }
 
