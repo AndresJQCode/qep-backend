@@ -99,6 +99,12 @@ public sealed class BulkDeleteCustomersHandler(
         var deletable = existing.Where(id => !blockers.ContainsKey(id)).Select(id => found[id]).ToArray();
         var deletableIds = deletable.Select(customer => customer.Id.Value).ToArray();
 
+        // Final review I-2b: las filas de los borrables, con FOR UPDATE, antes de la foto. data_consents ya no tiene FK, así que sin
+        // esto un consentimiento del chatbot o una revocación que entrara entre la foto y el DELETE quedaría sin foto; los dos
+        // bloquean esta misma fila y ahora esperan al borrado. Va después de FindBlockersAsync a propósito: para entonces el
+        // borrado ya tiene los candados de conversación del chatbot, y ningún runner de estos clientes puede estar esperándolo.
+        await store.LockRowsAsync(command.TenantId, deletableIds, cancellationToken);
+
         // La foto del consentimiento va antes de borrar: después ya no hay de dónde sacar nombre y teléfono (A-5).
         var consents = await store.SnapshotConsentsAsync(
             command.TenantId,

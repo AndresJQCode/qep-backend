@@ -30,6 +30,30 @@ internal sealed class CustomerDeletionStore(CustomersDbContext dbContext) : ICus
             .ToListAsync(cancellationToken);
     }
 
+    public async Task LockRowsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        Guid[] raw = [.. ids.Distinct().Order()];
+        if (raw.Length == 0)
+        {
+            return;
+        }
+
+        // Sin transacción el FOR UPDATE se soltaría al terminar la sentencia y no frenaría a nadie.
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("LockRowsAsync requires the transaction of ICustomersUnitOfWork.BeginTransactionAsync.");
+        }
+
+        // ORDER BY id: dos borrados (o un borrado y un consentimiento) toman las filas en el mismo orden.
+        await RunAsync(() => dbContext.Database.SqlQuery<Guid>($"""
+            SELECT id AS "Value" FROM customers.customers
+            WHERE tenant_id = {tenantId} AND id = ANY({raw})
+            ORDER BY id
+            FOR UPDATE
+            """).ToListAsync(cancellationToken));
+    }
+
     public async Task<IReadOnlyDictionary<Guid, int>> SnapshotConsentsAsync(
         Guid tenantId,
         IReadOnlyCollection<(Guid CustomerId, string Name, string? PhoneE164)> customers,

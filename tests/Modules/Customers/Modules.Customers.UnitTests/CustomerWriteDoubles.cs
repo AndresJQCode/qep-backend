@@ -174,6 +174,15 @@ internal static class CustomerWriteDoubles
                 .ToArray());
         }
 
+        public List<Guid> RowsLocked { get; } = [];
+
+        public Task LockRowsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            calls.Add("lock-rows");
+            RowsLocked.AddRange(ids);
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyDictionary<Guid, int>> SnapshotConsentsAsync(
             Guid tenantId, IReadOnlyCollection<(Guid CustomerId, string Name, string? PhoneE164)> customers, CancellationToken cancellationToken)
         {

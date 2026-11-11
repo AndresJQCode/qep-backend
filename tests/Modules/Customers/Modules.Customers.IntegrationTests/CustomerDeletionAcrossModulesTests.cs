@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
+using Modules.Customers.Domain;
 using Modules.Customers.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -351,6 +352,58 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         Assert.Equal(StateAfter(footprint), await StateAsync(footprint));
         Assert.Equal(0L, await ScalarAsync(
             "SELECT count(*) FROM messaging.messages WHERE conversation_id = @id", ("id", footprint.Conversation)));
+    }
+
+    // Final review I-2b (A-5): data_consents ya no tiene FK, así que un consentimiento del chatbot (o una revocación) que entrara entre
+    // la foto de los consentimientos y el DELETE quedaría sin foto. El borrado bloquea las filas de los clientes borrables antes de la
+    // foto; quien registra un consentimiento bloquea la misma fila (LockCustomerAsync), así que espera y, al despertar, no encuentra
+    // al cliente.
+    [Fact]
+    public async Task AConsentRecordedDuringTheDeletionWaitsAndFindsTheCustomerGone()
+    {
+        var tenant = Guid.CreateVersion7();
+        var customer = await InsertCustomerAsync(tenant, Name, Phone);
+        var warmUp = await InsertCustomerAsync(tenant, "Sofía", "+573009998877");
+        // Calentamiento del mismo camino con otro cliente: sin él la espera podría ser arranque en frío y no el bloqueo.
+        Assert.Equal(DataConsentRecordOutcome.Recorded, await RecordConsentAsync(tenant, warmUp));
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var references = services.GetRequiredService<ICustomerDeletionReferences>();
+        var store = services.GetRequiredService<ICustomerDeletionStore>();
+        await using var transaction = await services.GetRequiredService<ICustomersUnitOfWork>().BeginTransactionAsync(Ct);
+        await references.LockAsync(tenant, [customer], Ct);
+        var found = await store.FindDeletableAsync(tenant, [customer], Ct);
+        Assert.Empty(await references.FindBlockersAsync(tenant, [customer], Ct));
+        await store.LockRowsAsync(tenant, [customer], Ct);
+
+        var record = Task.Run(() => RecordConsentAsync(tenant, customer), Ct);
+
+        Assert.NotSame(record, await Task.WhenAny(record, Task.Delay(TimeSpan.FromMilliseconds(500), Ct)));
+        await store.SnapshotConsentsAsync(tenant, [.. found.Select(row => (row.Id.Value, row.Name, row.PhoneE164))], Ct);
+        await references.RemoveAsync(tenant, [customer], Ct);
+        await store.DeleteAsync(tenant, [customer], Ct);
+        await transaction.CommitAsync(Ct);
+
+        Assert.Equal(DataConsentRecordOutcome.CustomerMissing, await record);
+        Assert.Equal(0L, await ScalarAsync(
+            "SELECT count(*) FROM customers.data_consents WHERE customer_id = @id", ("id", customer)));
+    }
+
+    private async Task<DataConsentRecordOutcome> RecordConsentAsync(Guid tenant, Guid customer)
+    {
+        await using var scope = fixture.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<ICustomerDataConsents>().RecordFromChatbotAsync(
+            new ChatbotDataConsentRecord(
+                tenant,
+                customer,
+                DataConsentEvent.Accepted,
+                DateTimeOffset.UtcNow,
+                new DataConsentIdentity(Guid.CreateVersion7(), DataConsentChannel.WhatsApp, "CO.123456789", "573001112233"),
+                new ChatbotConsentEvidence(
+                    "¿Aceptas nuestra política de datos?", Guid.CreateVersion7(), Guid.CreateVersion7(), "wamid.HBgM",
+                    Guid.CreateVersion7(), "Bienvenida", Guid.CreateVersion7(), 3, "n4")),
+            Ct);
     }
 
     // §5 rendimiento: sentencias por lote. 100 clientes con 50 mensajes cada uno mandan los mismos comandos que uno solo.

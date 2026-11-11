@@ -154,8 +154,22 @@ public sealed class BulkDeleteCustomersTests
 
         Assert.Equal([a.Id.Value, b.Id.Value, missing], bed.References.Locked);
         Assert.Equal(
-            ["begin", "lock", "find-deletable", "find-blockers", "snapshot-consents", "remove", "delete", "save", "commit"],
+            ["begin", "lock", "find-deletable", "find-blockers", "lock-rows", "snapshot-consents", "remove", "delete", "save", "commit"],
             bed.Calls);
+    }
+
+    // Final review I-2b: sólo los borrables se bloquean (un bloqueado o uno que no existe no se toca).
+    [Fact]
+    public async Task OnlyTheDeletableRowsAreLockedBeforeTheConsentSnapshot()
+    {
+        var bed = new DeletionBed();
+        var deletable = bed.Known(DeletableCustomer("Ana Pérez"));
+        var blocked = bed.Known(DeletableCustomer("Bruno"));
+        bed.References.Blockers[blocked.Id.Value] = [CustomerDeletionBlockReasons.Loans];
+
+        await bed.RunAsync(deletable.Id.Value, blocked.Id.Value, Guid.CreateVersion7());
+
+        Assert.Equal([deletable.Id.Value], bed.Store.RowsLocked);
     }
 
     [Fact]

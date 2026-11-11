@@ -110,7 +110,8 @@ internal sealed class CustomerDeletionReferences(CustomersDbContext customers) :
         // bloqueara la conversación primero, esa escritura esperaría al borrado, el borrado a la corrida y la corrida a la escritura, un
         // ciclo que Postgres no ve (la transacción del runner queda ociosa) y que sólo corta el timeout. Así el borrado espera al runner sin
         // tener ninguna fila suya, y un runner que llega después encuentra el candado tomado y deja la unidad para luego. El conjunto no
-        // cambia: abrir o mover una conversación a uno de estos clientes exige su candado compartido, y LockAsync tiene el exclusivo.
+        // cambia: quien cuelga una conversación de uno de estos clientes toma su candado (compartido: las ingestas del webhook, el
+        // opener, el cambio de cliente y el LinkCustomerAsync del chatbot; exclusivo: la fusión), y LockAsync ya tiene el exclusivo.
         await database.ExecuteSqlAsync($"""
             SELECT pg_advisory_xact_lock({AutomationsConversationLock.Namespace}, hashtext(conversation.id::text))
             FROM (SELECT id FROM messaging.conversations WHERE tenant_id = {tenantId} AND customer_id = ANY({ids}) ORDER BY id) AS conversation

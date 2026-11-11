@@ -13,6 +13,14 @@ public interface ICustomerDeletionStore
     Task<IReadOnlyList<Customer>> FindDeletableAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Final review I-2b: bloquea con <c>FOR UPDATE</c>, en orden de id, las filas de los clientes que se van a borrar. Va después
+    /// de leer los bloqueos (cuando el borrado ya tiene los candados de conversación del chatbot) y antes de la foto de
+    /// consentimientos: quien registra un consentimiento o lo revoca bloquea la misma fila, así que espera al borrado y nunca deja
+    /// una fila sin foto. Antes de los candados de conversación cerraría un ciclo con el runner del chatbot.
+    /// </summary>
+    Task LockRowsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+
+    /// <summary>
     /// A-5: escribe la foto (nombre y teléfono) en el consentimiento de datos de estos clientes, que se conserva con el
     /// <c>customer_id</c> colgante. Devuelve cuántas filas tocó de cada cliente (el <c>dataConsents=</c> de la auditoría);
     /// un cliente sin consentimientos puede no aparecer.

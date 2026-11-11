@@ -2,7 +2,10 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
+using Modules.Messaging.Application;
 using Npgsql;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
@@ -262,6 +265,47 @@ public sealed class CustomerDeletionRaceTests
         await RetryNowAsync(f);
 
         await AssertLandedOnANewCustomerAsync(f, "wamid.adopt", owner);
+    }
+
+    /// <summary>
+    /// Final review I-2a: el bloque «Política de datos» del chatbot cuelga de su cliente una conversación que no tenía
+    /// (<c>LinkCustomerAsync</c>). Esa conversación no está entre las del borrado (no tenía cliente), así que nada la frena salvo el
+    /// candado compartido del cliente: espera al borrado y, al ver el cliente borrado, lanza <see cref="RequestConcurrencyException"/>
+    /// para que la unidad del motor se reintente (y el reintento cree un cliente nuevo, D-4). Nunca <c>null</c>: el bot saldría por
+    /// «No acepto» sin preguntar.
+    /// </summary>
+    [Fact]
+    public async Task LinkingAConversationToACustomerBeingDeletedFailsForARetry()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        var customers = await CreateCustomersAsync(f.Factory, f.Tenant, ("LAURA GÓMEZ", "300 111 2233"), ("ZIBA TIENDA", "301 222 3344"));
+        var (customerId, warmUpCustomer) = (customers[0], customers[1]);
+        var conversationId = await SeedBsuidConversationAsync(
+            f.Factory, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, MetaPayloads.UserIdFor(WaId), WaId);
+        var warmUpConversation = await SeedBsuidConversationAsync(
+            f.Factory, f.ConnectionString, f.Tenant.TenantId, f.ConnectionId, MetaPayloads.UserIdFor(WarmUpWaId), WarmUpWaId);
+        // Calentamiento del mismo camino con otro cliente: sin él la espera podría ser arranque en frío y no el candado.
+        Assert.Equal(warmUpCustomer, await LinkAsync(f, warmUpConversation, warmUpCustomer));
+        var (connection, transaction) = await HoldExclusiveAsync(f.ConnectionString, f.Tenant.TenantId, customerId);
+        await using var _c = connection;
+        await using var _t = transaction;
+
+        var link = Task.Run(() => LinkAsync(f, conversationId, customerId), Ct);
+
+        Assert.NotSame(link, await Task.WhenAny(link, Task.Delay(NoAnswerWindow, Ct)));
+        await DeleteAndCommitAsync(connection, transaction, customerId, conversationId: null);
+
+        await Assert.ThrowsAsync<RequestConcurrencyException>(() => link);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM messaging.conversations WHERE id = @id AND customer_id IS NOT NULL", ("id", conversationId)));
+    }
+
+    private static async Task<Guid?> LinkAsync(Fixture f, Guid conversationId, Guid customerId)
+    {
+        await using var scope = f.Factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IConversationRepository>().LinkCustomerAsync(
+            f.Tenant.TenantId, conversationId, customerId, created: false, DateTimeOffset.UtcNow, Ct);
     }
 
     private const string CampaignCatalog = """
