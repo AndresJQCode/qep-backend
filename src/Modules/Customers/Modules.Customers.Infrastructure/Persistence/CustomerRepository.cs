@@ -522,6 +522,28 @@ internal sealed class CustomerRepository(CustomersDbContext dbContext) : ICustom
         return customers.ToDictionary(customer => customer.Id);
     }
 
+    // Sin componer: EF envolvería el FOR UPDATE en una subconsulta, y un FromSql de entidad exigiría todas las columnas.
+    // SqlQuery<Guid> sólo lee el id. ORDER BY id fija el orden de los bloqueos entre transacciones concurrentes para que
+    // no se crucen en un deadlock.
+    public async Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customerIds);
+        if (customerIds.Count == 0)
+        {
+            return;
+        }
+
+        var ids = customerIds.Distinct().ToArray();
+        _ = await dbContext.Database
+            .SqlQuery<Guid>($"""
+                SELECT id AS "Value" FROM customers.customers
+                WHERE tenant_id = {tenantId} AND id = ANY({ids})
+                ORDER BY id
+                FOR UPDATE
+                """)
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(Customer customer) => dbContext.Customers.Add(customer);
 
     // lower() de los dos lados y en SQL: la expresión exacta de IX_customers_tenant_email. Bajarlo en .NET con

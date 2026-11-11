@@ -193,6 +193,9 @@ internal static class CustomerWriteDoubles
                     ? Existing
                     : Known.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
 
+        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public void Add(Customer customer) => Added.Add(customer);
 
         public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>

@@ -226,5 +226,12 @@ public interface ICustomerRepository
     /// </summary>
     Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Spec 2026-11-10 §3.3: toma <c>SELECT id … ORDER BY id FOR UPDATE</c> sobre los clientes dados, en orden de id, para que dos
+    /// vinculaciones concurrentes (A→B y B→A) se serialicen en vez de violar «un solo nivel». Sólo ids: no carga entidades.
+    /// Dura lo que la transacción de la unidad de trabajo.
+    /// </summary>
+    Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);
+
     void Add(Customer customer);
 }

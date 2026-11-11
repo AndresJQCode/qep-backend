@@ -286,6 +286,9 @@ public sealed class PosCustomerLookupTests
         public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public void Add(Customer customer) => throw new NotSupportedException();
     }
 }
