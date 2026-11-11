@@ -112,7 +112,7 @@ public sealed class CampaignDetailDto(
 /// pantalla lo marque. <c>replied</c>: hay un entrante suyo después del envío. <c>readWithoutReceipt</c>: respondió pero Meta nunca avisó
 /// la lectura —casi siempre porque apagó las confirmaciones de lectura—; la pantalla lo muestra como leído y lo marca.</summary>
 public sealed record CampaignRecipientDto(
-    Guid CustomerId,
+    Guid? CustomerId,
     string CustomerName,
     string Status,
     string? FailureReason,
