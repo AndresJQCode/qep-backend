@@ -1643,6 +1643,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-11-10 D-8: borrar es definitivo; sólo admin (el owner del tenant siempre lo es, `Membership.cs:529`).
+                CustomersPermissions.CustomerDelete,
                 // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
                 CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
@@ -1991,6 +1993,13 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerDelete,
+            "Borrar clientes",
+            "Permite borrar clientes de forma definitiva. No se puede deshacer.",
             "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
@@ -2601,6 +2610,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de borrar clientes (spec 2026-11-10 D-8). Sin esta política la ruta no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerDelete,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerDelete))
             // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
             // POST …/data-consent/revocations no resuelve y el síntoma es 500.
             .AddPolicy(
