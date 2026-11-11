@@ -36,12 +36,12 @@ public sealed class CustomerCompanyDirectoryTests
             """
             INSERT INTO customers.customers
                 (id, tenant_id, name, business_name, is_active, with_retention, vat_surplus, version, created_at, updated_at,
-                 completeness, phone, email, identification_number, company_id, merged_into_id, merged_at)
+                 completeness, phone, email, identification_type, identification_number, company_id, merged_into_id, merged_at)
             VALUES (@id, @tenant, @name, @business, @active, false, false, 1, now(), now(),
-                    'Incomplete', @phone, @email, @number, @company, @merged, CASE WHEN @merged::uuid IS NULL THEN NULL ELSE now() END)
+                    'Incomplete', @phone, @email, @type, @number, @company, @merged, CASE WHEN @merged::uuid IS NULL THEN NULL ELSE now() END)
             """,
             ("id", id), ("tenant", tenant), ("name", name), ("business", businessName), ("active", isActive),
-            ("phone", phone), ("email", email), ("number", number), ("company", companyId), ("merged", mergedInto));
+            ("phone", phone), ("email", email), ("type", number is null ? null : "Nit"), ("number", number), ("company", companyId), ("merged", mergedInto));
         return id;
     }
 
