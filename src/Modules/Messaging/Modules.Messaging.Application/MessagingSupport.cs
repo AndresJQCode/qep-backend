@@ -207,7 +207,7 @@ internal static class MessageMapping
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
         IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null,
-        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null)
+        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -253,7 +253,7 @@ internal static class MessageMapping
             mediaState,
             row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null,
             row.RetryDisabled,
-            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson) : null);
+            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson, sharedPhones) : null);
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
@@ -451,7 +451,7 @@ internal static class MessageMapping
 
     /// <summary><c>details</c> de un <c>contacts</c> es el arreglo <c>contacts</c> de Meta tal cual (<c>WebhookPayloadParser</c>).
     /// Si no es un arreglo, el mensaje sale sin <c>contacts</c> en vez de romper la página; el nombre sigue en <c>text</c>.</summary>
-    private static List<SharedContactDto>? ContactsFrom(string? detailsJson)
+    private static List<SharedContactDto>? ContactsFrom(string? detailsJson, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
     {
         if (string.IsNullOrEmpty(detailsJson))
         {
@@ -473,7 +473,7 @@ internal static class MessageMapping
                     contact.TryGetProperty("name", out var name) ? JsonString(name, "formatted_name") : null,
                     contact.TryGetProperty("org", out var org) ? JsonString(org, "company") : null,
                     ObjectsOf(contact, "phones")
-                        .Select(phone => new SharedContactPhoneDto(JsonString(phone, "phone"), JsonString(phone, "wa_id"), JsonString(phone, "type")))
+                        .Select(phone => SharedPhoneFrom(phone, sharedPhones))
                         .Where(phone => phone.Phone is not null || phone.WaId is not null)
                         .ToList(),
                     ObjectsOf(contact, "emails")
@@ -487,6 +487,45 @@ internal static class MessageMapping
         {
             return null;
         }
+    }
+
+    private static SharedContactPhoneDto SharedPhoneFrom(JsonElement phone, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
+    {
+        var waId = JsonString(phone, "wa_id");
+        var resolved = waId is null ? null : sharedPhones?.GetValueOrDefault(waId);
+        return new SharedContactPhoneDto(
+            JsonString(phone, "phone"), waId, JsonString(phone, "type"), resolved?.Customer, resolved?.Country, resolved?.NationalNumber);
+    }
+
+    /// <summary>Spec 2026-11-10: los <c>wa_id</c> de los teléfonos de toda tarjeta de contactos de la página, sin repetir, para
+    /// resolverlos en una sola consulta. Un <c>details</c> ilegible no aporta nada y no lanza.</summary>
+    public static IReadOnlyCollection<string> SharedContactWaIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var waIds = new List<string>();
+        foreach (var row in rows.Where(row => row.Kind == MessageKind.Contacts && !string.IsNullOrEmpty(row.DetailsJson)))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(row.DetailsJson!);
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                waIds.AddRange(document.RootElement.EnumerateArray()
+                    .Where(contact => contact.ValueKind == JsonValueKind.Object)
+                    .SelectMany(contact => ObjectsOf(contact, "phones"))
+                    .Select(phone => JsonString(phone, "wa_id"))
+                    .OfType<string>());
+            }
+            catch (JsonException)
+            {
+                // Un details roto no aporta nada: ContactsFrom ya deja el mensaje sin tarjeta.
+            }
+        }
+
+        return [.. waIds.Distinct(StringComparer.Ordinal)];
     }
 
     private static IEnumerable<JsonElement> ObjectsOf(JsonElement parent, string property) =>
