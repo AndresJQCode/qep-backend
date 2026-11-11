@@ -387,7 +387,7 @@ public enum ShopifyOrderOutcomeKind
 }
 
 /// <summary>Cómo terminó un cambio posterior (§6.3). <see cref="ShopifyOrderOutcomeKind.Ignored"/> lleva el código de la regla
-/// del pedido que lo rechazó (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>), que va a <c>last_error</c>
+/// del pedido que lo rechazó (<c>order.order.not_editable</c>, <c>order.order.payment_has_proofs</c>), que va a <c>last_error</c>
 /// del espejo. <see cref="ShopifyOrderOutcomeKind.Unchanged"/> es un <c>financial_status</c> que no cambia nada (<c>refunded</c>,
 /// <c>partially_refunded</c>, <c>voided</c>): no lleva código ni deja <c>last_error</c>, y Quotations no se llama.</summary>
 public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? Code)

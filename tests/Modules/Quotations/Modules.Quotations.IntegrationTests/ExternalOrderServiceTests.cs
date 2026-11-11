@@ -196,6 +196,111 @@ public sealed class ExternalOrderServiceTests
         Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.cancelled.v1"));
     }
 
+    // Spec 2026-11-10 §3.1 (owner): la anulación que llega de Shopify gana sobre preparado y archivado, conserva la
+    // marca de preparado y el historial avisa que hay un paquete que recuperar.
+    [Fact]
+    public async Task ShopifyCancelWinsOverAPreparedArchivedOrder()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#4001"));
+        await PostOrderActionAsync(setup, order.OrderId, "prepare");
+        await PostOrderActionAsync(setup, order.OrderId, "archive");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CancelAsync(
+                setup.TenantId, order.OrderId, setup.AdvisorId, "Cancelado en Shopify", TestContext.Current.CancellationToken);
+        }
+
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        Assert.Equal(("Cancelled", "Prepared"), (detail!.Order.Status, detail.Order.FulfillmentStatus));
+        Assert.Contains(
+            detail.History,
+            entry => entry.EventType == "Cancelled"
+                && entry.Details == "Anulado con el pedido ya preparado: Cancelado en Shopify. Hay un paquete despachado que recuperar.");
+        Assert.Single(await OutboxMessagesAsync(factory, "quotations.order.cancelled.v1"));
+    }
+
+    // Facturado sigue frenando la anulación de la plataforma: ShopifyOrderWriter lo traduce a AlreadyInvoiced.
+    [Fact]
+    public async Task ShopifyCancelStillStopsAtTheInvoice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#4002"));
+        await ExecuteOnOrderAsync(database, "UPDATE quotations.orders SET invoiced_at = now() WHERE id = @id", order.OrderId);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CancelAsync(
+                setup.TenantId, order.OrderId, setup.AdvisorId, "Cancelado en Shopify", TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.already_invoiced", error.Code);
+    }
+
+    // Spec 2026-11-10 §3.2 y §3.5 (owner): el pago de la plataforma también llega a un pedido preparado, y si el tenant
+    // archiva automáticamente, quedar pagado y preparado lo archiva, con su historial y su auditoría.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ShopifyPaymentSyncOnAPreparedOrderHonorsTheAutoArchiveSetting(bool autoArchive)
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await ArrangeAsync(
+            factory, [.. ManagerPermissions, TenancyPermissions.SettingsRead, TenancyPermissions.SettingsUpdate]);
+        using var _ = setup.Client;
+        (await setup.Client.PutAsJsonAsync(
+            $"/api/v1/tenants/{setup.TenantId}/orders-settings",
+            new { requirePaymentProofToMarkPaid = false, requireFullPaymentToInvoice = true, autoArchive },
+            TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
+        var order = await CreateAsync(factory, Draft(setup, "#4003"));
+        await PostOrderActionAsync(setup, order.OrderId, "prepare");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().SyncPaymentStatusAsync(
+                setup.TenantId, order.OrderId, OrderPaymentStatus.FullPaymentReceived, TestContext.Current.CancellationToken);
+        }
+
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        Assert.Equal(
+            (autoArchive ? "Archived" : "Open", "FullPaymentReceived", "Prepared"),
+            (detail!.Order.Status, detail.Order.PaymentStatus, detail.Order.FulfillmentStatus));
+        var archivedEntries = detail.History
+            .Where(entry => entry.EventType == "Archived"
+                && entry.Details == "Archivado automáticamente: quedó pagado y preparado.")
+            .ToArray();
+        var archivedAudits = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Where(message => message.PayloadJson.Contains("\"quotation.order.archived\"", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(autoArchive ? 1 : 0, archivedEntries.Length);
+        Assert.Equal(autoArchive ? 1 : 0, archivedAudits.Length);
+        if (autoArchive)
+        {
+            // Lo archivó la plataforma, no una persona.
+            Assert.Null(detail.Order.ArchivedBy);
+            using var auditPayload = JsonDocument.Parse(archivedAudits[0].PayloadJson);
+            Assert.Equal("Integration", auditPayload.RootElement.GetProperty("actorType").GetString());
+        }
+    }
+
+    private static async Task PostOrderActionAsync(ExternalSetup setup, Guid orderId, string action)
+    {
+        var response = await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{orderId}/{action}", content: null, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"{action}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+    }
+
     // Spec de Shopify §6.2 y flete §10: el envío que cobró la tienda entra con el pedido y suma al total.
     [Fact]
     public async Task CreateAsyncWithShippingPersistsShippingAndTotals()
@@ -773,9 +878,9 @@ public sealed class ExternalOrderServiceTests
         Guid TenantId, HttpClient Client, Guid ClientId, Guid ProductId, Guid AdvisorId,
         QuotationBillingAccountRequest Billing);
 
-    private static async Task<ExternalSetup> ArrangeAsync(QepApiFactory factory)
+    private static async Task<ExternalSetup> ArrangeAsync(QepApiFactory factory, string[]? permissions = null)
     {
-        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        var (tenantId, ownerUserId, client) = await RegisterTenantAsync(factory, permissions ?? ManagerPermissions);
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);

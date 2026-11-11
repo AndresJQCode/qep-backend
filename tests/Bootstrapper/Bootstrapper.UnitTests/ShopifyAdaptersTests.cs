@@ -377,9 +377,9 @@ public sealed class ShopifyAdaptersTests
     }
 
     [Theory]
-    [InlineData("order.order.not_pending")]
+    [InlineData("order.order.not_editable")]
     [InlineData("order.order.payment_has_proofs")]
-    public async Task OrderWriterSyncNotPendingOrWithProofsReturnsIgnored(string code)
+    public async Task OrderWriterSyncNotEditableOrWithProofsReturnsIgnored(string code)
     {
         var writer = new FakeExternalOrderWriter { OnSync = () => throw new QuotationsDomainException(code, "No.") };
 

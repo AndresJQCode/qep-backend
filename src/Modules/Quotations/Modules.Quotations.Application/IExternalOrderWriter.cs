@@ -91,7 +91,9 @@ public interface IExternalOrderWriter
     Task<ExternalOrderResult> CreateAsync(ExternalOrderDraft draft, CancellationToken cancellationToken);
 
     /// <summary>El estado de pago que avisa la plataforma. Sólo cambia si el pedido no tiene
-    /// comprobantes propios; con ellos, lanza <c>order.order.payment_has_proofs</c>.</summary>
+    /// comprobantes propios; con ellos, lanza <c>order.order.payment_has_proofs</c>. Un pedido anulado o
+    /// facturado lo rechaza con <c>order.order.not_editable</c>; uno preparado o archivado lo recibe, y con el
+    /// archivado automático del tenant puede quedar archivado (spec 2026-11-10 §3.2, §3.5).</summary>
     Task SyncPaymentStatusAsync(Guid tenantId, Guid orderId, OrderPaymentStatus status, CancellationToken cancellationToken);
 
     Task CancelAsync(
@@ -131,7 +133,8 @@ public sealed class ExternalOrderService(
     IQuotationLifecycleEventPublisher lifecycleEvents,
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationSettingsStore settingsStore)
     : IExternalOrderWriter
 {
     public async Task<ExternalOrderResult> CreateAsync(ExternalOrderDraft draft, CancellationToken cancellationToken)
@@ -316,13 +319,30 @@ public sealed class ExternalOrderService(
             return;
         }
 
-        // El archivado automático (el ajuste del tenant) lo conecta la Tarea 4 de spec 2026-11-10; mientras tanto, apagado.
-        order.SyncExternalPaymentStatus(status, autoArchive: false, now);
+        // Spec 2026-11-10 §3.2 y §3.5: el pago de la plataforma también llega a un pedido preparado, y con el ajuste del
+        // tenant, quedar pagado y preparado lo archiva. Lo archiva la integración, no una persona: historial sin autor y
+        // auditoría firmada por la integración.
+        var settings = await settingsStore.GetOrderSettingsAsync(tenantId, cancellationToken);
+        var archived = order.SyncExternalPaymentStatus(status, settings.AutoArchive, now);
         auditPublisher.PublishByIntegration(
             tenantId, "quotation.order.payment_status_synced", order.Id.ToString(), "success", now);
+        if (archived)
+        {
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Archived, memberId: null,
+                OrderChangeSummary.ArchivedAutomatically(), now));
+            auditPublisher.PublishByIntegration(
+                tenantId, OrderAutoArchive.AuditAction, order.Id.ToString(), "success", now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// La anulación que llega de la plataforma (spec 2026-11-10 §3.1): gana sobre preparado y archivado
+    /// (<see cref="Order.CancelFromPlatform"/>). Con el pedido preparado, el historial avisa que hay un paquete
+    /// despachado que recuperar. Facturado sigue lanzando <c>order.order.already_invoiced</c>.
+    /// </summary>
     public async Task CancelAsync(
         Guid tenantId, Guid orderId, Guid cancelledByMembershipId, string reason, CancellationToken cancellationToken)
     {
@@ -330,10 +350,13 @@ public sealed class ExternalOrderService(
             ?? throw OrderNotFound.ById(orderId);
         var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
         var by = new MemberId(cancelledByMembershipId);
-        order.Cancel(by, reason, now);
+        order.CancelFromPlatform(by, reason, now);
         orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Cancelled, by,
-            OrderChangeSummary.Cancelled(order.CancellationReason!), now));
+            order.IsPrepared
+                ? OrderChangeSummary.CancelledWhilePrepared(order.CancellationReason!)
+                : OrderChangeSummary.Cancelled(order.CancellationReason!),
+            now));
         auditPublisher.PublishByIntegration(tenantId, "quotation.order.cancelled", order.Id.ToString(), "success", now);
         lifecycleEvents.PublishOrderCancelled(order, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

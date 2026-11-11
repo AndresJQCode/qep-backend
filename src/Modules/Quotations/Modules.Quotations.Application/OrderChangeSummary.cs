@@ -77,6 +77,11 @@ public static class OrderChangeSummary
 
     public static string Cancelled(string reason) => Trim($"Anulado: {reason}");
 
+    /// <summary>La anulación de la plataforma sobre un pedido ya preparado (spec 2026-11-10 §3.1): el pedido conserva la
+    /// marca y el historial avisa que hay un paquete que recuperar.</summary>
+    public static string CancelledWhilePrepared(string reason) =>
+        Trim($"Anulado con el pedido ya preparado: {reason}. Hay un paquete despachado que recuperar.");
+
     public static string Invoiced() => "Marcado como facturado.";
 
     public static string InvoicingReverted() => "Se revirtió la facturación.";
