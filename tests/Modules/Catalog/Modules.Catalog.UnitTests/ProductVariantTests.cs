@@ -30,7 +30,7 @@ public sealed class ProductVariantTests
             "Camiseta básica",
             ProductDetails.Empty,
             [],
-            [Variant("CAM-001", id: product.Id.Value, costs: costs)],
+            [Variant("CAM-001", id: product.Variants.Single().Id.Value, costs: costs)],
             [],
             Now.AddMinutes(5));
 
