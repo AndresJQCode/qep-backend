@@ -196,7 +196,17 @@ internal static class CustomerWithholdingRules
 
         var ids = taxRateIds.Distinct().ToArray();
         var found = await lookup.FindManyAsync(tenantId, ids, cancellationToken);
+        Validate(found, ids);
+    }
 
+    /// <summary>
+    /// Las mismas reglas sobre tasas ya leidas del catalogo. El Excel carga las del tenant una sola vez por archivo y valida
+    /// cada fila contra ellas, sin una consulta por fila (spec impuestos por tipo §7.4).
+    /// </summary>
+    public static void Validate(
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> found, IReadOnlyCollection<Guid> taxRateIds)
+    {
+        var ids = taxRateIds.Distinct().ToArray();
         var rates = new List<CustomerTaxRateRef>(ids.Length);
         foreach (var id in ids)
         {

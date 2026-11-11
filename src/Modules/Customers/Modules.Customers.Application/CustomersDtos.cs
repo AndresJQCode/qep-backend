@@ -294,7 +294,8 @@ public sealed record CustomerImportRowData(
     string Department,
     string City,
     string Classification,
-    string? WithRetention,
+    string? Retefuente,
+    string? ReteIca,
     string? VatSurplus);
 
 /// <summary>

@@ -90,6 +90,17 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
     }
 
     [Fact]
+    public void TemplateHasBothColumnsAndNoConRetencion()
+    {
+        using var workbook = BuildWorkbook();
+        var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
+
+        Assert.Contains("Retefuente", headers);
+        Assert.Contains("ReteICA", headers);
+        Assert.DoesNotContain("Con Retencion", headers);
+    }
+
+    [Fact]
     public void ClassificationColumnHeaderIsTamano()
     {
         Assert.Equal("Tamano", CustomerImportColumns.Classification);

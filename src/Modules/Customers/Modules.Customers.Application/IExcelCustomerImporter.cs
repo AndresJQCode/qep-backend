@@ -49,12 +49,18 @@ public static class CustomerImportColumns
     // visible en el Excel usa el nombre con el que el negocio lo conoce.
     public const string Classification = "Tamano";
 
-    public const string WithRetention = "Con Retencion";
+    /// <summary>
+    /// Spec impuestos por tipo §7.4 (D20): el <b>nombre</b> de la tasa de Retefuente del cliente, o vacia si no tiene. Reemplaza
+    /// a «Con Retencion», que un archivo viejo todavia puede traer y se lee ignorandola.
+    /// </summary>
+    public const string Retefuente = "Retefuente";
+
+    /// <summary>El nombre de la tasa de ReteICA del cliente, o vacia si no tiene. Ver <see cref="Retefuente"/>.</summary>
+    public const string ReteIca = "ReteICA";
 
     /// <summary>
     /// Si el cliente tiene excedente de IVA: sus cotizaciones no pagan IVA, cualquiera sea la
-    /// tasa de cada producto (<c>Quotation.CustomerVatSurplus</c>). Mismo formato que
-    /// <see cref="WithRetention"/> — "Si", "No" o vacia, que es "No".
+    /// tasa de cada producto (<c>Quotation.CustomerVatSurplus</c>). "Si", "No" o vacia, que es "No".
     /// </summary>
     public const string VatSurplus = "Excedente Iva";
 
@@ -71,9 +77,16 @@ public static class CustomerImportColumns
         Department,
         City,
         Classification,
-        WithRetention,
+        Retefuente,
+        ReteIca,
         VatSurplus
     ];
+
+    /// <summary>
+    /// Las columnas por tipo de retencion son opcionales en la cabecera de un archivo a importar: uno armado antes de que
+    /// existieran no las trae y tiene que seguir entrando (en una actualizacion conserva las tasas del cliente).
+    /// </summary>
+    public static readonly IReadOnlyList<string> Optional = [Retefuente, ReteIca];
 }
 
 /// <summary>
@@ -99,11 +112,13 @@ public sealed record ExcelCustomerRow(
     string? Department,
     string? City,
     string? Classification,
-    string? WithRetention,
-    string? VatSurplus);
+    string? Retefuente,
+    string? ReteIca,
+    string? VatSurplus,
+    bool WithholdingColumnsPresent = true);
 
 /// <summary>
-/// El resultado de parsear un Excel: si la cabecera trae las trece columnas esperadas y, si las
+/// El resultado de parsear un Excel: si la cabecera trae las columnas esperadas y, si las
 /// trae, las filas de datos ya leidas. Cuando <see cref="HasExpectedColumns"/> es falso,
 /// <see cref="Rows"/> viene vacio — no tiene sentido leer datos de columnas que no se pudieron
 /// ubicar, y el llamador trata eso como un archivo estructuralmente invalido, no como un reporte

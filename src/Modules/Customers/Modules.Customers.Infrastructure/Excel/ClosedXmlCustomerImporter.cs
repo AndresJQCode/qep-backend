@@ -39,13 +39,18 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
         var indexes = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var expected in CustomerImportColumns.Ordered)
         {
-            if (!columnByName.TryGetValue(expected, out var index))
+            if (columnByName.TryGetValue(expected, out var index))
+            {
+                indexes[expected] = index;
+            }
+            else if (!CustomerImportColumns.Optional.Contains(expected))
             {
                 return new ExcelCustomerImportFile(false, []);
             }
-
-            indexes[expected] = index;
         }
+
+        // Un archivo anterior a las columnas por tipo no las trae: no es lo mismo que traerlas vacias (que quita las tasas).
+        var withholdingColumnsPresent = CustomerImportColumns.Optional.Any(indexes.ContainsKey);
 
         var rows = new List<ExcelCustomerRow>();
         var lastRow = worksheet.LastRowUsed()?.RowNumber() ?? 1;
@@ -65,7 +70,8 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var department = Cell(row, indexes, CustomerImportColumns.Department);
             var city = Cell(row, indexes, CustomerImportColumns.City);
             var classification = Cell(row, indexes, CustomerImportColumns.Classification);
-            var withRetention = Cell(row, indexes, CustomerImportColumns.WithRetention);
+            var retefuente = Cell(row, indexes, CustomerImportColumns.Retefuente);
+            var reteIca = Cell(row, indexes, CustomerImportColumns.ReteIca);
             var vatSurplus = Cell(row, indexes, CustomerImportColumns.VatSurplus);
 
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
@@ -75,7 +81,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && withRetention is null && vatSurplus is null)
+                classification is null && retefuente is null && reteIca is null && vatSurplus is null)
             {
                 continue;
             }
@@ -93,8 +99,10 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 department,
                 city,
                 classification,
-                withRetention,
-                vatSurplus));
+                retefuente,
+                reteIca,
+                vatSurplus,
+                withholdingColumnsPresent));
         }
 
         return new ExcelCustomerImportFile(true, rows);
@@ -120,7 +128,12 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
 
     private static string? Cell(IXLRow row, Dictionary<string, int> indexes, string column)
     {
-        var raw = row.Cell(indexes[column]).GetString().Trim();
+        if (!indexes.TryGetValue(column, out var index))
+        {
+            return null;
+        }
+
+        var raw = row.Cell(index).GetString().Trim();
         return raw.Length == 0 ? null : raw;
     }
 }
