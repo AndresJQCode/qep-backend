@@ -404,6 +404,26 @@ public sealed class PublicBuyerOrdersApiTests
             BuyerNote, await rig.TextAsync("SELECT buyer_notes FROM quotations.orders WHERE id = @order", ("order", orderId)));
     }
 
+    /// <summary>Guarda de no regresión de un no-objetivo (D6): ocultar precios lo resuelve el storefront, el backend sigue enviando montos.</summary>
+    [Fact]
+    public async Task WithShowPricesOffTheDetailStillCarriesAmounts()
+    {
+        await using var rig = await BuyerOrdersRig.OpenAsync();
+        var (account, session) = await SignInAsync(rig, "ana@test.co");
+        var orderId = await SeedBuyerOrderAsync(rig, account);
+        await rig.ExecuteAsync("UPDATE store.stores SET show_prices = false WHERE tenant_id = @tenant", ("tenant", Guid.Parse(TenantId)));
+
+        var detail = await OkAsync(await BuyerGetAsync(rig, $"/orders/{orderId}", session));
+
+        Assert.NotNull(detail["total"]);
+        Assert.NotNull(detail["subtotal"]);
+        Assert.NotNull(detail["taxAmount"]);
+        Assert.NotNull(detail["freightTotal"]);
+        var line = Assert.Single(detail["lines"]!.AsArray())!;
+        Assert.NotNull(line["unitPrice"]);
+        Assert.NotNull(line["lineTotal"]);
+    }
+
     [Fact]
     public async Task UsingTheSameDataShipsToTheBillingWithoutEmailOrDocument()
     {
