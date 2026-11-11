@@ -25,7 +25,8 @@ public sealed class PublicBuyerOrdersApiTests
 
     private static readonly string[] DetailKeys = [
         "billedTo", "billing", "buyerNotes", "canCancel", "cancelledAt", "carrierName", "createdAt", "currency", "firstLineName",
-        "freightTotal", "id", "isStorePickup", "lineCount", "lines", "number", "paymentStatus", "shipping", "status", "subtotal",
+        "freightTotal", "fulfillmentStatus", "id", "invoiced", "isStorePickup", "lineCount", "lines", "number", "paymentStatus", "shipping",
+        "status", "subtotal",
         "taxAmount", "total"];
 
     private static readonly string[] BillingKeys = [
