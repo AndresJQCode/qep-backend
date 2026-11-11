@@ -65,7 +65,7 @@ public sealed class Order
         OrderHeader header,
         QuotationParties parties,
         QuotationBillingAccount? billingAccount,
-        OrderPaymentStatus paymentStatus,
+        OrderPaymentStatus? paymentStatus,
         string? notes,
         MemberId createdBy,
         DateTimeOffset occurredAt,
@@ -101,7 +101,8 @@ public sealed class Order
         Currency = BillingAccount?.Currency ?? header.Currency;
         Status = OrderStatus.Open;
         FulfillmentStatus = OrderFulfillmentStatus.NotPrepared;
-        PaymentStatus = paymentStatus;
+        // Null = lo calculan los comprobantes, que se agregan después (ver CalculatedPaymentStatus).
+        PaymentStatus = paymentStatus ?? OrderPaymentStatus.PaymentPending;
         Notes = NormalizeNotes(notes);
         ConvertedAt = occurredAt;
         ConvertedBy = createdBy;
@@ -341,13 +342,12 @@ public sealed class Order
     /// <c>EnsureConvertibleToOrder</c> y <c>ConvertToOrder</c>; acá no se vuelve a validar su estado.
     /// Las notas del pedido son un solo campo, nunca una concatenación: <paramref name="notes"/> nulo hereda
     /// las de la cotización; con texto, lo reemplaza; vacío o en blanco deja el pedido sin notas (el usuario
-    /// borró el texto precargado).</summary>
+    /// borró el texto precargado). El pago nace calculado de los comprobantes (spec 2026-11-10 §3.2): nunca pagado.</summary>
     public static Order FromQuotation(
         OrderId id,
         Guid tenantId,
         string orderNumber,
         Quotation quotation,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId convertedBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
@@ -380,7 +380,7 @@ public sealed class Order
             quotation.PartyVatSurplus);
         var order = new Order(
             id, tenantId, orderNumber, OrderSource.Quotation, quotation.Id, null, header, parties,
-            quotation.BillingAccount, paymentStatus, notes ?? quotation.Notes, convertedBy, occurredAt);
+            quotation.BillingAccount, paymentStatus: null, notes ?? quotation.Notes, convertedBy, occurredAt);
         // Copia tal cual, incluida la tasa: la cotización ya validó el envío al fijarlo, y el pedido nace con
         // sus mismos totales.
         order.AssignShipping(quotation.ShippingDetails);
@@ -405,6 +405,7 @@ public sealed class Order
         order.EnsureCreatable();
         order.RecalculateTotals();
         order.AddProofs(proofs, convertedBy, occurredAt);
+        order.PaymentStatus = order.CalculatedPaymentStatus();
         return order;
     }
 
@@ -417,7 +418,6 @@ public sealed class Order
         QuotationBillingAccount billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
@@ -426,7 +426,7 @@ public sealed class Order
         ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt);
     }
 
     /// <summary>
@@ -446,14 +446,13 @@ public sealed class Order
         QuotationBillingAccount? billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt) =>
         Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt);
 
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
     /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id.</summary>
@@ -567,7 +566,7 @@ public sealed class Order
         QuotationBillingAccount? billingAccount,
         ShippingDetails shipping,
         IReadOnlyCollection<OrderLineInput> lines,
-        OrderPaymentStatus paymentStatus,
+        OrderPaymentStatus? paymentStatus,
         string? notes,
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
@@ -591,6 +590,11 @@ public sealed class Order
         order.EnsureCreatable();
         order.RecalculateTotals();
         order.AddProofs(proofs, createdBy, occurredAt);
+        if (paymentStatus is null)
+        {
+            order.PaymentStatus = order.CalculatedPaymentStatus();
+        }
+
         return order;
     }
 
@@ -1157,9 +1161,11 @@ public sealed class Order
         Version++;
     }
 
-    public void AddPaymentProofs(
+    /// <summary>Suma comprobantes y corrige los que ya estaban (spec 2026-11-10 §3.2). El pago lo calcula el sistema: un
+    /// pedido pagado sigue pagado, y uno sin pagar queda con lo que digan los comprobantes, nunca pagado. Devuelve el
+    /// cambio del pago, o <c>null</c> si no cambió.</summary>
+    public OrderPaymentStatusChange? AddPaymentProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
-        OrderPaymentStatus paymentStatus,
         string? notes,
         MemberId uploadedBy,
         DateTimeOffset occurredAt,
@@ -1196,40 +1202,85 @@ public sealed class Order
                 occurredAt, proof.PaidOn));
         }
 
-        PaymentStatus = paymentStatus;
+        var from = PaymentStatus;
+        if (from != OrderPaymentStatus.FullPaymentReceived)
+        {
+            PaymentStatus = CalculatedPaymentStatus();
+        }
+
         Notes = NormalizeNotes(notes);
         UpdatedAt = occurredAt;
         Version++;
+        return from == PaymentStatus ? null : new OrderPaymentStatusChange(from, PaymentStatus, NetTotal, NetTotal);
     }
 
-    /// <summary>Compara lo consignado contra el neto a cobrar del propio pedido (spec 2026-10-15 §4.1):
-    /// ya no recibe el monto, lo tiene.
+    /// <summary>
+    /// El pago de un pedido manual que todavía no se guardó, otra vez desde sus comprobantes. El alta y su cálculo
+    /// previo lo llaman después de <c>OrderPricingRecalculation</c>, cuyos descuentos de grupo y redondeo mueven el
+    /// neto que <see cref="CreateManual"/> ya había comparado. No es una edición: no toca <see cref="Version"/>.
+    /// Pagado no se toca: el sistema nunca sube ni baja una marca de una persona acá.
+    /// </summary>
+    public void RecalculateDraftPaymentStatus()
+    {
+        if (Source != OrderSource.Manual || PaymentStatus == OrderPaymentStatus.FullPaymentReceived)
+        {
+            return;
+        }
+
+        PaymentStatus = CalculatedPaymentStatus();
+    }
+
+    /// <summary>Vuelve a mirar el pago después de una edición que pudo mover el neto (spec 2026-11-10 §3.2).
+    /// <paramref name="previousNetTotal"/> es el neto de antes de la edición.
     ///
-    /// El neto se compara redondeado a lo que la moneda muestra: pesos enteros en COP, centavos en
-    /// las demás (hotfix 2026-10-19). La retención se redondea a centavos y le deja al neto una
-    /// fracción de peso que la pantalla no muestra —un neto de 116.529,37 se ve como $116.529—, así
-    /// que quien cargaba lo que veía quedaba en pago parcial por 37 centavos. Mismo redondeo que
-    /// <c>roundToCurrencyPrecision</c> del frontend.</summary>
-    public void RecalculatePaymentStatus(DateTimeOffset occurredAt)
+    /// Sin pagar, el pago es el que digan los comprobantes, nunca pagado. Pagado, queda pagado salvo un caso: hay
+    /// comprobantes, la edición subió el neto (comparado como lo muestra la moneda) y lo consignado ya no lo cubre;
+    /// ahí baja a <see cref="OrderPaymentStatus.PartialPaymentReceived"/> y se limpia la marca de pagado. Un pedido
+    /// pagado sin comprobantes se dio por pagado a mano y ninguna edición lo baja.
+    ///
+    /// Devuelve el cambio, o <c>null</c> si el pago no cambió.</summary>
+    public OrderPaymentStatusChange? RecalculatePaymentStatus(decimal previousNetTotal, DateTimeOffset occurredAt)
     {
         EnsureEditable("The payment status can only be recalculated on an editable order.");
-        var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
-        var displayedNetTotal = Math.Round(
-            NetTotal, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
-        PaymentStatus = proofsTotal <= 0
-            ? OrderPaymentStatus.PaymentPending
-            : proofsTotal >= displayedNetTotal
-                ? OrderPaymentStatus.FullPaymentReceived
-                : OrderPaymentStatus.PartialPaymentReceived;
+        var from = PaymentStatus;
+        if (from != OrderPaymentStatus.FullPaymentReceived)
+        {
+            PaymentStatus = CalculatedPaymentStatus();
+        }
+        else if (_paymentProofs.Count > 0
+            && DisplayedNetTotal > RoundAsDisplayed(previousNetTotal)
+            && ProofsTotal < DisplayedNetTotal)
+        {
+            PaymentStatus = OrderPaymentStatus.PartialPaymentReceived;
+            PaidMarkedBy = null;
+            PaidMarkedAt = null;
+        }
+
         UpdatedAt = occurredAt;
         Version++;
+        return from == PaymentStatus
+            ? null
+            : new OrderPaymentStatusChange(from, PaymentStatus, previousNetTotal, NetTotal);
     }
 
-    /// <summary>Spec de Shopify §6.3 (vía spec 2026-10-15 §5.4): el estado de pago que avisa la plataforma,
-    /// sólo si el pedido no tiene comprobantes propios; con comprobantes, el estado lo gobiernan ellos.</summary>
-    public void SyncExternalPaymentStatus(OrderPaymentStatus status, DateTimeOffset occurredAt)
+    /// <summary>
+    /// El estado de pago que avisa la plataforma (spec de Shopify §6.3), sólo si el pedido no tiene comprobantes
+    /// propios; con comprobantes, el estado lo gobiernan ellos. La plataforma manda sobre sus pedidos: un pedido
+    /// preparado o archivado también lo recibe (un contraentrega se prepara y se cobra después). Sólo lo rechazan
+    /// uno anulado o facturado. No toca la marca de pagado: no lo marcó una persona.
+    ///
+    /// Con <paramref name="autoArchive"/> (el ajuste del tenant), un pedido que queda pagado y ya estaba preparado se
+    /// archiva sin persona detrás. Devuelve <c>true</c> si lo archivó.
+    /// </summary>
+    public bool SyncExternalPaymentStatus(OrderPaymentStatus status, bool autoArchive, DateTimeOffset occurredAt)
     {
-        EnsureEditable("The payment status can only be synced on an editable order.");
+        if (Status == OrderStatus.Cancelled || IsInvoiced)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.NotEditable,
+                "The payment status cannot be synced on a cancelled or invoiced order.");
+        }
+
         if (_paymentProofs.Count > 0)
         {
             throw new QuotationsDomainException(
@@ -1239,12 +1290,13 @@ public sealed class Order
 
         if (PaymentStatus == status)
         {
-            return;
+            return false;
         }
 
         PaymentStatus = status;
         UpdatedAt = occurredAt;
         Version++;
+        return autoArchive && ArchiveIfSettled(archivedBy: null, occurredAt);
     }
 
     public void RemovePaymentProof(OrderPaymentProofId proofId, DateTimeOffset occurredAt)
@@ -1405,19 +1457,11 @@ public sealed class Order
         return true;
     }
 
-    // US-14: "se requiere al menos un comprobante, salvo que el estado del pago sea
-    // 'Payment pending'". Sólo para los pedidos que se cobran desde QEP: uno de origen externo entra
-    // con el estado de pago que avisa la plataforma y el pago vive allá (spec de Shopify §6.3).
+    // Spec 2026-11-10 §3.2: la regla de US-14 («al menos un comprobante salvo pago pendiente») ya no existe: el pago
+    // de un pedido interno sale de los comprobantes, así que sin ellos simplemente queda pendiente.
     private void AddProofs(
         IReadOnlyCollection<OrderPaymentProofInput> proofs, MemberId uploadedBy, DateTimeOffset occurredAt)
     {
-        if (proofs.Count == 0 && PaymentStatus != OrderPaymentStatus.PaymentPending && !IsExternal)
-        {
-            throw new QuotationsDomainException(
-                "order.order.payment_proof_required",
-                "At least one payment proof is required unless the payment status is pending.");
-        }
-
         foreach (var proof in proofs)
         {
             _paymentProofs.Add(OrderPaymentProof.Create(
@@ -1475,16 +1519,29 @@ public sealed class Order
         }
     }
 
+    /// <summary>Lo que falta por cobrar contra el neto como lo muestra la moneda: positivo si falta, negativo si
+    /// sobra (spec 2026-11-10 §3.2).</summary>
+    public decimal Balance => DisplayedNetTotal - ProofsTotal;
+
+    private decimal ProofsTotal => _paymentProofs.Sum(proof => proof.Amount);
+
+    // El neto redondeado a lo que la moneda muestra: pesos enteros en COP, centavos en las demás (hotfix
+    // 2026-10-19). La retención se redondea a centavos y le deja al neto una fracción de peso que la pantalla no
+    // muestra —un neto de 116.529,37 se ve como $116.529—, así que quien cargaba lo que veía quedaba en pago
+    // parcial por 37 centavos. Mismo redondeo que roundToCurrencyPrecision del frontend.
+    private decimal DisplayedNetTotal => RoundAsDisplayed(NetTotal);
+
+    private decimal RoundAsDisplayed(decimal amount) =>
+        Math.Round(amount, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
+
     // Spec 2026-11-10 §3.2: lo que dicen los comprobantes, comparado contra el neto que la moneda muestra. Nunca
-    // llega a FullPaymentReceived: eso sólo lo da «Marcar como pagado» o la plataforma. La Tarea 2 lo comparte con
-    // RecalculatePaymentStatus.
+    // llega a FullPaymentReceived: eso sólo lo da «Marcar como pagado» o la plataforma.
     private OrderPaymentStatus CalculatedPaymentStatus()
     {
-        var proofsTotal = _paymentProofs.Sum(proof => proof.Amount);
-        var displayedNetTotal = Math.Round(NetTotal, Currency == "COP" ? 0 : 2, MidpointRounding.AwayFromZero);
+        var proofsTotal = ProofsTotal;
         return proofsTotal <= 0
             ? OrderPaymentStatus.PaymentPending
-            : proofsTotal < displayedNetTotal
+            : proofsTotal < DisplayedNetTotal
                 ? OrderPaymentStatus.PartialPaymentReceived
                 : OrderPaymentStatus.PendingVerification;
     }

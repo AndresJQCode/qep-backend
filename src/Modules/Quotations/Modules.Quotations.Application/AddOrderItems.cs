@@ -68,6 +68,7 @@ public sealed class AddOrderItemsHandler(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
+        var previousNetTotal = order.NetTotal;
         // Una sola lectura del catálogo para toda la tanda. Los rechazos no se adelantan: siguen
         // abajo, línea por línea, en el mismo orden.
         var products = await QuotationProductPricingResolver.FindVariantsAsync(
@@ -98,7 +99,13 @@ public sealed class AddOrderItemsHandler(
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
         // El total cambió: lo cargado en comprobantes no, pero el estado del pago sí puede.
-        order.RecalculatePaymentStatus(now);
+        if (order.RecalculatePaymentStatus(previousNetTotal, now) is { } paymentChange)
+        {
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await OrderDetails.LoadAsync(

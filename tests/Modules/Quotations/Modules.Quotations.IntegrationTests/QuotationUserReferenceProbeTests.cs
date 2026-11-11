@@ -58,7 +58,7 @@ public sealed class QuotationUserReferenceProbeTests
             new CreateOrderRequest(
                 clientId, null, null, false, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(productId, 1m)], []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);

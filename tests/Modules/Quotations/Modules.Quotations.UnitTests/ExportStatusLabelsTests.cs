@@ -43,7 +43,7 @@ public sealed class ExportStatusLabelsTests
         AssertLabels(
             new Dictionary<OrderPaymentStatus, string>
             {
-                [OrderPaymentStatus.FullPaymentReceived] = "Pago total",
+                [OrderPaymentStatus.FullPaymentReceived] = "Pagado",
                 [OrderPaymentStatus.PartialPaymentReceived] = "Pago parcial",
                 [OrderPaymentStatus.PaymentPending] = "Pago pendiente",
                 [OrderPaymentStatus.PendingVerification] = "Por verificar",

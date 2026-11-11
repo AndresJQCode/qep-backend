@@ -27,7 +27,7 @@ public sealed class BilledCustomerFieldsApiTests
             new CreateOrderRequest(
                 clientId, "Transferencia", null, false, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(productId, 1m)], []),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);

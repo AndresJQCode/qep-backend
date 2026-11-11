@@ -2758,7 +2758,6 @@ public sealed class OrdersExportProcessorTests
                 .Select(item => new OrderLineInput(
                     item.ProductId, ownerProductId ?? item.ProductId, item.Quantity, item.UnitPrice, item.DiscountPercentage, item.TaxPercentage))
                 .ToArray(),
-            OrderPaymentStatus.PaymentPending,
             orderNotes,
             AdvisorId,
             proofInputs,

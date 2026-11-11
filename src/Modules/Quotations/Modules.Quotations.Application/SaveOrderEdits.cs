@@ -79,6 +79,9 @@ public sealed class SaveOrderEditsHandler(
                 "The order changed after it was loaded.");
         }
 
+        // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
+        var previousNetTotal = order.NetTotal;
+
         // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular.
         var customer = await customerLookup.FindAsync(command.TenantId, order.ClientId, cancellationToken);
         if (customer is not null)
@@ -309,7 +312,13 @@ public sealed class SaveOrderEditsHandler(
             // con ellas, y el detal o el piso cambian todos los descuentos.
             await OrderPricingRecalculation.ApplyAsync(
                 pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
-            order.RecalculatePaymentStatus(now);
+            if (order.RecalculatePaymentStatus(previousNetTotal, now) is { } paymentChange)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                    OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

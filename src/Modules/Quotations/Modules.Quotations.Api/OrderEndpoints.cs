@@ -265,7 +265,7 @@ public static class OrderEndpoints
         // dibuja el resumen (líneas, cliente, cotización de origen) sin pedir nada después.
         var detail = await dispatcher.SendAsync(
             new ConvertQuotationToOrderCommand(
-                tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
+                tenantId, quotationId, request.Notes, request.PaymentProofs),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -299,7 +299,6 @@ public static class OrderEndpoints
             new AddOrderPaymentProofsCommand(
                 tenantId,
                 orderId,
-                request.PaymentStatus,
                 request.Notes,
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
@@ -331,7 +330,7 @@ public static class OrderEndpoints
             new CreateOrderCommand(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -349,7 +348,7 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }

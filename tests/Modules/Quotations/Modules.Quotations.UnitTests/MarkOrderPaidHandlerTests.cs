@@ -57,7 +57,6 @@ public sealed class MarkOrderPaidHandlerTests
     private static Order NewRow(QuotationParties? parties = null) =>
         OrderBuilders.Pending(
             TenantId, AdvisorId, Now,
-            paymentStatus: OrderPaymentStatus.FullPaymentReceived,
             proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)],
             parties: parties);
 

@@ -102,6 +102,17 @@ public static class OrderChangeSummary
         return Trim($"Comprobantes: {string.Join(", ", parts)}.");
     }
 
+    /// <summary>El pago lo cambió el sistema, no una persona (spec 2026-11-10 §3.2): nombra los dos estados y los dos
+    /// netos para que se entienda por qué.</summary>
+    public static string PaymentStatusRecalculated(OrderPaymentStatusChange change, HistoryFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        ArgumentNullException.ThrowIfNull(format);
+        return Trim(
+            $"El pago pasó de {ExportStatusLabels.For(change.From)} a {ExportStatusLabels.For(change.To)}: " +
+            $"el neto pasó de {format.Number(change.PreviousNetTotal)} a {format.Number(change.NetTotal)}.");
+    }
+
     private static string Trim(string summary) =>
         summary.Length <= OrderHistoryEntry.DetailsMaxLength
             ? summary

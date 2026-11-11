@@ -13,6 +13,7 @@ public sealed class RemoveOrderPaymentProofHandler(
     IQuotationAuditPublisher auditPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock)
     : ICommandHandler<RemoveOrderPaymentProofCommand, OrderDto>
@@ -29,18 +30,26 @@ public sealed class RemoveOrderPaymentProofHandler(
             ?? throw OrderNotFound.ById(command.OrderId);
 
         var now = clock.UtcNow;
+        var previousNetTotal = order.NetTotal;
         var proofId = new OrderPaymentProofId(command.ProofId);
         var removed = order.PaymentProofs.FirstOrDefault(proof => proof.Id == proofId);
         order.RemovePaymentProof(proofId, now);
         // El neto es del pedido (spec 2026-10-15 §4.1): ya no hace falta la cotización para saber
         // cuánto se debe.
-        order.RecalculatePaymentStatus(now);
+        var paymentChange = order.RecalculatePaymentStatus(previousNetTotal, now);
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentProofsChanged, updatedBy,
             OrderChangeSummary.PaymentProofsChanged(added: 0, corrected: 0, removed: 1), now));
+        if (paymentChange is not null)
+        {
+            var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+        }
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

@@ -61,6 +61,7 @@ public sealed class PreviewOrderEditsHandler(
         }
 
         var storedVersion = order.Version;
+        var previousNetTotal = order.NetTotal;
         var customer = await customerLookup.FindAsync(query.TenantId, order.ClientId, cancellationToken);
         if (customer is not null)
         {
@@ -118,7 +119,8 @@ public sealed class PreviewOrderEditsHandler(
 
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
-        order.RecalculatePaymentStatus(now);
+        // Sin historial: el preview no guarda nada.
+        order.RecalculatePaymentStatus(previousNetTotal, now);
 
         var quotationNumber = order.QuotationId is { } quotationId
             ? (await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken))?.QuotationNumber

@@ -473,7 +473,7 @@ public sealed class RetailQuotationApiTests
             client, factory, tenantId, clientId, productId, paymentMethod: null);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var order = await converted.Content.ReadConvertedOrderAsync(

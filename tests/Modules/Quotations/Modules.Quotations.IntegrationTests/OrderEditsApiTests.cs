@@ -69,7 +69,7 @@ public sealed class OrderEditsApiTests
         var converted = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+                null, [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var order = await converted.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -271,7 +271,7 @@ public sealed class OrderEditsApiTests
         var converted = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null,
+                null,
                 [new OrderPaymentProofRequest(keptFileId, 60_000m), new OrderPaymentProofRequest(removedFileId, 40_000m)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
@@ -313,7 +313,7 @@ public sealed class OrderEditsApiTests
         var converted = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null,
+                null,
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total, new DateOnly(2026, 10, 1))]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
@@ -545,7 +545,7 @@ public sealed class OrderEditsApiTests
         var converted = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null,
+                null,
                 [new OrderPaymentProofRequest(keptFileId, 60_000m), new OrderPaymentProofRequest(removedFileId, 40_000m)]),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
@@ -900,7 +900,7 @@ public sealed class OrderEditsApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(
             OrderUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);

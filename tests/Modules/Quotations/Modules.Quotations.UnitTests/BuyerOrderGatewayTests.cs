@@ -64,7 +64,7 @@ public sealed class BuyerOrderGatewayTests
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
-            order.SyncExternalPaymentStatus(payment, at);
+            order.SyncExternalPaymentStatus(payment, autoArchive: false, at);
         }
 
         if (paidMarked)
@@ -167,11 +167,11 @@ public sealed class BuyerOrderGatewayTests
 
     private static Order StoreOrderWithProofStillPaymentPending()
     {
+        // AttachPaymentProofs no recalcula el pago (el guardado lo hace después): deja el comprobante con el pago aún
+        // en PaymentPending, el caso que D5 cubre.
         var order = StoreOrder(Buyer);
-        order.AddPaymentProofs(
+        order.AttachPaymentProofs(
             [new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m)],
-            OrderPaymentStatus.PaymentPending,
-            null,
             Advisor,
             Now.AddHours(-1));
         return order;

@@ -35,7 +35,7 @@ public sealed class OrderContractApiTests
 
         var converted = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, converted.StatusCode);
@@ -111,7 +111,7 @@ public sealed class OrderContractApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         using var created = JsonDocument.Parse(
@@ -122,7 +122,7 @@ public sealed class OrderContractApiTests
         var proofs = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
-                "FullPaymentReceived", [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
+                [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
         var approve = await client.PostAsync(
             $"/api/v1/tenants/{tenantId}/orders/{orderId}/approve",
@@ -191,7 +191,7 @@ public sealed class OrderContractApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         (await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         var today = TodayInBogota();
 

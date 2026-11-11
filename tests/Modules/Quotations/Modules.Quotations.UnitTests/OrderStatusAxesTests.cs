@@ -29,7 +29,7 @@ public sealed class OrderStatusAxesTests
     private static Order NewOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), QuotationParties.Empty, Account,
-            ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, ConvertedBy,
+            ShippingDetails.None, [Line()], null, ConvertedBy,
             proofs ?? [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)], Now);
 
     private static string CodeOf(Action action) => Assert.Throws<QuotationsDomainException>(action).Code;

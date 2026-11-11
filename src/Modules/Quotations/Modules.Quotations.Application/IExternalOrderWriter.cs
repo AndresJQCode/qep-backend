@@ -316,7 +316,8 @@ public sealed class ExternalOrderService(
             return;
         }
 
-        order.SyncExternalPaymentStatus(status, now);
+        // El archivado automático (el ajuste del tenant) lo conecta la Tarea 4 de spec 2026-11-10; mientras tanto, apagado.
+        order.SyncExternalPaymentStatus(status, autoArchive: false, now);
         auditPublisher.PublishByIntegration(
             tenantId, "quotation.order.payment_status_synced", order.Id.ToString(), "success", now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

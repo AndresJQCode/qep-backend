@@ -4,14 +4,13 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// Decisión del dueño de producto (2026-10-05): un pedido queda pagado cuando los comprobantes
-/// cubren el neto a cobrar (<see cref="Quotation.NetTotal"/>), no lo facturado
-/// (<see cref="Quotation.Total"/>). Con retención en la fuente el cliente no paga en efectivo lo
-/// que retiene, así que exigirle el total bruto dejaba en "pago parcial" a quien pagó todo lo que
-/// debía. Quitar un comprobante es el caso de uso más chico que recalcula el estado de pago desde
-/// el servidor; el resto (agregar, editar o quitar productos, guardar o previsualizar la edición)
-/// comparte el mismo <see cref="Order.RecalculatePaymentStatus"/> y lo cubren las pruebas de
-/// integración.
+/// Decisión del dueño de producto (2026-10-05): los comprobantes se comparan contra el neto a cobrar
+/// (<see cref="Quotation.NetTotal"/>), no contra lo facturado (<see cref="Quotation.Total"/>). Con
+/// retención en la fuente el cliente no paga en efectivo lo que retiene, así que exigirle el total bruto
+/// dejaba en "pago parcial" a quien pagó todo lo que debía. Desde spec 2026-11-10 §3.2 cubrir el neto
+/// deja el pedido «Por verificar», no pagado. Quitar un comprobante es el caso de uso más chico que
+/// recalcula el estado de pago desde el servidor; el resto (agregar, editar o quitar productos, guardar o
+/// previsualizar la edición) comparte el mismo <see cref="Order.RecalculatePaymentStatus"/>.
 /// </summary>
 public sealed class RemoveOrderPaymentProofHandlerTests
 {
@@ -23,9 +22,9 @@ public sealed class RemoveOrderPaymentProofHandlerTests
     // 119_000 con el IVA del 19% adentro: base 100_000, total 119_000. Con retención, el 2.5% de la
     // base (2_500) sale del neto: 116_500.
     [Theory]
-    [InlineData(true, 116_500, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(true, 116_500, OrderPaymentStatus.PendingVerification)]
     [InlineData(true, 116_499, OrderPaymentStatus.PartialPaymentReceived)]
-    [InlineData(false, 119_000, OrderPaymentStatus.FullPaymentReceived)]
+    [InlineData(false, 119_000, OrderPaymentStatus.PendingVerification)]
     [InlineData(false, 118_999, OrderPaymentStatus.PartialPaymentReceived)]
     public async Task RemovingAProofComparesWhatRemainsAgainstTheNetAmountDue(
         bool customerWithRetention, decimal remainingProofs, OrderPaymentStatus expected)
@@ -39,7 +38,6 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             TenantId,
             "PED-2026-0001",
             quotation,
-            OrderPaymentStatus.PartialPaymentReceived,
             notes: null,
             AdvisorId,
             [
@@ -49,14 +47,7 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             Now);
         var mistaken = order.PaymentProofs.Single(proof => proof.Amount == 5_000m);
 
-        var handler = new RemoveOrderPaymentProofHandler(
-            new StubOrderListRepository(order),
-            new NoOpQuotationsUnitOfWork(),
-            new NoOpQuotationAuditPublisher(),
-            new NoOpOrderPaymentProofEventPublisher(),
-            new StubMembershipDirectory(AdvisorId.Value),
-            new StubExecutionContext(SubjectId, TenantId),
-            new FixedClock(Now.AddHours(1)));
+        var handler = NewHandler(new StubOrderListRepository(order));
 
         var result = await handler.HandleAsync(
             new RemoveOrderPaymentProofCommand(TenantId, order.Id.Value, mistaken.Id.Value),
@@ -65,6 +56,43 @@ public sealed class RemoveOrderPaymentProofHandlerTests
         Assert.Equal(expected, order.PaymentStatus);
         Assert.Equal(expected.ToString(), result.PaymentStatus);
     }
+
+    // Spec 2026-11-10 §3.2: quitar un comprobante que dejaba el neto cubierto baja el pago, y el historial lo
+    // dice con el texto del sistema, no sólo con «Comprobantes: 1 retirado(s)».
+    [Fact]
+    public async Task RemovingAProofThatChangesThePaymentLeavesItInTheHistory()
+    {
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now,
+            proofs:
+            [
+                new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m),
+                new OrderPaymentProofInput(Guid.CreateVersion7(), 19_000m),
+            ]);
+        Assert.Equal(OrderPaymentStatus.PendingVerification, order.PaymentStatus);
+        var repository = new StubOrderListRepository(order);
+
+        await NewHandler(repository).HandleAsync(
+            new RemoveOrderPaymentProofCommand(
+                TenantId, order.Id.Value, order.PaymentProofs.Single(proof => proof.Amount == 19_000m).Id.Value),
+            TestContext.Current.CancellationToken);
+
+        Assert.Contains(
+            repository.History,
+            entry => entry.EventType == OrderHistoryEventType.PaymentStatusRecalculated
+                && entry.Details == "El pago pasó de Por verificar a Pago parcial: el neto pasó de 119.000 a 119.000.");
+    }
+
+    private static RemoveOrderPaymentProofHandler NewHandler(StubOrderListRepository repository) =>
+        new(
+            repository,
+            new NoOpQuotationsUnitOfWork(),
+            new NoOpQuotationAuditPublisher(),
+            new NoOpOrderPaymentProofEventPublisher(),
+            new StubMembershipDirectory(AdvisorId.Value),
+            new StubTenantDirectory(),
+            new StubExecutionContext(SubjectId, TenantId),
+            new FixedClock(Now.AddHours(1)));
 
     private static Quotation NewQuotationWithOneItem(bool customerWithRetention)
     {

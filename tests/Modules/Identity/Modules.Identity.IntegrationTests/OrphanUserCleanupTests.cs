@@ -860,7 +860,6 @@ public sealed class OrphanUserCleanupTests
             },
             ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 119_000m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,
             proofs: [],

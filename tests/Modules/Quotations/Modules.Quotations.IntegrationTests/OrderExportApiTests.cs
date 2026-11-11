@@ -852,7 +852,7 @@ public sealed class OrderExportApiTests
             parties: isStorePickup ? new QuotationPartiesRequest(null, null, IsStorePickup: true) : null);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -961,7 +961,7 @@ public sealed class OrderExportApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PartialPaymentReceived", null, proofs),
+            new ConvertQuotationToOrderRequest(null, proofs),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -978,7 +978,7 @@ public sealed class OrderExportApiTests
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
-                "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
+                [new OrderPaymentProofRequest(fileId, 5_000m)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);

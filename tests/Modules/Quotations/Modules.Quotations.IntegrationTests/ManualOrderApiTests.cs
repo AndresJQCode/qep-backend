@@ -19,7 +19,7 @@ public sealed class ManualOrderApiTests
         return new CreateOrderRequest(
             clientId, "Transferencia", "Pedido de mostrador", false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            [new OrderEditItemRequest(productId, 3m)], "PaymentPending", []);
+            [new OrderEditItemRequest(productId, 3m)], []);
     }
 
     private static async Task<string> CodeOfAsync(HttpResponseMessage response)

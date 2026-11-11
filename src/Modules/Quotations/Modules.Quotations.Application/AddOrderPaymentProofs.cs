@@ -7,15 +7,14 @@ namespace Modules.Quotations.Application;
 
 /// <summary>
 /// Sumar comprobantes a un pedido que ya existe, y corregir el monto de los que ya tenía
-/// cargados (a pedido, 2026-09), con el estado de pago que corresponda a lo cargado. Ruta
-/// hermana de <see cref="CancelOrderCommand"/> y no un campo del PATCH que no existe: el pedido
-/// no se edita en general, esto es un único gesto puntual —"cargué o corregí lo que hacía
+/// cargados (a pedido, 2026-09). El estado de pago no viaja: lo calcula el sistema con los
+/// comprobantes y nunca deja el pedido pagado (spec 2026-11-10 §3.2). Ruta hermana de
+/// <see cref="CancelOrderCommand"/>: un único gesto puntual —"cargué o corregí lo que hacía
 /// falta"— para destrabar el cobro cuando el pago no había quedado completo o correcto.
 /// </summary>
 public sealed record AddOrderPaymentProofsCommand(
     Guid TenantId,
     Guid OrderId,
-    string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     IReadOnlyCollection<OrderPaymentProofUpdateRequest> UpdatedProofs) : ICommand<OrderDto>;
@@ -23,15 +22,8 @@ public sealed record AddOrderPaymentProofsCommand(
 public sealed class AddOrderPaymentProofsValidator
     : AbstractValidator<AddOrderPaymentProofsCommand>
 {
-    private static readonly string[] ValidPaymentStatuses =
-        Enum.GetNames<OrderPaymentStatus>();
-
     public AddOrderPaymentProofsValidator()
     {
-        RuleFor(command => command.PaymentStatus)
-            .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
-            .WithMessage(
-                $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
         RuleForEach(command => command.UpdatedProofs).SetValidator(new OrderPaymentProofUpdateRequestValidator());
 
@@ -81,6 +73,7 @@ public sealed class AddOrderPaymentProofsHandler(
     IPaymentProofPublisher paymentProofPublisher,
     IOrderPaymentProofEventPublisher paymentProofEvents,
     IMembershipDirectory membershipDirectory,
+    ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
     IValidator<AddOrderPaymentProofsCommand> validator)
@@ -122,8 +115,8 @@ public sealed class AddOrderPaymentProofsHandler(
         var uploadedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
-        var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Sólo se publica lo que de verdad cambia de archivo: un comprobante nuevo siempre, y uno
         // que se reemplaza (a pedido, 2026-09-15) — corregir sólo el monto no toca el archivo.
@@ -163,13 +156,18 @@ public sealed class AddOrderPaymentProofsHandler(
                     newPublicStorageKey, update.PaidOn));
             }
 
-            order.AddPaymentProofs(
+            var paymentChange = order.AddPaymentProofs(
                 proofs,
-                paymentStatus,
                 command.Notes,
                 uploadedBy,
                 now,
                 updatedProofs);
+            if (paymentChange is not null)
+            {
+                repository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, uploadedBy,
+                    OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+            }
 
             auditPublisher.Publish(
                 command.TenantId,

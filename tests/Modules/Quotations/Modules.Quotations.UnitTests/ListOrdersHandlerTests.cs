@@ -304,7 +304,6 @@ public sealed class ListOrdersHandlerTests
             },
             ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, total / 2m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
             [],

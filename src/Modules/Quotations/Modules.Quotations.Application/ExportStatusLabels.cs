@@ -35,7 +35,7 @@ public static class ExportStatusLabels
 
     public static string For(OrderPaymentStatus status) => status switch
     {
-        OrderPaymentStatus.FullPaymentReceived => "Pago total",
+        OrderPaymentStatus.FullPaymentReceived => "Pagado",
         OrderPaymentStatus.PartialPaymentReceived => "Pago parcial",
         OrderPaymentStatus.PaymentPending => "Pago pendiente",
         OrderPaymentStatus.PendingVerification => "Por verificar",

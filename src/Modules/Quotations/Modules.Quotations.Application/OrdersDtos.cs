@@ -85,10 +85,12 @@ public sealed record OrderPaymentProofUpdateRequest(
 
 /// <summary>
 /// El cuerpo de un pedido manual (spec 2026-10-15 §5.2) y de su cálculo previo: el mismo que la
-/// pantalla arma para una cotización, más el estado de pago y los comprobantes, porque un pedido nace
-/// vendido. <c>Items</c> lleva producto y cantidad: el precio, el descuento por escala y la tasa los
-/// resuelve el backend, igual que al convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en
-/// el cálculo previo, que sin ella precia en la moneda por defecto del tenant.
+/// pantalla arma para una cotización, más los comprobantes, porque un pedido nace vendido. El estado de
+/// pago no viaja: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2), y un cliente viejo
+/// que todavía lo mande no falla, porque System.Text.Json ignora la propiedad. <c>Items</c> lleva
+/// producto y cantidad: el precio, el descuento por escala y la tasa los resuelve el backend, igual que al
+/// convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en el cálculo previo, que sin ella
+/// precia en la moneda por defecto del tenant.
 /// </summary>
 public sealed record CreateOrderRequest(
     Guid ClientId,
@@ -99,19 +101,18 @@ public sealed record CreateOrderRequest(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderEditItemRequest> Items,
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
-    /// <c>CashOnDelivery</c>, el <c>PaymentStatus</c> tiene que ser <c>PaymentPending</c> (spec 2026-10-17 §6).</summary>
+    /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
     ShippingRequest? Shipping = null);
 
+/// <summary>Sin estado de pago: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2).</summary>
 public sealed record ConvertQuotationToOrderRequest(
-    string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
 
+/// <summary>Sin estado de pago: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2).</summary>
 public sealed record AddOrderPaymentProofsRequest(
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     string? Notes = null,
     IReadOnlyCollection<OrderPaymentProofUpdateRequest>? UpdatedProofs = null);
