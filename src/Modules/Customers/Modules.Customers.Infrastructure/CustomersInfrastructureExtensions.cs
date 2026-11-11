@@ -37,6 +37,8 @@ public static class CustomersInfrastructureExtensions
         services.AddScoped<ICustomersUnitOfWork, CustomersUnitOfWork>();
         // Spec 2026-10-24 §3.2–§3.4: lo que la fusión lee y escribe en customers sin pasar por el agregado.
         services.AddScoped<ICustomerMergeStore, CustomerMergeStore>();
+        // Spec 2026-11-10 (borrar clientes) §4.3: lo que el borrado lee y escribe en customers.
+        services.AddScoped<ICustomerDeletionStore, CustomerDeletionStore>();
         services.AddScoped<ICustomersAuditPublisher, CustomersAuditPublisher>();
         services.AddScoped<ICucGenerator, CucGenerator>();
 

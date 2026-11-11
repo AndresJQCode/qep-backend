@@ -521,6 +521,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
+        // Spec 2026-11-10 (borrar clientes) §4.1: el borrado en lote.
+        services.AddScoped<
+            ICommandHandler<BulkDeleteCustomersCommand, BulkDeleteCustomersResult>,
+            BulkDeleteCustomersHandler>();
         services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
@@ -1227,6 +1231,9 @@ public static class QepServiceCollectionExtensions
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.
         services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
+        // Borrado de clientes (spec 2026-11-10 §4.2 y §4.3): los bloqueos y la limpieza en los otros módulos. Scoped como el
+        // CustomersDbContext sobre el que corre, para que todo quede en la transacción del lote.
+        services.AddScoped<ICustomerDeletionReferences, CustomerDeletionReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
