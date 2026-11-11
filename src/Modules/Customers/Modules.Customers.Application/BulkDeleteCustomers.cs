@@ -17,6 +17,8 @@ public sealed record BulkDeleteCustomersCommand(Guid TenantId, IReadOnlyList<Gui
 /// <summary>
 /// Las tres listas van siempre, en el orden en que llegaron los ids. <c>NotFound</c> no es un error: con dos pestañas
 /// abiertas, el otro ya lo borró.
+/// BFF: las tres listas viajan siempre (<c>[]</c> si no hay nada), para que la pantalla diga qué pasó con cada fila sin tener
+/// que cruzar ids ni distinguir «vacío» de «ausente».
 /// </summary>
 public sealed record BulkDeleteCustomersResult(
     IReadOnlyList<Guid> Deleted,

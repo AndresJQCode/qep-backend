@@ -474,6 +474,10 @@ public sealed record CustomerMergeDroppedTagDto(Guid Id, string Name);
 /// 422 con <c>errors.MergedCustomerIds</c> del validador y no un 400 del deserializador.</summary>
 public sealed record MergeCustomersRequest(IReadOnlyList<Guid>? MergedCustomerIds);
 
+/// <summary>El cuerpo de <c>POST /customers/bulk-delete</c>. Opcional en el binding para que una lista ausente sea un 422 con
+/// <c>errors.CustomerIds</c> del validador y no un 400 del deserializador.</summary>
+public sealed record BulkDeleteCustomersRequest(IReadOnlyList<Guid>? CustomerIds);
+
 /// <summary>
 /// La respuesta de la fusión (B3). BFF: los mismos campos que <see cref="CustomerResponse"/>, en el mismo objeto, para que
 /// la pantalla repinte la ficha del que quedó con el mismo código que dibuja un <c>GET</c>, más <c>DroppedTags</c>, que viaja
