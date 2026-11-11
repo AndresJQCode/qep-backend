@@ -79,4 +79,15 @@ public sealed class OrderDraftBuilderPersonTypeTests
 
         Assert.Equal(PartyPersonType.Juridica, order.Billing?.PersonType);
     }
+
+    // Spec impuestos por tipo §7.5: el país de la empresa decide qué retenciones aplican, así que el pedido manual
+    // nuevo lo congela con la cuenta (la migración sólo rellena los pedidos que ya existían).
+    [Fact]
+    public async Task ACreatedOrderFreezesTheBillingCompanyCountry()
+    {
+        var order = await NewBuilder(PersonTypeRequirement.Never).BuildAsync(
+            NewInput("Juridica"), "PED-2026-0001", Now, TestContext.Current.CancellationToken);
+
+        Assert.Equal("CO", order.BillingAccount?.Country);
+    }
 }
