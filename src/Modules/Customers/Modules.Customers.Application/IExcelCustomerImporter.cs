@@ -114,8 +114,7 @@ public sealed record ExcelCustomerRow(
     string? Classification,
     string? Retefuente,
     string? ReteIca,
-    string? VatSurplus,
-    bool WithholdingColumnsPresent = true);
+    string? VatSurplus);
 
 /// <summary>
 /// El resultado de parsear un Excel: si la cabecera trae las columnas esperadas y, si las
@@ -124,7 +123,13 @@ public sealed record ExcelCustomerRow(
 /// ubicar, y el llamador trata eso como un archivo estructuralmente invalido, no como un reporte
 /// por fila.
 /// </summary>
-public sealed record ExcelCustomerImportFile(bool HasExpectedColumns, IReadOnlyList<ExcelCustomerRow> Rows);
+/// <param name="WithholdingColumns">Las columnas por tipo de retención (<see cref="CustomerImportColumns.Optional"/>) que
+/// trae la cabecera; null = todas. Es por tipo y del archivo, no de la fila: una columna ausente no es lo mismo que una
+/// celda vacía, y en una actualización conserva las tasas de ese tipo que el cliente ya tiene.</param>
+public sealed record ExcelCustomerImportFile(
+    bool HasExpectedColumns,
+    IReadOnlyList<ExcelCustomerRow> Rows,
+    IReadOnlyCollection<string>? WithholdingColumns = null);
 
 /// <summary>
 /// Lee un Excel de clientes y devuelve sus filas en crudo. Puerto en Application, adaptador en

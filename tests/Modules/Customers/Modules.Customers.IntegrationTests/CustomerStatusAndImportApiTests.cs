@@ -1554,6 +1554,44 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(rate, Assert.Single((await GetAsync(client, customer.Id)).WithholdingTaxRates).Id);
     }
 
+    // La presencia de las columnas es por tipo: un archivo con sólo «Retefuente» actualiza esa tasa y conserva la ReteICA
+    // que el cliente ya tiene, porque no traer la columna no es lo mismo que traerla vacía.
+    [Fact]
+    public async Task AFileWithOnlyTheRetefuenteColumnKeepsTheReteIca()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente compras", "Retefuente", 2.5m);
+        var servicios = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+        var reteIca = await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA Medellin", "ReteICA", 0.966m);
+        var created = await ImportAsync(client,
+        [
+            new ExcelRowInput(
+                Department: city.DepartmentName, City: city.CityName, Classification: classification.Name,
+                Retefuente: "Retefuente compras", ReteIca: "ReteICA Medellin")
+        ]);
+        var customer = await ImportedCustomerAsync(client, created);
+        string[] onlyRetefuente = [.. CustomerImportColumns.Ordered.Where(column => column is not "ReteICA")];
+
+        var updated = await ImportAsync(
+            client,
+            [
+                new ExcelRowInput(
+                    Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
+                    Classification: classification.Name, Retefuente: "Retefuente servicios")
+            ],
+            onlyRetefuente);
+
+        Assert.Empty(updated.Errors);
+        Assert.Equal(
+            new[] { servicios, reteIca }.Order(),
+            (await GetAsync(client, customer.Id)).WithholdingTaxRates.Select(rate => rate.Id).Order());
+    }
+
     [Fact]
     public async Task OldFileWithConRetencionIsReadIgnoringIt()
     {

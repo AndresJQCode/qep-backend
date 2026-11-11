@@ -257,7 +257,8 @@ public sealed class ImportCustomersHandler(
 
         var now = clock.UtcNow;
         var imported = await CreateOrUpdateCustomersAsync(
-            command.TenantId, candidates, errors, now, cancellationToken);
+            command.TenantId, candidates, errors, parsed.WithholdingColumns ?? CustomerImportColumns.Optional, now,
+            cancellationToken);
 
         // Un solo evento por el import completo, no uno por cliente: mil clientes importados de
         // una vez no deben dejar mil filas en el outbox. Los conteos van en el resourceId porque
@@ -430,6 +431,31 @@ public sealed class ImportCustomersHandler(
         }
 
         return (candidates, errors);
+    }
+
+    /// <summary>
+    /// Las tasas del cliente que una actualizacion no toca: las de un tipo cuya columna no vino en el archivo. Una tasa que
+    /// el catalogo ya no tiene (borrada) no tiene tipo que comparar y tambien se conserva: la importacion no borra lo que
+    /// no sabe leer. Con las dos columnas presentes no consulta el catalogo.
+    /// </summary>
+    private async Task<IReadOnlyList<Guid>> KeptWithholdingsAsync(
+        Guid tenantId,
+        Customer customer,
+        IReadOnlyCollection<string> withholdingColumns,
+        CancellationToken cancellationToken)
+    {
+        if (customer.WithholdingTaxRateIds.Count == 0
+            || CustomerImportColumns.Optional.All(withholdingColumns.Contains))
+        {
+            return [];
+        }
+
+        var rates = await taxRateLookup.FindManyAsync(tenantId, customer.WithholdingTaxRateIds, cancellationToken);
+        return
+        [
+            .. customer.WithholdingTaxRateIds.Where(id =>
+                !rates.TryGetValue(id, out var rate) || !withholdingColumns.Contains(rate.Type))
+        ];
     }
 
     /// <summary>
@@ -653,6 +679,7 @@ public sealed class ImportCustomersHandler(
         Guid tenantId,
         List<CandidateRow> candidates,
         List<ImportRowError> errors,
+        IReadOnlyCollection<string> withholdingColumns,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -750,12 +777,14 @@ public sealed class ImportCustomersHandler(
                     now,
                     phoneNormalizer);
 
-                // Celda vacia = sin tasa. Solo un archivo sin las columnas por tipo (armado antes de que existieran)
-                // conserva las que el cliente ya tiene.
-                if (candidate.SourceRow.WithholdingColumnsPresent)
-                {
-                    customer.SetWithholdingTaxRates(candidate.WithholdingTaxRateIds, now);
-                }
+                // Celda vacia = sin tasa de ese tipo. Una columna que el archivo no trae (armado antes de que existiera, o
+                // con solo una de las dos) conserva las tasas de ese tipo que el cliente ya tiene.
+                customer.SetWithholdingTaxRates(
+                    [
+                        .. candidate.WithholdingTaxRateIds,
+                        .. await KeptWithholdingsAsync(tenantId, customer, withholdingColumns, cancellationToken)
+                    ],
+                    now);
 
                 imported.Add(new ImportedCustomerRow(
                     // Update exige una ficha completa (EnsureComplete), y una completa siempre tiene CUC.

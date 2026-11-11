@@ -49,8 +49,9 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             }
         }
 
-        // Un archivo anterior a las columnas por tipo no las trae: no es lo mismo que traerlas vacias (que quita las tasas).
-        var withholdingColumnsPresent = CustomerImportColumns.Optional.Any(indexes.ContainsKey);
+        // Un archivo anterior a las columnas por tipo no las trae, o trae sólo una: no es lo mismo que traerla vacía (que quita
+        // la tasa de ese tipo). Se cuenta por columna.
+        string[] withholdingColumns = [.. CustomerImportColumns.Optional.Where(indexes.ContainsKey)];
 
         var rows = new List<ExcelCustomerRow>();
         var lastRow = worksheet.LastRowUsed()?.RowNumber() ?? 1;
@@ -101,11 +102,10 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 classification,
                 retefuente,
                 reteIca,
-                vatSurplus,
-                withholdingColumnsPresent));
+                vatSurplus));
         }
 
-        return new ExcelCustomerImportFile(true, rows);
+        return new ExcelCustomerImportFile(true, rows, withholdingColumns);
     }
 
     private static Dictionary<string, int> MapHeaderColumns(IXLWorksheet worksheet)
