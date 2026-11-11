@@ -89,7 +89,17 @@ public sealed record CustomerDto(
     /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; <c>null</c> es «sin tipo».</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: la empresa de la que este cliente es contacto; <c>null</c> si no tiene. Siempre se llena por
+    /// <c>CustomerMapping.ToDtoAsync</c>, el camino que comparten todos los handlers que responden la ficha.</summary>
+    CustomerCompanyDto? Company = null);
+
+/// <summary>Spec 2026-11-10 §4.1: la empresa de un contacto, ya con su etiqueta (<c>BusinessName ?? Name</c>, A4). Es un objeto
+/// y no un id suelto (BFF): la ficha pinta el nombre, el aviso de «incompleta» y «inactiva» sin un segundo <c>GET</c>.</summary>
+public sealed record CustomerCompanyDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
+/// <summary>El cuerpo de <c>PUT /customers/{id}/company</c>: <c>null</c> desvincula.</summary>
+public sealed record SetCustomerCompanyRequest(Guid? CompanyId);
 
 /// <summary>
 /// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
@@ -127,7 +137,9 @@ public sealed record CustomerResponse(
     /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>), como <c>MergedInto</c>.</summary>
+    CustomerCompanyDto? Company = null);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -507,4 +519,5 @@ public sealed record CustomerMergeResponse(
     MarketingConsentDto MarketingConsent,
     CustomerMergedIntoDto? MergedInto,
     string? PersonType,
+    CustomerCompanyDto? Company,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

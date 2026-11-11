@@ -187,14 +187,28 @@ internal static class CustomerWriteDoubles
                     : new Dictionary<(IdentificationType, string), CustomerId>());
         }
 
-        public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken) =>
-            Task.FromResult(
+        /// <summary>El orden en que se tocó el repositorio (<c>find:id</c>, <c>lock</c>): lo que importa en el vínculo es que el
+        /// bloqueo vaya antes de leer a nadie.</summary>
+        public List<string> Log { get; } = [];
+
+        /// <summary>Los ids de cada <see cref="LockForCompanyLinkAsync"/>.</summary>
+        public List<IReadOnlyCollection<Guid>> LockCalls { get; } = [];
+
+        public Task<Customer?> FindAsync(Guid tenantId, CustomerId customerId, CancellationToken cancellationToken)
+        {
+            Log.Add("find:" + customerId.Value);
+            return Task.FromResult(
                 Existing is not null && Existing.TenantId == tenantId && Existing.Id == customerId
                     ? Existing
                     : Known.SingleOrDefault(item => item.TenantId == tenantId && item.Id == customerId));
+        }
 
-        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+        {
+            Log.Add("lock");
+            LockCalls.Add(customerIds);
+            return Task.CompletedTask;
+        }
 
         public void Add(Customer customer) => Added.Add(customer);
 

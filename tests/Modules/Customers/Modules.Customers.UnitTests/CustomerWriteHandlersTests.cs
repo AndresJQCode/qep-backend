@@ -42,13 +42,13 @@ public sealed class CustomerWriteHandlersTests
 
     private static CreateCustomerHandler NewCreate(
         FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
-        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), unitOfWork, new RecordingAudit(),
+        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
             new Cucs(calls ?? []), Manager, new FixedClock(), new CreateCustomerValidator(), new PlusNormalizer(),
             tenant ?? new TenantDirectory());
 
     private static UpdateCustomerHandler NewUpdate(
         FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
-        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), unitOfWork, new RecordingAudit(),
+        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
             new Cucs(calls ?? []), Manager, new FixedClock(), new UpdateCustomerValidator(), new PlusNormalizer(),
             tenant ?? new TenantDirectory());
 
