@@ -236,7 +236,7 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
     }
 
     public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds,
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds,
         bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
@@ -244,7 +244,7 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
         throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> ListForExportAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take,
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> AnyWithClassificationAsync(

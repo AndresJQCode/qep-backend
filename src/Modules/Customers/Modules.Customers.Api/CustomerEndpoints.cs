@@ -197,7 +197,8 @@ public static class CustomerEndpoints
         Guid[]? cityIds = null,
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize,
-        string? isComplete = null)
+        string? isComplete = null,
+        string? phone = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
@@ -210,7 +211,8 @@ public static class CustomerEndpoints
                 cityIds,
                 page,
                 pageSize,
-                isComplete),
+                isComplete,
+                phone),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -441,10 +443,11 @@ public static class CustomerEndpoints
         string? search = null,
         string? name = null,
         string? identificationNumber = null,
-        string? cuc = null)
+        string? cuc = null,
+        string? phone = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc),
+            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone),
             cancellationToken);
 
         return Results.Accepted(value: new ExportCustomersResponse(
