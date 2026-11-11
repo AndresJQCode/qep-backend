@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildingBlocks.Domain.Taxes;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 
@@ -370,8 +371,8 @@ public sealed class OrdersExportProcessor(
                 ExportCell.OfText(shippingContact.Department),
                 ExportCell.OfText(shippingContact.Phone),
                 ExportCell.OfText(shippingContact.Email),
-                WithholdingCell(order, "Retefuente"),
-                WithholdingCell(order, "ReteICA"),
+                WithholdingCell(order, TaxCountries.RetefuenteType),
+                WithholdingCell(order, TaxCountries.ReteIcaType),
             ];
         }
     }

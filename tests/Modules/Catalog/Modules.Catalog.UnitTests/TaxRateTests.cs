@@ -355,4 +355,17 @@ public sealed class TaxRateTests
 
         Assert.Throws<InvalidOperationException>(() => taxRate.VatPercentage);
     }
+
+    // Una fila con un tipo que la tabla de países ya no tiene (un país o un tipo retirado) no se puede editar, pero el
+    // error tiene que decir por qué, como Behavior, y no ser un NullReferenceException.
+    [Fact]
+    public void UpdateOfAnUnknownTypeSaysWhy()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", "CO", null, Now);
+        typeof(TaxRate).GetProperty(nameof(TaxRate.Type))!.SetValue(taxRate, "Retirado");
+
+        var error = Assert.Throws<InvalidOperationException>(() => taxRate.Update("IVA", 19m, null, Now));
+
+        Assert.Equal("Unknown tax type 'Retirado' for country 'CO'.", error.Message);
+    }
 }

@@ -31,12 +31,13 @@ public static class TaxCountries
 
     public const string IvaType = "IVA";
     public const string RetefuenteType = "Retefuente";
+    public const string ReteIcaType = "ReteICA";
 
     public static readonly TaxCountryDefinition Colombia = new("CO", "UVT", "COP",
     [
         new(IvaType, TaxBehavior.Adds, AllowsFraction: false, AllowsMinimumBase: false),
         new(RetefuenteType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true),
-        new("ReteICA", TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true),
+        new(ReteIcaType, TaxBehavior.Withholds, AllowsFraction: true, AllowsMinimumBase: true),
     ]);
 
     public static IReadOnlyList<TaxCountryDefinition> All { get; } = [Colombia];

@@ -82,11 +82,15 @@ public sealed class TaxRate
     public decimal? MinimumBase { get; private set; }
 
     /// <summary>Lo calcula el tipo, no se guarda: EF lo ignora.</summary>
-    public TaxBehavior Behavior =>
-        TaxCountries.FindType(Country, Type)?.Behavior
-        ?? throw new InvalidOperationException($"Unknown tax type '{Type}' for country '{Country}'.");
+    public TaxBehavior Behavior => Definition.Behavior;
 
     public bool Withholds => Behavior == TaxBehavior.Withholds;
+
+    // La definición del tipo en la tabla de países. Create la exige, así que sólo falta en una fila que la tabla ya no
+    // conoce: eso es un error de datos y lo dice, en vez de un NullReferenceException.
+    private TaxTypeDefinition Definition =>
+        TaxCountries.FindType(Country, Type)
+        ?? throw new InvalidOperationException($"Unknown tax type '{Type}' for country '{Country}'.");
 
     /// <summary>
     /// El porcentaje como entero, para los adaptadores de líneas, que sólo reciben tasas de IVA. Lanza si la
@@ -148,7 +152,7 @@ public sealed class TaxRate
     {
         EnsureActive();
 
-        var definition = TaxCountries.FindType(Country, Type)!;
+        var definition = Definition;
         Name = NormalizeName(name);
         Percentage = EnsureValidPercentage(percentage, definition);
         MinimumBase = EnsureValidMinimumBase(minimumBase, definition);

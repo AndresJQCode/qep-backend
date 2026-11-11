@@ -84,6 +84,29 @@ public sealed class QuotationWithholdingLookupTests
         Assert.False(candidates[vat.Id.Value].Withholds);
     }
 
+    // Una tasa de un país que la tabla de países no conoce (no debería existir, pero es una fila de otro módulo) no
+    // hace fallar la foto: el filtro por país la descarta antes de preguntar si retiene, y sin país no retiene.
+    [Fact]
+    public async Task ARateOfAnUnknownCountryNeverThrows()
+    {
+        var foreign = TaxRate.Create(TaxRateId.New(), TenantId, "Retención extranjera", 2m, "Retefuente", "CO", null, Now);
+        typeof(TaxRate).GetProperty(nameof(TaxRate.Country))!.SetValue(foreign, "ZZ");
+        var customer = NewCustomer();
+        customer.SetWithholdingTaxRates([Retefuente.Id.Value, foreign.Id.Value], Now);
+        var lookup = Lookup(new FakeCustomerRepository(customer), [Retefuente, foreign]);
+
+        var forCompany = await lookup.ForCustomerAsync(
+            TenantId, customer.Id.Value, "CO", new DateOnly(2026, 6, 1), TestContext.Current.CancellationToken);
+        var anyCountry = await lookup.ForCustomerAsync(
+            TenantId, customer.Id.Value, null, new DateOnly(2026, 6, 1), TestContext.Current.CancellationToken);
+        var candidates = await lookup.ForRatesAsync(
+            TenantId, [foreign.Id.Value], new DateOnly(2026, 6, 1), TestContext.Current.CancellationToken);
+
+        Assert.Equal(Retefuente.Id.Value, Assert.Single(forCompany).TaxRateId);
+        Assert.Equal(Retefuente.Id.Value, Assert.Single(anyCountry).TaxRateId);
+        Assert.False(candidates[foreign.Id.Value].Withholds);
+    }
+
     [Fact]
     public async Task AnUnknownCustomerHasNoRates()
     {

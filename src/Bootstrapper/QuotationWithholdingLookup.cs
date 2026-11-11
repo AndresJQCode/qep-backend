@@ -35,11 +35,12 @@ internal sealed class QuotationWithholdingLookup(
 
         // En el orden del cliente. Una tasa borrada del catálogo ya no tiene qué congelar; una inactiva o que no retiene
         // no debería estar asignada (Customers lo valida y Catalog no deja desactivarla), pero no se congela si llega.
+        // Primero el país: preguntar si retiene una tasa de un país que la tabla no conoce lanzaría.
         var assigned = customer.WithholdingTaxRateIds
             .Select(id => byId.GetValueOrDefault(id))
             .OfType<TaxRate>()
-            .Where(rate => rate.IsActive && rate.Withholds)
             .Where(rate => wantedCountry is null || rate.Country == wantedCountry)
+            .Where(rate => rate.IsActive && Withholds(rate))
             .ToArray();
 
         return await PhotosAsync(assigned, documentDate, cancellationToken);
@@ -61,7 +62,7 @@ internal sealed class QuotationWithholdingLookup(
         var photos = await PhotosAsync(found, documentDate, cancellationToken);
 
         return found
-            .Zip(photos, (rate, photo) => new WithholdingRateCandidate(photo, rate.IsActive, rate.Withholds))
+            .Zip(photos, (rate, photo) => new WithholdingRateCandidate(photo, rate.IsActive, Withholds(rate)))
             .ToDictionary(candidate => candidate.Rate.TaxRateId);
     }
 
@@ -92,6 +93,11 @@ internal sealed class QuotationWithholdingLookup(
             // tasa no aplica (D20).
             unit is null ? null : TaxUnitValues.ValueFor(values, rate.Country, documentDate.Year));
     }
+
+    // TaxRate.Withholds lanza con un país o un tipo que la tabla no conoce; acá eso es «no retiene», y el selector lo
+    // rechaza como inválido en vez de tumbar el guardado con un 500.
+    private static bool Withholds(TaxRate rate) =>
+        TaxCountries.FindType(rate.Country, rate.Type)?.Behavior == TaxBehavior.Withholds;
 
     private static string? UnitOf(TaxRate rate) => TaxCountries.Find(rate.Country)?.TaxUnitName;
 }
