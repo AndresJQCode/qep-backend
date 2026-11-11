@@ -36,6 +36,9 @@ internal sealed partial class CustomerMediaPurgeProcessor(IServiceScopeFactory s
     [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} ({EventName}) has a malformed payload; it is marked as processed without effect.")]
     private static partial void LogMalformed(ILogger logger, Guid messageId, string eventName);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Outbox message {MessageId} carries storage key '{StorageKey}' outside its tenant's media prefixes; it is skipped.")]
+    private static partial void LogKeySkipped(ILogger logger, Guid messageId, string storageKey);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Messaging could not claim outbox message {MessageId}; it is retried on the next tick.")]
     private static partial void LogClaimFailed(ILogger logger, Exception exception, Guid messageId);
 
@@ -62,11 +65,19 @@ internal sealed partial class CustomerMediaPurgeProcessor(IServiceScopeFactory s
     private async Task ProcessAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
         var record = message.Record;
-        if (TryReadKeys(record.PayloadJson, out var storageKeys))
+        if (TryReadKeys(record.PayloadJson, out var tenantId, out var storageKeys))
         {
             var store = message.Services.GetRequiredService<IMessagingMediaStore>();
             foreach (var key in storageKeys)
             {
+                // El borrado en R2 es permanente: sólo se borra lo que vive bajo el prefijo del tenant del aviso. Un productor con un
+                // error podría mandar la clave de otro tenant, o una vacía; se salta esa clave y no el aviso entero.
+                if (!BelongsToTenant(key, tenantId))
+                {
+                    LogKeySkipped(logger, record.Id, key);
+                    continue;
+                }
+
                 // Si una clave falla, la excepción deja el mensaje sin marcar: el reintento vuelve a pasar por las que ya se borraron.
                 await store.DeleteAsync(key, cancellationToken);
             }
@@ -81,21 +92,30 @@ internal sealed partial class CustomerMediaPurgeProcessor(IServiceScopeFactory s
         await MessagingSaveChanges.SaveAsync(message.DbContext, cancellationToken);
     }
 
-    private static bool TryReadKeys(string json, out IReadOnlyList<string> storageKeys)
+    // Los dos prefijos de MessagingMediaKeys que guardan medios de un mensaje (For y Scheduled). El staging no entra: lo que queda
+    // ahí no es de un mensaje y su ciclo de vida lo maneja R2.
+    private static bool BelongsToTenant(string key, Guid tenantId) =>
+        key.StartsWith($"messaging/{tenantId}/", StringComparison.Ordinal)
+        || key.StartsWith($"messaging/scheduled/{tenantId}/", StringComparison.Ordinal);
+
+    // Malformado es lo que no deja saber de qué tenant es el aviso ni cuáles son sus claves. Una clave suelta inválida (vacía, no
+    // texto) no lo es: queda como "" y BelongsToTenant la descarta.
+    private static bool TryReadKeys(string json, out Guid tenantId, out IReadOnlyList<string> storageKeys)
     {
+        tenantId = Guid.Empty;
         storageKeys = [];
         try
         {
             using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.GetProperty("tenantId").TryGetGuid(out tenantId) || tenantId == Guid.Empty)
+            {
+                return false;
+            }
+
             var keys = new List<string>();
             foreach (var element in document.RootElement.GetProperty("storageKeys").EnumerateArray())
             {
-                if (element.GetString() is not { Length: > 0 } key)
-                {
-                    return false;
-                }
-
-                keys.Add(key);
+                keys.Add(element.ValueKind == JsonValueKind.String ? element.GetString()! : "");
             }
 
             storageKeys = keys;
