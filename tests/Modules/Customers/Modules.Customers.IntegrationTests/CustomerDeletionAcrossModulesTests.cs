@@ -467,6 +467,81 @@ public sealed class CustomerDeletionAcrossModulesTests(CustomerDeletionDatabase 
         await Assert.ThrowsAsync<InvalidOperationException>(() => references.RemoveAsync(tenant, [customer], Ct));
     }
 
+    // Contactos de empresa (spec 2026-11-10 contactos A17): borrar la empresa no bloquea y deja company_id en nulo por la FK
+    // (ON DELETE SET NULL). El negocio que nació de la conversación del contacto es de la empresa (§4.5), así que se va con ella (D-3)
+    // junto con su decisión de triage; la conversación del contacto sigue y nada queda apuntando al negocio borrado.
+    [Fact]
+    public async Task DeletingACompanyLeavesItsContactWithoutCompanyAndKeepsTheContactsConversation()
+    {
+        var seeded = await SeedCompanyWithContactDealAsync();
+
+        var deletion = await DeleteAsync(seeded.Tenant, [seeded.Company]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal(
+            ["company=0", "contact=1|", "conversation=1", "deal=0", "dealHistory=0", "triage=0", "dealsFromConversation=0"],
+            await CompanyStateAsync(seeded));
+    }
+
+    // Borrar el contacto se lleva su conversación (D-5) y su decisión de triage; el negocio es de la empresa y se queda, sin origen
+    // (R11: origin_conversation_id en nulo). La empresa no cambia.
+    [Fact]
+    public async Task DeletingAContactOfACompanyKeepsTheCompanysDealWithoutItsOrigin()
+    {
+        var seeded = await SeedCompanyWithContactDealAsync();
+
+        var deletion = await DeleteAsync(seeded.Tenant, [seeded.Contact]);
+
+        Assert.Empty(deletion.Blockers);
+        Assert.Equal(
+            ["company=1", "contact=0|", "conversation=0", "deal=1", "dealHistory=1", "triage=0", "dealsFromConversation=0"],
+            await CompanyStateAsync(seeded));
+    }
+
+    private sealed record CompanyFootprint(Guid Tenant, Guid Company, Guid Contact, Guid Conversation, Guid Deal, Guid Triage);
+
+    private async Task<CompanyFootprint> SeedCompanyWithContactDealAsync()
+    {
+        var tenant = Guid.CreateVersion7();
+        var company = await InsertCustomerAsync(tenant, "Verde Esencial SAS", null);
+        var contact = await InsertCustomerAsync(tenant, "Laura Pérez", null);
+        var conversation = await InsertConversationAsync(tenant, contact, blocked: false);
+        var seeded = new CompanyFootprint(tenant, company, contact, conversation, Guid.CreateVersion7(), Guid.CreateVersion7());
+        await SeedAsync(
+            """
+            UPDATE customers.customers SET company_id = @company WHERE id = @contact;
+            INSERT INTO pipeline.deals (id, tenant_id, pipeline_id, customer_id, owner_member_id, title, currency, stage_id,
+                stage_entered_at, source, last_changed_at, created_at, updated_at, version, history_count, origin_conversation_id)
+            VALUES (@deal, @tenant, @member, @company, @member, 'Verde Esencial SAS', 'COP', @member, now(), 'Conversation', now(), now(),
+                now(), 1, 1, @conversation);
+            INSERT INTO pipeline.deal_stage_history (id, tenant_id, deal_id, pipeline_id, ordinal, to_stage_id, occurred_at, actor_kind,
+                currency, probability)
+            VALUES (gen_random_uuid(), @tenant, @deal, @member, 1, @member, now(), 'System', 'COP', 10);
+            INSERT INTO pipeline.triage_decisions (id, tenant_id, conversation_id, customer_id, kind, decided_at,
+                decided_against_inbound_at, actor_kind, deal_id)
+            VALUES (@triage, @tenant, @conversation, @contact, 'Created', now(), now(), 'System', @deal);
+            """,
+            ("tenant", tenant), ("company", company), ("contact", contact), ("conversation", conversation), ("deal", seeded.Deal),
+            ("triage", seeded.Triage), ("member", Guid.CreateVersion7()));
+        return seeded;
+    }
+
+    private async Task<string[]> CompanyStateAsync(CompanyFootprint f) =>
+        (await TextAsync(
+            """
+            SELECT concat_ws(';',
+                'company=' || (SELECT count(*) FROM customers.customers WHERE id = @company),
+                'contact=' || (SELECT count(*) FROM customers.customers WHERE id = @contact) || '|'
+                    || coalesce((SELECT company_id::text FROM customers.customers WHERE id = @contact), ''),
+                'conversation=' || (SELECT count(*) FROM messaging.conversations WHERE id = @conversation),
+                'deal=' || (SELECT count(*) FROM pipeline.deals WHERE id = @deal),
+                'dealHistory=' || (SELECT count(*) FROM pipeline.deal_stage_history WHERE deal_id = @deal),
+                'triage=' || (SELECT count(*) FROM pipeline.triage_decisions WHERE id = @triage),
+                'dealsFromConversation=' || (SELECT count(*) FROM pipeline.deals WHERE origin_conversation_id = @conversation))
+            """,
+            ("company", f.Company), ("contact", f.Contact), ("conversation", f.Conversation), ("deal", f.Deal), ("triage", f.Triage)))!
+        .Split(';');
+
     // ---------------------------------------------------------------------------------------------------------------------
     // El borrado, como lo corre el handler
     // ---------------------------------------------------------------------------------------------------------------------
