@@ -225,6 +225,78 @@ public sealed class CustomerSummaryApiTests
         Assert.Equal(HttpStatusCode.Forbidden, foreignRoute.StatusCode);
     }
 
+    private sealed record Contact(Setup Setup, Guid CompanyId, Guid ConversationId);
+
+    /// <summary>La persona de <see cref="Setup.CustomerId"/> con una empresa y una conversación abierta de la persona.</summary>
+    private static async Task<Contact> ArrangeContactAsync(Setup setup)
+    {
+        var (companyId, _) = await SeedCustomerAsync(setup.Factory, setup.Tenant.TenantId, "Droguería Central");
+        await LinkToCompanyAsync(setup.ConnectionString, setup.CustomerId, companyId);
+        var conversationId = await SeedConversationAsync(
+            setup.Factory, setup.ConnectionString, setup.Tenant.TenantId, setup.CustomerId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        return new Contact(setup, companyId, conversationId);
+    }
+
+    private static async Task<DealDetailDto> CreateForAsync(Setup setup, Guid customerId, string title) =>
+        (await (await setup.Client.PostAsJsonAsync($"{PipelineUrl(setup.Tenant.TenantId)}/deals",
+            new CreateDealRequest(customerId, title, 100m, null, null, null), Ct)).Content.ReadFromJsonAsync<DealDetailDto>(Ct))!;
+
+    // Spec 2026-11-10 §4.5 (A18): la empresa pedida desde el hilo de su contacto es 200 con los negocios de las dos.
+    [Fact]
+    public async Task TheCompanySummaryFromItsContactsConversationIs200WithBothSets()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var contact = await ArrangeContactAsync(setup);
+        var ofCompany = await CreateForAsync(setup, contact.CompanyId, "De la empresa");
+        var ofPerson = await CreateForAsync(setup, setup.CustomerId, "De la persona");
+
+        var summary = await SummaryAsync(setup.Client, setup.Tenant.TenantId, contact.CompanyId, contact.ConversationId);
+
+        Assert.Equal(contact.CompanyId, summary.CustomerId);
+        Assert.Equal([ofCompany.Id, ofPerson.Id], summary.OpenDeals.Select(deal => deal.Id));
+        Assert.Equal([contact.CompanyId, setup.CustomerId], summary.OpenDeals.Select(deal => deal.CustomerId));
+        Assert.Equal("NotApplicable", summary.Triage!.Status);
+    }
+
+    [Fact]
+    public async Task AnUnrelatedCustomerIs404()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var contact = await ArrangeContactAsync(setup);
+        var (strangerId, _) = await SeedCustomerAsync(factory, setup.Tenant.TenantId, "Otro");
+
+        var response = await setup.Client.GetAsync(SummaryUrl(setup.Tenant.TenantId, strangerId, contact.ConversationId), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(PipelineErrorCodes.TriageConversationNotFound, (await ProblemAsync(response)).Code);
+    }
+
+    [Fact]
+    public async Task ThePersonsOwnSummaryIsUnchanged()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var contact = await ArrangeContactAsync(setup);
+        await CreateForAsync(setup, contact.CompanyId, "De la empresa");
+        var ofPerson = await CreateForAsync(setup, setup.CustomerId, "De la persona");
+
+        var summary = await SummaryAsync(setup.Client, setup.Tenant.TenantId, setup.CustomerId, contact.ConversationId);
+
+        Assert.Equal(ofPerson.Id, Assert.Single(summary.OpenDeals).Id);
+        Assert.Equal(setup.CustomerId, summary.OpenDeals[0].CustomerId);
+    }
+
     // D36: sin la capacidad o sin permiso, 403, y la ficha oculta la sección.
     [Fact]
     public async Task WithoutTheCapabilityOrThePermissionIs403()

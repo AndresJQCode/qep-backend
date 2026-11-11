@@ -9,10 +9,26 @@ public sealed record BuyerOrderSummaryDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
     decimal Total, string Currency, int LineCount, string FirstLineName, bool CanCancel);
 
+public sealed record BuyerOrderBillingDto(
+    string Name, string? IdentificationType, string? IdentificationNumber, string? Email, string? Phone,
+    string? Address, string Country, string? DepartmentName, string? CityName);
+
+public sealed record BuyerOrderShippingDto(
+    string? Name, string? Phone, string? Address, string Country, string? DepartmentName, string? CityName);
+
+/// <summary>
+/// El detalle que el storefront reenvía tal cual al comprador (regla BFF: este contrato es el de la red). Se cumple
+/// <c>subtotal + taxAmount + freightTotal == total</c>; no hay fila de descuento porque <c>subtotal</c> ya lo incluye (D8).
+/// Con excedente de IVA las líneas van sin IVA para que sumen (D5). <c>billing</c> es <c>null</c> salvo cuando
+/// <c>billedTo == "BillingParty"</c> (D7). <c>buyerNotes</c> es la nota del checkout, nunca la del asesor (D9). El backend manda los
+/// montos aunque la tienda los oculte: los quita el servidor del storefront (D6).
+/// </summary>
 public sealed record BuyerOrderDetailDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
     decimal Total, string Currency, int LineCount, string FirstLineName,
-    IReadOnlyList<BuyerOrderLineDto> Lines, DateTimeOffset? CancelledAt, bool CanCancel);
+    IReadOnlyList<BuyerOrderLineDto> Lines, DateTimeOffset? CancelledAt, bool CanCancel,
+    decimal Subtotal, decimal TaxAmount, decimal FreightTotal, bool IsStorePickup, string? CarrierName,
+    string BilledTo, BuyerOrderBillingDto? Billing, BuyerOrderShippingDto? Shipping, string? BuyerNotes);
 
 public sealed record BuyerOrderPageDto(IReadOnlyList<BuyerOrderSummaryDto> Items, int Page, int PageSize, int Total);
 

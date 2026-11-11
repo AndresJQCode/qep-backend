@@ -100,7 +100,9 @@ la API pública los sigue devolviendo.
 | ausente o `null` | Se conserva el valor guardado; en una tienda nueva (`Version = 0`), el de `CreateEmpty`: `true`. |
 
 No hay código de error nuevo. Un valor que no sea booleano (`"no"`, `1`) lo rechaza el deserializador antes del
-handler, como hoy cualquier `Guid?` o `bool` mal formado del cuerpo; no se agrega regla al validador.
+handler, como hoy cualquier `Guid?` o `bool` mal formado del cuerpo: la petición se rechaza (status >= 400; este repo
+mapea `BadHttpRequestException` a 500, así que el código exacto no se fija) y no cambia nada. No se agrega regla al
+validador.
 
 **`GET /api/v1/public/stores/{host}`**: `PublicStoreDto` gana `showPrices: boolean`, siempre presente. Los demás
 endpoints públicos (`/products`, `/products/{id}`, `/cart/quote`, `/order-requests`, `buyer/orders`) **no cambian** y

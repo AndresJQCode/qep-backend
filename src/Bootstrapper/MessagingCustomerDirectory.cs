@@ -13,6 +13,7 @@ internal sealed partial class MessagingCustomerDirectory(
     ICustomerInstagramDirectory instagram,
     ICustomerTagLookup tagLookup,
     ICustomerMergeStore mergeStore,
+    ICustomerCompanyDirectory companies,
     ILogger<MessagingCustomerDirectory> logger) : IMessagingCustomerDirectory
 {
     /// <summary>El tope de <c>FindPhonesByNameAsync</c> (spec §6.5); el puerto de Customers no tiene default.</summary>
@@ -25,7 +26,27 @@ internal sealed partial class MessagingCustomerDirectory(
     public async Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
     {
         var matches = await phones.MatchAsync(tenantId, waIds.Select(waId => "+" + waId).ToArray(), cancellationToken);
-        return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete), StringComparer.Ordinal);
+        var withCompany = await WithCompanyAsync(
+            tenantId, [.. matches.Values.Select(match => new CustomerRefDto(match.Id, match.Name, match.IsComplete))], cancellationToken);
+        return matches.ToDictionary(pair => pair.Key.TrimStart('+'), pair => withCompany[pair.Value.Id], StringComparer.Ordinal);
+    }
+
+    /// <summary>Spec 2026-11-10 §4: la empresa del cliente de la conversación, en <b>una</b> consulta por página. Es el único lugar
+    /// que enriquece un <see cref="CustomerRefDto"/>: <c>MatchAsync</c> (lista) y <c>FindRefsAsync</c> (detalle) pasan por acá.</summary>
+    private async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> WithCompanyAsync(
+        Guid tenantId, IReadOnlyCollection<CustomerRefDto> refs, CancellationToken cancellationToken)
+    {
+        if (refs.Count == 0)
+        {
+            return new Dictionary<Guid, CustomerRefDto>();
+        }
+
+        var found = await companies.FindCompaniesAsync(tenantId, [.. refs.Select(customer => customer.Id)], cancellationToken);
+        return refs.DistinctBy(customer => customer.Id).ToDictionary(
+            customer => customer.Id,
+            customer => found.TryGetValue(customer.Id, out var company)
+                ? customer with { Company = new CustomerCompanyRefDto(company.Id, company.Name, company.IsComplete, company.IsActive) }
+                : customer);
     }
 
     public async Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(
@@ -57,10 +78,18 @@ internal sealed partial class MessagingCustomerDirectory(
     public async Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         await mergeStore.FindSurvivorIdAsync(tenantId, customerId, cancellationToken) ?? customerId;
 
-    public async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
-        ids.Count == 0
-            ? new Dictionary<Guid, CustomerRefDto>()
-            : (await whatsApp.FindRefsAsync(tenantId, ids, cancellationToken)).ToDictionary(pair => pair.Key, pair => new CustomerRefDto(pair.Value.Id, pair.Value.Name, pair.Value.IsComplete));
+    public async Task<IReadOnlyDictionary<Guid, CustomerRefDto>> FindRefsAsync(Guid tenantId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, CustomerRefDto>();
+        }
+
+        var refs = await whatsApp.FindRefsAsync(tenantId, ids, cancellationToken);
+        var withCompany = await WithCompanyAsync(
+            tenantId, [.. refs.Values.Select(found => new CustomerRefDto(found.Id, found.Name, found.IsComplete))], cancellationToken);
+        return refs.ToDictionary(pair => pair.Key, pair => withCompany[pair.Value.Id]);
+    }
 
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
         whatsApp.FindIdsByNameAsync(tenantId, term, NameCap, cancellationToken);

@@ -11,9 +11,13 @@ namespace Modules.Messaging.Application;
 /// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
 public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
+/// <summary>Spec 2026-11-10: la empresa del cliente de la conversación. <c>name</c> ya es la etiqueta (<c>BusinessName</c> o, si no hay,
+/// <c>Name</c>); <c>isActive</c> deja que el hilo avise de una empresa desactivada.</summary>
+public sealed record CustomerCompanyRefDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
 /// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
 /// ficha» sin otra llamada.</summary>
-public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete, CustomerCompanyRefDto? Company = null)
 {
     /// <summary>Spec qep-frontend 2026-10-15 (BFF): los chips de la fila de la bandeja. Siempre viaja, vacía si no tiene: la
     /// pantalla no sabe qué etiquetas tiene cada cliente sin otra llamada por fila.</summary>

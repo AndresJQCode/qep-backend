@@ -49,6 +49,53 @@ public sealed class StoreSettingsApiTests
     }
 
     [Fact]
+    public async Task ShowPricesRoundTripsAndAnAbsentValueKeepsIt()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+
+        var saved = await fixture.SaveAsync(fixture.Body(b => b["showPrices"] = false));
+        Assert.Equal(false, (bool?)saved["showPrices"]);
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(await fixture.GetAsync()))["showPrices"]);
+
+        var absent = await fixture.PutAsync(fixture.Body(), ifMatch: "1");
+        Assert.Equal(HttpStatusCode.OK, absent.StatusCode);
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(absent))["showPrices"]);
+
+        var nulled = await fixture.PutAsync(fixture.Body(b => b["showPrices"] = null), ifMatch: "1");
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(nulled))["showPrices"]);
+
+        var on = await StoreSettingsFixture.JsonAsync(
+            await fixture.PutAsync(fixture.Body(b => b["showPrices"] = true), ifMatch: "1"));
+        Assert.Equal(true, (bool?)on["showPrices"]);
+        Assert.Equal(2, (int)on["version"]!);
+    }
+
+    [Fact]
+    public async Task TheFirstSaveOfANewStoreKeepsShowPricesFalse()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+
+        await fixture.SaveAsync(fixture.Body(b => b["showPrices"] = false), ifMatch: "0");
+
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(await fixture.GetAsync()))["showPrices"]);
+    }
+
+    // No se fija el 400: este repo mapea BadHttpRequestException a 500. Importa que se rechace y que nada cambie.
+    [Fact]
+    public async Task ANonBooleanShowPricesIsRejectedAndChangesNothing()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        await fixture.SaveAsync(fixture.Body());
+
+        var response = await fixture.PutAsync(fixture.Body(b => b["showPrices"] = "no"), ifMatch: "1");
+
+        Assert.True((int)response.StatusCode >= 400, $"Se esperaba un rechazo, llegó {(int)response.StatusCode}.");
+        var read = await StoreSettingsFixture.JsonAsync(await fixture.GetAsync());
+        Assert.Equal(true, (bool?)read["showPrices"]);
+        Assert.Equal(1, (int)read["version"]!);
+    }
+
+    [Fact]
     public async Task ANeverSavedStoreReadsAsDefaultsWithVersionZero()
     {
         await using var fixture = await StoreSettingsFixture.OpenAsync();
@@ -63,6 +110,7 @@ public sealed class StoreSettingsApiTests
         Assert.Null(settings["resolvedColors"]);
         Assert.Null(settings["colorChecks"]);
         Assert.Equal("RetailOnly", (string)settings["pricingMode"]!);
+        Assert.Equal(true, (bool?)settings["showPrices"]);
         Assert.Equal(
             ["SlugRequired", "CurrencyRequired", "SalesCountryRequired"],
             Strings(settings["publishBlockers"]));

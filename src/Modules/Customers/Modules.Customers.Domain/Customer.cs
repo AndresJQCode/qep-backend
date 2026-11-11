@@ -314,6 +314,11 @@ public sealed class Customer
 
     public bool IsMerged => MergedIntoId is not null;
 
+    /// <summary>Spec 2026-11-10 §3.2: la empresa (otro cliente) de la que esta persona es contacto. Un solo nivel: quien
+    /// tiene empresa no puede tener contactos. Sólo lo escriben <see cref="LinkToCompany"/>, <see cref="UnlinkFromCompany"/>
+    /// y la fusión; crear y editar un cliente nunca lo tocan.</summary>
+    public CustomerId? CompanyId { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -1049,6 +1054,73 @@ public sealed class Customer
         return true;
     }
 
+    /// <summary>
+    /// Vincula este cliente como contacto de <paramref name="company"/>. <c>false</c> y sin cambios si ya lo era.
+    ///
+    /// El orden de las reglas importa: el no-op va antes de «inactiva» para que repetir el vínculo existente responda igual
+    /// aunque la empresa se inactivara después (ruling P10). <paramref name="hasContacts"/> lo calcula quien llama, porque
+    /// los contactos de este cliente no cuelgan del agregado. No exige <see cref="EnsureActive"/> a este cliente: las
+    /// notas y las etiquetas tampoco, y vincular no es editar la ficha.
+    /// </summary>
+    public bool LinkToCompany(Customer company, bool hasContacts, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (company.Id == Id)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsSelf, "A customer cannot be its own company.");
+        }
+
+        if (company.TenantId != TenantId || company.IsMerged)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyNotFound, "The company does not exist.");
+        }
+
+        if (CompanyId == company.Id)
+        {
+            return false;
+        }
+
+        if (!company.IsActive)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyInactive, "The company is inactive.");
+        }
+
+        if (company.CompanyId is not null)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsContact, "A contact cannot be the company of another customer.");
+        }
+
+        if (hasContacts)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.HasContacts, "A customer that has contacts cannot become a contact.");
+        }
+
+        CompanyId = company.Id;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
+    /// <summary>La vuelta de <see cref="LinkToCompany"/>. <c>false</c> y sin cambios si no tenía empresa.</summary>
+    public bool UnlinkFromCompany(DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (CompanyId is null)
+        {
+            return false;
+        }
+
+        CompanyId = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     /// <summary>Spec 2026-10-24 §3.1: va primero en toda escritura, antes de <see cref="EnsureActive"/>, para que el
     /// código diga «fusionado» y no «inactivo».</summary>
     public void EnsureNotMerged()
@@ -1066,6 +1138,8 @@ public sealed class Customer
         MergedIntoId = survivorId;
         MergedAt = now;
         IsActive = false;
+        // Spec 2026-11-10 §4.7: un fusionado deja de ser contacto; los suyos se mueven al que queda.
+        CompanyId = null;
         if (releaseWhatsAppUserId)
         {
             WhatsAppUserId = null;
@@ -1085,6 +1159,9 @@ public sealed class Customer
 
         Touch(now);
     }
+
+    // Sin versión ni auditoría propias: el que queda ya sube su versión en TouchForMerge.
+    internal void ClearCompanyLink() => CompanyId = null;
 
     internal void FillEmail(string value) => Email = value;
 

@@ -1,5 +1,7 @@
 using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Store.Application;
 using Modules.Store.Domain;
@@ -33,10 +35,11 @@ public sealed class StorePersistenceTests
         IReadOnlyList<StoreCurrency>? currencies = null,
         string? primaryCurrency = "COP",
         IReadOnlyList<string>? countries = null,
-        IReadOnlyList<Guid>? featured = null)
+        IReadOnlyList<Guid>? featured = null,
+        bool showPrices = true)
     {
         var store = OnlineStore.CreateEmpty(tenant, Now);
-        Configure(store, slug, currencies, primaryCurrency, countries, featured);
+        Configure(store, slug, currencies, primaryCurrency, countries, featured, showPrices);
         return store;
     }
 
@@ -46,7 +49,8 @@ public sealed class StorePersistenceTests
         IReadOnlyList<StoreCurrency>? currencies = null,
         string? primaryCurrency = "COP",
         IReadOnlyList<string>? countries = null,
-        IReadOnlyList<Guid>? featured = null) =>
+        IReadOnlyList<Guid>? featured = null,
+        bool showPrices = true) =>
         store.Configure(
             new StoreSettingsInput(
                 slug,
@@ -63,7 +67,8 @@ public sealed class StorePersistenceTests
                 PrimaryCurrency: primaryCurrency,
                 SalesCountries: countries ?? ["CO"],
                 FeaturedCategoryIds: featured ?? [],
-                AdvisorMembershipId: null),
+                AdvisorMembershipId: null,
+                ShowPrices: showPrices),
             KnowsSomeCountries,
             Caller,
             Now);
@@ -89,6 +94,13 @@ public sealed class StorePersistenceTests
         return await db.Database.SqlQuery<long>(sql).SingleAsync(Ct);
     }
 
+    private static async Task<string> ScalarTextAsync(QepApiFactory factory, FormattableString sql)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<StoreDbContext>();
+        return await db.Database.SqlQuery<string>(sql).SingleAsync(Ct);
+    }
+
     private static async Task ExecuteAsync(QepApiFactory factory, FormattableString sql)
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -104,6 +116,70 @@ public sealed class StorePersistenceTests
             INSERT INTO store.stores (tenant_id, is_published, pricing_mode, version)
             VALUES ({tenant}, false, 'RetailOnly', 0)
             """);
+
+    [Fact]
+    public async Task TheShowPricesColumnIsNotNullAndDefaultsToTrue()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        var column = await ScalarTextAsync(
+            factory,
+            $"""
+            SELECT is_nullable || '|' || column_default AS "Value" FROM information_schema.columns
+            WHERE table_schema = 'store' AND table_name = 'stores' AND column_name = 'show_prices'
+            """);
+
+        Assert.Equal("NO|true", column);
+    }
+
+    [Fact]
+    public async Task ANewStoreSavedWithShowPricesFalseReadsBackFalse()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        await SaveStoreAsync(factory, ConfiguredStore(Tenant, showPrices: false));
+
+        Assert.False((await ReloadStoreAsync(factory, Tenant)).ShowPrices);
+        Assert.Equal(
+            "false",
+            await ScalarTextAsync(factory, $"SELECT show_prices::text AS \"Value\" FROM store.stores WHERE tenant_id = {Tenant}"));
+    }
+
+    [Fact]
+    public async Task ANewStoreSavedWithDefaultsReadsBackTrue()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        await SaveStoreAsync(factory, ConfiguredStore(Tenant));
+
+        Assert.True((await ReloadStoreAsync(factory, Tenant)).ShowPrices);
+    }
+
+    [Fact]
+    public async Task AStoreThatExistedBeforeTheMigrationShowsPrices()
+    {
+        var (database, factory) = await OpenAsync();
+        await using var _ = database;
+        using var __ = factory;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var migrator = scope.ServiceProvider.GetRequiredService<StoreDbContext>().GetService<IMigrator>();
+            await migrator.MigrateAsync("20261110031040_DropStoreOrderRequests", Ct);
+            await InsertBareStoreAsync(factory, Tenant);
+            await migrator.MigrateAsync(null, Ct);
+        }
+
+        Assert.Equal(
+            "true",
+            await ScalarTextAsync(factory, $"SELECT show_prices::text AS \"Value\" FROM store.stores WHERE tenant_id = {Tenant}"));
+    }
 
     [Fact]
     public async Task AStoreWithFeaturedCategoriesRoundTrips()

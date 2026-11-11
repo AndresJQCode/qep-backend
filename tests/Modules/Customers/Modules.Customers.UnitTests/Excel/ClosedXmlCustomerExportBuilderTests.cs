@@ -40,9 +40,13 @@ public sealed class ClosedXmlCustomerExportBuilderTests
         PersonType: personType);
 
     private XLWorkbook BuildWorkbook(params CustomerDto[] customers) =>
+        BuildWorkbook(new Dictionary<Guid, string>(), customers);
+
+    private XLWorkbook BuildWorkbook(IReadOnlyDictionary<Guid, string> companyNumbers, params CustomerDto[] customers) =>
         new(new MemoryStream(
             builder.Build(
                 customers,
+                companyNumbers,
                 new TenantCalendar(Now, Bogota),
                 "yyyy-MM-dd HH:mm",
                 CancellationToken.None).Content));
@@ -86,5 +90,24 @@ public sealed class ClosedXmlCustomerExportBuilderTests
 
         Assert.Equal(CustomerImportColumns.Ordered, headers.Take(CustomerImportColumns.Ordered.Count));
         Assert.DoesNotContain("Tipo de persona", headers.Take(CustomerImportColumns.Ordered.Count));
+    }
+
+    [Fact]
+    public void TheExportCarriesTheCompanyDocumentNumber()
+    {
+        var contact = Customer("Natural");
+        var alone = Customer(null);
+        using var workbook = BuildWorkbook(new Dictionary<Guid, string> { [contact.Id] = "900111222" }, contact, alone);
+
+        var headers = Headers(workbook);
+        var sheet = workbook.Worksheet("Clientes");
+        var column = Array.IndexOf(headers, CustomerImportColumns.Company) + 1;
+
+        // La cabecera es la misma que el importador lee, así que el archivo exportado se puede corregir y volver a subir.
+        Assert.True(column > 0);
+        Assert.Equal("900111222", sheet.Cell(2, column).GetString());
+        Assert.Equal(string.Empty, sheet.Cell(3, column).GetString());
+        // Justo después de las de importación y antes de las propias del export.
+        Assert.Equal(CustomerImportColumns.Ordered.Count + 1, column);
     }
 }
