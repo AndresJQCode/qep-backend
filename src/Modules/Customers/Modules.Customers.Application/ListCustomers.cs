@@ -14,6 +14,10 @@ namespace Modules.Customers.Application;
 /// unico cuadro de texto libre, no tres. Los dos criterios son independientes y se
 /// pueden combinar (Search Y ademas Name/IdentificationNumber/Cuc), aunque en la practica cada
 /// consumidor usa solo uno de los dos.
+///
+/// <c>Phone</c> es una cuarta caja al nivel de esas tres (AND): solo los digitos del valor contra el
+/// telefono normalizado, sin el minimo de siete de <c>Search</c> — quien llena el campo Telefono ya
+/// dijo que busca un telefono. Sin ningun digito el filtro no aplica.
 /// </summary>
 public sealed record ListCustomersQuery(
     Guid TenantId,
@@ -25,7 +29,8 @@ public sealed record ListCustomersQuery(
     IReadOnlyCollection<Guid>? CityIds,
     int Page,
     int PageSize,
-    string? IsComplete = null) : IQuery<CustomerPage>;
+    string? IsComplete = null,
+    string? Phone = null) : IQuery<CustomerPage>;
 
 /// <summary>Spec 2026-10-10 §5.2 (P2): <c>isComplete</c> llega como texto para que un valor raro sea 422 con su
 /// clave y no un 400 del binding.</summary>
@@ -100,6 +105,7 @@ public sealed class ListCustomersHandler(
             query.Name,
             query.IdentificationNumber,
             query.Cuc,
+            query.Phone,
             cityIds,
             isComplete,
             page,

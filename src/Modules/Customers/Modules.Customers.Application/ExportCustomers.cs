@@ -17,7 +17,8 @@ public sealed record ExportCustomersCommand(
     string? Search,
     string? Name,
     string? IdentificationNumber,
-    string? Cuc) : ICommand<ExportCustomersResult>;
+    string? Cuc,
+    string? Phone = null) : ICommand<ExportCustomersResult>;
 
 /// <summary>
 /// Lo que el request devuelve. **No lleva el enlace**: el contrato de esta operacion es que el
@@ -126,6 +127,7 @@ public sealed class ExportCustomersHandler(
                 command.Name,
                 command.IdentificationNumber,
                 command.Cuc,
+                command.Phone,
                 all.Count,
                 BatchSize,
                 cancellationToken);

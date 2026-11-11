@@ -18,6 +18,10 @@ public interface ICustomerRepository
     /// necesita. El telefono se compara solo por los digitos del termino contra <c>PhoneE164</c>,
     /// y solo desde siete digitos: un fragmento mas corto aparece en casi cualquier numero.
     ///
+    /// <c>phone</c> es una cuarta caja al nivel de las otras tres (AND): compara solo los digitos del
+    /// valor contra <c>PhoneE164</c>, sin el minimo de siete, porque quien llena el campo Telefono ya
+    /// dijo que busca un telefono. Sin ningun digito no filtra.
+    ///
     /// <c>cityIds</c> filtra por ciudad exacta (no ILIKE: son ids). <c>null</c> es "sin filtro";
     /// una coleccion vacia es "no matchear ninguna fila" — la usa <c>ListCustomersHandler</c>
     /// cuando el filtro de Departamento ya resolvio que ningun id de ciudad aplica. El filtro de
@@ -30,6 +34,7 @@ public interface ICustomerRepository
         string? name,
         string? identificationNumber,
         string? cuc,
+        string? phone,
         IReadOnlyCollection<Guid>? cityIds,
         bool? isComplete,
         int page,
@@ -62,6 +67,7 @@ public interface ICustomerRepository
         string? name,
         string? identificationNumber,
         string? cuc,
+        string? phone,
         int skip,
         int take,
         CancellationToken cancellationToken);
