@@ -19,6 +19,15 @@ internal static class AiApiHarness
     public const string SubjectId = "01900000-0000-7000-8000-000000000002";
     public const string OtherTenantId = "01900000-0000-7000-8000-0000000000ff";
 
+    /// <summary>La llave con la que el host cifra. Calculada, no escrita: un literal con forma de llave en el repo termina copiado a un
+    /// ambiente. Bytes 0..31, la misma que IntegrationsApiHarness.</summary>
+    public static string TestSecretProtectionKey { get; } =
+        Convert.ToBase64String(Enumerable.Range(0, 32).Select(index => (byte)index).ToArray());
+
+    /// <summary>El nombre del cliente del probador de la clave de Anthropic (<c>AnthropicConnectionTester.HttpClientName</c>, interno de
+    /// Integrations): la prueba le cambia el handler primario por uno de mentira, nunca sale a api.anthropic.com.</summary>
+    public const string AnthropicTesterClient = "integrations.anthropic";
+
     public static string AiUrl(string tenantId = TenantId) => $"/api/v1/tenants/{tenantId}/ai";
 
     public static async Task<PostgreSqlContainer> StartDatabaseAsync()
@@ -45,6 +54,16 @@ internal static class AiApiHarness
                 id, "ai-api-tests", "Ai API Tests", "es-CO", "America/Bogota", "yyyy-MM-dd", MembershipId.New(), now));
             await tenancy.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
+
+        // La membresía activa de quien llama: Integrations atribuye cada conexión a una (sin ella, 403). Escrita directo, como
+        // AutomationsApiHarness.SeedMemberAsync, e idempotente para poder sembrar dos veces.
+        await tenancy.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO tenancy.memberships (id, user_id, tenant_id, state, roles, origin, invited_at, accepted_at, expires_at, version, created_at, updated_at, display_name)
+            SELECT {Guid.CreateVersion7()}, {Guid.Parse(SubjectId)}, {id.Value}, 'Active', ARRAY['admin']::text[], 'invitation', now(), now(), now() + interval '3 days', 1, now(), now(), 'Admin de pruebas'
+            WHERE NOT EXISTS (SELECT 1 FROM tenancy.memberships WHERE tenant_id = {id.Value} AND user_id = {Guid.Parse(SubjectId)})
+            """,
+            TestContext.Current.CancellationToken);
 
         foreach (var key in modules ?? TenantModuleKeys.All)
         {
@@ -102,6 +121,11 @@ internal static class AiApiHarness
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
             // Fijado: los user-secrets del developer pueden traer Seed:Enabled=true.
             builder.UseSetting("Seed:Enabled", "false");
+            // Como IntegrationsApiHarness: "test" es la activa y "k1" —el id que el README sugiere para local— se vacía, para que una
+            // llave mal pegada en la máquina de quien corre no tumbe las pruebas que guardan una clave de proveedor.
+            builder.UseSetting("Integrations:SecretProtection:ActiveKeyId", "test");
+            builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
+            builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
 
             if (configureServices is not null)
             {

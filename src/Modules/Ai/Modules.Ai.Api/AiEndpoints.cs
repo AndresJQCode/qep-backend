@@ -19,8 +19,16 @@ public static class AiEndpoints
             .Produces<AiModelCatalogDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapGet("/settings", GetSettingsAsync)
+            .RequireAuthorization(AiPermissions.AgentRead)
+            .Produces<AiSettingsDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         return endpoints;
     }
+
+    private static async Task<IResult> GetSettingsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetAiSettingsQuery(tenantId), cancellationToken));
 
     private static async Task<IResult> ListModelsAsync(Guid tenantId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListAiModelsQuery(tenantId), cancellationToken));

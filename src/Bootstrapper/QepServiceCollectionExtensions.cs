@@ -1170,6 +1170,9 @@ public static class QepServiceCollectionExtensions
         // entran por adaptadores en Bootstrapper. A mano, como el resto: sin registro, 500 (CompositionRootTests).
         services.AddAiInfrastructure(configuration);
         services.AddScoped<IQueryHandler<ListAiModelsQuery, AiModelCatalogDto>, ListAiModelsHandler>();
+        services.AddScoped<IQueryHandler<GetAiSettingsQuery, AiSettingsDto>, GetAiSettingsHandler>();
+        // Plan 2026-11-12, C-1: la clave de cada proveedor es su conexión en Integrations; Ai no la ve, así que el adaptador va acá.
+        services.AddScoped<IAiProviderCredentials, AiProviderCredentials>();
 
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
