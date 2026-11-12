@@ -183,9 +183,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba).</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSeventySevenConstants()
+    public void PermissionDiscoveryFindsTheSeventyEightConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -200,8 +200,9 @@ public sealed class CompositionRootTests
         // + los dos de préstamos (loans, spec 2026-10-31)
         // + el de uso de la plataforma (operator.usage.read)
         // + el de la tienda en línea (store.settings.manage, spec 2026-11-03; quotations.order.manage ya estaba y .Distinct no lo cuenta dos veces).
+        // + el de borrar clientes (customers.customer.delete, spec 2026-11-10 D-8).
         // + los tres de costo y margen (spec 2026-11-10 §5).
-        Assert.Equal(77, PermissionConstants().Length);
+        Assert.Equal(78, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -351,6 +352,24 @@ public sealed class CompositionRootTests
         Assert.DoesNotContain(CustomersPermissions.CustomerMerge, catalog.PermissionsFor("cashier"));
         var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerMerge);
         Assert.Equal("Customers", definition.Category);
+        Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
+    }
+
+    /// <summary>Spec 2026-11-10 D-8: borrar clientes es definitivo, así que de fábrica sólo lo lleva <c>admin</c>.</summary>
+    [Fact]
+    public void OnlyAdminCarriesTheCustomerDeletePermission()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+
+        Assert.Equal("customers.customer.delete", CustomersPermissions.CustomerDelete);
+        Assert.Contains(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("admin"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("advisor"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("billing"));
+        Assert.DoesNotContain(CustomersPermissions.CustomerDelete, catalog.PermissionsFor("cashier"));
+        var definition = Assert.Single(catalog.ListPermissions(), candidate => candidate.Permission == CustomersPermissions.CustomerDelete);
+        Assert.Equal("Customers", definition.Category);
+        Assert.Equal("high", definition.RiskLevel);
         Assert.Equal([ModuleKeys.Customers], definition.RequiredModules);
     }
 

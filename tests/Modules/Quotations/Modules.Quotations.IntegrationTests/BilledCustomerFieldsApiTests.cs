@@ -10,8 +10,8 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
 
-/// <summary>Politica de campos del cliente: aprobar un pedido exige el documento del cliente facturado solo si el
-/// tenant lo pide al facturar.</summary>
+/// <summary>Politica de campos del cliente: marcar un pedido como pagado exige el documento del cliente facturado
+/// solo si el tenant lo pide al facturar (spec 2026-11-10 §3.2; antes, al aprobar).</summary>
 public sealed class BilledCustomerFieldsApiTests
 {
     private static string OrdersUrl(Guid tenantId) => $"/api/v1/tenants/{tenantId}/orders";
@@ -27,7 +27,7 @@ public sealed class BilledCustomerFieldsApiTests
             new CreateOrderRequest(
                 clientId, "Transferencia", null, false, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(productId, 1m)], []),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
@@ -36,7 +36,7 @@ public sealed class BilledCustomerFieldsApiTests
     }
 
     [Fact]
-    public async Task ApprovingAnOrderOfACustomerWithoutDocumentFollowsThePolicy()
+    public async Task MarkingPaidAnOrderOfACustomerWithoutDocumentFollowsThePolicy()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -49,12 +49,12 @@ public sealed class BilledCustomerFieldsApiTests
         var second = await CreateManualOrderAsync(client, tenantId, clientId, productId);
 
         var approved = await client.PostAsync(
-            $"{OrderUrl(tenantId, first.Order.Id)}/approve", content: null, TestContext.Current.CancellationToken);
+            $"{OrderUrl(tenantId, first.Order.Id)}/mark-paid", content: null, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
 
         await SetTenantCustomerFieldPolicyAsync(factory, tenantId, false, true, true, true);
         var rejected = await client.PostAsync(
-            $"{OrderUrl(tenantId, second.Order.Id)}/approve", content: null, TestContext.Current.CancellationToken);
+            $"{OrderUrl(tenantId, second.Order.Id)}/mark-paid", content: null, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
         using var body = JsonDocument.Parse(
@@ -66,7 +66,7 @@ public sealed class BilledCustomerFieldsApiTests
     // Prueba de caracterizacion (sin RED/GREEN): fija que un pedido sin flete no pide la ciudad del cliente
     // aunque el tenant la exija al facturar, y que lo guardado es ShippingDetails.None.
     [Fact]
-    public async Task ApprovingAnOrderWithoutFreightPassesForACustomerWithoutCityUnderACityOnBillingPolicy()
+    public async Task MarkingPaidAnOrderWithoutFreightPassesForACustomerWithoutCityUnderACityOnBillingPolicy()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -99,14 +99,14 @@ public sealed class BilledCustomerFieldsApiTests
         var order = await CreateManualOrderAsync(client, tenantId, customerId, productId);
 
         var approved = await client.PostAsync(
-            $"{OrderUrl(tenantId, order.Order.Id)}/approve", content: null, TestContext.Current.CancellationToken);
+            $"{OrderUrl(tenantId, order.Order.Id)}/mark-paid", content: null, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
         var stored = await dbContext.Orders.AsNoTracking().SingleAsync(
             row => row.Id == new OrderId(order.Order.Id), TestContext.Current.CancellationToken);
-        Assert.Equal(OrderStatus.Approved, stored.Status);
+        Assert.NotNull(stored.PaidMarkedAt);
         Assert.Equal(ShippingDetails.None, stored.ShippingDetails);
     }
 }

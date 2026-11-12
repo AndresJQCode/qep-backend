@@ -99,7 +99,7 @@ public sealed class OrderPaymentProof
 
     /// <summary>Corrige el monto de un comprobante ya cargado (a pedido, 2026-09) — sólo desde
     /// <see cref="Order.AddPaymentProofs"/>, que es quien decide si el pedido admite el cambio
-    /// (sólo <see cref="OrderStatus.Pending"/>). El archivo, su copia pública y quién lo subió no
+    /// (sólo mientras <see cref="Order.IsEditable"/>). El archivo, su copia pública y quién lo subió no
     /// se tocan: es una corrección puntual del importe, no otro comprobante.</summary>
     internal void UpdateAmount(decimal amount)
     {

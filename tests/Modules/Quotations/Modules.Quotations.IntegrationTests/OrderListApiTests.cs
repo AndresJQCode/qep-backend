@@ -76,7 +76,7 @@ public sealed class OrderListApiTests
         // y el respaldo se recorren punta a punta en QuotationAdvisorNameApiTests (spec 2026-09-11,
         // D1, nota del 2026-09-15).
         Assert.NotNull(row.AdvisorName);
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("PaymentPending", row.PaymentStatus);
         Assert.Equal(quotation.Currency, row.Currency);
         Assert.Equal(quotation.Total, row.Total);
@@ -164,20 +164,20 @@ public sealed class OrderListApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
-        var approved = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        var approvedOrder = await ConvertToOrderAsync(client, tenantId, approved.Id);
+        var archived = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var archivedOrder = await ConvertToOrderAsync(client, tenantId, archived.Id);
         (await client.PostAsync(
-            $"{OrdersUrl(tenantId)}/{approvedOrder.Id}/approve",
+            $"{OrdersUrl(tenantId)}/{archivedOrder.Id}/archive",
             null,
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
-        var pending = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
-        await ConvertToOrderAsync(client, tenantId, pending.Id);
+        var open = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        await ConvertToOrderAsync(client, tenantId, open.Id);
 
         var page = await client.GetFromJsonAsync<OrdersPageResponse>(
-            $"{OrdersUrl(tenantId)}?status=Approved", TestContext.Current.CancellationToken);
+            $"{OrdersUrl(tenantId)}?status=Open", TestContext.Current.CancellationToken);
 
         Assert.NotNull(page);
-        Assert.Equal(approved.Id, Assert.Single(page.Items).QuotationId);
+        Assert.Equal(open.Id, Assert.Single(page.Items).QuotationId);
     }
 
     // Un estado que no existe es un 422 con codigo de dominio, no un filtro que en silencio no
@@ -236,7 +236,7 @@ public sealed class OrderListApiTests
         Assert.NotNull(detail);
         Assert.Equal(order.Id, detail.Order.Id);
         Assert.Equal(order.OrderNumber, detail.Order.OrderNumber);
-        Assert.Equal("Pending", detail.Order.Status);
+        Assert.Equal("Open", detail.Order.Status);
         // El detalle llega compuesto (spec 2026-10-15 §6.2): cliente resuelto, líneas con el nombre
         // del producto y la cotización de origen sólo como referencia.
         Assert.Equal(quotation.Id, detail.SourceQuotation?.Id);
@@ -324,6 +324,147 @@ public sealed class OrderListApiTests
         Assert.Contains("order.time_zone_invalid", await notAZone.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
     }
 
+    // Spec 2026-11-10 §5, como Shopify: sin filtro de estado el listado no trae archivados; filtrarlos los muestra.
+    [Fact]
+    public async Task TheDefaultListHidesArchivedOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var archived = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        var open = await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+        await PostActionAsync(client, tenantId, archived.Id, "archive");
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+        var archivedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?status=Archived", TestContext.Current.CancellationToken);
+
+        Assert.Equal((1, open.Id), (page!.Total, Assert.Single(page.Items).Id));
+        Assert.Equal(archived.Id, Assert.Single(archivedPage!.Items).Id);
+    }
+
+    [Fact]
+    public async Task FilteringByFulfillmentAndInvoiced()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var prepared = await CreatePaidOrderAsync(client, factory, tenantId);
+        var invoiced = await CreatePaidOrderAsync(client, factory, tenantId);
+        await CreatePaidOrderAsync(client, factory, tenantId);
+        await PostActionAsync(client, tenantId, prepared.Id, "prepare");
+        await PostActionAsync(client, tenantId, invoiced.Id, "invoice");
+
+        var preparedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?fulfillmentStatus=Prepared", TestContext.Current.CancellationToken);
+        var invoicedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?invoiced=true", TestContext.Current.CancellationToken);
+        var notInvoicedPage = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?invoiced=false", TestContext.Current.CancellationToken);
+
+        var preparedRow = Assert.Single(preparedPage!.Items);
+        Assert.Equal((prepared.Id, "Prepared"), (preparedRow.Id, preparedRow.FulfillmentStatus));
+        var invoicedRow = Assert.Single(invoicedPage!.Items);
+        Assert.Equal((invoiced.Id, true), (invoicedRow.Id, invoicedRow.Invoiced));
+        Assert.Equal(2, notInvoicedPage!.Total);
+        Assert.DoesNotContain(notInvoicedPage.Items, row => row.Id == invoiced.Id);
+    }
+
+    // Anti-meta §2: archivar no borra la marca de facturado; el archivado se sigue encontrando por ella.
+    [Fact]
+    public async Task AnInvoicedArchivedOrderStillReadsAsInvoiced()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, [.. ApproverPermissions, OrdersPermissions.OrderInvoice]);
+        using var _ = client;
+        var order = await CreatePaidOrderAsync(client, factory, tenantId);
+        await CreatePaidOrderAsync(client, factory, tenantId);
+        await PostActionAsync(client, tenantId, order.Id, "invoice");
+        await PostActionAsync(client, tenantId, order.Id, "archive");
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(
+            $"{OrdersUrl(tenantId)}?status=Archived&invoiced=true", TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal((order.Id, "Archived", true), (row.Id, row.Status, row.Invoiced));
+    }
+
+    [Fact]
+    public async Task AnUnknownFulfillmentOrInvoicedFilterIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+
+        var fulfillment = await client.GetAsync(
+            $"{OrdersUrl(tenantId)}?fulfillmentStatus=Shipped", TestContext.Current.CancellationToken);
+        var invoiced = await client.GetAsync($"{OrdersUrl(tenantId)}?invoiced=yes", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, fulfillment.StatusCode);
+        Assert.Equal(
+            "order.order.fulfillment_status_invalid",
+            (await fulfillment.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken))!.Code);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, invoiced.StatusCode);
+        Assert.Equal(
+            "order.order.invoiced_invalid",
+            (await invoiced.Content.ReadFromJsonAsync<ProblemPayload>(TestContext.Current.CancellationToken))!.Code);
+    }
+
+    [Fact]
+    public async Task TheListRowCarriesFulfillmentAndInvoiced()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        await ConvertToOrderAsync(
+            client, tenantId, (await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId)).Id);
+
+        var page = await client.GetFromJsonAsync<OrdersPageResponse>(OrdersUrl(tenantId), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page!.Items);
+        Assert.Equal(("Open", "NotPrepared", false), (row.Status, row.FulfillmentStatus, row.Invoiced));
+    }
+
+    /// <summary>Un pedido con un comprobante por el neto, marcado como pagado: facturar exige pago completo por defecto.</summary>
+    private static async Task<OrderResponse> CreatePaidOrderAsync(HttpClient client, QepApiFactory factory, Guid tenantId)
+    {
+        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var productId = await CreateProductWithScalesAsync(client, tenantId);
+        var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
+        var fileId = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
+        var response = await client.PostAsJsonAsync(
+            $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
+            new ConvertQuotationToOrderRequest(null, [new OrderPaymentProofRequest(fileId, quotation.NetTotal)]),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return await PostActionAsync(client, tenantId, order.Id, "mark-paid");
+    }
+
+    private static async Task<OrderResponse> PostActionAsync(HttpClient client, Guid tenantId, Guid orderId, string action)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{orderId}/{action}", content: null, TestContext.Current.CancellationToken);
+        Assert.True(
+            response.IsSuccessStatusCode,
+            $"{action}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)}");
+        var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(order);
+        return order;
+    }
+
     /// <summary>Convierte sin comprobantes: el pago queda pendiente, que es el unico caso en el
     /// que la conversion no los exige. Estas pruebas miran el listado, no el asistente.</summary>
     private static async Task<OrderResponse> ConvertToOrderAsync(
@@ -331,7 +472,7 @@ public sealed class OrderListApiTests
     {
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotationId}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(

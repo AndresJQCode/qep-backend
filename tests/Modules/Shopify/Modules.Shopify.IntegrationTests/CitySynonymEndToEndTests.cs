@@ -99,11 +99,11 @@ public sealed class CitySynonymEndToEndTests
                 ("order", orderId)));
     }
 
-    // §4.6: el sinónimo apunta a CALIMA y corrigió dos pedidos; uno se aprueba. El impacto de pasarlo a CALI cuenta el pendiente,
-    // lista el aprobado entre los que no se tocan, y al confirmar el PUT sólo el pendiente cambia de ciudad: el aprobado salta con
-    // order_not_pending y se queda en CALIMA.
+    // §4.6: el sinónimo apunta a CALIMA y corrigió dos pedidos; uno se prepara (sigue abierto, pero ya no es editable; spec
+    // 2026-11-10). El impacto de pasarlo a CALI cuenta el editable, lista el preparado entre los que no se tocan, y al confirmar
+    // el PUT sólo el editable cambia de ciudad: el preparado salta con order_not_pending y se queda en CALIMA.
     [Fact]
-    public async Task CorrectingCalimaToCaliMovesThePendingAndListsTheApproved()
+    public async Task CorrectingCalimaToCaliMovesTheEditableAndListsThePrepared()
     {
         await using var shop = await CalliShop.StartAsync(withSibling: true, operatorTenantId: OperatorTenantId);
         var calimaId = await ScalarAsync<Guid>(shop.ConnectionString, "SELECT id FROM geography.cities WHERE divipola_code = '76126'");
@@ -119,7 +119,7 @@ public sealed class CitySynonymEndToEndTests
                 "SELECT count(*) FROM quotations.order_parties WHERE role = 'Shipping' AND city_id = @city",
                 ("city", calimaId)));
         await ExecuteAsync(
-            shop.ConnectionString, "UPDATE quotations.orders SET status = 'Approved' WHERE id = @order", ("order", shop.SiblingOrderId));
+            shop.ConnectionString, "UPDATE quotations.orders SET fulfillment_status = 'Prepared' WHERE id = @order", ("order", shop.SiblingOrderId));
         using var client = OperatorClient(shop);
 
         var impact = await client.PostAsJsonAsync($"{Operator}/synonyms/{shop.SynonymId}/impact", new { cityId = shop.CaliId }, Ct);
@@ -129,7 +129,7 @@ public sealed class CitySynonymEndToEndTests
         Assert.Equal((calimaId, shop.CaliId), (preview.From.Id, preview.To.Id));
         Assert.Equal((1, 0), (preview.OrdersToChange.Count, preview.OrdersEdited.Count));
         var notPending = Assert.Single(preview.OrdersNotPending.Orders);
-        Assert.Equal((shop.World.TenantId, shop.SiblingOrderId, "Approved"), (notPending.TenantId, notPending.OrderId, notPending.Status));
+        Assert.Equal((shop.World.TenantId, shop.SiblingOrderId, "Open"), (notPending.TenantId, notPending.OrderId, notPending.Status));
 
         var corrected = await client.PutAsJsonAsync(
             $"{Operator}/synonyms/{shop.SynonymId}", new { cityId = shop.CaliId, expectedVersion = 1 }, Ct);

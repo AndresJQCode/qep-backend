@@ -290,6 +290,7 @@ app.MapCityOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
+app.MapOrderSettingsEndpoints();
 app.MapQuotationSettingsEndpoints();
 app.MapWhatsAppChannelEndpoints();
 app.MapCarrierEndpoints();

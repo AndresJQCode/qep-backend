@@ -5,24 +5,18 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
+/// <summary>Convierte una cotización en pedido. El estado de pago no viaja (spec 2026-11-10 §3.2): sale calculado de
+/// los comprobantes y nunca nace pagado.</summary>
 public sealed record ConvertQuotationToOrderCommand(
     Guid TenantId,
     Guid QuotationId,
-    string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs) : ICommand<OrderDetailDto>;
 
 public sealed class ConvertQuotationToOrderValidator : AbstractValidator<ConvertQuotationToOrderCommand>
 {
-    private static readonly string[] ValidPaymentStatuses =
-        Enum.GetNames<OrderPaymentStatus>();
-
     public ConvertQuotationToOrderValidator()
     {
-        RuleFor(command => command.PaymentStatus)
-            .Must(status => ValidPaymentStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
-            .WithMessage(
-                $"PaymentStatus must be one of: {string.Join(", ", ValidPaymentStatuses)}.");
         // Las notas del pedido no tienen tope (plan 2026-10-15, P2). `Notes` nulo hereda las de la
         // cotización; ver Order.FromQuotation.
         RuleForEach(command => command.PaymentProofs).SetValidator(new OrderPaymentProofRequestValidator());
@@ -102,7 +96,6 @@ public sealed class ConvertQuotationToOrderHandler(
         var format = await numberingFormats.GetAsync(
             command.TenantId, DocumentNumberType.Order, cancellationToken);
         var counterYear = format.IncludeYear ? year : 0;
-        var paymentStatus = Enum.Parse<OrderPaymentStatus>(command.PaymentStatus, ignoreCase: true);
 
         // Los números de pedido no tienen huecos. Las precondiciones del dominio se revisan antes
         // de pedir el número: una cotización ya convertida, anulada o incompleta sale 422 sin tocar
@@ -154,7 +147,6 @@ public sealed class ConvertQuotationToOrderHandler(
                 command.TenantId,
                 orderNumber,
                 quotation,
-                paymentStatus,
                 command.Notes,
                 convertedBy,
                 proofs,

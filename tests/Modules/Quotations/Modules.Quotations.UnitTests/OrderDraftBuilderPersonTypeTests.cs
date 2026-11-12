@@ -30,7 +30,7 @@ public sealed class OrderDraftBuilderPersonTypeTests
                 BillingVatSurplus: false),
             new QuotationBillingAccountRequest(CompanyId, "Bancolombia", "7542", "COP"),
             [new OrderItemAddition(VariantId, 1m)],
-            OrderPaymentStatus.PaymentPending, [], AllowIncompleteCustomer: false);
+            [], AllowIncompleteCustomer: false);
 
     private static OrderDraftBuilder NewBuilder(PersonTypeRequirement requirement)
     {

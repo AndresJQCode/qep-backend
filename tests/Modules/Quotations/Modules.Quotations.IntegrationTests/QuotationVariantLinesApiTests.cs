@@ -278,7 +278,7 @@ public sealed class QuotationVariantLinesApiTests
         return new CreateOrderRequest(
             clientId, "Transferencia", null, false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            items, "PaymentPending", []);
+            items, []);
     }
 
     private static async Task<string?> CodeOfAsync(HttpResponseMessage response)

@@ -70,7 +70,7 @@ public sealed record ShopifyStoreDto(
 /// <see cref="ShopifyLastErrorCodes.Normalize"/>, en orden y sin repetir, y <c>[]</c> sin error (siempre presente). BFF: existe
 /// porque el formato de <c>last_error</c> es del backend; si la pantalla lo partiera, tendría que conocer el separador, los
 /// prefijos y los nombres de enum de cada origen, y un cambio aquí rompería la traducción en silencio. Cada código es uno de
-/// Quotations tal cual (<c>order.order.not_pending</c>, …), <c>shopify.order.invalid_payload</c> o
+/// Quotations tal cual (<c>order.order.not_editable</c>, …), <c>shopify.order.invalid_payload</c> o
 /// <c>shopify.order.sync_failed</c> (todo lo que no es código); el texto lo tiene el diccionario del frontend.</item>
 /// <item><see cref="StoreName"/> es el nombre de la conexión, <c>null</c> si ya no existe. <see cref="CustomerName"/> y
 /// <see cref="CustomerEmail"/> son los del comprador en el último snapshot de Shopify (no los de la ficha de QEP), <c>null</c> en

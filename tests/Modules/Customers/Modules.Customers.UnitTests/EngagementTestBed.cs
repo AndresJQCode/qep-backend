@@ -45,6 +45,9 @@ internal static class EngagementTestBed
         public void Publish(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, string? source = null) =>
             Events.Add((tenantId, actorId, action, resourceId));
 
+        public void PublishWithChangedFields(Guid tenantId, Guid actorId, string action, string resourceId, string outcome, DateTimeOffset occurredAt, IReadOnlyCollection<string> changedFields) =>
+            Events.Add((tenantId, actorId, action, resourceId));
+
         public void PublishByIntegration(Guid tenantId, string action, string resourceId, string outcome, DateTimeOffset occurredAt) =>
             Events.Add((tenantId, Guid.Empty, action, resourceId));
 

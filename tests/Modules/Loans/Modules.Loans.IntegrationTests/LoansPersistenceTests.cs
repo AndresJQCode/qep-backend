@@ -29,7 +29,10 @@ public sealed class LoansPersistenceTests
         await using var _ = database;
         using var __ = factory;
 
-        var loan = NewLoan(Tenant);
+        // Esta prueba guarda por ILoansUnitOfWork, que toma el candado del cliente y exige que exista;
+        // las demás escriben directo en LoansDbContext y no lo necesitan.
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Novasteel SAS");
+        var loan = NewLoan(Tenant, customerId: customerId);
         var installments = LoanInstallmentGenerator.GenerateClosedPeriods(loan, [], Today, Now);
         var payment = LoanCapitalPayment.Create(Tenant, loan.Id, 100_000m, new DateOnly(2026, 3, 2), "abono", Now);
         payment.SetBalanceAfter(900_000m);
@@ -249,11 +252,15 @@ public sealed class LoansPersistenceTests
         Assert.Equal(new DateOnly(2026, 1, 31), oldest.PeriodEnd);
     }
 
-    private static Loan NewLoan(Guid tenantId, string currency = "COP", decimal principal = 1_000_000m) =>
+    private static Loan NewLoan(
+        Guid tenantId,
+        string currency = "COP",
+        decimal principal = 1_000_000m,
+        Guid? customerId = null) =>
         Loan.Create(
             LoanId.New(),
             tenantId,
-            new LoanTerms(Guid.CreateVersion7(), principal, currency, 2m, new DateOnly(2026, 1, 10), LoanCutoffRule.EndOfMonth),
+            new LoanTerms(customerId ?? Guid.CreateVersion7(), principal, currency, 2m, new DateOnly(2026, 1, 10), LoanCutoffRule.EndOfMonth),
             "Préstamo de prueba",
             null,
             null,

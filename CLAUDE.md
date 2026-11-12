@@ -383,7 +383,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un pedido tiene datos propios y puede no tener cotización** (spec 2026-10-15). `Order` lleva cliente,
   asesor, cuenta de cobro, partes, líneas y totales; `QuotationId` es opcional y `Source` dice de dónde nació
   (`Quotation`, `Manual`, `Shopify`). Convertir **copia**: la cotización `Converted` queda congelada y editar un
-  pedido pendiente edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
+  pedido editable edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
   `IExternalOrderWriter` (acepta cliente incompleto); el manual exige cliente completo con CUC. Los eventos
   `quotations.order.created.v1` y `order.cancelled.v1` llevan `source` y `quotationId` nullable: Pipeline los lee
   por nombre y guarda la foto en `pipeline.deal_orders` (un `order.created` **con** cotización no hace nada: ya
@@ -647,7 +647,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
   `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
 - **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
-  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`), y el borrado de clientes, que **no la borra**: la tabla ya no tiene
+  FK a `customers` y cada fila guarda `customer_name` y `customer_phone_e164`, una foto tomada al borrar (spec 2026-11-10); el estado vigente es la última fila por `(occurred_at, sequence)`.
   Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
   traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
   en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
@@ -774,7 +775,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **El header de sesión del comprador está declarado dos veces.** `PublicBuyerEndpoints.BuyerSessionHeader` (Buyers) y `StorefrontClient.BuyerSessionHeader` (Store, que no
   ve a Buyers); `BuyerParityTests.TheBuyerSessionHeaderMatches` los ata. El BFF sólo borra la cookie con el código `store.buyer.session_invalid`: no devuelvas un 401 con
   sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
-- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Pending && PaymentStatus == PaymentPending && PaymentProofs.Count == 0` (D5; un asesor puede registrar un comprobante dejando el pago en `PaymentPending`, y ese pedido ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
+- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
 - **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
 - **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
 
@@ -782,3 +783,19 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
 [README § Verificación](README.md#verificación).
+
+- **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
+  `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
+  `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
+  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
+  y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
+  `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
+  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros) y una conversación bloqueada.
+- **`CustomerReferenceLock` serializa el borrado contra quien referencia al cliente** (advisory lock por cliente, `Exclusive` para el
+  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans y ServiceContracts; en Messaging, el ingreso
+  (entrante y coexistencia), el opener, el cambio de cliente y el despacho de campañas, con **un solo candado compartido antes de
+  cualquier candado de fila de conversación**. El borrado además toma el candado por conversación del runner de Automations
+  (`AutomationsConversationLock.Namespace`) antes del `FOR UPDATE` de `conversations`: sin ese orden hay un ciclo de espera que la base
+  no detecta. Todo esto exige `READ COMMITTED`; en `REPEATABLE READ` el chequeo de bloqueadores vería una foto vieja. El POS y los
+  escritores del pipeline **no** lo toman: una venta creada en plena corrida puede conservar el id borrado (su foto sigue mostrándose).

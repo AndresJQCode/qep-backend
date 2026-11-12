@@ -9,17 +9,25 @@ namespace Modules.Quotations.Application;
 /// se «simplifica» a una sola fórmula: sin excedente son otros números.</summary>
 public sealed record BuyerOrderLine(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
 
+/// <summary>Los cuatro ejes del pedido (spec 2026-11-10 §9), por nombre: <c>Status</c> es <c>Open</c>,
+/// <c>Archived</c> o <c>Cancelled</c>; <c>FulfillmentStatus</c>, <c>NotPrepared</c> o <c>Prepared</c>; e
+/// <c>Invoiced</c>, la marca de facturado. Sin capa de compatibilidad: no hay compradores en producción.
+/// <c>IsStorePickup</c> viaja también en la lista (owner, 2026-11-11): con él la tienda muestra «Listo para recoger» o
+/// «Enviado» para un pedido preparado sin abrir el detalle.</summary>
 public sealed record BuyerOrderSummary(
     Guid Id,
     string Number,
     DateTimeOffset CreatedAt,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     decimal Total,
     string Currency,
     int LineCount,
     string FirstLineName,
-    bool CanCancel);
+    bool CanCancel,
+    bool IsStorePickup);
 
 /// <summary>A quién se le factura, cuando tiene datos propios. <c>Name</c> no es nulo porque esta parte sólo existe
 /// con <see cref="BilledPartySource.BillingParty"/>, que exige nombre. En Colombia los nombres salen de Geography; fuera,
@@ -50,6 +58,8 @@ public sealed record BuyerOrderDetail(
     DateTimeOffset CreatedAt,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     decimal Total,
     string Currency,
     int LineCount,
@@ -247,11 +257,14 @@ public sealed class BuyerOrderGateway(
             order.CreatedAt,
             order.Status.ToString(),
             order.PaymentStatus.ToString(),
+            order.FulfillmentStatus.ToString(),
+            order.IsInvoiced,
             order.Total,
             order.Currency,
             order.Items.Count,
             FirstLineName(order),
-            order.CanBeCancelledByBuyer);
+            order.CanBeCancelledByBuyer,
+            order.IsStorePickup);
 
     private sealed record Places(
         IReadOnlyDictionary<Guid, string> Departments, IReadOnlyDictionary<Guid, string> Cities);
@@ -301,6 +314,8 @@ public sealed class BuyerOrderGateway(
             order.CreatedAt,
             order.Status.ToString(),
             order.PaymentStatus.ToString(),
+            order.FulfillmentStatus.ToString(),
+            order.IsInvoiced,
             order.Total,
             order.Currency,
             order.Items.Count,

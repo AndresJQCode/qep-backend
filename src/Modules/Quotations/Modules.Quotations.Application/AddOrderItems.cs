@@ -57,17 +57,18 @@ public sealed class AddOrderItemsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "Products can only be added while the order is pending.");
+                ExternalOrderErrors.NotEditable,
+                "Products can only be added while the order is editable.");
         }
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
         var format = await HistoryFormat.ReadAsync(tenantDirectory, command.TenantId, cancellationToken);
         var now = clock.UtcNow;
+        var previousNetTotal = order.NetTotal;
         // Una sola lectura del catálogo para toda la tanda. Los rechazos no se adelantan: siguen
         // abajo, línea por línea, en el mismo orden.
         var products = await QuotationProductPricingResolver.FindVariantsAsync(
@@ -98,7 +99,13 @@ public sealed class AddOrderItemsHandler(
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
         // El total cambió: lo cargado en comprobantes no, pero el estado del pago sí puede.
-        order.RecalculatePaymentStatus(now);
+        if (order.RecalculatePaymentStatus(previousNetTotal, now) is { } paymentChange)
+        {
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
         return await OrderDetails.LoadAsync(

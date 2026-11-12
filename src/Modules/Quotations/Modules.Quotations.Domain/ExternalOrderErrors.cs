@@ -9,8 +9,9 @@ public static class ExternalOrderErrors
     /// HTTP: <c>ExternalOrderService</c> lo resuelve devolviendo el pedido que ya existe.</summary>
     public const string ExternalKeyTaken = "order.order.external_key_taken";
 
-    /// <summary>El de todo cambio a un pedido que ya no está pendiente, no sólo del camino externo.</summary>
-    public const string NotPending = "order.order.not_pending";
+    /// <summary>El de todo cambio a un pedido que ya no se edita (spec 2026-11-10 §3.6: anulado, archivado, preparado
+    /// o facturado), no sólo del camino externo. Reemplaza a <c>order.order.not_pending</c>.</summary>
+    public const string NotEditable = "order.order.not_editable";
 
     public const string SourceInvalid = "order.order.source_invalid";
 

@@ -287,6 +287,14 @@
       "buildingblocks.domain": {
         "type": "Project"
       },
+      "buildingblocks.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
+        }
+      },
       "modules.audit.application": {
         "type": "Project",
         "dependencies": {
@@ -333,6 +341,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "DocumentFormat.OpenXml": "[3.1.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",

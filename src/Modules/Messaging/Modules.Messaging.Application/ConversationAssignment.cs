@@ -173,7 +173,11 @@ public sealed class ChangeConversationCustomerValidator : AbstractValidator<Chan
 /// embudo y los mensajes ya enviados. Lo que sigue a la conversación porque lee <c>customer_id</c>: el opt-out por botón y por
 /// 131050, el asignado heredero, la búsqueda y el filtro por etiqueta y el triage pendiente.</para></summary>
 public sealed class ChangeConversationCustomerHandler(
-    ConversationAssignmentSteps steps, IMessagingCustomerDirectory customers, IValidator<ChangeConversationCustomerCommand> validator)
+    ConversationAssignmentSteps steps,
+    IMessagingCustomerDirectory customers,
+    IValidator<ChangeConversationCustomerCommand> validator,
+    IMessagingUnitOfWork unitOfWork,
+    IMessagingCustomerReferenceLock customerReferences)
     : ICommandHandler<ChangeConversationCustomerCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ChangeConversationCustomerCommand command, CancellationToken cancellationToken)
@@ -190,8 +194,19 @@ public sealed class ChangeConversationCustomerHandler(
             throw new MessagingDomainException(MessagingErrorCodes.ConversationCustomerNotFound, "That customer does not exist in this tenant.");
         }
 
+        // Borrar clientes (A-12 y P4): la lectura de arriba va por Customers, sin candado, y el cliente puede estar borrándose. El
+        // candado compartido se toma en la transacción que guarda y, ya con él, se vuelve a comprobar el cliente: si el borrado ganó,
+        // el mismo 422 de un cliente que no existe, y la conversación se queda con el que tenía.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        if (!await customerReferences.HoldAsync(command.TenantId, customerId, cancellationToken))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.ConversationCustomerNotFound, "That customer does not exist in this tenant.");
+        }
+
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
-        return await steps.CommitAsync(command.TenantId, conversation, conversation.ChangeCustomer(customerId, member, now), now, cancellationToken);
+        var summary = await steps.CommitAsync(command.TenantId, conversation, conversation.ChangeCustomer(customerId, member, now), now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return summary;
     }
 }

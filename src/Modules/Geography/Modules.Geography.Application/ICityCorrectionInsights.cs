@@ -10,9 +10,12 @@ public sealed record TenantCustomerKey(Guid TenantId, Guid CustomerId);
 
 /// <summary>
 /// Lo que el impacto de confirmar un sinónimo necesita de un pedido. <see cref="Status"/> es el nombre del enum de Quotations
-/// (<c>Pending</c>, <c>Approved</c>, <c>Invoiced</c>, <c>Cancelled</c>), que el BFF manda tal cual.
+/// (<c>Open</c>, <c>Archived</c>, <c>Cancelled</c>), que el BFF manda tal cual. <see cref="IsEditable"/> es la regla de Quotations
+/// (spec 2026-11-10 §3.6: abierto, sin preparar y sin facturar), la única que decide si el pedido se recorrige: un pedido
+/// <c>Open</c> pero preparado no se toca.
 /// </summary>
-public sealed record OrderInsight(Guid TenantId, Guid OrderId, string OrderNumber, string Status, bool HasShippingParty, bool IsStorePickup);
+public sealed record OrderInsight(
+    Guid TenantId, Guid OrderId, string OrderNumber, string Status, bool HasShippingParty, bool IsStorePickup, bool IsEditable);
 
 /// <summary>Lo que el impacto necesita de un cliente para decidir si se completa (§4.4, desvío S7: versión 1).</summary>
 public sealed record CustomerInsight(Guid TenantId, Guid CustomerId, bool IsComplete, bool IsMerged, bool IsActive, long Version);
@@ -21,10 +24,12 @@ public sealed record CustomerInsight(Guid TenantId, Guid CustomerId, bool IsComp
 /// Una huella de lo que un sinónimo escribió, de los dos orígenes (O8: la corrección al confirmarlo y lo que casó al importarse).
 /// <see cref="Target"/> es <c>Order</c> o <c>Customer</c>. <see cref="StillAsWritten"/>: el pedido conserva la parte de envío campo
 /// por campo como la dejó la huella, o el cliente sigue en la versión de la huella. <see cref="OrderNumber"/> y
-/// <see cref="OrderStatus"/> son nulos para un cliente, o si el pedido ya no existe.
+/// <see cref="OrderStatus"/> son nulos para un cliente, o si el pedido ya no existe; <see cref="OrderEditable"/> también (la
+/// misma regla que <see cref="OrderInsight.IsEditable"/>).
 /// </summary>
 public sealed record CorrectionInsight(
-    Guid TenantId, string Target, Guid TargetId, Guid CityId, string? OrderNumber, string? OrderStatus, bool StillAsWritten);
+    Guid TenantId, string Target, Guid TargetId, Guid CityId, string? OrderNumber, string? OrderStatus, bool StillAsWritten,
+    bool? OrderEditable);
 
 /// <summary>
 /// <see cref="Orders"/> y <see cref="Customers"/>: huellas de los dos orígenes (O8). <see cref="PendingJobs"/> y

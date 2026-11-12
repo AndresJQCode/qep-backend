@@ -377,9 +377,9 @@ public sealed class ShopifyAdaptersTests
     }
 
     [Theory]
-    [InlineData("order.order.not_pending")]
+    [InlineData("order.order.not_editable")]
     [InlineData("order.order.payment_has_proofs")]
-    public async Task OrderWriterSyncNotPendingOrWithProofsReturnsIgnored(string code)
+    public async Task OrderWriterSyncNotEditableOrWithProofsReturnsIgnored(string code)
     {
         var writer = new FakeExternalOrderWriter { OnSync = () => throw new QuotationsDomainException(code, "No.") };
 
@@ -838,7 +838,7 @@ public sealed class ShopifyAdaptersTests
             (new(ExternalShippingOutcomeKind.AlreadyApplied, persisted, null), new(ShopifyCityWriteKind.AlreadyApplied, fingerprint, null, null)),
             (new(ExternalShippingOutcomeKind.NotFound, null, null), new(ShopifyCityWriteKind.NotFound, null, null, null)),
             (new(ExternalShippingOutcomeKind.NotExternal, null, null), new(ShopifyCityWriteKind.NotFound, null, null, "order.order.source_invalid")),
-            (new(ExternalShippingOutcomeKind.NotPending, persisted, OrderStatus.Approved), new(ShopifyCityWriteKind.NotPending, null, null, "Approved")),
+            (new(ExternalShippingOutcomeKind.NotPending, persisted, OrderStatus.Archived), new(ShopifyCityWriteKind.NotPending, null, null, "Archived")),
             (new(ExternalShippingOutcomeKind.StorePickup, null, null), new(ShopifyCityWriteKind.StorePickup, null, null, null)),
             (new(ExternalShippingOutcomeKind.ShippingPresent, persisted, null), new(ShopifyCityWriteKind.ShippingPresent, null, null, null)),
             (new(ExternalShippingOutcomeKind.ShippingChanged, persisted, null), new(ShopifyCityWriteKind.ShippingChanged, null, null, null)),
@@ -926,12 +926,14 @@ public sealed class ShopifyAdaptersTests
             new ExternalShippingParty("Laura Gómez", "+573001112233", "laura@verde.co", "Cra 5 # 10-20", Guid.CreateVersion7(), Guid.CreateVersion7()));
         var label = ShopifyOrderImporter.RawAddressLabel;
         var orders = new FakeExternalOrderWriter();
-        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(OrderStatus.Pending, false, null, $"Shopify #1001\n{label}Cra 5, CALLI");
-        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(OrderStatus.Approved, true, party, $"Shopify #1002 {label}no es una línea\n");
+        orders.ShippingStates[(TenantId, orderId)] = new ExternalShippingState(
+            OrderStatus.Open, false, null, $"Shopify #1001\n{label}Cra 5, CALLI", IsEditable: true);
+        orders.ShippingStates[(TenantId, other)] = new ExternalShippingState(
+            OrderStatus.Archived, true, party, $"Shopify #1002 {label}no es una línea\n", IsEditable: false);
         var adapter = CityCorrectionWriter(orders: orders);
 
-        Assert.Equal(new ShopifyOrderCityState("Pending", false, false, true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
-        Assert.Equal(new ShopifyOrderCityState("Approved", true, true, false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Open", false, false, true, IsEditable: true), await adapter.ReadOrderCityStateAsync(TenantId, orderId, Ct));
+        Assert.Equal(new ShopifyOrderCityState("Archived", true, true, false, IsEditable: false), await adapter.ReadOrderCityStateAsync(TenantId, other, Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(TenantId, Guid.CreateVersion7(), Ct));
         Assert.Null(await adapter.ReadOrderCityStateAsync(Guid.CreateVersion7(), orderId, Ct));
     }

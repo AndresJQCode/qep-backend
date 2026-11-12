@@ -660,6 +660,45 @@ public sealed class CustomerMergeApiTests
         Assert.Null(await MergedIntoAsync(arranged.ConnectionString, arranged.Merged));
     }
 
+    // Final review I-1: la fusión toma el candado exclusivo de referencias de todos sus clientes (el mismo del borrado en bloque).
+    // Si un borrado del que queda ya lo tiene, la fusión espera sin tocar nada y, al despertar, encuentra al que queda borrado:
+    // 404 y el fusionado intacto. Sin el candado, la fusión movería lo del fusionado a un cliente que el borrado se lleva.
+    [Fact]
+    public async Task AMergeWaitsForADeletionOfTheSurvivorAndThenFindsItGone()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        // La vista previa calienta el camino de la fusión: sin esto la espera podría ser arranque en frío y no el candado.
+        var version = await PreviewVersionAsync(client, arranged.Survivor, arranged.Merged);
+        await using var deleter = new NpgsqlConnection(arranged.ConnectionString);
+        await deleter.OpenAsync(TestContext.Current.CancellationToken);
+        await using var deletion = await deleter.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using (var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended(@key, 0))", deleter, deletion))
+        {
+            hold.Parameters.AddWithValue("key", BuildingBlocks.Infrastructure.CustomerReferenceLock.KeyFor(Guid.Parse(TenantId), arranged.Survivor));
+            await hold.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var merge = PostMergeAsync(client, arranged.Survivor, $"\"{version}\"", [arranged.Merged]);
+
+        Assert.NotSame(merge, await Task.WhenAny(merge, Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken)));
+        await using (var delete = new NpgsqlCommand("DELETE FROM customers.customers WHERE id = @id", deleter, deletion))
+        {
+            delete.Parameters.AddWithValue("id", arranged.Survivor);
+            Assert.Equal(1, await delete.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+        }
+
+        await deletion.CommitAsync(TestContext.Current.CancellationToken);
+
+        var gone = await BodyAsync(await merge, HttpStatusCode.NotFound);
+        Assert.Equal("customers.customer.not_found", gone.GetProperty("code").GetString());
+        Assert.Null(await MergedIntoAsync(arranged.ConnectionString, arranged.Merged));
+        Assert.Equal(0, await ScalarAsync(
+            arranged.ConnectionString, $"SELECT count(*) FROM customers.customers WHERE merged_into_id = '{arranged.Survivor}'"));
+    }
+
     // ---- Spec 2026-11-10 contactos de empresa §4.7: la fusión y el vínculo persona → empresa ----
 
     private const string CompanyConflictCode = "customers.customer.merge_company_conflict";
@@ -943,6 +982,9 @@ public sealed class CustomerMergeApiTests
 
     private sealed class FailingMergeReferences : ICustomerMergeReferences
     {
+        public Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
         public Task MoveAsync(Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Simulated failure moving the references of another module.");
 

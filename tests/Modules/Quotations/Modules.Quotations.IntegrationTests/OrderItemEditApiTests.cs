@@ -22,7 +22,7 @@ public sealed class OrderItemEditApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         (await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
         return (client, tenantId, quotation);
     }

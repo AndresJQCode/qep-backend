@@ -38,13 +38,13 @@ internal sealed class BuyerOrdersAdapter(IServiceScopeFactory scopes) : IBuyerOr
 
     private static BuyerOrderSummaryDto ToSummary(BuyerOrderSummary order) =>
         new(
-            order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.Total, order.Currency,
-            order.LineCount, order.FirstLineName, order.CanCancel);
+            order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.FulfillmentStatus, order.Invoiced,
+            order.Total, order.Currency, order.LineCount, order.FirstLineName, order.CanCancel, order.IsStorePickup);
 
     private static BuyerOrderDetailDto ToDetail(BuyerOrderDetail order) =>
         new(
-            order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.Total, order.Currency,
-            order.LineCount, order.FirstLineName,
+            order.Id, order.Number, order.CreatedAt, order.Status, order.PaymentStatus, order.FulfillmentStatus, order.Invoiced,
+            order.Total, order.Currency, order.LineCount, order.FirstLineName,
             order.Lines.Select(line => new BuyerOrderLineDto(line.Name, line.Quantity, line.UnitPrice, line.LineTotal)).ToList(),
             order.CancelledAt, order.CanCancel,
             order.Subtotal, order.TaxAmount, order.FreightTotal, order.IsStorePickup, order.CarrierName, order.BilledTo,

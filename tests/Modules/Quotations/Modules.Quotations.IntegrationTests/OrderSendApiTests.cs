@@ -282,7 +282,7 @@ public sealed class OrderSendApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(
             ConvertUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(

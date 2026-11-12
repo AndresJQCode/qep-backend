@@ -521,6 +521,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
+        // Spec 2026-11-10 (borrar clientes) §4.1: el borrado en lote.
+        services.AddScoped<
+            ICommandHandler<BulkDeleteCustomersCommand, BulkDeleteCustomersResult>,
+            BulkDeleteCustomersHandler>();
         services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
@@ -744,9 +748,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderByIdQuery, OrderDetailDto>,
             GetOrderByIdHandler>();
         services.AddScoped<
-            ICommandHandler<ApproveOrderCommand, OrderDto>,
-            ApproveOrderHandler>();
-        services.AddScoped<
             ICommandHandler<CancelOrderCommand, OrderDto>,
             CancelOrderHandler>();
         services.AddScoped<
@@ -755,6 +756,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // Las acciones del pedido de spec 2026-11-10: pagado, preparado y archivado, con sus deshacer.
+        services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
+        services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
+        services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -816,6 +824,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,
+            GetOrderSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateOrderSettingsCommand, OrderSettingsDto>,
+            UpdateOrderSettingsHandler>();
         // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
         services.AddScoped<
             IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
@@ -1230,6 +1245,9 @@ public static class QepServiceCollectionExtensions
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.
         services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
+        // Borrado de clientes (spec 2026-11-10 §4.2 y §4.3): los bloqueos y la limpieza en los otros módulos. Scoped como el
+        // CustomersDbContext sobre el que corre, para que todo quede en la transacción del lote.
+        services.AddScoped<ICustomerDeletionReferences, CustomerDeletionReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
@@ -1647,6 +1665,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-11-10 D-8: borrar es definitivo; sólo admin (el owner del tenant siempre lo es, `Membership.cs:529`).
+                CustomersPermissions.CustomerDelete,
                 // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
                 CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
@@ -2017,6 +2037,13 @@ public static class QepServiceCollectionExtensions
             "high",
             RequiredModules: [ModuleKeys.Customers]));
         services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerDelete,
+            "Borrar clientes",
+            "Permite borrar clientes de forma definitiva. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
             CustomersPermissions.DataConsentRevoke,
             "Revocar autorización de datos",
             "Permite registrar que un cliente revocó su autorización de tratamiento de datos personales.",
@@ -2079,29 +2106,30 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
-        // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
+        // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
+        // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
-            "Aprobar pedidos",
-            "Permite dar el visto bueno a un pedido pendiente.",
+            "Marcar pedidos como pagados",
+            "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
-        // persona ya aprobó.
+        // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderCancel,
             "Anular pedidos",
-            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
             RequiredModules: [ModuleKeys.Orders]));
-        // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
-        // de QEP (spec 2026-10-05).
+        // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
+        // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderInvoice,
             "Facturar pedidos",
-            "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
+            "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
@@ -2636,6 +2664,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de borrar clientes (spec 2026-11-10 D-8). Sin esta política la ruta no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerDelete,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerDelete))
             // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
             // POST …/data-consent/revocations no resuelve y el síntoma es 500.
             .AddPolicy(
