@@ -52,6 +52,7 @@ public sealed class UpdateProductHandler(
         // Autorizar antes de validar. Ver la razón en CreateProductHandler.
         CatalogAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
+        CatalogCostAccess.EnsureCanWrite(executionContext, command.Variants);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var product = await repository.FindAsync(
@@ -187,7 +188,8 @@ public sealed class UpdateProductHandler(
         await transaction.CommitAsync(cancellationToken);
 
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, command.TenantId,
+            CatalogCostAccess.CanRead(executionContext), cancellationToken);
         return dtos[0];
     }
 

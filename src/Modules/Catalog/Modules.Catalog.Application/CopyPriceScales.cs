@@ -186,6 +186,7 @@ public sealed class CopyPriceScalesHandler(
         // de destino en la petición (no en el que los trajo PostgreSQL, que no está garantizado).
         // canDelete de cada variante sale de una consulta por lote al IVariantUsageChecker.
         return await productsInOrder
-            .ToDtosAsync(imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
+            .ToDtosAsync(imageLookup, optionRepository, usageChecker, command.TenantId,
+                CatalogCostAccess.CanRead(executionContext), cancellationToken);
     }
 }

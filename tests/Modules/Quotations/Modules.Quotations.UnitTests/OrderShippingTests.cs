@@ -166,11 +166,14 @@ public sealed class OrderShippingTests
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
         bool isStorePickup = false,
         string? externalKey = null,
-        string? externalShippingTitle = null) =>
-        Order.CreateExternal(
+        string? externalShippingTitle = null)
+    {
+        var line = Line;
+        return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, [Line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
-            externalShippingTitle);
+            Account, [line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
+            externalShippingTitle, OrderCostFixtures.WithoutCosts([line]));
+    }
 
     [Fact]
     public void CreateExternalWithoutShippingHasNone()

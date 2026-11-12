@@ -33,7 +33,8 @@ public sealed class GetProductHandler(
         // galería (ninguna si no tiene) y otra para los nombres de sus opciones (ninguna si no
         // tiene opciones).
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, usageChecker, query.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, query.TenantId,
+            CatalogCostAccess.CanRead(executionContext), cancellationToken);
         return dtos[0];
     }
 }

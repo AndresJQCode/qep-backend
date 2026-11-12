@@ -47,7 +47,8 @@ public sealed class ActivateProductHandler(
         // El detalle completo, como el GET: la pantalla repinta lo que vuelve, y hasta las
         // variantes devolvía la ficha sin la URL de la imagen.
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, usageChecker, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker, command.TenantId,
+            CatalogCostAccess.CanRead(executionContext), cancellationToken);
         return dtos[0];
     }
 }

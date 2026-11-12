@@ -302,6 +302,16 @@ public sealed class Order
 
     public MemberId? PaidMarkedBy { get; private set; }
 
+    /// <summary>El momento en que el pedido quedó pagado la última vez, por cualquier vía (spec costo de producto
+    /// 2026-11-10 §4.4): «Marcar como pagado», la plataforma o nacer pagado. Se limpia al salir de pagado. Es la
+    /// fecha del reporte de margen; <see cref="PaidMarkedAt"/> no sirve porque la plataforma no la llena.</summary>
+    public DateTimeOffset? PaidAt { get; private set; }
+
+    /// <summary>Las variantes de las líneas que todavía no congelaron su costo, sin repetir: lo que Application
+    /// tiene que buscar antes de llevar el pedido a pagado.</summary>
+    public IReadOnlyList<Guid> UncostedVariantIds =>
+        _items.Where(item => item.CostCapturedAt is null).Select(item => item.VariantId).Distinct().ToArray();
+
     /// <summary>Cuándo se marcó como preparado, y quién (spec 2026-11-10 §3.3).</summary>
     public DateTimeOffset? PreparedAt { get; private set; }
 
@@ -438,7 +448,7 @@ public sealed class Order
         ArgumentNullException.ThrowIfNull(billingAccount);
         return Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus: null, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, OrderLineCosts.None);
     }
 
     /// <summary>
@@ -464,10 +474,12 @@ public sealed class Order
         DateTimeOffset occurredAt) =>
         Build(
             id, tenantId, orderNumber, OrderSource.Manual, null, header, parties, billingAccount, shipping, lines,
-            paymentStatus: null, notes, createdBy, proofs, occurredAt);
+            paymentStatus: null, notes, createdBy, proofs, occurredAt, OrderLineCosts.None);
 
     /// <summary>Un pedido que trae una integración (Shopify y las que vengan). La elegibilidad del cliente
-    /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id.</summary>
+    /// —completo o incompleto— vive en Application: el dominio sólo exige que haya un id. Si nace
+    /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>, congela el costo de sus líneas con
+    /// <paramref name="costs"/> al crearse (spec costo de producto §4.3).</summary>
     public static Order CreateExternal(
         OrderId id,
         Guid tenantId,
@@ -485,7 +497,8 @@ public sealed class Order
         string externalReference,
         ShippingDetails shipping,
         string? externalKey,
-        string? externalShippingTitle)
+        string? externalShippingTitle,
+        OrderLineCosts costs)
     {
         if (source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store)
         {
@@ -507,7 +520,7 @@ public sealed class Order
         // no se valida contra la transportadora ni contra los modos que el tenant tenga habilitados (D-F18).
         var order = Build(
             id, tenantId, orderNumber, source, externalReference, header, parties, billingAccount,
-            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt);
+            shipping, lines, paymentStatus, notes, createdBy, proofs, occurredAt, costs);
         order.ExternalKey = key;
         order.ExternalShippingTitle = NormalizeExternalShippingTitle(externalShippingTitle);
         return order;
@@ -539,7 +552,8 @@ public sealed class Order
         var key = NormalizeExternalKey(externalKey);
         var order = Build(
             id, tenantId, orderNumber, OrderSource.Store, externalReference: null, header, parties, billingAccount,
-            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt);
+            ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, notes, createdBy, [], occurredAt,
+            OrderLineCosts.None);
         order.ExternalKey = key;
         order.BuyerAccountId = buyerAccountId;
         order.BuyerNotes = NormalizeNotes(notes);
@@ -565,7 +579,7 @@ public sealed class Order
         return Build(
             OrderId.New(), tenantId, "STORE-QUOTE", OrderSource.Store, null, header, QuotationParties.Empty, null,
             ShippingDetails.None, lines, OrderPaymentStatus.PaymentPending, null, nobody, [], occurredAt,
-            allowNoClient: true);
+            OrderLineCosts.None, allowNoClient: true);
     }
 
     private static Order Build(
@@ -584,10 +598,12 @@ public sealed class Order
         MemberId createdBy,
         IReadOnlyCollection<OrderPaymentProofInput> proofs,
         DateTimeOffset occurredAt,
+        OrderLineCosts costs,
         bool allowNoClient = false)
     {
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(shipping);
+        ArgumentNullException.ThrowIfNull(costs);
         var order = new Order(
             id, tenantId, orderNumber, source, null, externalReference, header, parties, billingAccount,
             paymentStatus, notes, createdBy, occurredAt, allowNoClient);
@@ -606,6 +622,12 @@ public sealed class Order
         if (paymentStatus is null)
         {
             order.PaymentStatus = order.CalculatedPaymentStatus();
+        }
+        else if (paymentStatus == OrderPaymentStatus.FullPaymentReceived)
+        {
+            // Nace vendido: la regla única (§4.3) congela al crearse, no en un pago que nunca va a llegar.
+            order.FreezeLineCosts(costs, occurredAt);
+            order.PaidAt = occurredAt;
         }
 
         return order;
@@ -806,17 +828,43 @@ public sealed class Order
         decimal unitPrice,
         decimal discountPercentage,
         int taxPercentage,
+        OrderLineCosts costs,
         MemberId updatedBy,
         DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(costs);
         EnsureEditable("Products can only be added while the order is editable.");
-        AddItemCore(
+        // Un pedido pagado sigue editable: la línea nueva ya cuenta como vendida y congela al entrar (§4.3). El
+        // costo se pide antes de agregarla para que un costo sin buscar no deje la línea a medias.
+        var sold = PaymentStatus == OrderPaymentStatus.FullPaymentReceived;
+        var unitCost = sold ? costs.For(variantId) : null;
+        var item = AddItemCore(
             itemId, variantId, productId, quantity, unitPrice, discountPercentage, taxPercentage,
             QuotationDiscountOrigin.Own, null, occurredAt);
+        if (sold)
+        {
+            item.FreezeCost(unitCost, occurredAt);
+        }
+
         Touch(updatedBy, occurredAt);
     }
 
-    private void AddItemCore(
+    // Congela las líneas que todavía no lo hicieron; las ya congeladas conservan su costo (§4.3). Resuelve todos
+    // los costos antes de tocar una línea, para que un costo sin buscar no deje el pedido congelado a medias.
+    private void FreezeLineCosts(OrderLineCosts costs, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(costs);
+        var pending = _items
+            .Where(item => item.CostCapturedAt is null)
+            .Select(item => (Item: item, Cost: costs.For(item.VariantId)))
+            .ToArray();
+        foreach (var (item, cost) in pending)
+        {
+            item.FreezeCost(cost, at);
+        }
+    }
+
+    private OrderItem AddItemCore(
         OrderItemId itemId,
         Guid variantId,
         Guid productId,
@@ -851,6 +899,7 @@ public sealed class Order
         }
 
         _items.Add(item);
+        return item;
     }
 
     public void UpdateItemQuantity(
@@ -1016,13 +1065,16 @@ public sealed class Order
     }
 
     /// <summary>«Marcar como pagado» (spec 2026-11-10 §3.2): la única forma, fuera de la plataforma, de llegar a
-    /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>.</summary>
-    public void MarkPaid(MemberId markedBy, bool requirePaymentProof, DateTimeOffset occurredAt)
+    /// <see cref="OrderPaymentStatus.FullPaymentReceived"/>. Congela el costo de las líneas que todavía no lo tienen
+    /// con <paramref name="costs"/>, que debe traer <see cref="UncostedVariantIds"/> (spec costo de producto §4.3).</summary>
+    public void MarkPaid(MemberId markedBy, bool requirePaymentProof, OrderLineCosts costs, DateTimeOffset occurredAt)
     {
         EnsureCanMarkPaid(requirePaymentProof);
+        FreezeLineCosts(costs, occurredAt);
         PaymentStatus = OrderPaymentStatus.FullPaymentReceived;
         PaidMarkedBy = markedBy;
         PaidMarkedAt = occurredAt;
+        PaidAt = occurredAt;
         UpdatedAt = occurredAt;
         Version++;
     }
@@ -1042,6 +1094,8 @@ public sealed class Order
         PaymentStatus = CalculatedPaymentStatus();
         PaidMarkedBy = null;
         PaidMarkedAt = null;
+        // Sale del reporte, pero las líneas conservan su costo: si se vuelve a marcar, reaparece con esos (§4.3).
+        PaidAt = null;
         UpdatedAt = occurredAt;
         Version++;
     }
@@ -1320,6 +1374,7 @@ public sealed class Order
             PaymentStatus = OrderPaymentStatus.PartialPaymentReceived;
             PaidMarkedBy = null;
             PaidMarkedAt = null;
+            PaidAt = null;
         }
 
         UpdatedAt = occurredAt;
@@ -1338,9 +1393,15 @@ public sealed class Order
     ///
     /// Con <paramref name="autoArchive"/> (el ajuste del tenant), un pedido que queda pagado y ya estaba preparado se
     /// archiva sin persona detrás. Devuelve <c>true</c> si lo archivó.
+    ///
+    /// Hacia pagado congela el costo de las líneas que todavía no lo tienen con <paramref name="costs"/> (debe traer
+    /// <see cref="UncostedVariantIds"/>) y fija <see cref="PaidAt"/>; hacia otro estado lo limpia y los costos se
+    /// quedan (spec costo de producto §4.3–§4.4).
     /// </summary>
-    public bool SyncExternalPaymentStatus(OrderPaymentStatus status, bool autoArchive, DateTimeOffset occurredAt)
+    public bool SyncExternalPaymentStatus(
+        OrderPaymentStatus status, bool autoArchive, OrderLineCosts costs, DateTimeOffset occurredAt)
     {
+        ArgumentNullException.ThrowIfNull(costs);
         if (Status == OrderStatus.Cancelled || IsInvoiced)
         {
             throw new QuotationsDomainException(
@@ -1360,14 +1421,20 @@ public sealed class Order
             return false;
         }
 
-        PaymentStatus = status;
-        if (status != OrderPaymentStatus.FullPaymentReceived)
+        if (status == OrderPaymentStatus.FullPaymentReceived)
+        {
+            FreezeLineCosts(costs, occurredAt);
+            PaidAt = occurredAt;
+        }
+        else
         {
             // Una marca de pagado describe un pagado: si el pago sale de ahí, la marca se va con él.
             PaidMarkedBy = null;
             PaidMarkedAt = null;
+            PaidAt = null;
         }
 
+        PaymentStatus = status;
         UpdatedAt = occurredAt;
         Version++;
         return autoArchive && ArchiveIfSettled(archivedBy: null, occurredAt);

@@ -37,9 +37,43 @@ public sealed class CreatePosSaleHandlerTests
         Command(session, lines: [new(Shampoo, 1m, 0m, 11_900m, 19)], payments: [new("Cash", null, 20_000m, null)], customerId: customerId);
 
     private static CreatePosSaleHandler Handler(PosTestBed bed, params string[] permissions) =>
-        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Cashiers,
+        new(bed.Sessions, bed.Sales, bed.Numbers, bed.UnitOfWork, bed.SaleIdLock, bed.Audit, bed.Products, bed.Costs, bed.Cashiers,
             bed.Memberships, bed.Customers, bed.TenantDirectory, bed.PriceRounding, bed.Context(permissions), bed.Clock, bed.TenantClock,
             new CreatePosSaleValidator());
+
+    // Spec 2026-11-10 §4.2: el costo es el de la moneda de la caja, no el de otra lista.
+    [Fact]
+    public async Task TheLineTakesTheCostInTheRegisterCurrency()
+    {
+        var (bed, session) = Arrange();
+        bed.Costs.Costs[("COP", Shampoo)] = 6_000m;
+        bed.Costs.Costs[("USD", Shampoo)] = 1m;
+
+        await Handler(bed, Seller).HandleAsync(PlainCommand(session), TestContext.Current.CancellationToken);
+
+        var call = Assert.Single(bed.Costs.Calls);
+        Assert.Equal("COP", call.Currency);
+        Assert.Equal([Shampoo], call.VariantIds);
+        var line = Assert.Single(Assert.Single(bed.Sales.Stored).Lines);
+        Assert.Equal(6_000m, line.UnitCost);
+        Assert.Equal(LineCostSource.Manual, line.CostSource);
+    }
+
+    [Fact]
+    public async Task AReplayDoesNotLookUpCosts()
+    {
+        var (bed, session) = Arrange();
+        bed.Costs.Costs[("COP", Shampoo)] = 6_000m;
+        var command = PlainCommand(session);
+        var handler = Handler(bed, Seller);
+        await handler.HandleAsync(command, TestContext.Current.CancellationToken);
+        bed.Costs.Calls.Clear();
+
+        var replay = await handler.HandleAsync(command, TestContext.Current.CancellationToken);
+
+        Assert.False(replay.Created);
+        Assert.Empty(bed.Costs.Calls);
+    }
 
     // La venta "del otro request" que el choque deja en la base: mismo id, mismo cajero, misma huella.
     private static PosSale WinnerFor(CreatePosSaleCommand command, CashSession session)

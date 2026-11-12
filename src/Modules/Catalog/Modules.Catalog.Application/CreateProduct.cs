@@ -51,6 +51,7 @@ public sealed class CreateProductHandler(
         // revisión de riesgo de CAT-02.
         CatalogAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CatalogPermissions.ProductManage);
+        CatalogCostAccess.EnsureCanWrite(executionContext, command.Variants);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Antes de construir el agregado: la FK garantiza que la tasa exista, no que sea de este
@@ -81,6 +82,7 @@ public sealed class CreateProductHandler(
                 Pricing = variant.Pricing!.ToDomain(),
                 GalleryFileId = variant.GalleryFileId,
                 IsActive = variant.IsActive ?? true,
+                Costs = variant.Costs?.ToDomainCosts(),
             })
             .ToArray();
 
@@ -118,7 +120,8 @@ public sealed class CreateProductHandler(
 
         // Sin consulta de uso: ninguna línea puede vender una variante que nació en esta petición.
         var dtos = await new[] { product }.ToDtosAsync(
-            imageLookup, optionRepository, usageChecker: null, command.TenantId, cancellationToken);
+            imageLookup, optionRepository, usageChecker: null, command.TenantId,
+            CatalogCostAccess.CanRead(executionContext), cancellationToken);
         return dtos[0];
     }
 }

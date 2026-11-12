@@ -193,7 +193,7 @@ public sealed class OrderPricingRecalculationTests
             : Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0010", header, QuotationParties.Empty, account, lines,
                 OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now, source, "1001", ShippingDetails.None,
-                "1:1001", null);
+                "1:1001", null, OrderLineCosts.None);
     }
 
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup

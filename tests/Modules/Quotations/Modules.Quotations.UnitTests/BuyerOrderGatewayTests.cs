@@ -76,12 +76,12 @@ public sealed class BuyerOrderGatewayTests
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
-            order.SyncExternalPaymentStatus(payment, autoArchive: false, at);
+            order.SyncExternalPaymentStatus(payment, autoArchive: false, order.WithoutCosts(), at);
         }
 
         if (paidMarked)
         {
-            order.MarkPaid(Advisor, requirePaymentProof: false, at);
+            order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), at);
         }
 
         return order;
