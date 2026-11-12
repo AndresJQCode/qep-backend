@@ -241,6 +241,48 @@ public sealed class CustomerStatusAndImportApiTests
     }
 
     /// <summary>
+    /// Review Focus 3: con documento y ciudad opcionales al guardar, dos filas sin documento ni ciudad en el mismo
+    /// archivo conviven (sin <c>duplicate_in_file</c>) y nacen con CUC de departamento <c>00</c>.
+    /// </summary>
+    [Fact]
+    public async Task AnImportWithTwoRowsWithoutDocumentCreatesBothWhenAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateImporter(factory);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Documento Uno",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null),
+                new ExcelRowInput(
+                    Name: "Sin Documento Dos",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(2, result.ImportedCount);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("00000001", result.Imported[0].Cuc);
+        Assert.Equal("00000002", result.Imported[1].Cuc);
+    }
+
+    /// <summary>
     /// La clasificacion es opcional (decision 2026-10-19, <c>Customer.cs</c>): una fila sin ella
     /// crea el cliente con un CUC sin prefijo (departamento + consecutivo) y sin clasificacion.
     /// </summary>
@@ -496,6 +538,111 @@ public sealed class CustomerStatusAndImportApiTests
         Assert.Equal(existing.Cuc, item.Cuc);
         Assert.Equal("Nombre Actualizado", item.Name);
         Assert.Equal("3009998877", item.Phone);
+    }
+
+    /// <summary>
+    /// Una fila de actualizacion (Cuc lleno) con documento y departamento+ciudad vacios significa "no enviado": con la
+    /// politica relajada conserva el documento y la ciudad guardados en vez de borrarlos.
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowWithBlankDocumentAndCityKeepsTheStoredOnes()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(manager);
+        var existing = await CreateCustomerAsync(manager, city.CityId, classification.Id);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: existing.Cuc,
+                    Name: "Nombre Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
+
+        var item = await GetAsync(client, existing.Id);
+        Assert.Equal("Nombre Actualizado", item.Name);
+        Assert.Equal(existing.IdentificationType, item.IdentificationType);
+        Assert.Equal(existing.IdentificationNumber, item.IdentificationNumber);
+        Assert.Equal(city.CityName, item.City?.Name);
+    }
+
+    /// <summary>
+    /// Un cliente que nunca tuvo documento ni ciudad se puede reimportar con la politica estricta: la fila de
+    /// actualizacion en blanco no exige lo que el cliente nunca tuvo (opcion B).
+    /// </summary>
+    [Fact]
+    public async Task AnUpdateRowForALegacyCustomerWithoutDocumentOrCityPassesUnderTheDefaultPolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var classification = await CreateClassificationAsync(manager);
+        var created = await manager.PostAsJsonAsync(
+            CustomersUrl(),
+            new
+            {
+                name = "Legado S.A.S.",
+                identificationType = (string?)null,
+                identificationNumber = (string?)null,
+                phone = "310 935 2187",
+                email = "compras@verde.co",
+                address = "Calle 10 # 45-12",
+                country = "CO",
+                cityId = (Guid?)null,
+                classificationId = classification.Id,
+                withRetention = false,
+                vatSurplus = false
+            },
+            TestContext.Current.CancellationToken);
+        created.EnsureSuccessStatusCode();
+        var legacy = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(legacy);
+        await SetTenantCustomerFieldPolicyAsync(factory, true, true, true, true);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Cuc: legacy.Cuc,
+                    Name: "Legado Actualizado",
+                    IdentificationType: null,
+                    IdentificationNumber: null,
+                    Department: null,
+                    City: null,
+                    Classification: classification.Name)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal("updated", Assert.Single(result.Imported).Action);
     }
 
     /// <summary>
@@ -908,7 +1055,114 @@ public sealed class CustomerStatusAndImportApiTests
             .Select(column => headerRow.Cell(column).GetString())
             .ToArray();
 
-        Assert.Equal(CustomerImportColumns.Ordered, headers);
+        // Las trece de siempre y, al final, «Empresa» (spec 2026-11-10 §4.8).
+        Assert.Equal([.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional], headers);
+    }
+
+    private static readonly string[] HeadersWithCompany = [.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional];
+
+    // G5: el importador lee por cabecera y exige las trece; «Empresa» es opcional. Un archivo de antes de la columna sigue siendo
+    // válido y se lee como «sin empresa».
+    [Fact]
+    public async Task AFileWithoutTheCompanyColumnIsStillValid()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Empresa",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("completed", body.GetProperty("status").GetString());
+        Assert.Equal(1, body.GetProperty("importedCount").GetInt32());
+    }
+
+    // Spec 2026-11-10 §4.8: la empresa puede venir en el mismo archivo y se nombra por su número de documento; la fila que la
+    // nombra queda vinculada.
+    [Fact]
+    public async Task ImportingLinksContactsToTheirCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "900.111.111-1"),
+                new ExcelRowInput(
+                    Name: "Verde Empresa S.A.S.",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed", result.Status);
+        var page = await ListAsync(manager, "?contacts=include&pageSize=50");
+        var company = Assert.Single(page.Items, item => item.Name == "Verde Empresa S.A.S.");
+        var contact = await GetAsync(manager, Assert.Single(page.Items, item => item.Name == "Ana Contacto").Id);
+        Assert.NotNull(contact.Company);
+        Assert.Equal(company.Id, contact.Company.Id);
+    }
+
+    // G6 + A22: el error de la columna trae el campo `companyIdentificationNumber` y la fila tal como vino, para que el modal la
+    // reenvíe; la fila no se escribe.
+    [Fact]
+    public async Task ACompanyErrorComesBackWithFieldAndRowData()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "999999999")
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("failed", body.GetProperty("status").GetString());
+        var error = Assert.Single(body.GetProperty("errors").EnumerateArray());
+        Assert.Equal("customers.import.row.company_not_found", error.GetProperty("code").GetString());
+        Assert.Equal("companyIdentificationNumber", error.GetProperty("field").GetString());
+        Assert.Equal("999999999", error.GetProperty("rowData").GetProperty("companyIdentificationNumber").GetString());
     }
 
     // Mismo permiso que /import: descargar la plantilla es parte del mismo flujo de carga masiva.

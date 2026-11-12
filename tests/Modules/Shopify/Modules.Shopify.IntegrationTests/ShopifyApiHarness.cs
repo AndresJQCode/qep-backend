@@ -188,6 +188,7 @@ internal static class ShopifyApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Fuera de Production, sin el par de la app el proveedor shopify sale del catálogo; se fija para que las
             // pruebas del módulo vean el mismo catálogo que producción.
@@ -387,6 +388,8 @@ internal static class ShopifyApiHarness
                 name = "Origen Botánico SAS",
                 bankAccounts = new[] { new { bankName = "Bancolombia", accountNumber, currency = "COP" } },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId = await AnyCityIdAsync(client),
                 phone = "6045551234",
                 email = "ventas@origen.example.co",

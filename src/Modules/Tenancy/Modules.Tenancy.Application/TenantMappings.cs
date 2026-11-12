@@ -16,7 +16,8 @@ internal static class TenantMappings
             tenant.Country,
             tenant.Version,
             LogoOf(tenant, logoStorage),
-            tenant.PersonTypeRequirement.ToString());
+            tenant.PersonTypeRequirement.ToString(),
+            tenant.CustomerFieldPolicy);
 
     private static TenantLogoDto? LogoOf(Tenant tenant, ITenantLogoStorage logoStorage) =>
         tenant.LogoFileId is { } fileId

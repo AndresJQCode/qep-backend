@@ -44,7 +44,8 @@ public sealed class PaymentProofPublicUrlTests
 
         await ListAsync(repository, FixedTenantModules.AllBut(TenantModuleKeys.Orders));
 
-        Assert.Equal([FileOwnerType.PaymentProof], repository.LastExcludedOwnerTypes);
+        // store depende de orders, así que apagar orders también deja fuera el banner de la tienda.
+        Assert.Equal([FileOwnerType.PaymentProof, FileOwnerType.Store], repository.LastExcludedOwnerTypes!.Order());
     }
 
     [Fact]

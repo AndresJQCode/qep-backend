@@ -189,6 +189,12 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.Property<bool>("VisibleInStore")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("visible_in_store");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId")
@@ -204,6 +210,10 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_products_tenant");
+
+                    b.HasIndex("TenantId", "Name")
+                        .HasDatabaseName("IX_products_tenant_store_visible")
+                        .HasFilter("visible_in_store AND is_active");
 
                     b.ToTable("products", "catalog");
                 });
@@ -275,6 +285,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnName("product_id");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FileId")
+                        .HasDatabaseName("IX_product_gallery_images_file");
 
                     b.HasIndex("ProductId")
                         .HasDatabaseName("IX_product_gallery_images_product");
@@ -660,6 +673,33 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                                 .HasForeignKey("VariantId");
                         });
 
+                    b.OwnsMany("Modules.Catalog.Domain.ProductVariantCost", "Costs", b1 =>
+                        {
+                            b1.Property<Guid>("VariantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("variant_id");
+
+                            b1.Property<string>("Currency")
+                                .HasMaxLength(3)
+                                .HasColumnType("character(3)")
+                                .HasColumnName("currency");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount");
+
+                            b1.HasKey("VariantId", "Currency");
+
+                            b1.ToTable("product_variant_costs", "catalog", t =>
+                                {
+                                    t.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("VariantId");
+                        });
+
                     b.OwnsMany("Modules.Catalog.Domain.ProductVariantOptionValue", "_optionValues", b1 =>
                         {
                             b1.Property<Guid>("VariantId")
@@ -690,6 +730,8 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("VariantId");
                         });
+
+                    b.Navigation("Costs");
 
                     b.Navigation("Prices");
 

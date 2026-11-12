@@ -15,7 +15,7 @@ internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IA
     /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
     /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008). Internal para las pruebas que toman el lock desde otra
     /// conexión.</summary>
-    internal const int ConversationLockNamespace = 20261022;
+    internal const int ConversationLockNamespace = AutomationsConversationLock.Namespace;
 
     public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
         await dbContext.Database.BeginTransactionAsync(cancellationToken);

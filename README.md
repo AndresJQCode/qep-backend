@@ -147,7 +147,7 @@ local y por variable de entorno en k8s
 | `Meta:App:WebhookOverrideCallbackUrl` | vacío | **Temporal.** URL https que la suscripción de una WABA le pide a Meta en vez de la URL de la app; vacío = sin override. Ver [Historial de coexistencia](#historial-de-coexistencia) |
 | `Messaging:Webhook:MaxBodyBytes`                     | `4194304`                                                                                     | Tope del cuerpo del webhook (Meta manda hasta 3 MB); más → 413 |
 | `Messaging:Webhook:ConcurrencyLimit` / `QueueLimit`  | `64` / `256`                                                                                  | Limitador `webhook`: concurrencia global con cola, no por IP |
-| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas y purga |
+| `Messaging:Workers:*`                                | `DeliveryPollSeconds 3`, `MediaPollSeconds 5`, `CampaignPollSeconds 10`, `ScheduledPollSeconds 5`, `PurgeIntervalHours 24`, `DeliveryRetentionDays 7` | Intervalos de los workers de entregas, medios, campañas, mensajes programados y purga |
 | `Messaging:Campaigns:MessagesPerSecond`              | `20` (opcional; `1 <= valor <= MaxMessagesPerSecond`)                                         | Ritmo inicial y objetivo de envío de una campaña **por conexión**, compartido por todas las réplicas (cubo en Postgres, `messaging.connection_send_budgets`). Es adaptativo: un `130429` de Meta lo baja a la mitad y pausa la conexión 30 s; sin nuevos `130429` sube 1 mps cada 30 s hasta este valor |
 | `Messaging:Campaigns:MaxMessagesPerSecond`           | `80` (opcional; hasta `1000`)                                                                 | Techo del ritmo: el throughput por defecto de Meta por número. Súbelo sólo si Meta subió el de tu número |
 | `Messaging:MarketingOptOut:ButtonTexts`              | `["Detener promociones", "Stop promotions"]` (opcional)                                       | Textos (o payloads) del botón de respuesta rápida de una plantilla que apagan el marketing del cliente, con origen `button`. Sin mayúsculas ni tildes; un mensaje de texto escrito a mano nunca cuenta. Si se configura, **reemplaza** la lista |
@@ -637,9 +637,9 @@ mensaje procesado nunca queda sin sus trabajos. Un mensaje que falla vuelve a lo
 minutos: nunca se abandona. `resolved` siembra un trabajo por pedido (y uno por cliente que sólo le faltaba la ciudad);
 `corrected` siembra una recorrección por cada corrección ya escrita con otra ciudad. `ShopifyCityCorrectionWorker` también
 corre cada 10 s: toma lotes de 50 trabajos, los reclama uno a uno (un solo ganador entre réplicas) y los procesa cada uno en su
-scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido salió de
-`Pending`, o ya tiene parte de envío, el trabajo termina `Skipped` con su motivo (`synonym_deleted`, `order_not_pending`,
-`shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
+scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido ya no es
+editable (abierto, sin preparar y sin facturar; spec 2026-11-10), o ya tiene parte de envío, el trabajo termina `Skipped` con su
+motivo (`synonym_deleted`, `order_not_pending` —el motivo persistido conserva su nombre—, `shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
 `Failed` con la causa. La corrección escribe en Quotations y Customers, deja su huella en `shopify.city_corrections` y una
 auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y las `city_corrected` de la recorrección) en el tenant del pedido.
 
@@ -647,8 +647,8 @@ auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y la
 los devuelve a `Pending` con los intentos en cero y el worker los toma en su siguiente pasada; el endpoint devuelve el sinónimo
 con los contadores frescos.
 
-**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen `Pending`, sin parte de
-envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
+**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen editables (abiertos, sin
+preparar y sin facturar), sin parte de envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
 `{ scanned, reported, alreadyReported, nowMatching, skipped }`. Es idempotente: un texto ya reportado cuenta como
 `alreadyReported`, y correrlo otra vez es seguro.
 
@@ -672,7 +672,7 @@ Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
 - **Auditoría del pedido.** La entrada de una corrección de pedido lleva `resource_type = "order"`, no `"quotation"` como las
   auditorías de pedidos del propio Quotations: un filtro por tipo de recurso no las junta.
 - **Reintento tras un commit entre módulos.** El worker escribe en Quotations y Customers en su propia unidad de trabajo y
-  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya fuera de `Pending` y terminar
+  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya no editable y terminar
   `Skipped` con `order_not_pending` aunque la ciudad ya esté escrita. Es no atomicidad inherente a que sean módulos distintos.
 - **`ShopifyClaimedOutboxConsumer` y `ShopifyInbox` son copia literal de las de Pipeline.** Un arreglo a la lógica de reclamo
   va en los dos sitios.
@@ -821,11 +821,11 @@ predeterminada (`tenancy.tenant_price_roundings`); el cambio se audita como
 
 ### Qué documentos se recalculan y cuándo
 
-- **Editables:** cotización `Draft`/`Sent` y pedido `Pending` se recalculan con la regla vigente la
-  próxima vez que alguien los edita. Abrirlos no los recalcula: ningún `GET` escribe, y no hay
-  recálculo masivo al guardar la regla.
-- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`, pedido `Approved`,
-  `Cancelled` o `Invoiced`, venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
+- **Editables:** cotización `Draft`/`Sent` y pedido editable (`Open`, sin preparar y sin facturar)
+  se recalculan con la regla vigente la próxima vez que alguien los edita. Abrirlos no los recalcula:
+  ningún `GET` escribe, y no hay recálculo masivo al guardar la regla.
+- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`; pedido `Archived`, `Cancelled`,
+  preparado o facturado; venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
   columnas nullable; `null` cuenta como el valor por defecto de su moneda).
 - **Conversión:** el pedido hereda la regla guardada de la cotización.
 - **Pedidos externos (Shopify):** usan siempre el valor por defecto de su moneda, aun editados.
@@ -843,9 +843,9 @@ por unidad.
 Cada tenant tiene prendidos los módulos comerciales que contrató, en `tenancy.tenant_modules`: la
 fila **activa** (`status = 'active'`) es el módulo. Una fila `inactive` es un módulo apagado que
 conserva quién lo prendió y desde cuándo (`source`, `enabled_at`, `status_changed_at`). Las claves son
-`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer` y `loans`; `quotations` exige
+`catalog`, `customers`, `companies`, `quotations`, `orders`, `reporting`, `pos`, `messaging`, `pipeline`, `shopify`, `automations`, `suppliers`, `billing`, `developer`, `loans` y `store`; `quotations` exige
 `catalog`, `customers` y `companies`, `orders` exige `quotations`, `pos` exige `catalog` y
-`companies`, `shopify` exige `orders` y `automations` exige `messaging` y `loans` exige `customers`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
+`companies`, `shopify` exige `orders` y `automations` exige `messaging`, `loans` exige `customers` y `store` exige `orders`. `messaging` (la bandeja de WhatsApp, sin dependencias) no viene con el signup y se prende por tenant desde la consola de operador o con el SQL de respaldo. `pipeline` (el embudo de ventas) exige `customers`, no viene con el signup y se prende igual. `automations` (el constructor de chatbots) no viene con el signup y se prende por tenant desde la consola de operador. `suppliers` (el directorio de proveedores; sin dependencias) tampoco viene con el signup y se prende igual. `developer` (las claves de API de integración; sin dependencias) tampoco viene con el signup y se prende por tenant; a diferencia de los demás, su guarda falla cerrada: un tenant sin fila no pasa, ni siquiera con el stub de desarrollo. Sin `messaging`, `pipeline` no ofrece triage; sin `quotations`, no le llegan eventos. Un módulo sin su dependencia cuenta como apagado. Identidad, Tenancy, Authorization,
 Storage, Platform, Geography, Audit, Notifications e Integrations son núcleo y no se apagan;
 Integrations filtra su catálogo de proveedores por los módulos activos del tenant.
 
@@ -997,6 +997,287 @@ docker exec postgres18 psql -U postgres -d dev_lulo_crm_v2 -c "INSERT INTO tenan
 En producción, las mismas sentencias por el acceso a la base que QCode ya usa para operaciones
 manuales. Efecto inmediato, sin reiniciar la API.
 
+## Tienda pública
+
+Cada tenant puede publicar una tienda en `{slug}.lulocrm.com` (spec `docs/superpowers/specs/2026-11-03-tienda-publica-design.md`,
+plan `docs/superpowers/plans/2026-11-03-tienda-publica-backend.md`). Es el módulo `store`: exige `orders`, no viene con el signup y se
+prende por tenant desde la consola de operador. Sin él, los ajustes y la vista previa de colores responden un `403` pelado, porque la
+máscara de permisos del módulo apagado ya los descarta antes, y las rutas públicas responden `404 store.public.not_found`.
+
+- **Backoffice:** `/api/v1/tenants/{tenantId}/store/settings` (ajustes, publicar y despublicar, vista previa de colores y cuentas de
+  cobro). Todo pide `store.settings.manage` (sólo `admin` por defecto). No hay bandeja de solicitudes: el pedido nace en el checkout
+  (spec `docs/superpowers/specs/2026-11-09-pedidos-tienda-directos-design.md`).
+- **Ajustes, asesor de los pedidos:** `PUT /settings` acepta `advisorMembershipId` (opcional; `null` lo quita) y `GET /settings` lo
+  devuelve junto con `advisorName`, el nombre visible de esa membresía. Cuando cambia, tiene que ser una membresía **activa del tenant**;
+  si no, `422 store.settings.advisor_not_found` (reenviar el mismo valor no lo revalida, para no bloquear los demás ajustes si esa
+  persona dejó el tenant). No se exige un permiso concreto al asesor: el pedido lo crea el sistema. No bloquea la
+  publicación.
+- **Ajustes, mostrar precios:** `PUT /settings` acepta `showPrices` (opcional; ausente o `null` conserva el valor guardado, a propósito,
+  para no apagar precios con un frontend viejo); `GET /settings` y `GET /api/v1/public/stores/{host}` lo devuelven siempre. Es sólo
+  visual: el pedido se precia con `pricingMode` y los demás endpoints públicos siguen devolviendo montos. Un cambio puede tardar hasta la
+  caché pública (`max-age=60`, `stale-while-revalidate=300`) en verse.
+- **Público:** `/api/v1/public/stores/{host}` (`GET /`, `/categories`, `/products`, `/products/{id}`, `/geography/departments`,
+  `/geography/departments/{id}/cities`, `POST /cart/quote` y `POST /order-requests`). No lee la cookie de sesión ni pide
+  `X-Qep-Client`: el que llama es el servidor del storefront (Astro), con `X-Qep-Storefront-Key` y la IP del visitante en
+  `X-Qep-Visitor-Ip`. Los límites son por IP del visitante: 300 lecturas por minuto y 5 envíos cada 10 minutos, más un tope de 500
+  pedidos de la tienda por tenant en 24 horas, anulados incluidos (`Store:DailyRequestCap`).
+- **El pedido:** `POST /order-requests` crea directamente un pedido con origen `Store`, registrado como creado por el sistema. El asesor
+  es el configurado en los ajustes si su membresía sigue activa; si no (nunca se configuró, o lo suspendieron o quitaron), el owner del
+  tenant. El cliente se busca por documento: si existe se completa lo que tenga en blanco; si no, se crea completo o, si Customers lo
+  rechaza, incompleto. El recibo trae el id y el número del pedido (el consecutivo de pedidos del tenant). El detalle
+  (`GET /orders/{orderId}`) ya no trae `storeRequest`; `GET /orders?source=Store` los filtra. El consentimiento del visitante queda en
+  `store.order_consents`, una fila por pedido.
+
+### Secretos
+
+Los dos son obligatorios **sólo en `Production`**, como los demás validadores del repositorio: sin ellos el arranque falla, y como
+el arranque es de toda la API, **un secreto faltante en Production detiene la API entera, no sólo la tienda**. Fuera de Production, un
+secreto ausente no impide arrancar: la tienda queda cerrada en ejecución (401 sin clave del storefront, 503 `store.captcha.unavailable`
+sin clave de Turnstile). La clave del storefront, cuando está, se valida siempre y necesita al menos 32 caracteres. Van en user-secrets en local y en el almacén de secretos del despliegue, nunca en
+`appsettings`:
+
+```powershell
+dotnet user-secrets set "Store:Storefront:SharedSecret" "<el mismo valor que el storefront>" --project src/Api
+dotnet user-secrets set "Store:Turnstile:SecretKey" "<secret key de Cloudflare Turnstile>" --project src/Api
+```
+
+Para comprobar que existen sin verlos: `dotnet user-secrets list --project src/Api | Select-String -Pattern "Store:" | Measure-Object`.
+Una clave del storefront vacía o en blanco no abre la tienda: toda llamada pública responde 401. `Store:Turnstile:Enabled=false` sólo se
+acepta en `Development` y `Testing` (en Staging el arranque falla, para que no corra con un captcha que acepta cualquier token).
+
+### Códigos de error de las rutas públicas
+
+| Status | `code` | Cuándo |
+| --- | --- | --- |
+| 400 | `store.public.body_invalid` | El cuerpo de `POST /order-requests` no es JSON o llegó cortado. |
+| 401 | `store.public.client_unauthorized` | Falta `X-Qep-Storefront-Key` o no coincide. |
+| 404 | `store.public.not_found` | No hay tienda publicada en ese host. |
+| 404 | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica. |
+| 413 | `store.public.body_too_large` | El cuerpo de `POST /order-requests` pasa de 64 KB. |
+| 422 | `validation.failed` | Un campo no cumple su forma; el detalle viaja en `errors`. |
+| 422 | `store.public.currency_invalid` | Falta `currency` o no es una moneda de la tienda. |
+| 422 | `store.public.visitor_ip_required` | Un envío sin `X-Qep-Visitor-Ip` legible. |
+| 422 | `store.order_request.consent_required` | No se aceptó la política de datos. |
+| 422 | `store.order_request.captcha_invalid` | Turnstile rechazó el token. |
+| 422 | `store.order_request.country_not_sold` | El país de facturación o envío no es de venta. |
+| 422 | `store.order_request.city_invalid` | La ciudad no cumple su carril (ids en Colombia, texto afuera). |
+| 422 | `store.order_request.phone_invalid` | El teléfono no se normaliza en el país de su bloque. |
+| 422 | `store.order_request.line_unavailable` | Una línea del carrito ya no se puede vender. |
+| 422 | `store.order_request.currency_not_in_store` | La tienda ya no tiene cuenta de cobro en esa moneda. |
+| 429 | `store.order_request.daily_cap` | La tienda llegó a su tope diario de pedidos. |
+| 429 | (sin cuerpo, con `Retry-After`) | La IP del visitante superó su límite. |
+| 503 | `store.captcha.unavailable` | Turnstile no responde o su configuración está rota. |
+
+Reenviar un envío con el mismo `clientRequestId` no es un error: responde 201 con el mismo pedido (la clave del pedido es
+`store-checkout:{clientRequestId}`, única por tenant), sin volver a pedir captcha. Los códigos conservan el prefijo
+`store.order_request.*` aunque ya no haya solicitud: renombrarlos obligaría a desplegar storefront y backend juntos.
+
+En el backoffice, `PUT /settings` suma `422 store.settings.advisor_not_found` (ver «Ajustes, asesor de los pedidos»).
+
+### Despliegue
+
+**El backend va antes que el frontend y el storefront.** El módulo nace apagado en todos los tenants y las direcciones y partes de afuera
+de Colombia no existen hasta que la tienda las crea. Los pedidos directos (spec del 2026-11-09) **sí rompen**: las migraciones
+`DropStoreOrderRequests` (Store) y `RenameProcessedSignupOrderId` (Buyers) descartan la bandeja y sus solicitudes, y el frontend viejo
+responde 404 en `/orders/store` hasta que se despliegue el suyo. El storefront viejo sigue andando: misma ruta y misma forma del recibo.
+Orden: (1) backend con sus migraciones y los dos secretos (en Production deben estar **antes** de desplegar: sin ellos la API entera no arranca); (2) frontend (backoffice), que debe leer las direcciones y partes de afuera
+antes de que se tome el primer pedido de otro país; (3) storefront, con la misma clave compartida; (4) prender `store` por tenant.
+
+## Cuentas de comprador
+
+El módulo `Buyers` (spec `docs/superpowers/specs/2026-11-07-cuentas-de-comprador-design.md`, plan `docs/superpowers/plans/2026-11-07-cuentas-de-comprador-backend.md`)
+da cuenta al **comprador de la tienda pública**: se registra con email y contraseña, guarda su perfil de facturación y envío, y lo reutiliza en el
+checkout. No es un usuario de la consola: no tiene `Identity`, ni tenant, ni permisos, y ninguna capa de Buyers referencia `Modules.Identity*`.
+La cuenta es de la plataforma (el email es único en todo `buyers.accounts`), pero **la sesión es de un host**: un token emitido en la tienda A no sirve
+en la B.
+
+- **Quién lo llama:** sólo el BFF del storefront, de servidor a servidor. El backend no escribe cookies ni lee la del navegador.
+- **Esquema `buyers`:** `accounts`, `profiles`, `sessions`, `email_tokens`, `consents`, `inbox_messages` y `processed_signups`. Los perfiles, las
+  sesiones y los tokens cuelgan de la cuenta por cascada. `consents` **no** tiene clave foránea y nunca se borra (ver «Datos que se conservan y se purgan»).
+- **Sesión:** el token opaco viaja en el header **`X-Qep-Buyer-Session`**; en base sólo está su hash. Vence a los 30 días absolutos o tras 7 sin uso.
+- **Tokens de correo:** verificación 24 h, restablecer contraseña 1 h; de un solo uso.
+- **Sin auditoría** en `audit.entries`: la tabla es por tenant y el comprador no pertenece a ninguno.
+
+### Contrato HTTP para el storefront
+
+Todas las rutas cuelgan de `/api/v1/public/stores/{host}/buyer` y heredan lo de la tienda pública:
+
+- `X-Qep-Storefront-Key` obligatorio: sin ella `401 store.public.client_unauthorized`.
+- `X-Qep-Visitor-Ip` con la IP del visitante (confiable sólo con la clave). Obligatorio donde la tabla dice «IP: sí»: sin él `422 store.public.visitor_ip_required`.
+- **El BFF DEBE mandar `X-Qep-Visitor-Ip` en toda ruta `/buyer`,** también donde la tabla no lo exige: es la partición del límite por IP.
+  Sin él, el límite cae a la IP del socket (`StorefrontClient.VisitorIp`), que detrás del BFF es la misma para todos los visitantes:
+  uno solo agotaría el cupo de todos.
+- `{host}` que no es una tienda publicada y activa: `404 store.public.not_found`.
+- Errores como `application/problem+json` con `code` y `traceId`; los `422 validation.failed` llevan `errors` (claves PascalCase de FluentValidation,
+  p. ej. `Password`, `Profile.Billing.Email`).
+- Toda ruta que lee cuerpo lo lee a mano con tope de **64 KB**: pasado el tope `413 store.public.body_too_large`; JSON ilegible o `null`,
+  `400 store.public.body_invalid`.
+- `429` sin cuerpo al pasar el límite. «Credenciales» = 10 por minuto, por ruta y por IP del visitante (política `StorefrontCredentials`);
+  «lectura» = el límite de lecturas de la tienda pública (300/min).
+- **Toda respuesta de `/buyer/*` lleva `Cache-Control: no-store`**, también el `429`, el `400`/`413` y el `401` de la clave. Lo pone
+  `BuyerNoStoreMiddleware` (Bootstrapper), registrado en `Program.cs` **antes** de `UseRateLimiter`.
+- **Sesión:** header `X-Qep-Buyer-Session: <token>`. Ausente, vacío, desconocido, vencido, revocado, de una cuenta borrada o emitido en otro host:
+  `401 store.buyer.session_invalid`. **Ese código, y sólo ese, es la señal para que el BFF borre la cookie.**
+
+#### Tipos compartidos
+
+```jsonc
+// BuyerProfile: mismos campos y reglas que billing/shipping de POST /order-requests (PublicBillingInput / PublicShippingInput).
+{
+  "billing": {
+    "name": "Ana Pérez", "identificationType": "CC", "identificationNumber": "1020304050",
+    "phone": "3001234567", "email": "ana@correo.com", "address": "Cra 1 # 2-3",
+    "country": "CO", "departmentId": "<guid>", "cityId": "<guid>", "cityName": null
+  },
+  "shipping": null,                 // o { "recipientName", "phone", "address", "country", "departmentId", "cityId", "cityName" }
+  "shippingSameAsBilling": true     // true ⇔ shipping es null (si no, 422 en Shipping)
+}
+// Buyer
+{ "email": "ana@correo.com", "profile": BuyerProfile | null }   // email = el de login, no el de facturación
+```
+
+El perfil **no** valida contra la tienda (país vendido, ciudad del departamento): eso lo sigue haciendo el pedido.
+
+#### Rutas
+
+| # | Método y ruta | Cuerpo | Éxito | Errores | Límite | IP | Turnstile | Sesión |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `POST /buyer/register` | `{ "email", "password", "acceptsDataPolicy": true, "turnstileToken", "profile": BuyerProfile \| null }` | `202` sin cuerpo | 422 `validation.failed` (`Email`, `Password`, `TurnstileToken`, `Profile.*`), 422 `store.buyer.consent_required`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 2 | `POST /buyer/email/verify` | `{ "token" }` | `204` | 422 `validation.failed` (`Token`), 422 `store.buyer.token_invalid` (inexistente, vencido o usado: no se distingue) | credenciales | no | no | no |
+| 3 | `POST /buyer/email/resend` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 4 | `POST /buyer/session` (login) | `{ "email", "password" }` | `200` `{ "sessionToken": "<43 chars base64url>", "expiresAt": "2026-12-07T15:04:05+00:00", "buyer": Buyer }` | 422 `validation.failed` (sólo vacíos), 401 `store.buyer.credentials_invalid` (email inexistente o contraseña mala, mismo cuerpo), 403 `store.buyer.email_not_verified` (contraseña correcta, sin verificar) | credenciales | opcional | no | no |
+| 5 | `GET /buyer/session` | — | `200` `Buyer` | 401 `store.buyer.session_invalid` | lectura | no | no | sí |
+| 6 | `DELETE /buyer/session` (logout) | — | `204` siempre (idempotente; sin sesión válida en ese host no hace nada) | — | lectura | no | no | opcional |
+| 7 | `PUT /buyer/profile` | `BuyerProfile` | `200` `Buyer` | 401 `store.buyer.session_invalid`, 422 `validation.failed` | lectura | no | no | sí |
+| 8 | `POST /buyer/password` (cambiar) | `{ "currentPassword", "newPassword" }` | `204`; revoca las **demás** sesiones, la actual sigue | 401 `store.buyer.session_invalid`, 422 `validation.failed` (`NewPassword`), 422 `store.buyer.password_incorrect` (`errors.CurrentPassword`) | credenciales | no | no | sí |
+| 9 | `POST /buyer/password/forgot` | `{ "email", "turnstileToken" }` | `202` sin cuerpo | 422 `validation.failed`, 422 `store.buyer.captcha_invalid`, 503 `store.captcha.unavailable` | credenciales | sí | sí | no |
+| 10 | `POST /buyer/password/reset` | `{ "token", "newPassword" }` | `204`; marca el email verificado y revoca **todas** las sesiones; no abre sesión | 422 `validation.failed` (`NewPassword`, `Token`), 422 `store.buyer.token_invalid` | credenciales | no | no | no |
+| 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
+| 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
+| 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
+| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está `Open` con pago `PaymentPending`, sin comprobantes, sin preparar y sin facturar, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
+
+Notas:
+
+- Orden de chequeos (1, 3, 9): IP, host (404), cuerpo (422), consentimiento (sólo 1), Turnstile, efecto. Un rechazo no escribe nada.
+- Contraseña actual mala en cambiar contraseña o eliminar cuenta es `422 store.buyer.password_incorrect`, **no** 401: un 401 con sesión válida haría que el BFF
+  borre la cookie.
+- `expiresAt` es el vencimiento **absoluto**; la sesión además vence tras 7 días sin uso, así que la cookie puede durar más que la sesión: el BFF lo resuelve con el 401.
+- 1, 3 y 9 responden `202` exista o no la cuenta (anti-enumeración). 1 con email ya **verificado** envía «ya tienes una cuenta» y no toca nada; con email **sin verificar**
+  reemplaza contraseña y perfil, invalida verificaciones previas y reenvía la verificación.
+- Login de cuenta sin verificar con contraseña correcta es `403` y **no** reenvía solo: el storefront ofrece reenviar (ruta 3, con Turnstile).
+- El email se normaliza (trim y minúsculas) en toda entrada: registro, login, reenviar, olvidé y checkout caen en la misma cuenta.
+
+#### Pedidos del comprador
+
+Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
+
+- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`, `isStorePickup` (en la lista para que la tienda muestre «Listo para recoger» o «Enviado» sin abrir el detalle). `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
+- **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
+- **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
+  1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
+     sirve (vencida, de otro host, de cuenta borrada) o una falla de Buyers (queda un `Warning`) deja un pedido de invitado; sin `updateProfile` el recibo
+     no se marca con `buyerSessionRejected`.
+  2. **En el alta diferida de `createAccount`.** Cuando `BuyerSignupRequestedWorker` crea la cuenta o reemplaza una sin verificar, enlaza el pedido del
+     mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
+     toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
+     sin cuenta, sin reintento.
+- **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
+- Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
+#### Cambios en `POST /order-requests`
+
+Cuerpo: dos campos opcionales nuevos (todo lo demás igual).
+
+```jsonc
+{
+  "...": "campos de hoy",
+  "createAccount": { "password": "…", "acceptsDataPolicy": true },   // opcional; null o ausente = no crear
+  "updateProfile": false                                              // opcional; default false
+}
+```
+
+- `createAccount`: contraseña 10–128, si no `422 validation.failed` con `errors["CreateAccount.Password"]`; `acceptsDataPolicy` distinto de `true`,
+  `422 validation.failed` con `errors["CreateAccount.AcceptsDataPolicy"]`. Se valida con el resto del cuerpo, **antes** de aceptar el pedido. Email de login =
+  `billing.email`; perfil = `billing`, `shipping`, `shippingSameAsBilling = (shipping == null)`.
+- Con `X-Qep-Buyer-Session` válido el pedido queda enlazado a la cuenta (ver «Pedidos del comprador»), con o sin `updateProfile`.
+- `updateProfile: true` usa el header `X-Qep-Buyer-Session` (el BFF lo manda con la sesión). Si falta o no sirve, el pedido se acepta igual
+  (`201`) y el recibo lleva `buyerSessionRejected: true`: no es un error. Con `createAccount` a la vez, `422 validation.failed` en `CreateAccount`.
+- Recibo `201`: suma **`"buyerSessionRejected": bool`**, `true` sólo si se pidió `updateProfile` y la sesión no sirve (ausente, vencida, de otro host, de cuenta borrada).
+  El pedido se acepta igual y el BFF borra la cookie.
+
+```jsonc
+{ "id": "<guid del pedido>", "number": "PED-2026-0001", "total": 10000, "currency": "COP", "buyerSessionRejected": false }
+```
+
+- Reintento con el mismo `clientRequestId`: el primer recibo, `buyerSessionRejected: false`, sin crear cuenta ni tocar el perfil.
+- La cuenta se crea de forma asíncrona y durable (un mensaje del outbox que commitea en la transacción de Store posterior al pedido), así que puede tardar unos segundos en existir después del `201`.
+  Sus errores (email existente, fallo al guardar) nunca cambian la respuesta.
+
+#### Correos
+
+Los envía Notifications; los enlaces apuntan al host de la tienda:
+
+| Evento | Enlace |
+| --- | --- |
+| Verificación (registro, reenvío, checkout con email nuevo o sin verificar) | `https://{host}/cuenta/verificar?token=<token>` |
+| «Ya tienes una cuenta» | `https://{host}/cuenta/ingresar` y `https://{host}/cuenta/olvide` |
+| Restablecer contraseña | `https://{host}/cuenta/restablecer?token=<token>` |
+| Cuenta eliminada | sin enlace |
+
+### Eventos de outbox
+
+Todos viven en `platform.outbox_messages`.
+
+| Evento | Lo escribe | Lo consume | Lleva |
+| --- | --- | --- | --- |
+| `store.buyer-signup-requested.v1` | Store, en la **misma transacción de Store posterior al pedido** (`createAccount`); idempotente por `orderId` (`buyers.processed_signups`) | `BuyerSignupRequestedWorker` (Buyers) | email normalizado, perfil y **sólo `passwordHash`**, nunca la contraseña |
+| `buyers.email-verification-requested.v1` | Buyers | `BuyerVerificationDeliveryWorker` (Notifications) | token de verificación en claro |
+| `buyers.existing-account-notice.v1` | Buyers | `BuyerExistingAccountDeliveryWorker` | sin token |
+| `buyers.password-reset-requested.v1` | Buyers | `BuyerPasswordResetDeliveryWorker` | token de restablecer en claro |
+| `buyers.account-deleted.v1` | Buyers | `BuyerAccountDeletedDeliveryWorker` | sin token |
+
+Cada consumidor lleva su propio inbox (el de Buyers es `buyers.inbox_messages`). Los cuatro correos comparten `BuyerEmailPayload`
+(`AccountId`, `Email`, `StoreHost`, `StoreName`, `Token`).
+
+### Cómo se conecta con Store
+
+- **Alta desde el checkout.** Store hashea la contraseña al validar el pedido (`IStoreBuyerAccounts.HashPassword`, adaptador `StoreBuyerAccounts` en Bootstrapper) y
+  escribe el evento de alta con sólo el `passwordHash`. Si el hash falla, el pedido se acepta sin alta. El alta la procesa `BuyerSignupRequestedWorker`; si el email ya
+  tiene cuenta, el pedido no se entera.
+- **`updateProfile`.** Store llama `IStoreBuyerAccounts.ReplaceProfileAsync`; el adaptador llama a `ReplaceBuyerProfileFromOrder`, que resuelve la sesión por host y
+  reemplaza el perfil. Devuelve si la sesión sirvió; si no, el recibo lleva `buyerSessionRejected: true`.
+- **Dependencias entre módulos.** Store no referencia Buyers (el adaptador vive en Bootstrapper) y `Notifications.Infrastructure` referencia
+  `Buyers.Application` para leer `BuyerIntegrationEvents` y `BuyerEmailPayload`. Las reglas viven en `BuyersLayerTests` y `StoreLayerTests`, en
+  `tests/ArchitectureTests/ArchitectureTests`.
+
+### Datos que se conservan y se purgan
+
+- **El consentimiento no se borra nunca.** `buyers.consents` guarda email, IP, host, versión y URL de la política (`BuyerDataPolicy.Version`) de cada aceptación, y
+  sobrevive a la cuenta: no tiene clave foránea y la purga no lo toca. Borrar la cuenta lo conserva.
+- **Las notificaciones del comprador se anonimizan al borrar la cuenta.** Cuando `BuyerAccountDeletedDeliveryWorker` cierra el mensaje de cuenta
+  eliminada —haya salido el correo o haya fallado, porque ninguno de los dos se reintenta—, toda fila de `notifications.notifications` sin tenant,
+  con `recipient_id` de la cuenta y plantilla `buyers.*` (ésta incluida) queda con `recipient_id` vacío (`Guid.Empty`) y `recipient_address` vacío,
+  en el mismo guardado que el `processed_at`. Las filas no se borran: estado, plantilla y fechas siguen contando para las estadísticas de envío.
+- **Ningún correo del comprador sale después del borrado.** En la misma transacción que borra la cuenta, Buyers borra de `platform.outbox_messages`
+  los demás correos de esa cuenta (verificación, «ya tienes una cuenta», restablecer; por `payload->>'accountId'`). Y uno que ya estaba en vuelo
+  lo frena Notifications: antes de enviar, si el outbox tiene un `buyers.account-deleted.v1` de la cuenta, no envía y guarda la fila ya
+  anonimizada, `Failed` con `buyer_account_deleted`; si el borrado se confirma mientras sale el correo, la fila se anonimiza al guardarse.
+- `BuyerHousekeepingWorker` corre cada hora y borra en masa:
+  - cuentas **sin verificar** cuyo último registro o reenvío de la verificación (`updated_at`) tiene más de 7 días (perfil, sesiones y tokens se van
+    por cascada);
+  - sesiones revocadas, vencidas o sin uso en 7 días, y tokens usados o vencidos;
+  - de `platform.outbox_messages` (llevan el hash de la contraseña o tokens en claro, y nada más las borraría): los 4 correos del comprador con
+    `occurred_at` de hace más de **24 h**, sólo por edad; el alta (`store.buyer-signup-requested.v1`) sólo cuando `buyers.inbox_messages` tiene la fila
+    procesada del consumidor `buyers.signup-requested` para ese mensaje;
+  - `buyers.inbox_messages` procesados con más de **30 días** cuyo mensaje ya no está en el outbox, y `buyers.processed_signups` con más de 30 días.
+  - Cada paso corre aislado: uno que falla se registra con el tipo de la excepción y los demás siguen.
+- Workers: `BuyerSignupRequestedWorker` (poll de 15 s) y `BuyerHousekeepingWorker` en Buyers; en Notifications, un entregador por cada correo del comprador.
+
+### Pendientes del owner
+
+Datos legales y plazo de conservación de la política; y el nombre del remitente (hoy se usa sólo `Notifications:Infobip:SenderEmail`).
+`BuyerDataPolicy.Version` es `1.0.0`, la versión que el owner publicó el 2026-11-08 en la página de la tienda.
+
 ## API implementada
 
 Inventario completo de la superficie HTTP. Las secciones siguientes desarrollan
@@ -1030,7 +1311,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
-| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders-settings`       | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `tenancy.settings.read` / `.update` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
@@ -1394,21 +1676,76 @@ cobro, partes (facturación y envío), líneas con la foto del producto y totale
 mismas reglas que la cotización. `quotationId` es opcional y `source` dice de dónde nació:
 
 - `Quotation`: `POST /quotations/{id}/order` **copia** la cotización al pedido. La cotización queda
-  `Converted` y congelada; editar el pedido pendiente (`PUT /orders/{id}`, `POST /orders/{id}/items`)
+  `Converted` y congelada; editar el pedido (`PUT /orders/{id}`, `POST /orders/{id}/items`)
   cambia `order_items`, nunca la cotización.
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
-  una cotización más el estado de pago y los comprobantes; `POST /orders/preview` lo calcula sin
+  una cotización más los comprobantes (un `paymentStatus` en el cuerpo se ignora: el pago lo calcula
+  el sistema); `POST /orders/preview` lo calcula sin
   guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
   sí la exige). Exige cliente completo con CUC, como convertir. Permiso
   `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).
 
-Todos nacen `Pending` y publican `quotations.order.created.v1` con `source` y `quotationId`
+Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quotationId`
 (nulo sin cotización). Pipeline lo consume: un pedido sin cotización gana el único negocio abierto
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Los cuatro ejes del pedido
+
+Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
+la API con su nombre:
+
+| Eje | Campo | Valores | Quién lo mueve |
+| --- | --- | --- | --- |
+| Estado | `status` | `Open`, `Archived`, `Cancelled` | `archive`/`unarchive` (`.manage`), `cancel` (`.cancel`), el archivado automático |
+| Pago | `paymentStatus` | `PaymentPending`, `PartialPaymentReceived`, `PendingVerification`, `FullPaymentReceived` | el sistema con los comprobantes; `mark-paid`/`unmark-paid` (`.approve`); Shopify |
+| Envío | `fulfillmentStatus` | `NotPrepared`, `Prepared` | `prepare`/`unprepare` (`.manage`) |
+| Facturado | `invoiced` (+ `invoicedAt`, `invoicedBy`) | marca | `invoice`/`uninvoice` (`.invoice`) |
+
+- **El pago lo calcula el sistema.** Sin comprobantes es `PaymentPending`; con menos que el neto,
+  `PartialPaymentReceived`; con lo que lo cubre (comparado como lo muestra la moneda: pesos enteros en
+  COP), `PendingVerification` («Por verificar»). `FullPaymentReceived` («Pagado») sólo se alcanza con
+  `mark-paid`, que deja `paidMarkedAt`/`paidMarkedBy`, o con el pago que sincroniza Shopify en un pedido
+  sin comprobantes. Quitar un comprobante de un pedido pagado (por `DELETE …/proofs/{id}` o por
+  `proofs.removeIds` del `PUT`), o corregir su monto (`proofs.update` del `PUT` o `updatedProofs` de
+  `POST …/proofs`), exige `.approve`: con sólo `.manage` es `403`. `balance` es neto menos
+  consignado (negativo es sobrante).
+- **Editable** es `Open`, sin preparar y sin facturar (`Order.IsEditable`). Pagado sigue siendo editable;
+  preparado congela el pedido. Fuera de eso, `PUT`, `preview`, `items` y `proofs` responden
+  `422 order.order.not_editable`. Anular desde la consola tampoco deja un preparado
+  (`order.order.already_prepared`) ni un archivado; la anulación que llega de Shopify sí gana sobre los
+  dos y conserva la marca de preparado.
+- **Facturar es una marca, no un estado**: `status` no cambia. Por defecto exige pagado
+  (`order.order.not_paid`); no exige preparado.
+- **El listado oculta los archivados** si no se pide `status`. Filtros nuevos: `fulfillmentStatus` e
+  `invoiced` (`true`/`false`), también en la exportación.
+- **Ajustes por tenant** en `GET`/`PUT /orders-settings` (`tenancy.settings.read` / `.update`; los tres
+  campos son obligatorios en el `PUT`):
+
+  | Campo | Por defecto | Efecto |
+  | --- | --- | --- |
+  | `requirePaymentProofToMarkPaid` | `false` | `mark-paid` exige al menos un comprobante (`order.order.payment_proof_required`) |
+  | `requireFullPaymentToInvoice` | `true` | `invoice` exige pagado (`order.order.not_paid`) |
+  | `autoArchive` | `false` | un pedido que queda pagado y preparado se archiva solo, con historial «Archivado automáticamente» |
+
+- Cada acción deja historial (`PaidMarked`, `PaidUnmarked`, `Prepared`, `PreparationUndone`, `Archived`,
+  `Unarchived`) y auditoría (`quotation.order.paid_marked`, `…paid_unmarked`, `…prepared`,
+  `…preparation_undone`, `…archived`, `…unarchived`). `POST …/approve` ya no existe; el permiso
+  `quotations.order.approve` conserva su nombre y ahora se llama «Marcar pedidos como pagados».
+- **Migración `OrderStatusAxes`:** `Pending`, `Approved` e `Invoiced` pasan a `Open` (la marca de facturado
+  queda); quien aprobó un pedido pagado queda como quien lo marcó pagado; un `FullPaymentReceived` que nadie
+  aprobó vuelve a lo que digan sus comprobantes (`PaymentPending`, `PartialPaymentReceived` o
+  `PendingVerification`, con el neto redondeado como lo muestra la moneda), salvo los de Shopify sin
+  comprobantes, cuyo pago lo dice la tienda. **Es sin pérdida:** `approved_at` y `approved_by` se quedan como
+  columnas históricas, y el estado y el pago de antes quedan respaldados en `legacy_status` y
+  `legacy_payment_status`. Ninguna de las cuatro está en el modelo de EF; todas llevan un `COMMENT` que lo dice.
+  Para revertir, baja a `AddOrderBuyerAccount` con `$env:ConnectionStrings__QepDatabase` apuntando a la base
+  (`dotnet ef database update AddOrderBuyerAccount --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext`):
+  cada pedido anterior vuelve exacto a su estado y su pago, y el `Down` borra lo que agregó el `Up`. Un pedido
+  creado después no tiene respaldo y se traduce al esquema viejo (spec 2026-11-10 §8).
 
 **Rollback.** El código anterior no sabe escribir las siete columnas que `AddOrderOwnData` deja
 `NOT NULL` sin default: sin este paso, toda conversión falla con `23502`. Se corre **antes** de
@@ -1430,6 +1767,12 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
+**Pagado y costo congelado.** `Order.PaidAt` (columna `paid_at`) es el instante en que el pedido llegó a pago completo (nulo si no está pagado); no viaja en ninguna respuesta de la API, es de uso interno del reporte de margen. Con él, el costo unitario de cada línea (`unit_cost`) se congela desde el costo de la variante en ese momento y no cambia si la variante se edita después. Toda vía a `FullPaymentReceived` pasa `OrderLineCosts` al dominio.
+
+### Reporte de margen
+
+`GET /api/v1/tenants/{tenantId}/reports/margin` y `GET …/reports/margin/summary` (permiso `reporting.margin.read`) leen el costo **congelado** en cada línea vendida (`unit_cost`), de `quotations.order_items` y `pos.sale_lines`, por producto y variante. Una línea sin costo no suma al margen y se informa aparte. `MarginReportSource` (Bootstrapper) es SQL crudo, como `OrdersReportSource`.
+
 ### Reporte de pedidos: pedidos y ventas POS
 
 `GET /api/v1/tenants/{tenantId}/reports/orders` y `GET …/reports/orders/summary` leen **la unión** de
@@ -1447,7 +1790,7 @@ pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran lo
 - **Lo anulado no suma**: un pedido `Cancelled` y una venta `Voided` no cuentan en ningún agregado ni en el período
   anterior, pero se ven en el listado con su estado. El estado de una venta es `Completed` o `Voided`, y su
   estado de pago siempre `FullPaymentReceived`: por eso `paymentStatus` con cualquier otro valor
-  (`PartialPaymentReceived` o `PaymentPending`) la excluye.
+  (`PartialPaymentReceived`, `PaymentPending` o `PendingVerification`) la excluye.
 - **El cajero entra como asesor**: `cashier_id` es una membresía, igual que el `advisor_id` del pedido. El filtro
   `advisorId`, el ranking por asesor y el alcance de quien no tiene `reporting.all_advisors.read` valen para los
   dos. No cambia ningún permiso.
@@ -1460,12 +1803,13 @@ pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran lo
 WhatsApp, como `POST /quotations/{id}/send` lo hace con la cotización. Contrato completo y códigos de
 error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizaciones-y-pedidos.md).
 
-- **Permiso** `quotations.order.manage`. **Cuerpo opcional** `{ "recipient": "Customer" | "Billing" }`
+- **Permiso** `quotations.order.manage`. **Cuerpo opcional** `{ "recipient": "Customer" | "Billing", "connectionId": "…" }`
   (default `Customer`): el teléfono lo resuelve el backend — el del cliente, o el de la facturación
-  propia del pedido (`order.order.billing_phone_missing` si no la tiene).
+  propia del pedido (`order.order.billing_phone_missing` si no la tiene). `connectionId` es la conexión elegida
+  cuando hay varias disponibles para pedidos (spec 2026-11-09 D8).
 - **Responde el `OrderDetailResponse` entero**, con la entrada `Sent` en el historial.
-- **No cambia el pedido**: ni estado ni `version`. Se manda en `Pending`, `Approved` e `Invoiced`; un
-  anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
+- **No cambia el pedido**: ni estado ni `version`. Se manda abierto o archivado, pagado o no, preparado
+  o facturado; un anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
   (`OrderHistoryEventType.Sent`, que se guarda como texto: sin migración) y auditoría
   `quotation.order.sent`. No exige cliente completo: un pedido de Shopify puede tenerlo incompleto.
 - **El PDF es el de la cotización** (`quotation.typ`, layout único por decisión del owner) con
@@ -1473,17 +1817,28 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
   llama `Pedido-<número>.pdf`. Sale del detalle del pedido (`QuotationPdfDocumentMapper.FromOrder`),
   nunca de la cotización de origen, que puede no existir.
 - **Sin caché ni migración**: se genera en cada envío y se guarda bajo `quotations/tenants/…/orders/`
-  (lo limpia la misma regla de lifecycle), y la copia pública para Meta sale como la de la cotización.
-  Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar un pedido es raro.
+  (lo limpia la misma regla de lifecycle); la copia pública sólo se publica para Zenvia, como en la cotización
+  (Meta lee el PDF privado por su clave). Cachearlo pediría una tabla invalidada por `Order.Version`, y enviar
+  un pedido es raro.
 - **Sin registro propio de fallas**: el log de fallas de la API guarda la excepción, y `order.send.failed`
   nombra el paso.
-- **Plantilla propia en Zenvia**: el `orderTemplateId` de la conexión de Zenvia del tenant, ver
-  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia). Sin él, enviar un pedido responde
-  `order.whatsapp.not_configured` antes de generar el PDF; sin conexión, `order.whatsapp.no_channel`, y con
-  más de una, `order.whatsapp.channel_required`.
-- **El pedido sigue saliendo sólo por Zenvia** (DP-1): no recibe `connectionId`, no lee la elección guardada del
-  tenant y, con una conexión de Meta sola, responde `order.whatsapp.no_channel`. Lo de
-  [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia) sobre elegir canal aplica sólo a la cotización.
+- **Sale por el canal del tenant, como la cotización** (spec 2026-11-09, cierra DP-1 y DP-2). Los canales
+  disponibles para pedidos (D6) son: Meta con la plantilla de sistema `qep_pedido` **APPROVED**
+  (`MessageTemplateKind.Order`, se aprovisiona con `POST …/template-management/order`, ver
+  [Plantillas de WhatsApp desde QEP](#plantillas-de-whatsapp-desde-qep)) y Zenvia con token, número, `templateId`
+  **y** `orderTemplateId` (ver [Plantilla de WhatsApp](#plantilla-de-whatsapp-zenvia)). Una Zenvia sin
+  `orderTemplateId` simplemente no está disponible para pedidos: `order.whatsapp.not_configured` ya no sale de la
+  selección (sigue como chequeo defensivo del sender de Zenvia). La selección (D7) es la misma que la de la
+  cotización, con prefijo `order.whatsapp.`: sin canal `no_channel`; varios sin elección guardada
+  `channel_required`; elección guardada disponible → sale por ella (otro `connectionId` es `channel_already_set`);
+  elección guardada **no disponible para pedidos** → se ignora; `connectionId` que no está en la lista →
+  `channel_unavailable`. La elección es una por tenant y **compartida** con la cotización: un envío de pedido con
+  `connectionId` la guarda igual (misma auditoría, misma transacción, nunca si el envío falla). La pantalla pregunta
+  por los canales de pedido con `GET /quotations/whatsapp-channels?document=order`.
+- **Por Meta** (D9): la fila `Order` aprobada se relee al enviar (`order.whatsapp.send_failed (template_not_approved)` si
+  ya no está), el PDF viaja como encabezado de documento con el nombre `Pedido-<número>.pdf` y el mensaje queda en el
+  hilo de Mensajería con las variables `nombre_contacto`, `numero_pedido`, `valor_total` (más `asesor`, `empresa` y
+  `saludo` si la plantilla las usa).
 
 ### Catálogo: opciones, variantes y galería
 
@@ -1545,6 +1900,7 @@ Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.pr
   transacción del `PUT`. Borrar una variante sin uso borra en cascada su historial de precios.
 - **Escalas por variante**: una escala sin agrupación cuenta sólo la cantidad de su variante (6 M y 6 L
   no suman 12); una con `allowGrouping` suma entre variantes, como antes sumaba entre productos.
+- **Costo por variante**: `costs` es un mapa por código de moneda (p. ej. `{ "COP": 12000 }`), sin conversión entre monedas. En la respuesta de cada variante siempre está presente: `null` = el llamador no tiene `catalog.product_cost.read` (`manage` también cuenta como lectura) y `{}` = la variante no tiene costo. En el `POST/PUT /products`, `null` o ausente conserva el costo guardado y un objeto lo reemplaza (`{}` lo borra). Escribirlo exige `catalog.product_cost.manage`; sin él, 403 `catalog.product_cost.forbidden`. Cada monto es > 0 y con máximo 2 decimales; si no, 422 bajo `Variants[i].Costs.<CUR>`.
 - **Historial de precios** por variante: `GET /reports/price-changes` y `/summary` aceptan `variantId`, y
   el resumen desglosa cada producto en `variants[]`, todas incluso en cero.
 - **Excel de productos**: una fila por variante (activas e inactivas), con `Código`, `Código de barras`,
@@ -1617,9 +1973,12 @@ variante por defecto), y siguen otra regla (owner, 2026-09-26):
 - El nombre visible se guarda hasta 200 caracteres: uno más largo (producto de 200 más los valores de
   opción) se recorta a 200 con «…» al congelarse (`SnapshotText.Fit`); el borrador, que lee en vivo, lo
   muestra entero. El POS guarda el suyo con la misma regla.
-- Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo; no hay
-  backfill, porque Quotations no lee las tablas de Catalog. Se congelan solas si la cotización se
-  reenvía o se convierte.
+- Las líneas enviadas antes de este cambio no tienen foto y se siguen leyendo en vivo. No hay
+  backfill masivo, porque Quotations no lee las tablas de Catalog: la foto se completa **al borrar el
+  producto** (`DELETE /catalog/products/{productId}`), que congela código y nombre de las líneas que
+  todavía no la tienen (cotizaciones que no son borrador y pedidos) en la misma transacción del borrado.
+  Las demás se congelan solas si la cotización se reenvía o se convierte. En un borrador la línea del
+  producto borrado desaparece y la cotización se recotiza.
 - Una cotización anulada desde borrador no congela nada (ya no se usa ni en pedidos ni en el
   Excel). Ninguna transición devuelve una cotización a borrador.
 
@@ -1868,7 +2227,7 @@ el spec del slice; esta tabla es el inventario.
 | `GET /products/by-code`            | `pos.sale.create`      | El escáner: la variante por código de barras exacto y, si ninguna lo tiene, por su `Code` |
 | `POST /sales/preview`              | `pos.sale.create`      | Calcula totales de un carrito sin guardar nada; cada línea es una variante (`variantId`) |
 | `POST /sales`                      | `pos.sale.create`      | Crea la venta, con una línea por variante; idempotente por el `id` del cliente (201 la primera vez, 200 al repetir); `customerId` opcional |
-| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento o CUC |
+| `GET /customers`                   | `pos.sale.customer`    | Clientes elegibles de la caja: activos con documento, hasta 20, por nombre, documento, CUC o teléfono (desde 7 dígitos, sin importar el formato) |
 | `POST /customers`                  | `pos.sale.customer`    | Alta rápida: ficha incompleta con documento; 422 `pos.customer.identification_taken` trae `existing` |
 | `GET /sales/{saleId}`              | `pos.sale.read`        | Detalle de una venta                                                             |
 | `GET /sales`                       | `pos.sale.read`        | Lista paginada de ventas; `number` y `customerDocument` buscan por un pedazo     |
@@ -2317,6 +2676,16 @@ el bucket se configuran bajo `Storage:R2`; nunca se entregan al cliente.
 Para AWS CLI se incluye la variante envuelta en `CORSRules` en
 [`ops/r2-cors.aws.json`](ops/r2-cors.aws.json).
 
+**Fotos de producto liberadas.** Borrar un producto, o quitar una foto de su galería con el `PUT`,
+escribe `catalog.product.images-released.v1` (`{ tenantId, fileIds }`, sólo si la lista no está vacía) en el
+outbox, en la misma transacción. `ProductImageReleaseWorker` (Storage) lo consume con el inbox
+`storage.inbox_messages` y, por cada archivo, consulta las `IFileReferenceProbe`: si otra galería (sonda de
+Catalog) u otro dueño lo sigue referenciando, lo salta. Sólo purga archivos `Product` sin referencias, y
+siempre borra primero los objetos (clave del archivo, copia pública y cada variante) y después marca
+el `FileResource` como `Purged`, auditado como `storage.file.purged` / `product_image_released`. Para
+la copia pública reutiliza la despublicación, así que una foto publicada pierde `PublicStorageKey` y
+`PublishedAt`; es a propósito.
+
 ### Reportes exportados (`exports/`)
 
 La exportación del padrón de clientes (`POST /tenants/{tenantId}/customers/export`) y las de los
@@ -2467,9 +2836,12 @@ en borrador con `SendFailed` en el historial y no dicen por qué canal fue.
 
 - `GET /quotations/whatsapp-channels` lista los canales (Meta primero, después Zenvia, cada grupo por nombre)
   con `selectedConnectionId` (sólo si la elección sigue disponible) y `needsChoice`. Se lee con
-  `quotations.quotation.manage` **o** `tenancy.settings.update` (decisión del owner DP-F1, 2026-10-25: quien
-  elige el canal desde Configuración no necesariamente envía cotizaciones). Política
-  `QuotationsPolicies.WhatsAppChannelsRead`, y el handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny`.
+  `quotations.quotation.manage`, `quotations.order.manage` (spec 2026-11-09 D8: quien manda pedidos pregunta por
+  el canal) **o** `tenancy.settings.update` (decisión del owner DP-F1, 2026-10-25: quien elige el canal desde
+  Configuración no necesariamente envía cotizaciones). Política `QuotationsPolicies.WhatsAppChannelsRead`, y el
+  handler revalida con `QuotationsAuthorization.EnsureAuthorizedAny`. Acepta `?document=quotation|order` (default
+  `quotation`; otro valor es `422 quotation.whatsapp.document_invalid`): con `order` la lista es la de canales
+  disponibles para pedidos, y `selectedConnectionId` y `needsChoice` se calculan sobre ella.
 - `PUT /quotations/whatsapp-channel` con `{ "connectionId": "…" }` guarda la elección y responde con la forma
   del `GET`. Exige `tenancy.settings.update`; `422 validation.failed` (`errors.connectionId`) si falta o es
   `Guid.Empty`, y `422 quotation.whatsapp.channel_unavailable` si no está disponible.
@@ -2496,11 +2868,12 @@ conexión apunta a ella. Sus variables son las de la cotización menos
 | `order_number` | `Order.OrderNumber` |
 | `total` | `Order.Total`, con el mismo formato que la cotización |
 
-> **Decisión pendiente (owner):** el texto de la plantilla del pedido, su `name` y su aprobación en
-> Zenvia/Meta. Por eso `orderTemplateId` es opcional en la conexión: sin él, el endpoint responde
-> `order.whatsapp.not_configured`. Se crea con el mismo procedimiento de abajo, cambiando
-> `components.body.text` y quitando `valid_until` de `examples`, y su `id` se carga en la conexión de cada
-> tenant.
+> **Zenvia:** el texto de la plantilla del pedido, su `name` y su aprobación siguen siendo del owner. Por eso
+> `orderTemplateId` es opcional en la conexión: sin él, la conexión no está disponible para pedidos (spec 2026-11-09 D6)
+> y, si no queda otra, el endpoint responde `order.whatsapp.no_channel`. Se crea con el mismo procedimiento de abajo,
+> cambiando `components.body.text` y quitando `valid_until` de `examples`, y su `id` se carga en la conexión de cada
+> tenant. **Meta** no necesita nada de esto: la plantilla `qep_pedido` la aprovisiona QEP
+> (`POST …/template-management/order`).
 
 **Cambiar el texto de la plantilla no se hace acá: se crea una plantilla nueva en Zenvia y se
 edita el `templateId` de la conexión de Zenvia del tenant con el `id` que devuelva.** Meta no permite
@@ -2918,6 +3291,83 @@ en `true`.
   la foto de la lista.
 - **Respuestas citadas.** `replyTo` al enviar (el `id` de **nuestro** mensaje) y `Message.replyTo` al leer.
 
+#### Mensajes programados (spec 2026-11-09)
+
+Un asesor deja **un** mensaje (texto, imagen, documento, video, audio o nota de voz) para que salga solo a la hora
+elegida, mientras la ventana de 24 h siga abierta. Hay a lo sumo uno activo por conversación (`Scheduled`, `Sending` o
+`Failed` ocupan el cupo). Rutas bajo `/api/v1/tenants/{tenantId}/messaging/conversations/{conversationId}`; leer pide
+`messaging.conversation.read` y el resto `messaging.conversation.manage`, por permiso (no por ser el asignado ni el autor):
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /scheduled-message` | `{ scheduledMessage }`: el activo o `null`. Trae `canRetry`, calculado por el backend |
+| `POST /scheduled-messages` | Crea (JSON: `clientId`, `scheduledAt`, y `text` **o** `uploadId` + `fileName` con `caption`). `201`; un `clientId` repetido devuelve `200` con la fila ya guardada |
+| `POST /scheduled-messages/audio` | Nota de voz, multipart (`clientId`, `scheduledAt`, `file`) |
+| `PUT /scheduled-messages/{id}` | Edita `scheduledAt`, `text`, `caption`; lo omitido o `null` conserva lo guardado, `caption: ""` borra el pie. Sólo en `Scheduled` |
+| `POST …/{id}/cancel` | Cancela (`204`). Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/send-now` | «Enviar ya»: adelanta la hora y responde `202`; la salida la hace el worker en su próximo ciclo. Cuerpo `{ expectedVersion }`. Sólo en `Scheduled` |
+| `POST …/{id}/retry` | Reintenta un `Failed` (`202`); sólo si `canRetry`. Cuerpo `{ expectedVersion }`. `422 messaging.scheduled.outside_window` si la ventana ya no alcanza y `422 messaging.contact.blocked` si el contacto está bloqueado |
+| `POST …/{id}/discard` | Descarta un `Failed` (`204`). Cuerpo `{ expectedVersion }` |
+| `GET …/{id}/media` | El adjunto, con `Range` |
+
+La versión viaja en el cuerpo (`expectedVersion`), no en `If-Match`, como las campañas: una versión vieja responde `412`.
+
+**Estados.** `Scheduled` → `Sending` (el worker lo reclama con un lease de 10 min; al reclamar el mensaje vuelve a mirar que el
+lease siga siendo suyo y le queden al menos 30 s, y si no, no envía y deja la fila a la recuperación) → `Sent` o `Failed`; `Cancelled` sale de
+`Scheduled`. `Sent` y `Cancelled` son finales. `FailureCode` guarda el motivo, con los códigos de siempre de Mensajería
+(`messaging.window_closed`, contacto bloqueado, conexión no disponible, `messaging.message.rejected`…) más los propios de
+abajo.
+
+**Errores propios.** `422 messaging.scheduled.too_soon` (la hora va a menos de 1 min) y `outside_window` (pasa de
+`último entrante + 24 h − 2 min`, o no hay entrante); `409 already_exists`, `not_editable` (editar, cancelar o «Enviar ya»
+fuera de `Scheduled`) y `not_retriable` (reintentar o descartar fuera de `Failed`); `404 not_found`. En la fila:
+`messaging.scheduled.media_missing`, `messaging.scheduled.unknown_outcome` y `messaging.message.not_retriable` (D8b).
+
+**Decisiones que conviene no romper.**
+
+- **D4, no toca la conversación.** Enviar un programado no cambia el estado ni la asignación, ni apaga el asistente. El
+  mensaje queda con el autor del contenido y entra con `seen: 0` (sin el acuse de lectura que sí manda el envío directo).
+- **D5, `{saludo}`.** Se resuelve **al enviar**, con la hora del tenant en ese momento, en el texto o en el pie. Los topes
+  miden con el saludo más largo (13 caracteres).
+- **D6, adjuntos.** Viven en `messaging/scheduled/{tenantId}/{id}{ext}` hasta que sale el mensaje, que los promueve a su
+  clave final. Una fila terminal borra el suyo; si no puede, el worker lo barre (cada `PurgeIntervalHours`). El bucket **no
+  debe tener regla de expiración** sobre `messaging/scheduled/`, o una de más de 2 días: un programado puede esperar casi 24 h
+  y borrarle el archivo antes lo deja en `media_missing`.
+- **D8b, `retry_disabled`.** Descartar un programado `Failed` desde su tarjeta quema el `clientId` de su mensaje fallido: el
+  hilo ya no puede reenviarlo (`409 messaging.message.not_retriable`) y, si el ejecutor lo encuentra así, cierra el
+  programado con ese mismo código sin reenviar.
+- **D9, nunca reenvía solo.** Un `Sending` con el lease vencido (el pod murió) se **cierra**, no se reprograma: `Sent` si el
+  mensaje ya salió, `message.rejected` sólo si Meta lo rechazó (la fila `Failed` guarda su código), y `unknown_outcome` si no
+  hay rastro o la falla no la confirmó Meta (timeout, 5xx, red: `failure_code = -1`). Reenviar podría mandarlo dos veces.
+  El ejecutor sigue la misma regla: sin respuesta de Meta el programado es `unknown_outcome`, nunca `message.rejected`
+  (decisión del owner, 2026-11-10). Lo reintenta una persona con `retry`.
+
+Configuración: `Messaging:Workers:ScheduledPollSeconds` (5) es el tick del worker, y la purga usa `PurgeIntervalHours`.
+
+**Despliegue.** Backend primero: la migración `AddScheduledMessages` crea `messaging.scheduled_messages` y agrega
+`retry_disabled` a `messaging.messages`; el frontend sale después.
+
+**Bucket privado (`Storage:R2:Bucket`), antes de desplegar.** No hay nada que crear: lo que se revisa es que ninguna regla
+existente borre los adjuntos programados. Los limpia el código (al terminar cada fila y con el barrido de
+`PurgeIntervalHours`, 24 h por defecto); el bucket no tiene que hacerlo.
+
+1. **Ninguna regla de lifecycle cubre `messaging/scheduled/`.** Ni una propia ni una más amplia: una regla sobre
+   `messaging/` o sin prefijo también la alcanza. Si por política se quiere una red de seguridad, que expire a **más de 2
+   días** (un programado espera hasta 24 h; antes de eso el envío falla con `messaging.scheduled.media_missing`).
+2. **La regla de `messaging/staging/` sigue con su prefijo exacto** (`expire-messaging-staging`, 1 día; ver «Pendientes del
+   owner antes de producción: imágenes y documentos del asesor»). El adjunto se sube a staging y se copia a
+   `messaging/scheduled/` al programar, así que esa regla no lo toca después.
+3. **El CORS del bucket privado** es el mismo de los adjuntos del asesor ([`ops/r2-cors.aws.json`](ops/r2-cors.aws.json)): la
+   subida usa la misma sesión de staging. No cambia nada.
+
+Para verificar, en PowerShell (wrangler pide su propio login):
+
+```powershell
+npx wrangler r2 bucket lifecycle list <bucket-privado>
+```
+
+En la salida, ningún prefijo puede ser `messaging/scheduled/`, `messaging/` ni vacío, salvo con más de 2 días.
+
 #### Secretos en local
 
 ```powershell
@@ -3185,11 +3635,13 @@ bajo `/api/v1/tenants/{tenantId}/messaging/connections/{connectionId}/template-m
 
 | Método y ruta | Qué hace |
 | --- | --- |
-| `GET /` | La pantalla: conexión, estado de la plantilla de cotización, última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
+| `GET /` | La pantalla: conexión, estado de la plantilla de cotización (`quotationTemplate`) y de la de pedido (`orderTemplate`, spec 2026-11-09 D4), última sincronización y todas las plantillas con su estado y motivo de rechazo. Si la conexión nunca se sincronizó, la primera lectura llena el espejo. |
 | `POST /templates` | Crea una plantilla libre (texto, variables con nombre, pie, botones) y la manda a aprobar. |
 | `POST /quotation` | Aprovisiona la plantilla de cotización con su PDF de ejemplo; reintenta si la anterior fue rechazada; adopta una `qep_cotizacion` igual creada a mano en Meta. |
+| `POST /order` | Lo mismo para la plantilla de pedido `qep_pedido` (spec 2026-11-09 D1–D3): variables fijas más `numero_pedido` y `valor_total`, sin vigencia; una por conexión (`messaging.template.order_exists`), adopción de una `qep_pedido` compatible o `messaging.template.order_conflict`. Con ella aprobada, la conexión puede mandar pedidos. |
 | `POST /billing` | Aprovisiona las dos plantillas de cobro (recordatorio y mora). Igual que `POST /quotation`, el cuerpo HTTP es **opcional**: sin él se crea el texto base de la definición; con él, el tenant manda su propio texto. |
 | `GET /quotation/draft` | Borrador que abre la ventana de edición de la plantilla de cotización: texto inicial, variables disponibles con su etiqueta y si ya se puede editar. |
+| `GET /order/draft` | Lo mismo para la plantilla de pedido. |
 | `GET /billing/draft` | Lo mismo para las dos plantillas de cobro. |
 | `DELETE /templates/{templateId}` | Borra en Meta (sólo ese idioma) y en el espejo; 422 `messaging.template.in_use_by_campaign` si una campaña programada o enviándose la usa. |
 | `POST /sync` | Sincroniza el espejo contra Meta. |
@@ -3918,9 +4370,11 @@ prendido, al importador:
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
   (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
   `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
-- Después de importado, sólo se sincronizan el pago (un pedido `Pending` sin comprobantes; con comprobantes o ya
-  aprobado, el rechazo queda en `last_error`) y la cancelación (se anula en QEP a nombre del asesor; uno ya facturado
-  queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
+- Después de importado, sólo se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
+  contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
+  con `autoArchive`, un pedido que queda pagado y ya estaba preparado se archiva) y la cancelación (se anula en QEP a
+  nombre del asesor, aunque esté preparado o archivado, y el historial avisa que hay un paquete que recuperar; uno ya
+  facturado queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
   pero con su pedido en QEP también se anula.
 - `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
   actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
@@ -3940,7 +4394,7 @@ filtros (AND): los cancelados después de facturar que todavía tienen avisos si
 Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
 presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
 Quotations viaja tal cual; `invalid_payload: …` se vuelve `shopify.order.invalid_payload`; cualquier otra cosa (un
-nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibles son `order.order.not_pending`,
+nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibles son `order.order.not_editable`,
 `order.order.payment_has_proofs`, `order.order.not_found`, `tenancy.tenant.not_found`,
 `shopify.order.invalid_payload` y `shopify.order.sync_failed`; el texto de cada uno lo tiene el diccionario del frontend
 (`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en

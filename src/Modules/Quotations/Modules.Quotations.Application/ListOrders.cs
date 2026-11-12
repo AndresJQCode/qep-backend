@@ -5,7 +5,9 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Spec 2026-10-15 §6.1: cliente, CUC y asesor filtran columnas del pedido; <c>Source</c>
-/// es el filtro nuevo por origen (sin valor, todos).</summary>
+/// es el filtro nuevo por origen (sin valor, todos). Spec 2026-11-10 §5: sin <c>Status</c> no salen los
+/// archivados; <c>FulfillmentStatus</c> (<c>NotPrepared</c>/<c>Prepared</c>) e <c>Invoiced</c> (<c>true</c>/<c>false</c>)
+/// van al final para no correr los posicionales de quien ya construye la consulta.</summary>
 public sealed record ListOrdersQuery(
     Guid TenantId,
     Guid? ClientId,
@@ -21,10 +23,14 @@ public sealed record ListOrdersQuery(
     int PageSize,
     /// <summary>La zona IANA de quien filtra (<see cref="OrderListing.CalendarFor"/>). Sin ella, los
     /// días son los del tenant.</summary>
-    string? TimeZone = null) : IQuery<OrderPage>;
+    string? TimeZone = null,
+    string? FulfillmentStatus = null,
+    string? Invoiced = null) : IQuery<OrderPage>;
 
 /// <summary>Fila de la lista. <c>QuotationId</c> y <c>QuotationNumber</c> son nulos en un pedido manual
-/// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino.</summary>
+/// o externo; <c>Source</c> y <c>ExternalReference</c> dicen de dónde vino. <c>FulfillmentStatus</c> e
+/// <c>Invoiced</c> están para que la tabla pinte las columnas de envío y facturado sin pedir el detalle
+/// (spec 2026-11-10 §5).</summary>
 public sealed record OrderListItemDto(
     Guid Id,
     string OrderNumber,
@@ -36,6 +42,8 @@ public sealed record OrderListItemDto(
     string? AdvisorName,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     string? PaymentMethod,
     DateTimeOffset ConvertedAt,
     string Currency,
@@ -73,6 +81,8 @@ public sealed class ListOrdersHandler(
         var pageSize = QuotationPaging.NormalizePageSize(query.PageSize);
         var status = OrderListing.ParseStatus(query.Status);
         var paymentStatus = OrderListing.ParsePaymentStatus(query.PaymentStatus);
+        var fulfillmentStatus = OrderListing.ParseFulfillmentStatus(query.FulfillmentStatus);
+        var invoiced = OrderListing.ParseInvoiced(query.Invoiced);
         var source = OrderListing.ParseSource(query.Source);
         var advisorId = query.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
@@ -94,6 +104,8 @@ public sealed class ListOrdersHandler(
             advisorId,
             status,
             paymentStatus,
+            fulfillmentStatus,
+            invoiced,
             converted.From,
             converted.Before,
             query.OrderNumber,

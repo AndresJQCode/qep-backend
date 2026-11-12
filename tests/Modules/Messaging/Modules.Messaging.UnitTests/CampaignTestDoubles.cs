@@ -135,7 +135,17 @@ internal sealed class RecordingAudit : IMessagingAuditRecorder
     public void RecordHistorySync(
         Guid tenantId, Guid actorId, string action, Guid connectionId, DateTimeOffset occurredAt, IReadOnlyCollection<string> retriedTypes) =>
         throw new NotSupportedException();
+
+    public List<ScheduledMessageAuditCall> ScheduledMessages { get; } = [];
+
+    public void RecordScheduledMessage(
+        Guid tenantId, Guid actorId, bool bySystem, string action, Guid scheduledMessageId, DateTimeOffset occurredAt,
+        IReadOnlyCollection<string>? changedFields = null) =>
+        ScheduledMessages.Add(new ScheduledMessageAuditCall(tenantId, actorId, bySystem, action, scheduledMessageId, changedFields));
 }
+
+internal sealed record ScheduledMessageAuditCall(
+    Guid TenantId, Guid ActorId, bool BySystem, string Action, Guid ScheduledMessageId, IReadOnlyCollection<string>? ChangedFields);
 
 internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
 {
@@ -156,6 +166,16 @@ internal sealed class FakeUnitOfWork : IMessagingUnitOfWork
 
         Saves++;
         return Task.FromResult(1);
+    }
+
+    public Task<IMessagingTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IMessagingTransaction>(new FakeTransaction());
+
+    private sealed class FakeTransaction : IMessagingTransaction
+    {
+        public Task CommitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
 

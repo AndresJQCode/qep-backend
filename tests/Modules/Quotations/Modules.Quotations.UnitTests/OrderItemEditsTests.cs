@@ -30,13 +30,74 @@ public sealed class OrderItemEditsTests
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             lines.Select(line => new OrderLineInput(line.ProductId, line.ProductId, line.Quantity, line.UnitPrice, 0m, 0, line.Product)).ToArray(),
-            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
+            null, UpdatedBy, [], Now);
 
     private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
         Order order, StubPricingCatalog catalog, params OrderItemAddition[] desired) =>
+        ApplyAsync(order, catalog, new RecordingOrderVariantCostLookup(), desired);
+
+    private static Task<IReadOnlyList<OrderItemEdit>> ApplyAsync(
+        Order order, StubPricingCatalog catalog, RecordingOrderVariantCostLookup costs,
+        params OrderItemAddition[] desired) =>
         OrderItemEdits.ApplyAsync(
-            order, desired, catalog, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
+            order, desired, catalog, costs, TenantId, UpdatedBy, Now.AddDays(1), isRetail: false,
             TestContext.Current.CancellationToken);
+
+    // Spec costo de producto §4.3: un pedido pagado sigue editable y la línea nueva ya cuenta como vendida, así que
+    // congela al entrar. Sólo se busca la variante agregada; las que ya estaban congelaron al pagar.
+    [Fact]
+    public async Task AddingToAPaidOrderFreezesTheNewLine()
+    {
+        var existing = Guid.CreateVersion7();
+        var added = Guid.CreateVersion7();
+        var order = PendingOrder((existing, 1m, 100_000m, null));
+        order.MarkPaid(UpdatedBy, requirePaymentProof: false, order.WithoutCosts(), Now);
+        var catalog = new StubPricingCatalog(
+            Product(existing, "Vela de soja", 100_000m), Product(added, "Difusor", 50_000m));
+        var costs = new RecordingOrderVariantCostLookup(new Dictionary<Guid, decimal> { [added] = 500m });
+
+        await ApplyAsync(
+            order, catalog, costs, new OrderItemAddition(existing, 1m), new OrderItemAddition(added, 2m));
+
+        var call = Assert.Single(costs.Calls);
+        Assert.Equal("COP", call.Currency);
+        Assert.Equal([added], call.VariantIds);
+        var line = order.Items.Single(item => item.VariantId == added);
+        Assert.Equal(500m, line.UnitCost);
+        Assert.Equal(Now.AddDays(1), line.CostCapturedAt);
+    }
+
+    [Fact]
+    public async Task AddingToAnUnpaidOrderDoesNotLookUpCosts()
+    {
+        var existing = Guid.CreateVersion7();
+        var added = Guid.CreateVersion7();
+        var order = PendingOrder((existing, 1m, 100_000m, null));
+        var catalog = new StubPricingCatalog(
+            Product(existing, "Vela de soja", 100_000m), Product(added, "Difusor", 50_000m));
+        var costs = new RecordingOrderVariantCostLookup(new Dictionary<Guid, decimal> { [added] = 500m });
+
+        await ApplyAsync(
+            order, catalog, costs, new OrderItemAddition(existing, 1m), new OrderItemAddition(added, 2m));
+
+        Assert.Empty(costs.Calls);
+        Assert.Null(order.Items.Single(item => item.VariantId == added).CostCapturedAt);
+    }
+
+    // Un pedido pagado al que sólo se le cambia una cantidad no tiene nada nuevo que congelar.
+    [Fact]
+    public async Task ChangingAQuantityOnAPaidOrderDoesNotLookUpCosts()
+    {
+        var existing = Guid.CreateVersion7();
+        var order = PendingOrder((existing, 1m, 100_000m, null));
+        order.MarkPaid(UpdatedBy, requirePaymentProof: false, order.WithoutCosts(), Now);
+        var catalog = new StubPricingCatalog(Product(existing, "Vela de soja", 100_000m));
+        var costs = new RecordingOrderVariantCostLookup();
+
+        await ApplyAsync(order, catalog, costs, new OrderItemAddition(existing, 3m));
+
+        Assert.Empty(costs.Calls);
+    }
 
     [Fact]
     public async Task AddsProductsThatAreNotInTheOrderPricedFromTheCatalog()
@@ -279,7 +340,7 @@ public sealed class OrderItemEditsTests
             new OrderHeader(Guid.CreateVersion7(), UpdatedBy, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0)],
-            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now);
+            null, UpdatedBy, [], Now);
         var catalog = new StubPricingCatalog(Variant(CamisetaM, "M", 30_000m), Variant(CamisetaL, "L", 32_000m));
 
         var edits = await ApplyAsync(
@@ -297,7 +358,7 @@ public sealed class OrderItemEditsTests
         var order = PendingOrder((CamisetaM, 1m, 30_000m, null));
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, UpdatedBy, Now));
+            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, OrderLineCosts.None, UpdatedBy, Now));
 
         Assert.Equal("order.item.duplicate_product", error.Code);
         Assert.Single(order.Items);
@@ -316,7 +377,7 @@ public sealed class OrderItemEditsTests
                 new OrderLineInput(CamisetaM, Camiseta, 1m, 30_000m, 0m, 0),
                 new OrderLineInput(CamisetaM, Camiseta, 2m, 30_000m, 0m, 0),
             ],
-            OrderPaymentStatus.PaymentPending, null, UpdatedBy, [], Now));
+            null, UpdatedBy, [], Now));
 
         Assert.Equal("order.item.duplicate_product", error.Code);
     }

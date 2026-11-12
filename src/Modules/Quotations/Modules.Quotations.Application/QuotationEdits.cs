@@ -121,8 +121,16 @@ internal sealed class QuotationPartiesRequestValidator : AbstractValidator<Quota
         RuleFor(parties => parties.Billing!.IdentificationType)
             .Must(type => PartyFiscalTypesParser.SupportedIdentificationTypes
                 .Contains(type!.Trim(), StringComparer.OrdinalIgnoreCase))
-            .WithMessage("The identification type must be one of NIT, CC, CE or PASAPORTE.")
+            .WithMessage($"The identification type must be one of {string.Join(", ", PartyFiscalTypesParser.SupportedIdentificationTypes)}.")
             .When(parties => !string.IsNullOrWhiteSpace(parties.Billing?.IdentificationType));
+
+        // Aparte de la regla anterior para que un país mal escrito se informe sólo en el país y un código
+        // desconocido sólo como código desconocido: esta corre cuando el código es conocido y el país tiene forma de ISO.
+        RuleFor(parties => parties.Billing!.IdentificationType)
+            .Must((parties, type) => PartyFiscalTypesParser.ParseIdentificationType(type)!.Value
+                .IsAllowedFor(parties.Billing!.Country))
+            .WithMessage("The identification type is not allowed for the country.")
+            .When(parties => PartyDocumentRules.IsKnownTypeWithAValidCountry(parties.Billing?.IdentificationType, parties.Billing?.Country));
 
         RuleFor(parties => parties.Billing!.PersonType)
             .Must(type => PartyFiscalTypesParser.SupportedPersonTypes
@@ -185,7 +193,7 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
 /// <c>PUT /orders/{orderId}</c>, y sin esto el rechazo llegaría recién al primer método de dominio,
 /// después de haber ido al catálogo a valorizar líneas que nunca se van a aplicar.
 ///
-/// Mismo criterio que <c>SaveOrderEditsHandler</c> con <c>OrderStatus.Pending</c>.
+/// Mismo criterio que <c>SaveOrderEditsHandler</c> con <c>Order.IsEditable</c>.
 /// </summary>
 internal static class QuotationEditable
 {

@@ -100,7 +100,7 @@ public sealed class QuotationPriceRoundingApiTests
 
         var response = await setup.Client.PostAsJsonAsync(
             $"{QuotationsUrl(setup.TenantId)}/{sent.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -125,7 +125,7 @@ public sealed class QuotationPriceRoundingApiTests
             OrdersUrl(setup.TenantId),
             new CreateOrderRequest(
                 setup.CustomerId, "Transferencia", null, false, null, null, setup.BillingAccount,
-                [new OrderEditItemRequest(setup.VariantId, 10m)], "PaymentPending", []),
+                [new OrderEditItemRequest(setup.VariantId, 10m)], []),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);

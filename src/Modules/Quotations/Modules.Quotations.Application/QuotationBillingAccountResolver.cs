@@ -28,39 +28,22 @@ internal static class QuotationBillingAccountResolver
         // el recurso entero, así que mandarlo en null la limpia.
         if (request is null) return null;
 
-        // Before the company lookup: a currency outside the catalogue can never be quoted, whatever
-        // the company has on file (spec D6; replaces the former Quotations-only currency code).
-        var currency = Currencies.Normalize(request.Currency);
-
-        var company = await lookup.FindAsync(tenantId, request.CompanyId, cancellationToken);
-
-        // Mismo código para "no existe" y "es de otro tenant", igual que con el cliente:
-        // distinguirlos confirmaría que el id existe en otro tenant.
-        if (company is null)
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.company_not_found",
-                $"Company '{request.CompanyId}' was not found in this tenant.");
-        }
-
-        var matches = company.BankAccounts.Any(account =>
-            string.Equals(account.BankName, request.BankName?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-            account.AccountNumber == request.AccountNumber?.Trim() &&
-            string.Equals(account.Currency, currency, StringComparison.OrdinalIgnoreCase));
-
-        if (!matches)
-        {
-            throw new QuotationsDomainException(
-                "quotation.billing.account_not_found",
-                "The bank account does not belong to the selected company.");
-        }
+        // La comprobación vive en un solo lugar (QuotationBillingAccountVerifier), compartida con la tienda pública.
+        var verified = await QuotationBillingAccountVerifier.VerifyAsync(
+            lookup,
+            tenantId,
+            request.CompanyId,
+            request.BankName,
+            request.AccountNumber,
+            request.Currency,
+            cancellationToken);
 
         return new QuotationBillingAccount
         {
-            CompanyId = company.Id,
+            CompanyId = verified.CompanyId,
             BankName = request.BankName,
             AccountNumber = request.AccountNumber,
-            Currency = currency
+            Currency = verified.Currency
         };
     }
 }

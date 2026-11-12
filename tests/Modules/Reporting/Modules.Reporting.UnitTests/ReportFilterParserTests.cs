@@ -51,14 +51,22 @@ public sealed class ReportFilterParserTests
         Assert.Throws<ReportingDomainException>(
             () => ReportFilterParser.ParseQuotationStatus(value));
 
-    /// <summary>El estado de pago de un pedido es un enum distinto y sigue teniendo sus tres
-    /// valores: bajar `Approved` de las cotizaciones no lo tocó.</summary>
+    /// <summary>El estado de pago de un pedido es un enum distinto: bajar `Approved` de las
+    /// cotizaciones no lo tocó. Spec 2026-11-10 §3.2 le sumó «Por verificar».</summary>
     [Theory]
     [InlineData("FullPaymentReceived", OrderPaymentStatusFilter.FullPaymentReceived)]
     [InlineData("PartialPaymentReceived", OrderPaymentStatusFilter.PartialPaymentReceived)]
     [InlineData("PaymentPending", OrderPaymentStatusFilter.PaymentPending)]
-    public void ParsesTheThreePaymentStatuses(string value, OrderPaymentStatusFilter expected) =>
+    [InlineData("PendingVerification", OrderPaymentStatusFilter.PendingVerification)]
+    public void ParsesTheFourPaymentStatuses(string value, OrderPaymentStatusFilter expected) =>
         Assert.Equal(expected, ReportFilterParser.ParsePaymentStatus(value));
+
+    [Fact]
+    public void PendingVerificationIsAValidPaymentFilter()
+    {
+        Assert.True(ReportFilterParser.TryParsePaymentStatus("PendingVerification", out var parsed));
+        Assert.Equal(OrderPaymentStatusFilter.PendingVerification, parsed);
+    }
 
     [Theory]
     [InlineData("PriceBase", PriceChangeField.PriceBase)]
@@ -82,7 +90,7 @@ public sealed class ReportFilterParserTests
 
     [Theory]
     [InlineData("pos")]
-    [InlineData("Store")]
+    [InlineData("Telegram")]
     public void RejectsAnUnknownOrLowercaseSource(string value)
     {
         Assert.False(ReportFilterParser.TryParseSource(value, out _));
@@ -99,4 +107,13 @@ public sealed class ReportFilterParserTests
     [InlineData("PriceBaseCop")]
     public void TheRetiredPerCurrencyFieldsAreNoLongerValid(string value) =>
         Assert.False(ReportFilterParser.TryParsePriceChangeField(value, out _));
+
+    // El orden del enum es el de bySource en el resumen: un origen nuevo va al final, después de Pos.
+    [Fact]
+    public void StoreIsTheLastSourceAfterPos()
+    {
+        var sources = Enum.GetValues<OrderSourceFilter>();
+
+        Assert.Equal((OrderSourceFilter.Store, OrderSourceFilter.Pos), (sources[^1], sources[^2]));
+    }
 }

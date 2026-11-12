@@ -29,6 +29,15 @@ public static class SystemTemplateVariables
         new("vigencia", "Vigencia", "30 de septiembre de 2026"),
     ];
 
+    /// <summary>Spec 2026-11-09 D2: el pedido no tiene vigencia. La clave es <c>numero_pedido</c> y no <c>order_number</c>, que
+    /// <see cref="LegacyKeys"/> traduce a <c>numero_cotizacion</c> en toda plantilla.</summary>
+    public static IReadOnlyList<SystemTemplateVariable> Order { get; } =
+    [
+        .. Fixed,
+        new("numero_pedido", "Número de pedido", "PED-000123"),
+        new("valor_total", "Valor total", "2.450.000 COP"),
+    ];
+
     public static IReadOnlyList<SystemTemplateVariable> BillingReminder { get; } =
     [
         .. Fixed,

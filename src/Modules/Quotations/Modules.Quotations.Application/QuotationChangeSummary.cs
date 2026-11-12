@@ -46,9 +46,12 @@ public static class QuotationChangeSummary
         Trim($"Cambió el cliente: {from ?? "sin cliente"} → {to ?? "sin cliente"}. " +
              "Se borraron los datos propios de facturación y envío.");
 
-    public static string Sent() => "Enviada al cliente con su PDF.";
+    /// <summary>Con <paramref name="contactName"/> el texto nombra a la persona (spec 2026-11-10 §4.6); sin él, es el de siempre.</summary>
+    public static string Sent(string? contactName = null) =>
+        contactName is null ? "Enviada al cliente con su PDF." : Trim($"Enviada a {contactName} con su PDF.");
 
-    public static string Resent() => "Reenviada al cliente con su PDF.";
+    public static string Resent(string? contactName = null) =>
+        contactName is null ? "Reenviada al cliente con su PDF." : Trim($"Reenviada a {contactName} con su PDF.");
 
     /// <summary>
     /// Un intento de envío que falló, contado para quien vende y no para quien programa.
@@ -363,7 +366,9 @@ public sealed record QuotationHeaderSnapshot(
                 party.Email,
                 party.Address,
                 party.DepartmentId,
-                party.CityId);
+                party.CityId,
+                party.Country,
+                party.CityName);
 }
 
 /// <summary>La cuenta de cobro dentro de una foto del encabezado. Es un record para que la

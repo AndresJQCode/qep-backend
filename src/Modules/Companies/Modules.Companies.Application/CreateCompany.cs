@@ -10,7 +10,10 @@ public sealed record CreateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -42,15 +45,24 @@ public sealed class CreateCompanyHandler(
         // revision de riesgo de CAT-02.
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
+
+        // El pais se normaliza una sola vez, antes de validar: la busqueda de ciudad de abajo
+        // compara contra "CO", y un "co" sin normalizar se la saltaria.
+        command = command with { Country = CompanyWriteRules.NormalizeCountry(command.Country) };
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         // Se resuelve antes de crear el agregado, no despues: un CityId sintacticamente valido
         // pero de una ciudad inexistente tiene que fallar como 422 companies.company.city_not_found
         // en vez de reventar la FK de base como 500 al hacer SaveChanges.
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
-            ?? throw new CompaniesDomainException(
-                "companies.company.city_not_found",
-                "The city was not found.");
+        // Fuera de Colombia la ciudad es texto libre: no hay nada que buscar en Geography.
+        CompanyCityRef? city = null;
+        if (command.Country == Company.ColombiaCountryCode)
+        {
+            city = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+                ?? throw new CompaniesDomainException(
+                    "companies.company.city_not_found",
+                    "The city was not found.");
+        }
 
         var now = clock.UtcNow;
         var company = Company.Create(
@@ -59,7 +71,10 @@ public sealed class CreateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
+            command.Country!,
+            CompanyDocumentTypes.Parse(command.DocumentType!),
             command.CityId,
+            command.CityName,
             new CompanyContactInfo
             {
                 Phone = command.Phone,

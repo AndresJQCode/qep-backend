@@ -44,7 +44,7 @@ public sealed class MessagingCustomerDirectoryEnsureByPhoneTests
     }
 
     private static MessagingCustomerDirectory Adapter(ICustomerWhatsAppDirectory whatsApp) =>
-        new(null!, whatsApp, null!, null!, null!, NullLogger<MessagingCustomerDirectory>.Instance);
+        new(null!, null!, whatsApp, null!, null!, null!, null!, NullLogger<MessagingCustomerDirectory>.Instance);
 
     [Fact]
     public async Task TheAdapterAddsThePlusAndReportsACreatedCustomer()

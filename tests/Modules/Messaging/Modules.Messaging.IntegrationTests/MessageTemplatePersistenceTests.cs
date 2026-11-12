@@ -73,6 +73,7 @@ public sealed class MessageTemplatePersistenceTests
             Assert.Equal(mirroredId, (await repository.FindByNameAsync(f.TenantId, f.ConnectionId, "aviso", "es", Ct))!.Id);
             Assert.Single(await repository.ListApprovedAsync(f.TenantId, f.ConnectionId, Ct));
             Assert.Null(await repository.FindQuotationAsync(f.TenantId, f.ConnectionId, Ct));
+            Assert.Null(await repository.FindOrderAsync(f.TenantId, f.ConnectionId, Ct));
             // Otro tenant con los mismos ids no ve nada.
             Assert.Empty(await repository.ListAsync(Guid.CreateVersion7(), f.ConnectionId, Ct));
             return 0;
@@ -188,6 +189,39 @@ public sealed class MessageTemplatePersistenceTests
             "SELECT count(*) FROM messaging.message_templates WHERE kind = 'Quotation' AND tenant_id = @t AND connection_id = @c", ("t", f.TenantId), ("c", f.ConnectionId)));
         Assert.Equal(4L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.message_templates WHERE tenant_id = @t", ("t", f.TenantId)));
     }
+
+    // Spec 2026-11-09 D1: la misma regla para la plantilla de pedido, por UX_message_templates_order → order_exists.
+    [Fact]
+    public async Task ASecondOrderTemplateInTheSameConnectionIs422OrderExistsByIndexName()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        await InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Order(f.TenantId, f.ConnectionId, "1", "qep_pedido"));
+            // Una Quotation en la misma conexión no choca con la Order.
+            repository.Add(Quotation(f.TenantId, f.ConnectionId, "2", "qep_cotizacion"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        });
+
+        var exception = await Assert.ThrowsAsync<MessagingDomainException>(() => InScopeAsync(f.Factory, async (repository, unitOfWork) =>
+        {
+            repository.Add(Order(f.TenantId, f.ConnectionId, "3", "qep_pedido_v2"));
+            return await unitOfWork.SaveChangesAsync(Ct);
+        }));
+
+        Assert.Equal(MessagingErrorCodes.TemplateOrderExists, exception.Code);
+        await InScopeAsync(f.Factory, async (repository, _) =>
+        {
+            var order = await repository.FindOrderAsync(f.TenantId, f.ConnectionId, Ct);
+            Assert.Equal("qep_pedido", order!.Name);
+            return 0;
+        });
+    }
+
+    private static MessageTemplate Order(Guid tenantId, Guid connectionId, string metaId, string name) =>
+        MessageTemplate.Pending(tenantId, connectionId, metaId, name, "es", "UTILITY", "NAMED", "PENDING", "[]", MessageTemplateKind.Order, null, Now);
 
     [Fact]
     public async Task TheSyncMarkerIsNullUntilMarkedAndThenUpserts()

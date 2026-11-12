@@ -21,6 +21,9 @@ public sealed record QuotationCompanyRef(
     Guid Id,
     string Name,
     string TaxId,
+    /// <summary>Código de wire del tipo de documento (NIT, CC, NIF…): Quotations no referencia
+    /// Companies, así que el tipo cruza sólo como texto.</summary>
+    string DocumentType,
     bool IsActive,
     /// <summary>Membrete del PDF: dirección y teléfono tal como están hoy en la empresa, no
     /// congelados como la cuenta bancaria — son datos de contacto, no un compromiso financiero

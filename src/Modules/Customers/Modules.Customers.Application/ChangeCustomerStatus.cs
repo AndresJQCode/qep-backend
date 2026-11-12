@@ -17,6 +17,7 @@ public sealed class DeactivateCustomerHandler(
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -47,7 +48,7 @@ public sealed class DeactivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, cancellationToken);
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
     }
 }
 
@@ -66,6 +67,7 @@ public sealed class ActivateCustomerHandler(
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     IExecutionContext executionContext,
@@ -94,6 +96,6 @@ public sealed class ActivateCustomerHandler(
             now);
         await unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, cancellationToken);
+        return await customer.ToDtoAsync(geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
     }
 }

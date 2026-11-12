@@ -167,7 +167,10 @@ public sealed record SessionResponse(
 /// the country rule. <c>PriceRoundings</c> (price rounding spec, D9): the effective rule of every
 /// catalogue currency, in catalogue order, here and not only in <c>GET /settings/price-rounding</c>
 /// because that one needs <c>tenancy.settings.read</c>, which <c>cashier</c> lacks, and the POS cart
-/// estimate needs the rule before the first paint.
+/// estimate needs the rule before the first paint. <c>CustomerFieldPolicy</c> (customer field policy
+/// spec, 2026-11-09): which customer data the tenant requires on save and on billing; here and not only
+/// in <c>GET /settings</c> because the cashier lacks <c>tenancy.settings.read</c>. Null only when the
+/// tenant has no row (like the regional format).
 /// </remarks>
 public sealed record ActiveTenantResponse(
     Guid TenantId,
@@ -180,7 +183,16 @@ public sealed record ActiveTenantResponse(
     IReadOnlyList<string> CurrenciesInUse,
     string? Country,
     string? PersonTypeRequirement,
-    IReadOnlyList<SessionPriceRoundingResponse> PriceRoundings);
+    IReadOnlyList<SessionPriceRoundingResponse> PriceRoundings,
+    SessionCustomerFieldPolicyResponse? CustomerFieldPolicy);
+
+/// <summary>The effective customer field policy of a tenant: when the document and the city are required.</summary>
+public sealed record SessionCustomerFieldPolicyResponse(
+    SessionFieldRequirementResponse Document,
+    SessionFieldRequirementResponse City);
+
+/// <summary>One field's requirement: on saving the customer and/or on billing.</summary>
+public sealed record SessionFieldRequirementResponse(bool OnCustomerSave, bool OnBilling);
 
 /// <summary>One currency's effective price rounding. <c>Mode</c> is <c>Nearest</c>, <c>Up</c> or <c>Down</c>.</summary>
 public sealed record SessionPriceRoundingResponse(string Currency, int Decimals, string Mode);

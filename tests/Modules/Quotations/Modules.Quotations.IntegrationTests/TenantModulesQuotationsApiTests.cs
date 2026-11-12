@@ -82,7 +82,7 @@ public sealed class TenantModulesQuotationsApiTests
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, customerId, productId);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         Assert.NotNull(Assert.Single((await ListAsync(client, tenantId)).Items).OrderId);

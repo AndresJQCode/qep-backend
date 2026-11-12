@@ -51,6 +51,43 @@ internal sealed class CustomerMergeStore(CustomersDbContext dbContext) : ICustom
             .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.MergedIntoId, survivor), cancellationToken));
     }
 
+    public async Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
+    {
+        var ids = ToCustomerIds(mergedIds);
+        if (ids.Length == 0)
+        {
+            return 0;
+        }
+
+        return await MovingContacts(tenantId, new CustomerId(survivorId), ids).CountAsync(cancellationToken);
+    }
+
+    public async Task RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
+    {
+        var ids = ToCustomerIds(mergedIds);
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        CustomerId? survivor = new CustomerId(survivorId);
+        var survivorKey = new CustomerId(survivorId);
+        await CustomersWriteRaces.RunAsync(() => MovingContacts(tenantId, survivorKey, ids)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(customer => customer.CompanyId, survivor), cancellationToken));
+    }
+
+    // Sin fusionados: un contacto que también se fusiona queda como tombstone sin empresa, no se mueve. Sin el que queda: no
+    // puede quedar apuntándose a sí mismo (su vínculo, si apuntaba a un fusionado, lo borra FillSurvivor).
+    private IQueryable<Customer> MovingContacts(Guid tenantId, CustomerId survivor, CustomerId[] mergedIds) =>
+        dbContext.Customers.Where(customer =>
+            customer.TenantId == tenantId
+            && customer.CompanyId != null && mergedIds.Contains(customer.CompanyId.Value)
+            && customer.MergedIntoId == null
+            && customer.Id != survivor
+            && !mergedIds.Contains(customer.Id));
+
     public async Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
     {

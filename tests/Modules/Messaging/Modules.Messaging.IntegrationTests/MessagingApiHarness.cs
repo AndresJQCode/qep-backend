@@ -19,6 +19,12 @@ using Modules.Messaging.Infrastructure.Persistence;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
+// The connection budget below (max_connections=800) only holds for a bounded number of live hosts, and xUnit runs one class
+// per logical processor by default. Each host keeps about 17-24 pooled connections idle, one per worker that ticked, so on a
+// 32-thread machine 32 hosts sat at ~530 idle connections, and the bursts on top hit 53300 (too many clients). An arrange
+// that fails that way used to leak its host and snowball. Fixed here so the suite does not depend on the machine's core count.
+[assembly: CollectionBehavior(MaxParallelThreads = 16)]
+
 namespace Modules.Messaging.IntegrationTests;
 
 /// <summary>
@@ -178,6 +184,7 @@ internal static class MessagingApiHarness
             // pool de Npgsql, más los 64 INSERT concurrentes de la prueba de carga y los workers: el límite
             // por defecto (100) se agota y la API responde 500 con 53300 (too many clients). Con las campañas (E3) cada host suma
             // los envíos en paralelo del worker, y la prueba de dos pods levanta tres: 800 deja margen a la suite entera.
+            // That margin assumes the class parallelism capped at the top of this file (MaxParallelThreads).
             .WithCommand("-c", "max_connections=800")
             .Build();
         await container.StartAsync(CancellationToken.None);
@@ -196,6 +203,12 @@ internal static class MessagingApiHarness
         await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
+    // Every started host, with the database it points at. Most tests build their host in an arrange helper and take ownership
+    // only after it returns, so an arrange that throws leaves the host running; its workers would then poll the database
+    // dropped below, fail on every tick and log the exception, and with enough leaked hosts that logging starved the thread
+    // pool and stalled the whole suite. The database stops its hosts before it drops.
+    private static readonly ConcurrentDictionary<QepApiFactory, string> StartedHosts = new();
+
     /// <summary>La base de una prueba.</summary>
     public sealed class TestDatabase(TestServer server, string name) : IAsyncDisposable
     {
@@ -203,6 +216,11 @@ internal static class MessagingApiHarness
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var host in StartedHosts.Where(entry => entry.Value == name).Select(entry => entry.Key).ToList())
+            {
+                await host.DisposeAsync();
+            }
+
             NpgsqlConnection.ClearPool(new NpgsqlConnection(GetConnectionString()));
             // FORCE: un worker del host que todavía no soltó su conexión no puede dejar la base viva.
             await ExecuteAdminAsync(server, $"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)");
@@ -215,8 +233,16 @@ internal static class MessagingApiHarness
         /// <summary>Lo que sale hacia Graph —desde Integrations y desde Messaging— lo ve este handler.</summary>
         public FakeMetaGraphHandler MetaHandler { get; } = new();
 
+        public override async ValueTask DisposeAsync()
+        {
+            StartedHosts.TryRemove(this, out _);
+            await base.DisposeAsync();
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Runs when the host is first built, so only a host that can be running is tracked.
+            StartedHosts.TryAdd(this, new NpgsqlConnectionStringBuilder(connectionString).Database!);
             builder.UseEnvironment("Development");
             // Siempre fijado, aunque no se pida: un valor en los user-secrets de quien corre las pruebas convertiría en operador
             // a un tenant ajeno (mismo criterio que ShopifyApiHarness). Cambia el comportamiento de las pruebas de Messaging que
@@ -262,6 +288,7 @@ internal static class MessagingApiHarness
             builder.UseSetting("Messaging:Workers:DeliveryPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:MediaPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:CampaignPollSeconds", "3600");
+            builder.UseSetting("Messaging:Workers:ScheduledPollSeconds", "3600");
             builder.UseSetting("Messaging:Workers:PurgeIntervalHours", "24");
             // Spec 2026-10-21 D-M1: prendido por defecto en el host desde que el motor existe; acá se fija siempre y sólo las pruebas de la
             // cola lo prenden, para que el resto no deje filas en automation_inbox.
@@ -290,6 +317,12 @@ internal static class MessagingApiHarness
                 // Spec 2026-10-29: el worker de smb_app_data tampoco corre solo; su intervalo no es configuración, así que se reemplaza acá.
                 services.RemoveAll<Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule>();
                 services.AddSingleton(new Modules.Messaging.Infrastructure.Coexistence.HistorySyncRequestSchedule(TimeSpan.FromHours(1)));
+                // Spec 2026-11-10 A-9: el worker de la purga de medios tampoco corre solo (su intervalo es fijo); las pruebas llaman al procesador.
+                foreach (var descriptor in services
+                    .Where(d => d.ImplementationType == typeof(Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeWorker)).ToList())
+                {
+                    services.Remove(descriptor);
+                }
             });
         }
     }
@@ -693,6 +726,14 @@ internal static class MessagingApiHarness
     {
         var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
             .OfType<Modules.Messaging.Infrastructure.Campaigns.CampaignDispatchWorker>().Single();
+        await worker.DrainAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Spec 2026-11-09: una pasada del worker de programados (recupera, reclama, ejecuta y, si toca, purga), como un tick suyo.</summary>
+    public static async Task DrainScheduledMessagesAsync(WebApplicationFactory<Program> host)
+    {
+        var worker = host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .OfType<Modules.Messaging.Infrastructure.ScheduledMessages.ScheduledMessageWorker>().Single();
         await worker.DrainAsync(TestContext.Current.CancellationToken);
     }
 

@@ -1,16 +1,18 @@
 namespace Modules.Reporting.Domain;
 
 /// <summary>
-/// El estado de pago por el que se puede filtrar el reporte de pedidos. Son exactamente los tres
+/// El estado de pago por el que se puede filtrar el reporte de pedidos. Son exactamente los cuatro
 /// valores de <c>OrderPaymentStatus</c> en Quotations, redeclarados acá y no referenciados: el
 /// dominio de un módulo de negocio no referencia el dominio de otro — mismo criterio que
 /// <c>Quotations.MemberId</c> frente al <c>MembershipId</c> de Tenancy.
+/// <see cref="PendingVerification"/> («Por verificar», spec 2026-11-10 §3.2) va al final.
 /// </summary>
 public enum OrderPaymentStatusFilter
 {
     FullPaymentReceived,
     PartialPaymentReceived,
-    PaymentPending
+    PaymentPending,
+    PendingVerification
 }
 
 /// <summary>
@@ -19,7 +21,7 @@ public enum OrderPaymentStatusFilter
 /// mostrador de <c>pos.sales</c> (spec 2026-10-23 §2). Ver <see cref="OrderPaymentStatusFilter"/>
 /// sobre por qué se redeclara.
 ///
-/// **El orden de los valores es contrato**: es el orden fijo en que viaja <c>bySource</c> en el
+/// **El orden de los valores es contrato** (Store va después de Pos para no mover el de <c>bySource</c>): es el orden fijo en que viaja <c>bySource</c> en el
 /// resumen. Agregar un origen es agregarlo al final.
 /// </summary>
 public enum OrderSourceFilter
@@ -27,7 +29,8 @@ public enum OrderSourceFilter
     Quotation,
     Manual,
     Shopify,
-    Pos
+    Pos,
+    Store
 }
 
 /// <summary>

@@ -29,17 +29,19 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// <c>DataConsentReplyRecordedException</c>.</summary>
     internal const string DataConsentReplyIndex = "IX_data_consents_reply_message";
 
-    /// <summary>La FK a <c>customers.customers</c>. No está en el modelo: la agrega a mano la migración
-    /// <c>AddCustomerDataConsents</c>, ver <see cref="ConfigureDataConsent"/>.</summary>
-    internal const string DataConsentCustomerForeignKey = "FK_data_consents_customers_customer_id";
-
-    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. Teléfono y ciudad siguen exigidos
-    /// por CustomerWriteRules, como antes. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
+    /// <summary>Spec 2026-10-10 §7.2 (D-A11): las columnas que antes eran NOT NULL. El teléfono sigue exigido por
+    /// CustomerWriteRules, como antes; la ciudad, desde el 2026-11-09, la exige (o no) la política de campos del tenant en
+    /// Application (<c>CustomerFieldPolicyRequirement</c>), así que tampoco va en este check. La clasificación salió de la lista el 2026-10-19 (decisión del owner): una
     /// ficha completa puede no tenerla, y su CUC va sin prefijo. La dirección salió el 2026-11-01: es opcional, y sin
-    /// ella la ficha guarda <c>null</c> y nace sin libreta.</summary>
+    /// ella la ficha guarda <c>null</c> y nace sin libreta. La identificación salió el 2026-11-09: la política de campos
+    /// del tenant decide en Application si una ficha completa la lleva; aquí sólo se exige que tipo y número vayan
+    /// juntos, ver <see cref="IdentificationPairCheck"/>.</summary>
     public const string CompleteFieldsCheck =
-        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND identification_type IS NOT NULL AND identification_number IS NOT NULL "
-        + "AND country IS NOT NULL)";
+        "completeness = 'Incomplete' OR (cuc IS NOT NULL AND country IS NOT NULL)";
+
+    /// <summary>Tipo y número de identificación van juntos o ninguno: media identificación no es un dato. Vale para
+    /// fichas completas e incompletas, y deja fuera del índice único a las que no la tienen.</summary>
+    public const string IdentificationPairCheck = "(identification_type IS NULL) = (identification_number IS NULL)";
 
     /// <summary>El único por <c>(tenant_id, lower(name))</c>. Va en la migración con SQL —EF no modela índices por
     /// expresión— y <c>CustomersUnitOfWork</c> lo traduce por este nombre a 409 <c>customers.tag.name_taken</c>.</summary>
@@ -73,6 +75,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         {
             table.HasCheckConstraint("CK_customers_completeness", "completeness IN ('Complete', 'Incomplete')");
             table.HasCheckConstraint("CK_customers_complete_fields", CompleteFieldsCheck);
+            table.HasCheckConstraint("CK_customers_identification_pair", IdentificationPairCheck);
             table.HasCheckConstraint(
                 "CK_customers_marketing_opt_out_source",
                 "marketing_opt_out_source IS NULL OR marketing_opt_out_source IN ('manual', 'meta', 'button')");
@@ -173,6 +176,21 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         customer.HasIndex(value => new { value.TenantId, value.MergedIntoId })
             .HasFilter("merged_into_id IS NOT NULL")
             .HasDatabaseName("IX_customers_tenant_merged_into");
+        // Empresa de un contacto (spec 2026-11-10 §3.2, G3): un solo nivel, reglas en el agregado. A diferencia de MergedIntoId
+        // sí lleva FK: la autorreferencia no puede quedar colgando, y SET NULL deja al contacto suelto si la empresa se borra.
+        customer.Property(value => value.CompanyId)
+            .HasColumnName("company_id")
+            .HasConversion(new ValueConverter<CustomerId, Guid>(
+                id => id.Value, value => new CustomerId(value)));
+        customer.HasOne<Customer>()
+            .WithMany()
+            .HasForeignKey(value => value.CompanyId)
+            .HasConstraintName("FK_customers_customers_company_id")
+            .OnDelete(DeleteBehavior.SetNull);
+        // Parcial: sólo los contactos. Sirve «los contactos de esta empresa» y su conteo.
+        customer.HasIndex(value => new { value.TenantId, value.CompanyId })
+            .HasFilter("company_id IS NOT NULL")
+            .HasDatabaseName("IX_customers_tenant_company");
         customer.HasOne<ClientClassification>()
             .WithMany()
             .HasForeignKey(value => new { value.TenantId, value.ClassificationId })
@@ -266,12 +284,21 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             .HasDatabaseName("IX_customers_name_trgm")
             .HasMethod("gin")
             .HasOperators("gin_trgm_ops");
+
+        // Lo mismo para la razón social: la búsqueda de empresas del listado compara BusinessName con ILIKE '%término%'.
+        customer.HasIndex(value => value.BusinessName)
+            .HasDatabaseName("IX_customers_business_name_trgm")
+            .HasMethod("gin")
+            .HasOperators("gin_trgm_ops");
     }
 
     private static void ConfigureCustomerAddress(ModelBuilder modelBuilder)
     {
         var address = modelBuilder.Entity<CustomerAddress>();
-        address.ToTable("customer_addresses", "customers");
+        address.ToTable("customer_addresses", "customers", table => table.HasCheckConstraint(
+            "CK_customer_addresses_city_lane",
+            "(country = 'CO' AND city_id IS NOT NULL AND city_name IS NULL) " +
+            "OR (country <> 'CO' AND city_id IS NULL AND city_name IS NOT NULL)"));
         address.HasKey(value => value.Id);
         address.Property(value => value.Id)
             .HasColumnName("id")
@@ -294,7 +321,16 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         // hacia una entidad que no esta en el mismo ModelBuilder. La restriccion real
         // (FK a geography.cities(id), ON DELETE RESTRICT) la agrega a mano la migracion, con
         // migrationBuilder.AddForeignKey — Postgres la impone igual, EF simplemente no la "ve".
+        // Nulo en una direccion de afuera de Colombia (spec tienda publica 4.2): su ciudad es
+        // texto libre. El carril lo respalda CK_customer_addresses_city_lane.
         address.Property(value => value.CityId).HasColumnName("city_id");
+        address.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(CustomerContactInfo.CountryLength)
+            .HasDefaultValue(Customer.ColombiaCountryCode);
+        address.Property(value => value.CityName)
+            .HasColumnName("city_name")
+            .HasMaxLength(CustomerContactInfo.CityNameMaxLength);
         address.Property(value => value.IsPrincipal).HasColumnName("is_principal");
         address.Property(value => value.CreatedAt).HasColumnName("created_at");
         address.Property(value => value.UpdatedAt).HasColumnName("updated_at");
@@ -406,10 +442,9 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
     /// garantía de que cada fila es prueba completa: las del bot llevan la evidencia y ninguna nota, una revocación lleva
     /// miembro, medio y nota, y la identidad falta sólo en una revocación por otro medio. <c>wa_id</c> es siempre opcional.
     ///
-    /// Sin <c>HasOne&lt;Customer&gt;()</c> a propósito: con la relación en el modelo EF agrega por convención un índice sobre
-    /// <c>customer_id</c> solo, que sobra —el de orden ya empieza por <c>(tenant_id, customer_id)</c> y un cliente nunca se
-    /// borra—. La FK real (<see cref="DataConsentCustomerForeignKey"/>, <c>ON DELETE RESTRICT</c>) la agrega a mano la
-    /// migración, como <c>FK_customers_cities_city_id</c>.
+    /// Sin <c>HasOne&lt;Customer&gt;()</c> y sin FK en la base: el consentimiento es prueba legal y sobrevive al cliente
+    /// borrado (spec 2026-11-10). Por eso la fila guarda <c>customer_name</c> y <c>customer_phone_e164</c>, que escribe el
+    /// borrado. La FK que agregó a mano <c>AddCustomerDataConsents</c> la quita <c>DetachDataConsentsFromCustomers</c>.
     /// </summary>
     private static void ConfigureDataConsent(ModelBuilder modelBuilder)
     {
@@ -471,6 +506,8 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
         consent.Property(value => value.NodeId).HasColumnName("node_id").HasMaxLength(64);
         consent.Property(value => value.Medium).HasColumnName("medium").HasConversion<string>().HasMaxLength(24);
         consent.Property(value => value.Note).HasColumnName("note").HasMaxLength(CustomerDataConsent.NoteMaxLength);
+        consent.Property(value => value.CustomerName).HasColumnName("customer_name").HasMaxLength(160);
+        consent.Property(value => value.CustomerPhoneE164).HasColumnName("customer_phone_e164").HasMaxLength(16);
 
         // La historia de la ficha y el estado vigente (la primera fila de este orden).
         consent.HasIndex(value => new { value.TenantId, value.CustomerId, value.OccurredAt, value.Sequence })

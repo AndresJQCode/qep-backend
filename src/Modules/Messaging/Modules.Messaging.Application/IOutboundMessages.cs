@@ -29,11 +29,12 @@ public sealed record OutboundDraft(
 /// <summary>La fila que ya existía con ese <c>clientId</c> en la conversación (con <c>FOR UPDATE</c> en el reclamo).
 /// <c>Kind</c> y <c>MediaMimeType</c> (spec 2026-10-11 §6.5): la idempotencia devuelve la burbuja de audio con su
 /// <c>media.url</c>. <c>DetailsJson</c> (spec 2026-10-11 §5.2): la plantilla de un mensaje <c>Template</c>, para devolver lo guardado.
-/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.</summary>
+/// <c>MediaFileName</c> y <c>Caption</c> (messaging-media-reply R5): repetir un clientId devuelve la burbuja con su nombre y su pie.
+/// <c>RetryDisabled</c> (spec 2026-11-09 D8b): un <c>Failed</c> que el asesor descartó desde «Programados»; su clientId ya no se reenvía.</summary>
 public sealed record ExistingOutbound(
     Guid Id, MessageStatus Status, DateTimeOffset OccurredAt, Guid? SentByMemberId, string Text, Guid? ReplyToMessageId = null,
     MessageKind Kind = MessageKind.Text, string? MediaMimeType = null, string? DetailsJson = null, string? MediaFileName = null, string? Caption = null, Guid? SentByChatbotId = null,
-    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null);
+    int? FailureCode = null, Guid? SentByApiKeyId = null, string? SentByApiKeyName = null, bool RetryDisabled = false);
 
 /// <summary>Spec 2026-10-30 §4.4: el mensaje de una clave de API con ese <c>clientId</c> en el tenant, para devolverlo al repetir el envío.
 /// <c>WaId</c> es el de la conversación; <c>FailureCode</c> distingue un <c>Failed</c> sin confirmar.</summary>
@@ -70,10 +71,20 @@ public interface IOutboundClaim : IAsyncDisposable
     Task RollbackAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-09 (revisión final): el lease de un programado que el reclamo de su mensaje vuelve a mirar. El reclamo sólo sigue si la
+/// fila sigue <c>Sending</c> con este <c>Attempts</c> y este <c>LockedUntil</c> (la recuperación lo renueva) y si el lease vence después de
+/// <c>ValidAfter</c>, el margen para que no venza a mitad del envío.</summary>
+public sealed record ScheduledLease(Guid ScheduledMessageId, Guid TenantId, int Attempts, DateTimeOffset LockedUntil, DateTimeOffset ValidAfter);
+
 /// <summary>Spec 2026-10-09 §8.3: el reclamo idempotente de un saliente por <c>(conversation_id, client_id)</c>.</summary>
 public interface IOutboundMessages
 {
     Task<IOutboundClaim> ClaimAsync(OutboundDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-09 (revisión final): <see cref="ClaimAsync"/> de un programado. En la misma transacción toma la fila del programado con
+    /// <c>FOR SHARE</c> y sigue sólo si <paramref name="lease"/> sigue vigente; así el cierre de la recuperación espera al reclamo en vez de cruzarse
+    /// con él. <c>null</c> = el lease ya no es de este ejecutor: no se escribió nada y no se debe enviar.</summary>
+    Task<IOutboundClaim?> ClaimLeasedAsync(OutboundDraft draft, ScheduledLease lease, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-10 §8.5 paso 2: el mensaje ya commiteado con ese clientId, sin candado; <c>null</c> si no hay.</summary>
     Task<ExistingOutbound?> FindByClientIdAsync(Guid conversationId, Guid clientId, CancellationToken cancellationToken);

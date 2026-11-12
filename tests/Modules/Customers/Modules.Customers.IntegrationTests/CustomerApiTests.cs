@@ -261,6 +261,114 @@ public sealed class CustomerApiTests
         Assert.Equal("Naturaleza Viva Ltda.", Assert.Single(byIdentification.Items).Name);
     }
 
+    // `search` tambien encuentra por el telefono, escrito como sea: quien busca copia el numero de un
+    // chat o de una tarjeta, con espacios, `+57` y parentesis, y `phone_e164` lo guarda sin formato.
+    // Por eso se comparan solo los digitos del termino.
+    [Fact]
+    public async Task TheCombinedSearchMatchesThePhoneIgnoringItsFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1", "3001234567");
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2", "3109352187");
+
+        var spaced = await ListAsync(client, $"?search={Uri.EscapeDataString("300 123 4567")}");
+        var international = await ListAsync(client, $"?search={Uri.EscapeDataString("+57 (300) 123-4567")}");
+        var fragment = await ListAsync(client, "?search=1234567");
+
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(spaced.Items).Name);
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(international.Items).Name);
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(fragment.Items).Name);
+    }
+
+    // Con menos de siete digitos el telefono no entra al criterio: un fragmento corto aparece en
+    // casi cualquier numero y el listado dejaria de filtrar. El nombre sigue buscando igual.
+    [Fact]
+    public async Task TheCombinedSearchIgnoresThePhoneBelowSevenDigits()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1", "3001234567");
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2", "3109352187");
+
+        var shortDigits = await ListAsync(client, "?search=123456");
+        var byName = await ListAsync(client, "?search=naturaleza");
+
+        Assert.DoesNotContain(shortDigits.Items, item => item.Name == "Verde Esencial S.A.S.");
+        Assert.Equal("Naturaleza Viva Ltda.", Assert.Single(byName.Items).Name);
+    }
+
+    // `phone` es la caja propia del telefono, al nivel de nombre, documento y CUC. Compara solo los
+    // digitos contra `phone_e164`, sin el minimo de siete de `search`: quien llena el campo Telefono
+    // ya dijo que busca un telefono, asi que un fragmento corto (los ultimos cuatro) es intencional.
+    // Sin ningun digito (`abc`) no hay telefono que buscar y el filtro no aplica.
+    [Fact]
+    public async Task ThePhoneFilterMatchesTheDigitsOfThePhoneInAnyFormat()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1", "3001234567");
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2", "3109352187");
+
+        var spaced = await ListAsync(client, $"?phone={Uri.EscapeDataString("300 123 4567")}");
+        var international = await ListAsync(client, $"?phone={Uri.EscapeDataString("+57 (300) 123-4567")}");
+        var shortFragment = await ListAsync(client, "?phone=4567");
+        var noDigits = await ListAsync(client, "?phone=abc");
+
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(spaced.Items).Name);
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(international.Items).Name);
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(shortFragment.Items).Name);
+        Assert.Equal(2, noDigits.Total);
+    }
+
+    // Como las otras cajas, `phone` se combina con AND: un nombre que no es el del dueno del
+    // telefono no devuelve nada, aunque el telefono coincida.
+    [Fact]
+    public async Task ThePhoneFilterCombinesWithTheNameFilter()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Verde Esencial S.A.S.", "900.111.111-1", "3001234567");
+        await CreateCustomerWithPhoneAsync(
+            client, city.CityId, classification.Id, "Naturaleza Viva Ltda.", "830.222.222-2", "3109352187");
+
+        var mismatched = await ListAsync(client, "?phone=3001234567&name=naturaleza");
+        var matched = await ListAsync(client, "?phone=3001234567&name=verde");
+
+        Assert.Empty(mismatched.Items);
+        Assert.Equal(0, mismatched.Total);
+        Assert.Equal("Verde Esencial S.A.S.", Assert.Single(matched.Items).Name);
+    }
+
+    private static async Task CreateCustomerWithPhoneAsync(
+        HttpClient client, Guid cityId, Guid classificationId, string name, string identificationNumber, string phone)
+    {
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewCustomerBody(cityId, classificationId, name: name, identificationNumber: identificationNumber, phone: phone),
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     // Las tres cajas se combinan con AND cuando se llenan mas de una: filtrar por nombre Y
     // documento a la vez es mas preciso que el viejo campo unico, que las unia con OR.
     [Fact]

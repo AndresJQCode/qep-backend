@@ -54,6 +54,8 @@ public sealed class TemplateManagementApiTests
         var screen = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Equal(("Ventas", "+57 300 123 4567"), (screen.GetProperty("connection").GetProperty("name").GetString(), screen.GetProperty("connection").GetProperty("displayPhoneNumber").GetString()));
         Assert.Equal(JsonValueKind.Null, screen.GetProperty("quotationTemplate").ValueKind);
+        // Spec 2026-11-09 D4: la pantalla también dice si hay plantilla de pedido.
+        Assert.Equal(JsonValueKind.Null, screen.GetProperty("orderTemplate").ValueKind);
         Assert.NotEqual(JsonValueKind.Null, screen.GetProperty("lastSyncedAt").ValueKind);
         var templates = screen.GetProperty("templates").EnumerateArray().ToArray();
         Assert.Equal(["borrador", "en_revision", "seguimiento"], templates.Select(item => item.GetProperty("name").GetString()));

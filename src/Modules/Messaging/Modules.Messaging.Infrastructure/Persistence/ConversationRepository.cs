@@ -1,3 +1,4 @@
+using BuildingBlocks.Application;
 using Microsoft.EntityFrameworkCore;
 using Modules.Messaging.Application;
 using Modules.Messaging.Domain;
@@ -25,6 +26,16 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         Guid tenantId, Guid conversationId, Guid customerId, bool created, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        // Borrar clientes (final review I-2a): esta conversación no tiene cliente, así que no está entre las que el borrado bloquea;
+        // lo único que la frena es el candado compartido del cliente, antes de tocar la fila. Si el borrado ganó, la excepción
+        // reintenta la unidad del motor y el reintento crea un cliente nuevo (D-4). Devolver null haría que el bot saliera por
+        // «No acepto» sin preguntar. Sin ciclo: el runner tiene el candado de esta conversación, que el borrado no pide.
+        if (!await MessagingCustomerReferenceLock.HoldAsync(dbContext, tenantId, customerId, cancellationToken))
+        {
+            throw new RequestConcurrencyException(
+                "concurrency.conflict", $"Customer '{customerId}' was deleted while a conversation was being linked to it.");
+        }
+
         var linked = await dbContext.Database.SqlQuery<LinkedRow>(
             $"""
             UPDATE messaging.conversations SET customer_id = {customerId}

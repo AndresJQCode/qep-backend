@@ -163,11 +163,18 @@ public static class QuotationPdfDocumentMapper
                 false,
                 party.Name ?? string.Empty,
                 Join(ContactSeparator, party.Phone, party.Email),
-                party.Address ?? string.Empty,
+                // Fuera de Colombia la parte guarda la ciudad como texto: se imprime tras la dirección con el país.
+                IsForeign(party)
+                    ? Join(LocationSeparator, party.Address, Join(LocationSeparator, party.CityName, party.Country))
+                    : party.Address ?? string.Empty,
                 // Sólo la facturación guarda documento (la entrega lo descarta en el dominio); una
                 // fila anterior a la columna no tiene y queda vacío, que la plantilla no imprime.
                 role == QuotationPartyRole.Billing ? party.IdentificationNumber ?? string.Empty : string.Empty);
     }
+
+    private static bool IsForeign(QuotationPartyResponse party) =>
+        !string.IsNullOrWhiteSpace(party.Country)
+        && !string.Equals(party.Country, QuotationPartyDetails.ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Consumidor final no tiene fila de facturación —el dominio la prohíbe— pero
     /// tampoco es "los del cliente": la factura sale a otro nombre, con el NIT genérico. Sin
@@ -207,6 +214,7 @@ public static class QuotationPdfDocumentMapper
                 // y la cotización tiene que poder exportarse igual.
                 account.CompanyName ?? string.Empty,
                 account.CompanyTaxId,
+                CompanyDocumentLabels.For(account.CompanyDocumentType),
                 account.CompanyAddress ?? string.Empty,
                 account.CompanyPhone ?? string.Empty,
                 account.BankName,

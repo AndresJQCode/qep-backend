@@ -78,7 +78,9 @@ internal static class QuotationMapping
         party.DepartmentId,
         party.CityId,
         party.PersonType?.ToWireValue(),
-        party.IdentificationType?.ToWireValue());
+        party.IdentificationType?.ToWireValue(),
+        party.Country ?? QuotationPartyDetails.ColombiaCountryCode,
+        party.CityName);
 
     /// <summary>
     /// La fila del listado. <paramref name="hasItems"/> y <paramref name="order"/> llegan
@@ -171,6 +173,8 @@ internal static class QuotationMapping
                 Email = request.Email,
                 Address = request.Address,
                 DepartmentId = request.DepartmentId,
-                CityId = request.CityId
+                CityId = request.CityId,
+                Country = request.Country,
+                CityName = request.CityName
             };
 }

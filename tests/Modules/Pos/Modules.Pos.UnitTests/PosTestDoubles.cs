@@ -133,7 +133,7 @@ internal sealed class InMemoryPosSaleRepository(InMemoryCashSessionRepository se
             .Where(sale => filter.Status is not { } status || sale.Status == status)
             .Where(sale => filter.Number is null || sale.SaleNumber.Contains(filter.Number, StringComparison.OrdinalIgnoreCase))
             .Where(sale => filter.CustomerDocument is null
-                || sale.CustomerIdentificationNumber.Contains(filter.CustomerDocument, StringComparison.OrdinalIgnoreCase))
+                || (sale.CustomerIdentificationNumber?.Contains(filter.CustomerDocument, StringComparison.OrdinalIgnoreCase) ?? false))
             .OrderByDescending(sale => sale.CreatedAt)
             .ToList();
         var rows = matches
@@ -290,6 +290,24 @@ internal sealed class FakeCashierLookup : IPosCashierLookup
         Task.FromResult(Names.TryGetValue(membershipId, out var name) ? name : null);
 }
 
+/// <summary>Costos por moneda y variante; registra cada consulta para probar que una repetición no consulta.</summary>
+internal sealed class FakeVariantCostLookup : IPosVariantCostLookup
+{
+    public Dictionary<(string Currency, Guid VariantId), decimal> Costs { get; } = [];
+
+    public List<(string Currency, Guid[] VariantIds)> Calls { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, decimal>> FindAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        Calls.Add((currency, variantIds.ToArray()));
+        IReadOnlyDictionary<Guid, decimal> found = variantIds
+            .Where(id => Costs.ContainsKey((currency, id)))
+            .ToDictionary(id => id, id => Costs[(currency, id)]);
+        return Task.FromResult(found);
+    }
+}
+
 /// <summary>
 /// Variantes de la caja. <c>id</c> es el id de la variante; sin <c>productId</c> es la variante por
 /// defecto, con el mismo id que su producto (como la migración). Para un producto con opciones se
@@ -395,6 +413,34 @@ internal sealed class FakeCategoryLookup : IPosCategoryLookup
             Totals.GetValueOrDefault(tenantId)));
 }
 
+/// <summary>El tenant que lee la venta para saber si exige el documento al facturar: sólo
+/// <see cref="Regional"/> responde; sin fijarlo (null) rige la política por defecto (todo exigido).</summary>
+internal sealed class FakeTenantDirectory : ITenantDirectory
+{
+    public TenantRegionalSettings? Regional { get; set; }
+
+    /// <summary>Cuántas veces se leyó la política.</summary>
+    public int Reads { get; private set; }
+
+    public Task<TenantRegionalSettings?> GetRegionalSettingsAsync(TenantId tenantId, CancellationToken cancellationToken)
+    {
+        Reads++;
+        return Task.FromResult(Regional);
+    }
+
+    public Task<string?> GetSlugAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetDisplayNameAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetTimeZoneAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<string?> GetDefaultCurrencyAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Guid?> GetLogoFileIdAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<TenantStatus?> GetStatusAsync(TenantId tenantId, CancellationToken cancellationToken) => throw new NotSupportedException();
+}
+
 /// <summary>
 /// El adaptador de Customers en memoria. Guarda por tenant las referencias del selector (con documento) y las
 /// fotos que lee la venta (con o sin documento, activas o no), y anota cada llamada en <see cref="Calls"/>
@@ -410,7 +456,7 @@ internal sealed class FakeCustomerLookup : IPosCustomerLookup
     public List<string> Calls { get; } = [];
 
     public PosCustomerRef AddRef(
-        string name, string type = "CC", string number = "1020304050", bool complete = false, bool active = true,
+        string name, string? type = "CC", string? number = "1020304050", bool complete = false, bool active = true,
         Guid? id = null, Guid? tenantId = null)
     {
         var customer = new PosCustomerRef(id ?? Guid.CreateVersion7(), name, type, number, complete, active);
@@ -428,10 +474,14 @@ internal sealed class FakeCustomerLookup : IPosCustomerLookup
         return snapshot;
     }
 
+    /// <summary>El <c>includeIncompleteWithoutDocument</c> de cada búsqueda, en orden.</summary>
+    public List<bool> SearchIncludedIncompleteWithoutDocument { get; } = [];
+
     public Task<IReadOnlyList<PosCustomerRef>> SearchAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken)
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken)
     {
         Calls.Add($"Search:{search}:{take}");
+        SearchIncludedIncompleteWithoutDocument.Add(includeIncompleteWithoutDocument);
         IReadOnlyList<PosCustomerRef> found = Refs
             .Where(entry => entry.TenantId == tenantId && entry.Customer.IsActive)
             .Select(entry => entry.Customer)
@@ -508,9 +558,13 @@ internal sealed class PosTestBed
 
     public FakeProductLookup Products { get; } = new();
 
+    public FakeVariantCostLookup Costs { get; } = new();
+
     public FakeCategoryLookup Categories { get; } = new();
 
     public FakeCustomerLookup Customers { get; } = new();
+
+    public FakeTenantDirectory TenantDirectory { get; } = new();
 
     public FakeClock Clock { get; } = new(PosFixtures.Now);
 
@@ -545,7 +599,7 @@ internal sealed class PosTestBed
 
     public PosCompanyRef AddCompany(string name = "Origen Botánico SAS", bool active = true, Guid? tenantId = null)
     {
-        var company = new PosCompanyRef(Guid.CreateVersion7(), name, "900123456-1", "Cra 50 # 10-20", "6045551234", active);
+        var company = new PosCompanyRef(Guid.CreateVersion7(), name, "900123456-1", "NIT", "Cra 50 # 10-20", "6045551234", active);
         Companies.Companies.Add((tenantId ?? PosFixtures.TenantId, company));
         return company;
     }

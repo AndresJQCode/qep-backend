@@ -7,7 +7,7 @@ using Modules.Reporting.Application;
 namespace Modules.Reporting.Api;
 
 /// <summary>
-/// Los ocho endpoints de reportes: cuatro listados paginados y sus cuatro resumenes.
+/// Los diez endpoints de reportes: cinco listados paginados y sus cinco resumenes.
 /// </summary>
 public static class ReportingEndpoints
 {
@@ -63,6 +63,19 @@ public static class ReportingEndpoints
         group.MapGet("/customers/summary", GetCustomersSummaryAsync)
             .RequireAuthorization(ReportingPermissions.CustomerRead)
             .Produces<CustomerReportSummaryDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Margen bruto (spec 2026-11-10 §6.3): dato comercial sensible, con su propio permiso.
+        group.MapGet("/margin", ListMarginAsync)
+            .RequireAuthorization(ReportingPermissions.MarginRead)
+            .Produces<ReportPage<MarginReportProductDto>>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapGet("/margin/summary", GetMarginSummaryAsync)
+            .RequireAuthorization(ReportingPermissions.MarginRead)
+            .Produces<MarginReportSummaryDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
@@ -246,6 +259,40 @@ public static class ReportingEndpoints
             new GetCustomerReportSummaryQuery(
                 new CustomerReportFilter(
                     tenantId, from, to, isActive, classificationId, departmentId)),
+            cancellationToken);
+
+        return Results.Ok(summary);
+    }
+
+    private static async Task<IResult> ListMarginAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        string? source = null,
+        int page = 1,
+        int pageSize = ReportPaging.DefaultPageSize)
+    {
+        var result = await dispatcher.QueryAsync(
+            new ListMarginReportQuery(new MarginReportFilter(tenantId, from, to, source), page, pageSize),
+            cancellationToken);
+
+        return Results.Ok(result);
+    }
+
+    /// <summary>Ver <see cref="GetOrdersSummaryAsync"/>: mismos filtros que el listado, sin
+    /// paginacion.</summary>
+    private static async Task<IResult> GetMarginSummaryAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken,
+        DateOnly? from = null,
+        DateOnly? to = null,
+        string? source = null)
+    {
+        var summary = await dispatcher.QueryAsync(
+            new GetMarginReportSummaryQuery(new MarginReportFilter(tenantId, from, to, source)),
             cancellationToken);
 
         return Results.Ok(summary);

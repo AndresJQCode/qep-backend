@@ -185,6 +185,54 @@ public sealed class CatalogVariantPersistenceTests
         Assert.Equal(product.Id, Assert.Single(byIds).Id);
     }
 
+    [Fact]
+    public async Task VariantCostsRoundTripAndCascadeWithTheVariant()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.Parse(TenantId);
+        var product = Product.Create(
+            ProductId.New(),
+            tenantId,
+            "Camiseta básica",
+            ProductDetails.Empty,
+            Variant("CAM-001", []) with { Costs = new Dictionary<string, decimal> { ["COP"] = 12000.50m } },
+            [],
+            Now);
+        var variantId = product.Variants.Single().Id.Value;
+        await SaveAsync(factory, product);
+
+        await using (var readScope = factory.Services.CreateAsyncScope())
+        {
+            var loaded = await readScope.ServiceProvider.GetRequiredService<IProductRepository>()
+                .FindAsync(tenantId, product.Id, TestContext.Current.CancellationToken);
+            Assert.Equal(12000.50m, loaded!.Variants.Single().CostIn("COP"));
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var tracked = await scope.ServiceProvider.GetRequiredService<IProductRepository>()
+                .FindAsync(tenantId, product.Id, TestContext.Current.CancellationToken);
+            tracked!.Update(
+                tracked.Name,
+                ProductDetails.Empty,
+                [],
+                [Variant("CAM-002", [])],
+                [],
+                Now.AddMinutes(1),
+                deletedVariantIds: [variantId]);
+            await scope.ServiceProvider.GetRequiredService<ICatalogUnitOfWork>()
+                .SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var countScope = factory.Services.CreateAsyncScope();
+        var remaining = await countScope.ServiceProvider.GetRequiredService<CatalogDbContext>()
+            .Database
+            .SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM catalog.product_variant_costs WHERE variant_id = {variantId}")
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0, remaining);
+    }
+
     // CatalogUnitOfWork sella UpdatedAt con el IClock al guardar una opción modificada. Con un reloj
     // fijo distinto de Now, la prueba distingue el sello del reloj de cualquier otro valor: un
     // «UpdatedAt > Now» pasaría también con DateTimeOffset.UtcNow escrito a mano en el dominio.

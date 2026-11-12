@@ -55,7 +55,25 @@ public interface IQuotationCustomerLookup
     /// </summary>
     Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// El contacto <paramref name="contactId"/> de la empresa <paramref name="clientId"/> (spec 2026-11-10 §4.6): null salvo
+    /// que sea un cliente del tenant, sin fusionar, cuya empresa sea <paramref name="clientId"/>. Un contacto de otra
+    /// empresa, de otro tenant, fusionado o el propio cliente dan null: quien llama no distingue entre ellos.
+    /// </summary>
+    Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los contactos sin fusionar de <paramref name="clientId"/>, por nombre, hasta 100 (para el diálogo de envío). Vacío si el
+    /// cliente no tiene o si él mismo es un contacto.
+    /// </summary>
+    Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken);
 }
+
+/// <summary>Un contacto de la empresa de un documento: lo que el envío por WhatsApp necesita (a quién y a qué número).</summary>
+public sealed record QuotationClientContact(Guid Id, string Name, string? Phone);
 
 // Name/Phone/Address se agregaron para el envío por WhatsApp (SendQuotation.cs): son los
 // mismos tres campos que ya resuelve el frontend para armar el `wa.me` — se traen acá para
@@ -102,7 +120,7 @@ public sealed record QuotationCustomerRef(
     string? PersonType = null,
     /// <summary>País del cliente (ISO alfa-2). Con él se decide a qué país se factura: el del cliente, o el del tenant si no lo tiene.</summary>
     string? Country = null,
-    /// <summary>Tipo del documento de la ficha ("NIT" | "CC" | "CE" | "PASAPORTE"), el tipo de <see cref="IdentificationNumber"/>.</summary>
+    /// <summary>Tipo del documento de la ficha (uno de los siete códigos: NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID), el tipo de <see cref="IdentificationNumber"/>.</summary>
     string? IdentificationType = null);
 
 /// <summary>Una direccion de la libreta del cliente, para el selector de envio de la
@@ -112,8 +130,11 @@ public sealed record QuotationCustomerAddressRef(
     string Name,
     string Address,
     string? Phone,
-    Guid CityId,
-    string CityName,
-    Guid DepartmentId,
-    string DepartmentName,
-    bool IsPrincipal);
+    Guid? CityId,
+    string? CityName,
+    Guid? DepartmentId,
+    string? DepartmentName,
+    bool IsPrincipal,
+    /// <summary>ISO alfa-2. Fuera de Colombia <see cref="CityId"/> y <see cref="DepartmentId"/> son null y la ciudad
+    /// es el texto de <see cref="CityName"/>.</summary>
+    string Country = "CO");

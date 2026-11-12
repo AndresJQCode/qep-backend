@@ -720,6 +720,8 @@
           "Modules.Audit.Infrastructure": "[1.0.0, )",
           "Modules.Automations.Api": "[1.0.0, )",
           "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Buyers.Api": "[1.0.0, )",
+          "Modules.Buyers.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Api": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Api": "[1.0.0, )",
@@ -752,6 +754,8 @@
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Api": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )",
+          "Modules.Store.Infrastructure": "[1.0.0, )",
           "Modules.Suppliers.Api": "[1.0.0, )",
           "Modules.Suppliers.Infrastructure": "[1.0.0, )",
           "Scalar.AspNetCore": "[2.16.16, )"
@@ -770,6 +774,8 @@
           "Modules.Authorization.Infrastructure": "[1.0.0, )",
           "Modules.Automations.Application": "[1.0.0, )",
           "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Infrastructure": "[1.0.0, )",
           "Modules.Catalog.Application": "[1.0.0, )",
           "Modules.Catalog.Infrastructure": "[1.0.0, )",
           "Modules.Companies.Application": "[1.0.0, )",
@@ -803,6 +809,8 @@
           "Modules.Shopify.Infrastructure": "[1.0.0, )",
           "Modules.Storage.Application": "[1.0.0, )",
           "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Infrastructure": "[1.0.0, )",
           "Modules.Suppliers.Application": "[1.0.0, )",
           "Modules.Suppliers.Infrastructure": "[1.0.0, )",
           "Modules.Tenancy.Api": "[1.0.0, )",
@@ -824,7 +832,8 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
-          "BuildingBlocks.Domain": "[1.0.0, )"
+          "BuildingBlocks.Domain": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore.Relational": "[10.0.13, )"
         }
       },
       "buildingblocks.observability": {
@@ -955,6 +964,42 @@
           "Modules.Automations.Application": "[1.0.0, )",
           "Modules.Automations.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
+        }
+      },
+      "modules.buyers.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Domain": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )"
+        }
+      },
+      "modules.buyers.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "Modules.Buyers.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.buyers.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.buyers.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
+          "Microsoft.Extensions.Identity.Core": "[10.0.13, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
+          "Modules.Buyers.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
@@ -1191,6 +1236,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
           "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
@@ -1231,6 +1277,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Concentus": "[2.2.2, )",
           "Concentus.Oggfile": "[1.0.7, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
@@ -1261,6 +1308,7 @@
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
           "Microsoft.Extensions.Options.ConfigurationExtensions": "[10.0.13, )",
+          "Modules.Buyers.Application": "[1.0.0, )",
           "Modules.Identity.Application": "[1.0.0, )",
           "Modules.Notifications.Application": "[1.0.0, )",
           "Modules.Notifications.Domain": "[1.0.0, )",
@@ -1397,6 +1445,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "DocumentFormat.OpenXml": "[3.1.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
@@ -1466,6 +1515,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "BuildingBlocks.Infrastructure": "[1.0.0, )",
           "ClosedXML": "[0.105.1, )",
           "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Microsoft.Extensions.Hosting.Abstractions": "[10.0.13, )",
@@ -1548,6 +1598,42 @@
           "Modules.Storage.Domain": "[1.0.0, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )",
           "SixLabors.ImageSharp": "[3.1.12, )"
+        }
+      },
+      "modules.store.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.store.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "Modules.Store.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.store.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.store.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Application": "[1.0.0, )",
+          "Modules.Store.Domain": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
       "modules.suppliers.api": {

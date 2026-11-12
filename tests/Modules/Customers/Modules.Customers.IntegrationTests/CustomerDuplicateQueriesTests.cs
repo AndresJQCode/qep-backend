@@ -140,8 +140,7 @@ public sealed class CustomerDuplicateQueriesTests
         var kept = Guid.NewGuid();
         await InsertAsync(connection, Tenant, excluded, "Excluido", "Nit", "123-4", now);
         await InsertAsync(connection, Tenant, kept, "Otro", "Cc", "1234", now.AddMinutes(1));
-        // Sin tipo: un número suelto no identifica a nadie.
-        await InsertAsync(connection, Tenant, Guid.NewGuid(), "SinTipo", null, "1234", now.AddMinutes(2));
+        // Un número sin tipo ya no puede existir: CK_customers_identification_pair lo rechaza en la base.
         await InsertAsync(connection, Tenant, Guid.NewGuid(), "SinDocumento", null, null, now.AddMinutes(3));
 
         var found = await FindAsync(factory, Tenant, "1234", excluded);

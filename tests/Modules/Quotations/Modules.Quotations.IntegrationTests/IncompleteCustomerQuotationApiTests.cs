@@ -72,7 +72,7 @@ public sealed class IncompleteCustomerQuotationApiTests
             $"{QuotationsUrl(tenantId)}/{draft.Id}/send", new SendQuotationRequest(pdfFileId), TestContext.Current.CancellationToken);
         var convert = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{sent.Id}/order",
-            new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, sent.Total)]),
+            new ConvertQuotationToOrderRequest(null, [new OrderPaymentProofRequest(proofFileId, sent.Total)]),
             TestContext.Current.CancellationToken);
 
         await AssertIncompleteAsync(send);

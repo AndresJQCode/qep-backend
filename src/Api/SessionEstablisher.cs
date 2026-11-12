@@ -123,9 +123,15 @@ internal sealed class SessionEstablisher(
                 inUse,
                 regional?.Country,
                 regional?.EffectivePersonTypeRequirement.ToString(),
-                roundings));
+                roundings,
+                regional is null ? null : ToResponse(regional.EffectiveCustomerFieldPolicy)));
         }
 
         return responses;
     }
+
+    private static SessionCustomerFieldPolicyResponse ToResponse(CustomerFieldPolicy policy) =>
+        new(
+            new SessionFieldRequirementResponse(policy.Document.OnCustomerSave, policy.Document.OnBilling),
+            new SessionFieldRequirementResponse(policy.City.OnCustomerSave, policy.City.OnBilling));
 }

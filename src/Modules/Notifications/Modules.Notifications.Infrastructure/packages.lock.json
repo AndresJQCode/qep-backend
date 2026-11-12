@@ -339,6 +339,21 @@
           "BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "modules.buyers.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "Modules.Buyers.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.buyers.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "modules.identity.application": {
         "type": "Project",
         "dependencies": {

@@ -17,5 +17,7 @@
          internal (InternalsVisibleTo en Bootstrapper.csproj). Los módulos llegan transitivos por
          esta referencia. -->
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
+    <!-- BuyerParityTests ata el header de sesión de Store.Api al de Buyers.Api (que trae Store.Api transitivo). -->
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
   </ItemGroup>
 </Project>

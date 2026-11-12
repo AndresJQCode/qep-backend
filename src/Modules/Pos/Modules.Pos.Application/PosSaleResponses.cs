@@ -36,7 +36,7 @@ internal static class PosSaleResponses
             calendar.ToLocal(sale.CreatedAt),
             sale.CashSessionId.Value,
             session.CashierName,
-            new PosIssuerResponse(session.CompanyName, session.CompanyTaxId, session.CompanyAddress, session.CompanyPhone),
+            new PosIssuerResponse(session.CompanyName, session.CompanyTaxId, session.CompanyDocumentType, session.CompanyAddress, session.CompanyPhone),
             new PosCustomerResponse(sale.CustomerName, sale.CustomerIdentificationType, sale.CustomerIdentificationNumber),
             sale.Lines
                 .OrderBy(line => line.Position)

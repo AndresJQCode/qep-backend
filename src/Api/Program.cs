@@ -51,6 +51,11 @@ using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Api;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Api;
+using Modules.Store.Api;
+using Modules.Store.Application;
+using Modules.Store.Infrastructure;
+using Modules.Buyers.Api;
+using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Api;
 using Modules.Tenancy.Infrastructure;
@@ -154,6 +159,47 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+
+    // Tienda pública: la cubeta es la IP del visitante, no la del servidor del storefront (si no, todos los visitantes
+    // compartirían una). StorefrontClient.VisitorIp solo cree el header X-Qep-Visitor-Ip con la clave válida; sin ella
+    // cae a la IP del par directo, así que quien no tiene la clave no escapa de su cubeta cambiando el header. Corre antes
+    // del filtro de la clave: los intentos con clave inventada también gastan el cupo de su IP.
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontRead,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 300,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontSubmit,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext)),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+
+    // Credenciales de compradores: 10 por minuto por ruta y por IP del visitante. La clave usa el PATRÓN de ruta (no el path) para que
+    // cada ruta lleve su contador y el host de la tienda no abra una partición por tienda.
+    options.AddPolicy(
+        RateLimiterPolicies.StorefrontCredentials,
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{(httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText}|{StorefrontClient.VisitorIp(httpContext, StorefrontSecret(httpContext))}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    static string? StorefrontSecret(HttpContext httpContext) =>
+        httpContext.RequestServices.GetRequiredService<IOptions<StoreOptions>>().Value.Storefront.SharedSecret;
 });
 
 var app = builder.Build();
@@ -177,6 +223,9 @@ app.UseMiddleware<ExternalApiCallLoggingMiddleware>();
 // ver el 401 que escribe la primera y el 403 que escribe la segunda, que no pasan por el
 // manejador de excepciones porque no tiran nada. Ver RequestFailureLoggingMiddleware.
 app.UseMiddleware<RequestFailureLoggingMiddleware>();
+// Antes del limitador, a propósito: así el 429 (y el 400/413 del cuerpo, el 401 de la clave y lo que sale por excepción) de /buyer/*
+// también llevan Cache-Control: no-store. Ver BuyerNoStoreMiddleware.
+app.UseMiddleware<BuyerNoStoreMiddleware>();
 app.UseRateLimiter();
 // La defensa CSRF protege la sesión autenticada por cookie (ver AddAuthentication);
 // el stub de desarrollo confía en los headers que manda el llamador en vez de en una
@@ -241,6 +290,7 @@ app.MapCityOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
+app.MapOrderSettingsEndpoints();
 app.MapQuotationSettingsEndpoints();
 app.MapWhatsAppChannelEndpoints();
 app.MapCarrierEndpoints();
@@ -269,6 +319,12 @@ app.MapSupplierEndpoints();
 app.MapApiKeyEndpoints();
 app.MapServiceContractsEndpoints();
 app.MapLoansEndpoints();
+// Spec 2026-11-03: la tienda en línea (backoffice y rutas públicas).
+app.MapStoreEndpoints();
+// Tienda pública: sin sesión ni CSRF, con la clave del storefront y limitadores por IP del visitante.
+app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontSubmit);
+// Cuentas de comprador (spec 2026-11-07): mismo prefijo y misma clave del storefront; las credenciales llevan su propio cupo por ruta.
+app.MapPublicBuyerEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontCredentials);
 
 await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
 // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
@@ -349,6 +405,14 @@ await app.Services.InitializeServiceContractsDatabaseAsync(
 // referencias blandas.
 await app.Services.InitializeLoansDatabaseAsync(
     app.Lifetime.ApplicationStopping);
+
+// Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
+// clientes, pedidos y membresías son referencias blandas.
+await app.Services.InitializeStoreDatabaseAsync(
+    app.Lifetime.ApplicationStopping);
+
+// Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
+await app.Services.InitializeBuyersDatabaseAsync(app.Lifetime.ApplicationStopping);
 
 // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
 // membresías son referencias blandas.

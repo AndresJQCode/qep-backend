@@ -94,6 +94,8 @@ public sealed class CompanyActivationApiTests
                 name = "Andes Logistica S.A.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "900.111.222-3",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);
@@ -125,6 +127,8 @@ public sealed class CompanyActivationApiTests
                 name = "Otra Empresa S.A.S.",
                 bankAccounts = new[] { BankAccount("CTA-000123") },
                 taxId = "830.222.333-4",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
             },
             TestContext.Current.CancellationToken);

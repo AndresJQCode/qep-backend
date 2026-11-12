@@ -1,3 +1,4 @@
+using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Modules.Customers.Application;
 using Modules.Customers.Infrastructure.Persistence;
@@ -28,6 +29,32 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class CustomerMergeReferences(CustomersDbContext customers) : ICustomerMergeReferences
 {
+    public async Task LockAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(customerIds);
+        Guid[] ids = [.. customerIds.Distinct().Order()];
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        // Sin transacción el candado se soltaría al terminar su sentencia y la fusión no se serializaría con nada.
+        if (customers.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("Locking the merge references requires the transaction of the CustomersDbContext.");
+        }
+
+        // Una sentencia por cliente y en orden de id, como CustomerDeletionReferences.LockAsync: dos que se crucen piden los candados
+        // en el mismo orden. Un deadlock igual sería una carrera (412), no un 500.
+        await CustomersWriteRaces.RunAsync(async () =>
+        {
+            foreach (var id in ids)
+            {
+                await customers.Database.ExecuteSqlAsync(CustomerReferenceLock.Exclusive(tenantId, id), cancellationToken);
+            }
+        });
+    }
+
     public async Task MoveAsync(
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken)
     {

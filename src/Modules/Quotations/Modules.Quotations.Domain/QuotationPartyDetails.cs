@@ -19,7 +19,7 @@ public sealed record QuotationPartyDetails
     /// <see cref="QuotationParty"/> lo descarta en la de entrega.</summary>
     public PartyPersonType? PersonType { get; init; }
 
-    /// <summary>NIT, CC, CE o PASAPORTE: el tipo del <see cref="IdentificationNumber"/>. Misma
+    /// <summary>Uno de los siete códigos (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID; qué país acepta cuáles lo dice <c>DocumentTypesByCountry</c>): el tipo del <see cref="IdentificationNumber"/>. Misma
     /// suerte que el número: sólo existe en facturación y se exige donde el número se exige.</summary>
     public PartyIdentificationType? IdentificationType { get; init; }
 
@@ -32,6 +32,20 @@ public sealed record QuotationPartyDetails
     public Guid? DepartmentId { get; init; }
 
     public Guid? CityId { get; init; }
+
+    /// <summary>País ISO 3166-1 alfa-2. <c>null</c> es Colombia (<c>CO</c>), que es lo que tienen todas las
+    /// filas guardadas antes de la columna y lo que sigue mandando Shopify. Un país distinto trae la
+    /// ciudad escrita (<see cref="CityName"/>) y ningún id de DIVIPOLA.</summary>
+    public string? Country { get; init; }
+
+    /// <summary>La ciudad como texto, sólo fuera de Colombia: no hay catálogo contra el cual validarla.</summary>
+    public string? CityName { get; init; }
+
+    public const string ColombiaCountryCode = "CO";
+
+    public const int CountryLength = 2;
+
+    public const int CityNameMaxLength = 120;
 
     // Mismos topes que Customer para los campos que son el mismo dato: una parte es una copia
     // puntual de la ficha del cliente, no puede aceptar más de lo que la ficha acepta.
@@ -48,8 +62,95 @@ public sealed record QuotationPartyDetails
     // el dominio de Customers; si allá cambia, cambia acá también.
     public const int IdentificationNumberMaxLength = 32;
 
-    internal QuotationPartyDetails Normalized() => new()
+    /// <summary>Colombia por omisión: <c>null</c>, vacío y <c>CO</c> son la misma parte.</summary>
+    public bool IsColombian =>
+        string.IsNullOrWhiteSpace(Country)
+        || string.Equals(Country.Trim(), ColombiaCountryCode, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>El carril de la ciudad, igual que en la libreta de direcciones: Colombia lleva
+    /// departamento y ciudad de DIVIPOLA, el resto el nombre de la ciudad. Completa si están los dos.</summary>
+    public bool HasCompleteCity => IsColombian
+        ? DepartmentId is not null && CityId is not null
+        : !string.IsNullOrWhiteSpace(CityName);
+
+    internal QuotationPartyDetails Normalized(string fieldPrefix)
     {
+        var country = NormalizeCountry(Country);
+        var normalized = this with { Country = country };
+        normalized.EnsureLane(fieldPrefix);
+        normalized.EnsureDocumentTypeAllowed(fieldPrefix);
+        return normalized.NormalizedFields(country);
+    }
+
+    // Se rechaza en vez de limpiar el campo que sobra: un id con un país de afuera (o una ciudad escrita
+    // con CO) es una contradicción de quien escribe, y descartarla en silencio guardaría otra ciudad.
+    private void EnsureLane(string fieldPrefix)
+    {
+        if (IsColombian && !string.IsNullOrWhiteSpace(CityName))
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.CityName",
+                "A Colombian party takes its city from the department and city ids, not from a city name.");
+        }
+
+        if (!IsColombian && (DepartmentId is not null && DepartmentId != Guid.Empty
+            || CityId is not null && CityId != Guid.Empty))
+        {
+            throw LaneInvalid(
+                $"{fieldPrefix}.CityId",
+                "A party outside Colombia takes its city as text, not from the department and city ids.");
+        }
+    }
+
+    // Sólo se comprueba al escribir (Normalized), nunca al cargar de la base: una fila guardada antes de la regla
+    // se lee igual y recién falla cuando alguien la guarda de nuevo.
+    private void EnsureDocumentTypeAllowed(string fieldPrefix)
+    {
+        if (IdentificationType is { } type && !type.IsAllowedFor(Country))
+        {
+            const string message = "The identification type is not allowed for the country.";
+            throw new QuotationsDomainException(
+                "quotations.party.document_type_not_allowed",
+                message,
+                new Dictionary<string, string[]>(StringComparer.Ordinal)
+                {
+                    [$"{fieldPrefix}.IdentificationType"] = [message]
+                });
+        }
+    }
+
+    private static QuotationsDomainException LaneInvalid(string field, string message) =>
+        new("quotations.party.city_lane_invalid", message,
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { [field] = [message] });
+
+    // CO se guarda como null: una sola forma para Colombia, así las filas nuevas son iguales a las viejas y
+    // la igualdad de registros (Shopify compara partes) no depende de cómo se escribió el país.
+    private static string? NormalizeCountry(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var code = value.Trim().ToUpperInvariant();
+        if (code.Length != CountryLength || !code.All(char.IsAsciiLetterUpper))
+        {
+            throw new QuotationsDomainException(
+                "quotations.party.country_invalid",
+                "The party country must be an ISO 3166-1 alpha-2 code.");
+        }
+
+        return code == ColombiaCountryCode ? null : code;
+    }
+
+    private QuotationPartyDetails NormalizedFields(string? country) => new()
+    {
+        Country = country,
+        CityName = NormalizeOptional(
+            CityName,
+            CityNameMaxLength,
+            "quotation.party.city_name_too_long",
+            $"The party city name cannot exceed {CityNameMaxLength} characters."),
         Name = NormalizeOptional(
             Name,
             NameMaxLength,

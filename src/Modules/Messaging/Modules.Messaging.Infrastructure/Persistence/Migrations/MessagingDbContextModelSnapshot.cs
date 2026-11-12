@@ -798,13 +798,17 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "TenantId", "ConnectionId", "Name", "Language" }, "UX_message_templates_name_language")
                         .IsUnique();
 
+                    b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_order")
+                        .IsUnique()
+                        .HasFilter("kind = 'Order'");
+
                     b.HasIndex(new[] { "TenantId", "ConnectionId" }, "UX_message_templates_quotation")
                         .IsUnique()
                         .HasFilter("kind = 'Quotation'");
 
                     b.ToTable("message_templates", "messaging", t =>
                         {
-                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue')");
+                            t.HasCheckConstraint("CK_message_templates_kind", "kind IN ('Free','Quotation','External','BillingReminder','BillingOverdue','Order')");
                         });
                 });
 
@@ -889,6 +893,154 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.ToTable("resolution_reasons", "messaging");
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Domain.ScheduledMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("attempts");
+
+                    b.Property<Guid>("AuthorMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_member_id");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<Guid?>("CancelledByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cancelled_by_member_id");
+
+                    b.Property<string>("Caption")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("caption");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_member_id");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("failure_code");
+
+                    b.Property<bool>("IsVoiceNote")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_voice_note");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("kind");
+
+                    b.Property<DateTimeOffset?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<string>("MediaFileName")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("media_file_name");
+
+                    b.Property<string>("MediaMimeType")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("media_mime_type");
+
+                    b.Property<string>("MediaSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("media_sha256");
+
+                    b.Property<long?>("MediaSizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("media_size_bytes");
+
+                    b.Property<string>("MediaStorageKey")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("media_storage_key");
+
+                    b.Property<DateTimeOffset>("ScheduledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scheduled_at");
+
+                    b.Property<Guid?>("SentMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sent_message_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Text")
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)")
+                        .HasColumnName("text");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByMemberId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_member_id");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "ScheduledAt" }, "IX_scheduled_messages_due")
+                        .HasFilter("status = 'Scheduled'");
+
+                    b.HasIndex(new[] { "ConversationId" }, "UX_scheduled_messages_active_conversation")
+                        .IsUnique()
+                        .HasFilter("status IN ('Scheduled','Sending','Failed')");
+
+                    b.HasIndex(new[] { "ConversationId", "ClientId" }, "UX_scheduled_messages_conversation_client")
+                        .IsUnique();
+
+                    b.ToTable("scheduled_messages", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_scheduled_messages_media_shape", "kind = 'Text' OR media_mime_type IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_scheduled_messages_status", "status IN ('Scheduled','Sending','Sent','Failed','Cancelled')");
+
+                            t.HasCheckConstraint("CK_scheduled_messages_text_shape", "kind <> 'Text' OR (text IS NOT NULL AND media_mime_type IS NULL)");
+
+                            t.HasCheckConstraint("CK_scheduled_messages_voice_note", "NOT is_voice_note OR kind = 'Audio'");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.AutomationInboxRecord", b =>
                 {
                     b.Property<Guid>("MessageId")
@@ -969,7 +1121,7 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("customer_created_at");
 
-                    b.Property<Guid>("CustomerId")
+                    b.Property<Guid?>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
 
@@ -1223,6 +1375,12 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.Property<string>("ReplyToWamid")
                         .HasColumnType("text")
                         .HasColumnName("reply_to_wamid");
+
+                    b.Property<bool>("RetryDisabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("retry_disabled");
 
                     b.Property<NpgsqlTsVector>("SearchVector")
                         .ValueGeneratedOnAddOrUpdate()
@@ -1511,6 +1669,16 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ResolutionReasonId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_conversations_resolution_reasons");
+                });
+
+            modelBuilder.Entity("Modules.Messaging.Domain.ScheduledMessage", b =>
+                {
+                    b.HasOne("Modules.Messaging.Domain.Conversation", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_scheduled_messages_conversation");
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>

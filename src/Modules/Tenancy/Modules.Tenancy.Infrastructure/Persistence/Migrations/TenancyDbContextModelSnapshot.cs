@@ -270,6 +270,45 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("version");
 
+                    b.ComplexProperty(typeof(Dictionary<string, object>), "CustomerFieldPolicy", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy", b1 =>
+                        {
+                            b1.IsRequired();
+
+                            b1.ComplexProperty(typeof(Dictionary<string, object>), "City", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy.City#FieldRequirement", b2 =>
+                                {
+                                    b2.IsRequired();
+
+                                    b2.Property<bool>("OnBilling")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_city_required_on_billing");
+
+                                    b2.Property<bool>("OnCustomerSave")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_city_required_on_save");
+                                });
+
+                            b1.ComplexProperty(typeof(Dictionary<string, object>), "Document", "Modules.Tenancy.Domain.Tenant.CustomerFieldPolicy#CustomerFieldPolicy.Document#FieldRequirement", b2 =>
+                                {
+                                    b2.IsRequired();
+
+                                    b2.Property<bool>("OnBilling")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_document_required_on_billing");
+
+                                    b2.Property<bool>("OnCustomerSave")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("boolean")
+                                        .HasDefaultValue(true)
+                                        .HasColumnName("customer_document_required_on_save");
+                                });
+                        });
+
                     b.HasKey("Id");
 
                     b.HasIndex("Slug")
@@ -400,7 +439,7 @@ namespace Modules.Tenancy.Infrastructure.Persistence.Migrations
 
                     b.ToTable("tenant_modules", "tenancy", t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans')");
+                            t.HasCheckConstraint("CK_tenant_modules_module_key", "module_key IN ('catalog','customers','companies','quotations','orders','reporting','pos','messaging','pipeline','shopify','automations','suppliers','billing','developer','loans','store')");
 
                             t.HasCheckConstraint("CK_tenant_modules_source", "source IN ('backfill','signup','seed','manual','operator')");
 

@@ -57,6 +57,14 @@ public sealed class Product
 
     public bool IsActive { get; private set; }
 
+    /// <summary>
+    /// Si el producto se publica en la tienda pública. Nace en <c>false</c>, y los productos de antes
+    /// de la tienda también quedan ocultos: publicar es una decisión del tenant, nunca un efecto de
+    /// la migración. Aparte de <see cref="IsActive"/> a propósito: desactivar un producto no debe
+    /// borrar lo que el tenant eligió mostrar.
+    /// </summary>
+    public bool VisibleInStore { get; private set; }
+
     // --- CAT-04: propiedades opcionales. Nacen nullable porque hay productos ya cargados: una
     // columna NOT NULL sin default los rompe. Price se retiró en CAT-09, reemplazado por los
     // precios por moneda, que desde 2026-10-20 son de cada variante.
@@ -162,7 +170,8 @@ public sealed class Product
         IReadOnlyList<Guid> optionIds,
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
-        DateTimeOffset occurredAt)
+        DateTimeOffset occurredAt,
+        bool visibleInStore = false)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
@@ -173,7 +182,10 @@ public sealed class Product
         EnsureGallery(galleryFileIds);
         EnsureVariantCount(variants);
 
-        var product = new Product(id, tenantId, normalizedName, details, occurredAt);
+        var product = new Product(id, tenantId, normalizedName, details, occurredAt)
+        {
+            VisibleInStore = visibleInStore
+        };
         product.ReplaceOptions(optionIds);
         product.ReplaceGallery(galleryFileIds);
         product.ReplaceVariants(
@@ -205,7 +217,8 @@ public sealed class Product
         IReadOnlyList<ProductVariantInput> variants,
         IReadOnlyList<Guid> galleryFileIds,
         DateTimeOffset occurredAt,
-        IReadOnlyCollection<Guid>? deletedVariantIds = null)
+        IReadOnlyCollection<Guid>? deletedVariantIds = null,
+        bool? visibleInStore = null)
     {
         ArgumentNullException.ThrowIfNull(optionIds);
         ArgumentNullException.ThrowIfNull(variants);
@@ -229,6 +242,10 @@ public sealed class Product
         // mismo guardado.
         _variants.RemoveAll(variant => deleted.Contains(variant.Id.Value));
         ReplaceVariants(variants, optionIds.Count, isCreate: false);
+        // null conserva el valor: el PUT reemplaza el recurso entero, pero la visibilidad la puede
+        // cambiar también el lote, y un cliente viejo que no la manda no debe ocultar el producto.
+        // Va en el mismo incremento de versión que el resto del guardado.
+        VisibleInStore = visibleInStore ?? VisibleInStore;
         Version++;
         UpdatedAt = occurredAt;
     }
@@ -551,6 +568,24 @@ public sealed class Product
         IsActive = true;
         Version++;
         UpdatedAt = occurredAt;
+    }
+
+    /// <summary>
+    /// Publica u oculta el producto en la tienda. Devuelve <c>false</c> sin tocar nada si ya estaba así:
+    /// un lote que repite el valor no debe subir la versión ni invalidar a quien tiene el formulario
+    /// abierto. No exige que el producto esté activo; la tienda sólo lo muestra activo.
+    /// </summary>
+    public bool SetStoreVisibility(bool visible, DateTimeOffset occurredAt)
+    {
+        if (VisibleInStore == visible)
+        {
+            return false;
+        }
+
+        VisibleInStore = visible;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
     }
 
     private void EnsureActive()

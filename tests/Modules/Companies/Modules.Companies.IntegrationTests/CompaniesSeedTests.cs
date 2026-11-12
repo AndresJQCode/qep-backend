@@ -47,7 +47,7 @@ public sealed class CompaniesSeedTests
         // afirma contra el DIVIPOLA: 05615 es Rionegro, Antioquia.
         var cityId = Assert.Single(companies.Select(company => company.CityId).Distinct());
         var city = await scope.ServiceProvider.GetRequiredService<ICityRepository>()
-            .FindAsync(new CityId(cityId), TestContext.Current.CancellationToken);
+            .FindAsync(new CityId(cityId!.Value), TestContext.Current.CancellationToken);
         Assert.NotNull(city);
         Assert.Equal("05615", city.DivipolaCode);
 

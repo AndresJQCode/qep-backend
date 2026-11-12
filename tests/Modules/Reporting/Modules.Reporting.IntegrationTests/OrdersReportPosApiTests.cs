@@ -112,7 +112,9 @@ public sealed class OrdersReportPosApiTests
             ("source=Pos", true, false),
             ("source=Quotation", false, true),
             ("paymentStatus=PaymentPending", false, false),
-            ("paymentStatus=FullPaymentReceived", true, true),
+            // El pedido convertido con comprobante por el total queda «Por verificar» (spec 2026-11-10 §3.2).
+            ("paymentStatus=FullPaymentReceived", true, false),
+            ("paymentStatus=PendingVerification", false, true),
             ($"clientId={order.ClientId}", false, true),
             ($"from={outside:yyyy-MM-dd}&to={outside:yyyy-MM-dd}", false, false),
             ($"from={today:yyyy-MM-dd}&to={today:yyyy-MM-dd}", true, true),
@@ -246,8 +248,8 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(2, advisor.Count);
         Assert.Equal(2, summary.ByClient.Count);
         Assert.Contains(summary.ByClient, entry => entry.Id == customer.Id && entry.Count == 1);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
-        Assert.Equal([1, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal([1, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", sale.Total)], summary.BySource[3].Totals);
         Assert.Equal(0, summary.WithoutClient.Count);
     }
@@ -397,7 +399,7 @@ public sealed class OrdersReportPosApiTests
 
         Assert.Equal(1, summary.OrderCount);
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
-        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Empty(summary.ByClient);
         Assert.Equal(1, summary.WithoutClient.Count);
     }
@@ -425,7 +427,7 @@ public sealed class OrdersReportPosApiTests
         Assert.Equal(0, page.Total);
         Assert.Empty(page.Items);
         Assert.Equal(0, summary.OrderCount);
-        Assert.Equal([0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 0, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal(0, summary.WithoutClient.Count);
     }
 
@@ -495,7 +497,7 @@ public sealed class OrdersReportPosApiTests
         Assert.NotNull(summary);
         Assert.Equal(1, summary.OrderCount);
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.Totals);
-        Assert.Equal([0, 0, 0, 1], summary.BySource.Select(slice => slice.Count));
+        Assert.Equal([0, 0, 0, 1, 0], summary.BySource.Select(slice => slice.Count));
         Assert.Equal([new MoneyAmount("COP", PosPrice)], summary.BySource[3].Totals);
         Assert.Equal((1, PosPrice), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Single().Amount));
         var ranked = Assert.Single(summary.ByAdvisor);
@@ -507,7 +509,7 @@ public sealed class OrdersReportPosApiTests
     /// <summary>
     /// Un filtro que deja el resumen sin filas sigue trayendo <c>bySource</c> completo, en cero, y
     /// <c>withoutClient</c> en cero: <c>paymentStatus=PaymentPending</c> excluye las ventas (siempre
-    /// pagadas) y el pedido pagado, y <c>source=Manual</c> no tiene ninguno.
+    /// pagadas) y el pedido por verificar, y <c>source=Manual</c> no tiene ninguno.
     /// </summary>
     [Theory]
     [InlineData("paymentStatus=PaymentPending")]
@@ -524,7 +526,7 @@ public sealed class OrdersReportPosApiTests
 
         Assert.Equal(0, summary.OrderCount);
         Assert.Empty(summary.Totals);
-        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos"], summary.BySource.Select(slice => slice.Source));
+        Assert.Equal(["Quotation", "Manual", "Shopify", "Pos", "Store"], summary.BySource.Select(slice => slice.Source));
         Assert.All(summary.BySource, slice => Assert.Equal((0, 0), (slice.Count, slice.Totals.Count)));
         Assert.Equal((0, 0), (summary.WithoutClient.Count, summary.WithoutClient.Totals.Count));
     }

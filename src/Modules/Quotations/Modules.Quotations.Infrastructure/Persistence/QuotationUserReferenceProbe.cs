@@ -16,7 +16,8 @@ namespace Modules.Quotations.Infrastructure.Persistence;
 /// Cubre cada columna mapeada con <see cref="MemberId"/> en <see cref="QuotationsDbContext"/>:
 /// <c>quotations.advisor_id</c>, <c>created_by</c> y <c>updated_by</c>;
 /// <c>quotation_history.member_id</c>; <c>orders.advisor_id</c>, <c>orders.converted_by</c>,
-/// <c>orders.approved_by</c>, <c>orders.cancelled_by</c> y <c>orders.invoiced_by</c>;
+/// <c>orders.paid_marked_by</c>, <c>orders.prepared_by</c>, <c>orders.archived_by</c>, <c>orders.cancelled_by</c>
+/// y <c>orders.invoiced_by</c>;
 /// <c>order_history.member_id</c>; y <c>order_payment_proofs.uploaded_by</c>. Desde el spec
 /// 2026-10-15 el pedido tiene asesor e historial propios: un pedido manual o de una integración
 /// referencia a su asesor sin pasar por una cotización, y quien edita un pedido pendiente sólo
@@ -52,7 +53,9 @@ internal sealed class QuotationUserReferenceProbe(
                 await dbContext.Orders.AnyAsync(
                     order => order.AdvisorId == member ||
                         order.ConvertedBy == member ||
-                        order.ApprovedBy == member ||
+                        order.PaidMarkedBy == member ||
+                        order.PreparedBy == member ||
+                        order.ArchivedBy == member ||
                         order.CancelledBy == member ||
                         order.InvoicedBy == member,
                     cancellationToken) ||

@@ -315,6 +315,10 @@ public sealed class CorsApiTests
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");
             builder.UseSetting("Storage:R2:SecretAccessKey", "test-secret");
             builder.UseSetting("Storage:R2:Bucket", "test-bucket");
+            // Fuera de Development y Testing la tienda exige sus dos secretos al arrancar (StoreOptionsValidator.cs:13, regla de la
+            // tarea 7); valores de prueba, igual que los de R2.
+            builder.UseSetting("Store:Storefront:SharedSecret", "test-storefront-shared-secret-0123456789");
+            builder.UseSetting("Store:Turnstile:SecretKey", "test-turnstile-secret");
             // Fijado, nunca heredado: mismo criterio que TenantSettingsApiTests (SDD-CT-17).
             builder.UseSetting("Notifications:EmailProvider", "log");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:DryRun", "true");

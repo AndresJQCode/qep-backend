@@ -18,7 +18,6 @@ public sealed record OrderDraftInput(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
-    OrderPaymentStatus PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofInput> Proofs,
     bool AllowIncompleteCustomer,
     ShippingRequest? Shipping = null);
@@ -59,11 +58,13 @@ public sealed class OrderDraftBuilder(
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now);
         await BillingPersonTypeRequirement.EnsureForOrderAsync(
             tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        // Los descuentos de grupo movieron el neto: el pago se compara contra el definitivo.
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
 
@@ -83,9 +84,10 @@ public sealed class OrderDraftBuilder(
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
 
@@ -116,20 +118,39 @@ public sealed class OrderDraftBuilder(
     private async Task<(OrderHeader Header, QuotationParties Parties, List<OrderLineInput> Lines)> PriceAsync(
         OrderDraftInput input, QuotationCustomerRef customer, string currency, CancellationToken cancellationToken)
     {
+        var lines = await PriceLinesAsync(input.TenantId, input.Items, currency, input.IsRetail, cancellationToken);
+        var header = new OrderHeader(
+            input.ClientId,
+            input.AdvisorId,
+            currency,
+            input.PaymentMethod,
+            input.IsRetail,
+            input.GlobalScaleFloor,
+            customer.WithRetention,
+            customer.VatSurplus);
+        return (header, input.Parties.ToDomain(), lines);
+    }
+
+    /// <summary>Las líneas preciadas con el catálogo del tenant, sin cliente ni cuenta: lo comparten el pedido
+    /// manual y la tienda pública (<see cref="StoreOrderGateway"/>), que precia antes de saber a quién se vende.</summary>
+    internal async Task<List<OrderLineInput>> PriceLinesAsync(
+        Guid tenantId, IReadOnlyList<OrderItemAddition> items, string currency, bool isRetail,
+        CancellationToken cancellationToken)
+    {
         // Una lectura del catálogo con precio para todo el pedido (el preview corre mientras se escribe)
         // y la comprobación línea por línea, como el alta de una línea en la cotización: un producto
         // ausente, de otro tenant o inactivo se rechaza con el código de siempre (ResolveManyAsync deja
         // pasar el inactivo a propósito, porque sirve al cambio de moneda de líneas que ya existen).
         var pricedVariants = await QuotationProductPricingResolver.FindVariantsAsync(
-            pricingLookup, input.TenantId, input.Items.Select(item => item.VariantId), cancellationToken);
+            pricingLookup, tenantId, items.Select(item => item.VariantId), cancellationToken);
         var products = await productLookup.FindManyAsync(
-            input.TenantId, input.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
-        var lines = new List<OrderLineInput>(input.Items.Count);
-        foreach (var item in input.Items)
+            tenantId, items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
+        var lines = new List<OrderLineInput>(items.Count);
+        foreach (var item in items)
         {
             var priced = QuotationProductPricingResolver.Resolve(
-                pricedVariants.GetValueOrDefault(item.VariantId), input.TenantId, item.VariantId, item.Quantity,
-                currency, input.IsRetail);
+                pricedVariants.GetValueOrDefault(item.VariantId), tenantId, item.VariantId, item.Quantity,
+                currency, isRetail);
             products.TryGetValue(item.VariantId, out var product);
             lines.Add(new OrderLineInput(
                 item.VariantId,
@@ -141,15 +162,6 @@ public sealed class OrderDraftBuilder(
                 product is null ? null : new QuotationProductSnapshot(product.Code, product.Name)));
         }
 
-        var header = new OrderHeader(
-            input.ClientId,
-            input.AdvisorId,
-            currency,
-            input.PaymentMethod,
-            input.IsRetail,
-            input.GlobalScaleFloor,
-            customer.WithRetention,
-            customer.VatSurplus);
-        return (header, input.Parties.ToDomain(), lines);
+        return lines;
     }
 }

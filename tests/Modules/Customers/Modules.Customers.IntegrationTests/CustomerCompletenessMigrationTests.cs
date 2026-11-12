@@ -135,6 +135,66 @@ public sealed class CustomerCompletenessMigrationTests
             $"SELECT address FROM customers.customers WHERE id = '{OldCustomerId}'"));
     }
 
+    // Spec 2026-11-09: la identificación ya no es obligatoria en una ficha completa; la política del tenant lo decide
+    // en Application. El CHECK sólo exige que tipo y número vayan juntos.
+    [Fact]
+    public async Task ACompleteCustomerWithoutIdentificationIsAccepted()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateGeographyToLatestAsync(connectionString);
+        await using var context = NewCustomersContext(connectionString);
+        await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, OldCustomerSql(afterCompleteness: true));
+
+        await ExecuteAsync(connectionString,
+            $"UPDATE customers.customers SET identification_type = NULL, identification_number = NULL WHERE id = '{OldCustomerId}'");
+
+        Assert.Equal(0L, await ScalarAsync<long>(connectionString,
+            $"SELECT count(identification_type) + count(identification_number) FROM customers.customers WHERE id = '{OldCustomerId}'"));
+    }
+
+    [Fact]
+    public async Task HalfAnIdentificationIsRejectedByThePairCheck()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateGeographyToLatestAsync(connectionString);
+        await using var context = NewCustomersContext(connectionString);
+        await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, OldCustomerSql(afterCompleteness: true));
+
+        var half = await Assert.ThrowsAsync<PostgresException>(() =>
+            ExecuteAsync(connectionString, $"UPDATE customers.customers SET identification_number = NULL WHERE id = '{OldCustomerId}'"));
+
+        Assert.Equal("23514", half.SqlState);
+        Assert.Equal("CK_customers_identification_pair", half.ConstraintName);
+    }
+
+    [Fact]
+    public async Task TwoCustomersWithoutIdentificationCoexistInATenant()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await MigrateGeographyToLatestAsync(connectionString);
+        await using var context = NewCustomersContext(connectionString);
+        await context.Database.MigrateAsync(TestContext.Current.CancellationToken);
+        await ExecuteAsync(connectionString, OldCustomerSql(afterCompleteness: true));
+        await ExecuteAsync(connectionString,
+            $"UPDATE customers.customers SET identification_type = NULL, identification_number = NULL WHERE id = '{OldCustomerId}'");
+
+        await ExecuteAsync(connectionString, $"""
+            INSERT INTO customers.customers (
+                id, tenant_id, cuc, name, identification_type, identification_number, is_active, country, city_name,
+                classification_id, with_retention, vat_surplus, version, created_at, updated_at, completeness)
+            VALUES ('{SecondIncompleteCustomerId}', '{TenantId}', 'CLI00000002', 'Otra Ficha S.L.', NULL, NULL, true, 'ES', 'Madrid',
+                    '{ClassificationId}', false, false, 1, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z', 'Complete');
+            """);
+
+        Assert.Equal(2L, await ScalarAsync<long>(connectionString,
+            "SELECT count(*) FROM customers.customers WHERE identification_number IS NULL"));
+    }
+
     private static async Task MigrateGeographyToLatestAsync(string connectionString)
     {
         await using var geography = new GeographyDbContext(

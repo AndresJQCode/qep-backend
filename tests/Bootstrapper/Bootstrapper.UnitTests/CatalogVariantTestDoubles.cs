@@ -83,13 +83,35 @@ internal sealed class FakeProductRepository(params Product[] products) : IProduc
         string? name,
         string? code,
         bool? isActive,
+        bool? visibleInStore,
         IReadOnlyCollection<Guid>? categoryIds,
         int page,
         int pageSize,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyList<Product>> FindManyForUpdateAsync(
+        Guid tenantId, IReadOnlyCollection<ProductId> productIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<(IReadOnlyList<Product> Items, int Total)> SearchStoreVisibleAsync(
+        Guid tenantId, string currency, string? search, IReadOnlyCollection<Guid>? categoryIds, int page, int pageSize,
+        CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<ProductCategoryId, int>> CountStoreVisibleByCategoryAsync(
+        Guid tenantId, string currency, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<Product?> FindStoreVisibleAsync(
+        Guid tenantId, ProductId id, string currency, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlyList<Product>> FindStoreVisibleVariantsAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public void Add(Product product) => throw new NotSupportedException();
+
+    public void Remove(Product product) => throw new NotSupportedException();
 
     public void AddPriceChanges(IReadOnlyList<ProductPriceChange> changes) => throw new NotSupportedException();
 

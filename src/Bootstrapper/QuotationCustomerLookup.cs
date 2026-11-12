@@ -17,9 +17,27 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class QuotationCustomerLookup(
     ICustomerRepository repository,
-    ICustomerGeographyLookup geographyLookup)
+    ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companies)
     : IQuotationCustomerLookup
 {
+    /// <summary>El tope de contactos que viajan en el documento (spec 2026-11-10 §4.6): el diálogo de envío no pagina.</summary>
+    public const int ContactCap = 100;
+
+    public async Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken)
+    {
+        var contact = await companies.FindContactOfAsync(tenantId, clientId, contactId, cancellationToken);
+        return contact is null ? null : new QuotationClientContact(contact.Id, contact.Name, contact.Phone);
+    }
+
+    public async Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var contacts = await companies.ListContactsAsync(tenantId, clientId, ContactCap, cancellationToken);
+        return [.. contacts.Select(contact => new QuotationClientContact(contact.Id, contact.Name, contact.Phone))];
+    }
+
     public async Task<QuotationCustomerRef?> FindAsync(
         Guid tenantId, Guid clientId, CancellationToken cancellationToken)
     {
@@ -33,8 +51,7 @@ internal sealed class QuotationCustomerLookup(
         // Las ciudades del domicilio y de toda la libreta de una vez: la cotizacion muestra la
         // libreta completa en su selector de envio, y cada fila necesita el nombre de su ciudad.
         var citiesById = await geographyLookup.FindCitiesAsync(
-            customer.Addresses
-                .Select(address => address.CityId)
+            AddressCityIds(customer)
                 .Concat(DomicileCityIds(customer))
                 .Distinct()
                 .ToArray(),
@@ -59,8 +76,7 @@ internal sealed class QuotationCustomerLookup(
         // sola vez — mismo motivo que FindAsync, pero por lote y no por cliente.
         var citiesById = await geographyLookup.FindCitiesAsync(
             customers.Values
-                .SelectMany(customer => customer.Addresses
-                    .Select(address => address.CityId)
+                .SelectMany(customer => AddressCityIds(customer)
                     .Concat(DomicileCityIds(customer)))
                 .Distinct()
                 .ToArray(),
@@ -69,6 +85,12 @@ internal sealed class QuotationCustomerLookup(
         return customers.Values.ToDictionary(
             customer => customer.Id.Value, customer => ToRef(customer, citiesById));
     }
+
+    // Las ciudades DIVIPOLA de la libreta: una direccion de afuera no tiene id que resolver.
+    private static IEnumerable<Guid> AddressCityIds(Customer customer) =>
+        customer.Addresses
+            .Where(address => address.CityId.HasValue)
+            .Select(address => address.CityId!.Value);
 
     // La ciudad del domicilio a resolver, o nada: un cliente que no es de Colombia no tiene
     // ciudad DIVIPOLA, la suya es el texto de Customer.CityName.
@@ -125,18 +147,26 @@ internal sealed class QuotationCustomerLookup(
         CustomerAddress address,
         IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
     {
-        citiesById.TryGetValue(address.CityId, out var city);
+        // Una direccion de afuera no tiene ciudad DIVIPOLA: viaja sin ids y la ciudad escrita va como nombre.
+        CustomerCityRef? city = null;
+        if (address.CityId is { } cityId)
+        {
+            citiesById.TryGetValue(cityId, out city);
+        }
 
+        // Para Colombia el contrato no cambia: una ciudad que no se resolvió sigue llegando vacía.
+        var foreign = !string.Equals(address.Country, "CO", StringComparison.OrdinalIgnoreCase);
         return new QuotationCustomerAddressRef(
             address.Id.Value,
             address.Name,
             address.Address,
             address.Phone,
             address.CityId,
-            city?.CityName ?? string.Empty,
-            city?.DepartmentId ?? Guid.Empty,
-            city?.DepartmentName ?? string.Empty,
-            address.IsPrincipal);
+            city?.CityName ?? address.CityName ?? (foreign ? null : string.Empty),
+            city?.DepartmentId ?? (foreign ? null : Guid.Empty),
+            city?.DepartmentName ?? (foreign ? null : string.Empty),
+            address.IsPrincipal,
+            address.Country);
     }
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationAsync(

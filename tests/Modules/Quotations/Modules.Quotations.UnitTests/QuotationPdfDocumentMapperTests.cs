@@ -314,6 +314,24 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.Equal(string.Empty, document.Billing.TaxId);
     }
 
+    // Task 1B de la tienda publica: fuera de Colombia la parte no tiene ciudad de DIVIPOLA, asi que la ciudad
+    // escrita y el pais se imprimen tras la direccion. Una parte colombiana sigue imprimiendo solo la direccion.
+    [Fact]
+    public void ThePdfPrintsTheForeignCity()
+    {
+        var foreign = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Shipping", "Bodega Madrid", null, null, null,
+            "Calle Mayor 1", null, null, Country: "ES", CityName: "Madrid");
+        var colombian = new QuotationPartyResponse(
+            Guid.CreateVersion7(), "Billing", "Sede", null, null, null,
+            "Carrera 7", Guid.CreateVersion7(), Guid.CreateVersion7(), Country: "CO");
+
+        var document = Map(Response() with { Parties = [foreign, colombian] });
+
+        Assert.Equal("Calle Mayor 1, Madrid, ES", document.Shipping.Location);
+        Assert.Equal("Carrera 7", document.Billing.Location);
+    }
+
     [Fact]
     public void MapsTheShippingFields()
     {
@@ -399,6 +417,32 @@ public sealed class QuotationPdfDocumentMapperTests
 
         Assert.DoesNotContain("\"notes\"", json);
         Assert.DoesNotContain("transporte", json);
+    }
+
+    // La etiqueta del documento de la empresa emisora sigue su tipo, no un «NIT» fijo.
+    [Theory]
+    [InlineData("NIF", "NIF")]
+    [InlineData(null, "NIT")]
+    public void TheIssuerDocumentIsLabelledByItsType(string? documentType, string expectedLabel)
+    {
+        var billing = new QuotationBillingResponse(
+            Guid.CreateVersion7(), "Empresa", "B12345678", documentType, null, null,
+            "Bancolombia", "123", "COP");
+
+        var document = Map(Response() with { BillingAccount = billing });
+
+        Assert.Equal(expectedLabel, document.BillingAccount!.CompanyDocumentLabel);
+    }
+
+    [Fact]
+    public void TheBillingResponseCarriesTheCompanyDocumentType()
+    {
+        var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123", "COP");
+        var company = new QuotationCompanyRef(
+            account.CompanyId, "Empresa", "B12345678", "NIF", true, null, null, []);
+
+        Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
+        Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);
     }
 
     private static QuotationResponse Response() => new(
@@ -495,5 +539,7 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
         new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
         0m,
-        0m);
+        0m,
+        // El PDF no imprime los contactos: son del diálogo de envío.
+        []);
 }

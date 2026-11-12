@@ -22,8 +22,9 @@ internal static class OrderPricingRecalculation
     {
         // Primer paso, antes de cualquier salida temprana (spec 2026-10-27 §4). Un pedido de una integración
         // (Shopify y las que vengan) se precia siempre con el valor por defecto de su moneda, aun editado:
-        // decisión del owner. El manual y el que nació de una cotización toman la regla vigente del tenant.
-        var rounding = order.Source is OrderSource.Quotation or OrderSource.Manual
+        // decisión del owner. El manual, el que nació de una cotización y el de la tienda pública (decisión del owner,
+        // 2026-11-03) toman la regla vigente del tenant.
+        var rounding = order.Source is OrderSource.Quotation or OrderSource.Manual or OrderSource.Store
             ? await priceRounding.GetAsync(tenantId, order.Currency, cancellationToken)
             : PriceRoundingDefaults.For(order.Currency);
         order.UsePriceRounding(rounding, occurredAt);

@@ -61,6 +61,10 @@ internal sealed class RequireCsrfHeaderMiddleware(
             // no acepta la cookie de sesión: no hay sesión que un sitio hermano pueda aprovechar. Tampoco hay CORS que
             // permita X-Api-Key desde el navegador (CorsApiTests).
             || ExternalApiPaths.IsExternal(context.Request.Path)
+            // Tienda pública: el servidor del storefront no puede mandar X-Qep-Client en nombre de un visitante. Las rutas
+            // se autentican con la clave compartida (StorefrontKeyFilter), nunca con la cookie de sesión, así que no hay
+            // sesión que un sitio hermano pueda aprovechar. La excepción es por prefijo explícito (StorefrontPaths).
+            || StorefrontPaths.IsStorefront(context.Request.Path)
             || (context.Request.Path.Value is { } path && SignedAnonymousPaths.Contains(path))
             || string.Equals(context.Request.Headers[HeaderName], ExpectedValue, StringComparison.Ordinal))
         {

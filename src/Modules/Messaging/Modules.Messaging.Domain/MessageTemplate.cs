@@ -14,6 +14,9 @@ public enum MessageTemplateKind
 
     /// <summary>Cobros recurrentes §5: la plantilla del aviso de cobros vencidos que QEP aprovisiona por conexión.</summary>
     BillingOverdue,
+
+    /// <summary>Spec 2026-11-09 D1: la plantilla del pedido que QEP aprovisiona por conexión, hermana de <see cref="Quotation"/>.</summary>
+    Order,
 }
 
 /// <summary>Los estados de Meta, como texto (D-T15). Sin enum ni <c>CHECK</c>: Meta agrega estados sin avisar y uno desconocido se guarda
@@ -86,11 +89,18 @@ public static partial class MessageTemplateName
     /// <summary>Cobros recurrentes §5: <c>qep_cobro_recordatorio</c>, <c>qep_cobro_vencido</c> y sus versiones (<c>_v2</c>…).</summary>
     public const string BillingPrefix = "qep_cobro_";
 
+    /// <summary>Spec 2026-11-09 D1: <c>qep_pedido</c> y sus versiones (<c>qep_pedido_v2</c>…).</summary>
+    public const string OrderName = "qep_pedido";
+
+    public const string OrderPrefix = "qep_pedido_";
+
     public static bool IsReserved(string? name) =>
         name is not null
         && (string.Equals(name, QuotationName, StringComparison.Ordinal)
             || name.StartsWith(QuotationPrefix, StringComparison.Ordinal)
-            || name.StartsWith(BillingPrefix, StringComparison.Ordinal));
+            || name.StartsWith(BillingPrefix, StringComparison.Ordinal)
+            || string.Equals(name, OrderName, StringComparison.Ordinal)
+            || name.StartsWith(OrderPrefix, StringComparison.Ordinal));
 
     // \z y no $: $ también acepta un salto de línea al final.
     [GeneratedRegex(@"^[a-z0-9_]{1,512}\z", RegexOptions.CultureInvariant)]
@@ -160,7 +170,7 @@ public sealed class MessageTemplate
     {
         if (kind == MessageTemplateKind.External)
         {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation or Billing.");
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A template created from QEP is Free, Quotation, Order or Billing.");
         }
 
         if (!MessageTemplateName.IsValid(name))
@@ -170,7 +180,7 @@ public sealed class MessageTemplate
 
         if (kind == MessageTemplateKind.Free && MessageTemplateName.IsReserved(name))
         {
-            throw new MessagingDomainException(MessagingErrorCodes.TemplateNameReserved, "That name is reserved for the quotation template QEP provisions.");
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateNameReserved, "That name is reserved for a template QEP provisions.");
         }
 
         var template = New(tenantId, connectionId, metaTemplateId, name, language, category, parameterFormat, componentsJson, now);
@@ -223,6 +233,18 @@ public sealed class MessageTemplate
         }
 
         Kind = MessageTemplateKind.Quotation;
+        UpdatedAt = now;
+    }
+
+    /// <summary>Spec 2026-11-09 D3: lo mismo que <see cref="AdoptAsQuotation"/> para una <c>qep_pedido</c> creada en la consola de Meta.</summary>
+    public void AdoptAsOrder(DateTimeOffset now)
+    {
+        if (Kind != MessageTemplateKind.External)
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateOrderConflict, "Only a template created outside QEP can be adopted.");
+        }
+
+        Kind = MessageTemplateKind.Order;
         UpdatedAt = now;
     }
 

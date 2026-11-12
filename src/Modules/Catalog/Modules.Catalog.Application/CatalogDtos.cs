@@ -18,6 +18,7 @@ public sealed record ProductDto(
     Guid Id,
     string Name,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
@@ -34,6 +35,9 @@ public sealed record ProductResponse(
     Guid Id,
     string Name,
     bool IsActive,
+    // Si la tienda pública lo publica. Aparte de IsActive: lo cambia el PUT o el lote
+    // POST /products/store-visibility, no /deactivate.
+    bool VisibleInStore,
     string? Description,
     // La imagen principal: el archivo de la primera foto de Gallery. Derivada; se cambia
     // reordenando Gallery en el PUT.
@@ -90,6 +94,9 @@ public sealed record ProductOptionValueResponse(Guid Id, string Name);
 /// entretanto, alguien la vendió (la respuesta lo muestra). Con false, pedir su borrado la
 /// desactiva. No mira la regla de «al menos una variante activa»: esa la responde el PUT con su
 /// propio código.</param>
+/// <param name="Costs">El costo unitario manual por moneda, en orden de catálogo. <c>null</c> = el
+/// llamador no puede verlo (sin <c>catalog.product_cost.read</c> ni <c>.manage</c>); <c>{}</c> = no
+/// tiene costo. BFF: la pantalla distingue «no puedes verlo» de «no tiene» sin adivinar.</param>
 public sealed record ProductVariantResponse(
     Guid Id,
     string Name,
@@ -103,7 +110,8 @@ public sealed record ProductVariantResponse(
     Guid? GalleryFileId,
     string? ImageUrl,
     bool IsActive,
-    bool CanDelete);
+    bool CanDelete,
+    IReadOnlyDictionary<string, decimal>? Costs);
 
 /// <param name="Url">Null si el archivo no está publicado o no es del tenant, igual que
 /// <c>ImageUrl</c>; <c>FileId</c> viaja siempre porque es lo que el PUT manda de vuelta.</param>
@@ -132,6 +140,7 @@ public sealed record ProductListItemDto(
     string Name,
     string? Code,
     bool IsActive,
+    bool VisibleInStore,
     string? Description,
     Guid? ImageFileId,
     string? ImageUrl,
@@ -261,7 +270,8 @@ public sealed record CreateProductRequest(
     Guid? CategoryId,
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
-    IReadOnlyList<Guid>? Gallery);
+    IReadOnlyList<Guid>? Gallery,
+    bool? VisibleInStore = null);
 
 /// <summary>
 /// Una variante como la manda el formulario. En el PUT se empareja por <paramref name="Id"/>
@@ -277,6 +287,9 @@ public sealed record CreateProductRequest(
 /// <param name="GalleryFileId">La foto de la variante, por id de archivo: una foto que se sube en el
 /// mismo PUT todavía no tiene fila de galería. Tiene que estar en <c>Gallery</c>.</param>
 /// <param name="IsActive">Null es activa en una variante nueva y «como está» en una guardada.</param>
+/// <param name="Costs">Null o ausente conserva el costo guardado (un cliente que no lo conoce no lo
+/// borra); un mapa lo reemplaza entero, y <c>{}</c> lo quita. Exige
+/// <c>catalog.product_cost.manage</c>: sin él, 403 <c>catalog.product_cost.forbidden</c>.</param>
 public sealed record ProductVariantRequest(
     Guid? Id,
     string? Code,
@@ -284,7 +297,8 @@ public sealed record ProductVariantRequest(
     IReadOnlyList<Guid>? OptionValueIds,
     ProductPricingRequest? Pricing,
     Guid? GalleryFileId,
-    bool? IsActive);
+    bool? IsActive,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 /// <summary>
 /// El cuerpo de la copia de escalas: de qué variante salen y a cuáles van. No lleva las escalas
@@ -300,6 +314,10 @@ public sealed record ProductVariantRequest(
 /// **contadas en variantes** contra el tope de 200 (<see cref="PriceScaleCopyLimits.MaxTargets"/>):
 /// la pantalla de copia deja marcar variantes sueltas de productos distintos, y un tope por
 /// productos dejaría pasar un lote de miles de filas. Sin repetidos ni el origen.</param>
+public sealed record SetProductsStoreVisibilityRequest(
+    IReadOnlyList<Guid>? ProductIds,
+    bool Visible);
+
 public sealed record CopyPriceScalesRequest(
     Guid SourceVariantId,
     IReadOnlyList<Guid> TargetVariantIds);
@@ -335,7 +353,8 @@ public sealed record UpdateProductRequest(
     IReadOnlyList<Guid>? OptionIds,
     IReadOnlyList<ProductVariantRequest>? Variants,
     IReadOnlyList<Guid>? Gallery,
-    IReadOnlyList<Guid>? DeletedVariantIds = null);
+    IReadOnlyList<Guid>? DeletedVariantIds = null,
+    bool? VisibleInStore = null);
 
 public sealed record TaxRateDto(
     Guid Id,

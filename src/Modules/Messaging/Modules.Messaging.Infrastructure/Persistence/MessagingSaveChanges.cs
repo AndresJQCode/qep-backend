@@ -88,6 +88,26 @@ internal static class MessagingSaveChanges
             throw new MessagingDomainException(
                 MessagingErrorCodes.TemplateQuotationExists, "This connection already has its quotation template.", exception);
         }
+        // Spec 2026-11-09 D1: lo mismo para la plantilla de pedido.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  string.Equals(postgres.ConstraintName, MessagingDbContext.MessageTemplateOrderIndex, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(
+                MessagingErrorCodes.TemplateOrderExists, "This connection already has its order template.", exception);
+        }
+        // Spec 2026-11-09: un programado activo por conversación y un clientId por conversación. Los dos son 409 ya_existe: el handler de
+        // crear relee por clientId y devuelve el existente si fue el mismo reintento.
+        catch (DbUpdateException exception)
+            when (exception.InnerException is PostgresException postgres &&
+                  postgres.SqlState == PostgresErrorCodes.UniqueViolation &&
+                  (string.Equals(postgres.ConstraintName, MessagingDbContext.ScheduledActiveConversationIndex, StringComparison.Ordinal) ||
+                   string.Equals(postgres.ConstraintName, MessagingDbContext.ScheduledConversationClientIndex, StringComparison.Ordinal)))
+        {
+            throw new ResourceConflictException(
+                MessagingErrorCodes.ScheduledAlreadyExists, "This conversation already has a scheduled message.", exception);
+        }
         // Cobros recurrentes §5: lo mismo para las plantillas de cobro.
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException postgres &&

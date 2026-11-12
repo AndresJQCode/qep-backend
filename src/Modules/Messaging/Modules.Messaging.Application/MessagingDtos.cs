@@ -11,9 +11,13 @@ namespace Modules.Messaging.Application;
 /// <c>waId</c> es <c>null</c> cuando Meta no mandó el teléfono. Al menos uno viene (CK_conversations_identity).</summary>
 public sealed record ContactDto(string? UserId, string? WaId, string? Username, string? ProfileName);
 
+/// <summary>Spec 2026-11-10: la empresa del cliente de la conversación. <c>name</c> ya es la etiqueta (<c>BusinessName</c> o, si no hay,
+/// <c>Name</c>); <c>isActive</c> deja que el hilo avise de una empresa desactivada.</summary>
+public sealed record CustomerCompanyRefDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
 /// <summary>Spec 2026-10-10 §5.1 (D-A8): <c>isComplete</c> viaja para que el encabezado del hilo ofrezca «Completar
 /// ficha» sin otra llamada.</summary>
-public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete)
+public sealed record CustomerRefDto(Guid Id, string Name, bool IsComplete, CustomerCompanyRefDto? Company = null)
 {
     /// <summary>Spec qep-frontend 2026-10-15 (BFF): los chips de la fila de la bandeja. Siempre viaja, vacía si no tiene: la
     /// pantalla no sabe qué etiquetas tiene cada cliente sin otra llamada por fila.</summary>
@@ -196,7 +200,31 @@ public sealed record MessageDto(
     string? MediaState = null,
     /// <summary>Spec 2026-10-30 §4.4: la clave de API que envió el saliente, con el nombre que tenía al enviar; excluyente con <c>SentBy</c> y
     /// <c>SentByChatbot</c>.</summary>
-    ApiKeyRefDto? SentByApiKey = null);
+    ApiKeyRefDto? SentByApiKey = null,
+    /// <summary>Spec 2026-11-09 D8b: un <c>Failed</c> descartado desde «Programados»; el SPA oculta «Reintentar». Un backend viejo no lo manda.</summary>
+    bool RetryDisabled = false,
+    /// <summary>Las tarjetas de un <c>Contacts</c> (la persona compartió contactos de su agenda); <c>null</c> en todo otro kind o si el
+    /// <c>details</c> guardado no se puede leer.</summary>
+    IReadOnlyList<SharedContactDto>? Contacts = null);
+
+/// <summary>Un contacto que el cliente compartió desde su agenda (<c>messages[].contacts</c> de Meta). BFF: la burbuja del asesor
+/// necesita los números y correos para llamar o escribir; antes de esto sólo se veía el nombre, que viaja en <c>text</c>.
+/// <c>Phones</c> y <c>Emails</c> viajan siempre, vacíos si no hay: la burbuja no tiene que distinguir ausente de vacío.</summary>
+public sealed record SharedContactDto(
+    string? Name, string? Organization, IReadOnlyList<SharedContactPhoneDto> Phones, IReadOnlyList<SharedContactEmailDto> Emails);
+
+/// <summary>Un teléfono de la tarjeta. Meta puede mandar <c>phone</c> sin <c>wa_id</c> (el número no tiene WhatsApp) o al revés;
+/// uno sin ninguno de los dos no se manda. <c>Type</c> es el de Meta (<c>CELL</c>, <c>HOME</c>, <c>WORK</c>…), tal cual.
+/// Spec 2026-11-10, BFF: la tarjeta tiene que saber si el número ya es un cliente (<c>Customer</c>, por la regla de
+/// <c>ResolveSharedPhonesAsync</c>: activo y no fusionado) para ofrecer «Escribirle» o «Agregar como contacto», y el formulario de cliente
+/// pide el país y el número nacional por separado (<c>Country</c> y <c>NationalNumber</c>; su campo sólo acepta dígitos). Prellenar el
+/// <c>waId</c> entero con país <c>CO</c> deja <c>PhoneE164</c> en <c>null</c> y <c>StartConversation</c> falla con
+/// <c>422 messaging.customer.unreachable</c>. Los tres son <c>null</c> sin <c>waId</c> o si el número no es válido.</summary>
+public sealed record SharedContactPhoneDto(
+    string? Phone, string? WaId, string? Type, CustomerRefDto? Customer = null, string? Country = null, string? NationalNumber = null);
+
+/// <summary>Un correo de la tarjeta; <c>Type</c> es el de Meta (<c>HOME</c>, <c>WORK</c>), tal cual.</summary>
+public sealed record SharedContactEmailDto(string Email, string? Type);
 
 /// <summary>Spec 2026-10-30 §4.4: la clave de API autora de un mensaje.</summary>
 public sealed record ApiKeyRefDto(Guid Id, string Name);

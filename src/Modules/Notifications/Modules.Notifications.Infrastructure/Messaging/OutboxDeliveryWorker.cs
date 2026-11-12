@@ -104,7 +104,8 @@ internal abstract partial class OutboxDeliveryWorker(
             services.GetRequiredService<IUserDirectory>(),
             services.GetRequiredService<ITenantDirectory>(),
             services.GetRequiredService<ITenantClock>(),
-            services.GetRequiredService<IClock>());
+            services.GetRequiredService<IClock>(),
+            dbContext);
 
         // Candidatos: sin fila en el inbox, o con una reclamada y sin terminar cuyo lease venció.
         var now = context.Clock.UtcNow;
@@ -244,15 +245,26 @@ internal abstract partial class OutboxDeliveryWorker(
             CancellationToken.None);
         entry.ProcessedAt = context.Clock.UtcNow;
         dbContext.Notifications.Add(notification);
+        await BeforeSaveAsync(dbContext, notification, CancellationToken.None);
         await dbContext.SaveChangesAsync(CancellationToken.None);
     }
+
+    /// <summary>
+    /// Último paso antes del guardado de la notificación y el processed_at: lo que se cambie acá en el
+    /// change tracker entra en el mismo SaveChanges. Por defecto no hace nada.
+    /// </summary>
+    protected virtual Task BeforeSaveAsync(
+        NotificationsDbContext dbContext, Notification notification, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }
 
 /// <summary>Lo que un worker concreto necesita para armar y mandar su correo, resuelto en el scope del
-/// tick.</summary>
+/// tick. <paramref name="Database"/> es el mismo contexto del reclamo y del guardado: sólo para leer
+/// antes de enviar (los correos del comprador miran si la cuenta ya se borró).</summary>
 internal sealed record DeliveryContext(
     IEmailChannel Channel,
     IUserDirectory UserDirectory,
     ITenantDirectory TenantDirectory,
     ITenantClock TenantClock,
-    IClock Clock);
+    IClock Clock,
+    NotificationsDbContext Database);

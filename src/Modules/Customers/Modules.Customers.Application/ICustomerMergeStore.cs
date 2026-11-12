@@ -23,6 +23,21 @@ public interface ICustomerMergeStore
     Task RepointMergedIntoAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Spec 2026-11-10 §4.7 (G14): cuántos clientes sin fusionar tienen como empresa a alguno de los fusionados y pasarían al que
+    /// queda. Ni el que queda ni los propios fusionados cuentan: unos no se mueven y los otros dejan de ser contactos.
+    /// </summary>
+    Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Los contactos de los fusionados pasan a ser contactos del que queda (<c>company_id = survivor</c>), con la misma regla de
+    /// <see cref="CountContactsMovedAsync"/>. Como <see cref="RepointMergedIntoAsync"/>, no sube <c>version</c> ni
+    /// <c>updated_at</c>: es el mismo cambio de dueño, y el contacto no se edita.
+    /// </summary>
+    Task RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken);
+
     /// <summary>Las notas y las direcciones de envío de estos clientes (la vista previa, §3.4).</summary>
     Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken);

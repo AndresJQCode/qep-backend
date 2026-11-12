@@ -19,14 +19,14 @@ public sealed class CorrectImpactCalculatorTests
             Cali,
             Palmira,
             [
-                OrderFootprint(TenantA, "Pending", stillAsWritten: true),
-                OrderFootprint(TenantA, "Pending", stillAsWritten: true),
-                OrderFootprint(TenantB, "Pending", stillAsWritten: true),
+                OrderFootprint(TenantA, "Open", stillAsWritten: true),
+                OrderFootprint(TenantA, "Open", stillAsWritten: true),
+                OrderFootprint(TenantB, "Open", stillAsWritten: true),
             ],
             [],
             Names);
 
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(3, [new ImpactTenantCountDto(TenantA, "Ritual", 2), new ImpactTenantCountDto(TenantB, "Lulo", 1)]),
             impact.OrdersToChange);
         Assert.Equal(0, impact.OrdersEdited.Count);
@@ -40,12 +40,12 @@ public sealed class CorrectImpactCalculatorTests
         var impact = CorrectImpactCalculator.Compute(
             Cali,
             Palmira,
-            [OrderFootprint(TenantA, "Pending", stillAsWritten: true), OrderFootprint(TenantB, "Pending", stillAsWritten: false)],
+            [OrderFootprint(TenantA, "Open", stillAsWritten: true), OrderFootprint(TenantB, "Open", stillAsWritten: false)],
             [],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToChange);
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersEdited);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersEdited);
     }
 
     // Un pedido que ya no está Pending no se recorrige (con la parte intacta o editada): se lista completo con su estado. Uno que ya
@@ -53,7 +53,7 @@ public sealed class CorrectImpactCalculatorTests
     [Fact]
     public void ANotPendingOrderIsListedWithItsStatus()
     {
-        var approved = OrderFootprint(TenantA, "Approved", stillAsWritten: true, number: "PED-7");
+        var approved = OrderFootprint(TenantA, "Archived", stillAsWritten: true, number: "PED-7");
         var cancelled = OrderFootprint(TenantB, "Cancelled", stillAsWritten: false, number: "PED-2");
         var gone = OrderFootprint(TenantB, null, stillAsWritten: false);
 
@@ -63,7 +63,7 @@ public sealed class CorrectImpactCalculatorTests
         Assert.Equal(
             [
                 new ImpactOrderDto(TenantB, "Lulo", cancelled.TargetId, "PED-2", "Cancelled"),
-                new ImpactOrderDto(TenantA, "Ritual", approved.TargetId, "PED-7", "Approved"),
+                new ImpactOrderDto(TenantA, "Ritual", approved.TargetId, "PED-7", "Archived"),
             ],
             impact.OrdersNotPending.Orders);
         Assert.Equal(0, impact.OrdersToChange.Count);
@@ -84,8 +84,8 @@ public sealed class CorrectImpactCalculatorTests
             [],
             Names);
 
-        Assert.Equal(new ImpactCountDto(2, [new ImpactTenantCountDto(TenantA, "Ritual", 2)]), impact.CustomersToChange);
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.CustomersEdited);
+        ImpactAssert.Equal(new ImpactCountDto(2, [new ImpactTenantCountDto(TenantA, "Ritual", 2)]), impact.CustomersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.CustomersEdited);
     }
 
     // Una ocurrencia está corregida si su pedido o su cliente tiene huella; si ninguno, el trabajo falló, se saltó o sigue pendiente.
@@ -104,14 +104,14 @@ public sealed class CorrectImpactCalculatorTests
             Cali,
             Palmira,
             [
-                OrderFootprint(TenantA, "Pending", stillAsWritten: true, orderId: corrected.OrderId),
+                OrderFootprint(TenantA, "Open", stillAsWritten: true, orderId: corrected.OrderId),
                 CustomerFootprint(TenantA, stillAsWritten: true, customerId: customerId),
-                OrderFootprint(TenantA, "Pending", stillAsWritten: true, orderId: sameOrderOtherTenant.OrderId),
+                OrderFootprint(TenantA, "Open", stillAsWritten: true, orderId: sameOrderOtherTenant.OrderId),
             ],
             [corrected, correctedThroughTheCustomer, uncorrected, uncorrectedOfAnotherTenant, sameOrderOtherTenant],
             Names);
 
-        Assert.Equal(
+        ImpactAssert.Equal(
             new ImpactCountDto(3, [new ImpactTenantCountDto(TenantB, "Lulo", 2), new ImpactTenantCountDto(TenantA, "Ritual", 1)]),
             impact.OccurrencesUncorrected);
     }
@@ -128,16 +128,16 @@ public sealed class CorrectImpactCalculatorTests
             Cali,
             Palmira,
             [
-                OrderFootprint(TenantA, "Pending", stillAsWritten: true, orderId: order.OrderId) with { CityId = Palmira.Id },
-                OrderFootprint(TenantB, "Pending", stillAsWritten: false) with { CityId = Palmira.Id },
+                OrderFootprint(TenantA, "Open", stillAsWritten: true, orderId: order.OrderId) with { CityId = Palmira.Id },
+                OrderFootprint(TenantB, "Open", stillAsWritten: false) with { CityId = Palmira.Id },
                 CustomerFootprint(TenantA, stillAsWritten: true, customerId: customerId) with { CityId = Palmira.Id },
                 CustomerFootprint(TenantB, stillAsWritten: false) with { CityId = Palmira.Id },
-                OrderFootprint(TenantB, "Pending", stillAsWritten: true),
+                OrderFootprint(TenantB, "Open", stillAsWritten: true),
             ],
             [order, customerOccurrence],
             Names);
 
-        Assert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersToChange);
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantB, "Lulo", 1)]), impact.OrdersToChange);
         Assert.Equal(0, impact.OrdersEdited.Count);
         Assert.Equal(0, impact.CustomersToChange.Count);
         Assert.Equal(0, impact.CustomersEdited.Count);
@@ -164,10 +164,37 @@ public sealed class CorrectImpactCalculatorTests
         Assert.Equal((Cali, Palmira), (impact.From, impact.To));
     }
 
+    // Review Focus 5 (spec 2026-11-10): «editable» sale de los tres ejes, no del texto del estado.
+    [Fact]
+    public void AnOpenButPreparedOrderIsNotPending()
+    {
+        var prepared = OrderFootprint(TenantA, "Open", stillAsWritten: true, number: "PED-9", editable: false);
+
+        var impact = CorrectImpactCalculator.Compute(Cali, Palmira, [prepared], [], Names);
+
+        Assert.Equal(0, impact.OrdersToChange.Count);
+        Assert.Equal(
+            [new ImpactOrderDto(TenantA, "Ritual", prepared.TargetId, "PED-9", "Open")],
+            impact.OrdersNotPending.Orders);
+    }
+
+    [Fact]
+    public void AnOpenUnpreparedOrderIsFixable()
+    {
+        var open = OrderFootprint(TenantA, "Open", stillAsWritten: true, editable: true);
+
+        var impact = CorrectImpactCalculator.Compute(Cali, Palmira, [open], [], Names);
+
+        ImpactAssert.Equal(new ImpactCountDto(1, [new ImpactTenantCountDto(TenantA, "Ritual", 1)]), impact.OrdersToChange);
+        Assert.Equal(0, impact.OrdersNotPending.Count);
+    }
+
     private static CorrectionInsight OrderFootprint(
-        Guid tenantId, string? status, bool stillAsWritten, string number = "PED-1", Guid? orderId = null) =>
-        new(tenantId, "Order", orderId ?? Guid.CreateVersion7(), Cali.Id, status is null ? null : number, status, stillAsWritten);
+        Guid tenantId, string? status, bool stillAsWritten, string number = "PED-1", Guid? orderId = null, bool? editable = null) =>
+        new(
+            tenantId, "Order", orderId ?? Guid.CreateVersion7(), Cali.Id, status is null ? null : number, status, stillAsWritten,
+            status is null ? null : editable ?? status == "Open");
 
     private static CorrectionInsight CustomerFootprint(Guid tenantId, bool stillAsWritten, Guid? customerId = null) =>
-        new(tenantId, "Customer", customerId ?? Guid.CreateVersion7(), Cali.Id, null, null, stillAsWritten);
+        new(tenantId, "Customer", customerId ?? Guid.CreateVersion7(), Cali.Id, null, null, stillAsWritten, null);
 }

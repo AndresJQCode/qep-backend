@@ -37,7 +37,8 @@ public sealed class PreviewOrderEditsHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewOrderEditsQuery> validator)
+    IValidator<PreviewOrderEditsQuery> validator,
+    IOrderVariantCostLookup costLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -53,14 +54,15 @@ public sealed class PreviewOrderEditsHandler(
         var order = await orderRepository.FindUntrackedByIdAsync(
             query.TenantId, new OrderId(query.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(query.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "An order can only be edited while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "An order can only be edited while it is open, not prepared and not invoiced.");
         }
 
         var storedVersion = order.Version;
+        var previousNetTotal = order.NetTotal;
         var customer = await customerLookup.FindAsync(query.TenantId, order.ClientId, cancellationToken);
         if (customer is not null)
         {
@@ -71,7 +73,7 @@ public sealed class PreviewOrderEditsHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
         await OrderItemEdits.ApplyAsync(
-            order, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
+            order, query.Items, pricingLookup, costLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);
@@ -118,7 +120,8 @@ public sealed class PreviewOrderEditsHandler(
 
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, query.TenantId, order, now, cancellationToken);
-        order.RecalculatePaymentStatus(now);
+        // Sin historial: el preview no guarda nada.
+        order.RecalculatePaymentStatus(previousNetTotal, now);
 
         var quotationNumber = order.QuotationId is { } quotationId
             ? (await quotationRepository.FindUntrackedAsync(query.TenantId, quotationId, cancellationToken))?.QuotationNumber

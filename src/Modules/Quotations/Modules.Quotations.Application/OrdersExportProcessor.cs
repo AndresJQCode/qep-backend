@@ -45,7 +45,7 @@ public sealed class OrdersExportProcessor(
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
         var filters = ExportJobFilters.Read<OrdersExportFilters>(job);
-        var (status, paymentStatus, source) = ParseFilters(filters);
+        var (status, paymentStatus, fulfillmentStatus, invoiced, source) = ParseFilters(filters);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
@@ -72,6 +72,8 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
+                fulfillmentStatus,
+                invoiced,
                 converted.From,
                 converted.Before,
                 filters.OrderNumber,
@@ -105,7 +107,12 @@ public sealed class OrdersExportProcessor(
     }
 
     // Un filtro ilegible es definitivo: el trabajo nació con él y reintentar no lo arregla.
-    private static (OrderStatus? Status, OrderPaymentStatus? PaymentStatus, OrderSource? Source) ParseFilters(
+    private static (
+        OrderStatus? Status,
+        OrderPaymentStatus? PaymentStatus,
+        OrderFulfillmentStatus? FulfillmentStatus,
+        bool? Invoiced,
+        OrderSource? Source) ParseFilters(
         OrdersExportFilters filters)
     {
         try
@@ -113,6 +120,8 @@ public sealed class OrdersExportProcessor(
             return (
                 OrderListing.ParseStatus(filters.Status),
                 OrderListing.ParsePaymentStatus(filters.PaymentStatus),
+                OrderListing.ParseFulfillmentStatus(filters.FulfillmentStatus),
+                OrderListing.ParseInvoiced(filters.Invoiced),
                 OrderListing.ParseSource(filters.Source));
         }
         catch (QuotationsDomainException exception)
@@ -454,7 +463,7 @@ public sealed class OrdersExportProcessor(
             BilledPartySource.BillingParty => new BilledContact(
                 billing!.IdentificationType?.ToWireValue() ?? string.Empty,
                 billing.Address ?? string.Empty,
-                NameOf(billing.CityId, cityNames),
+                CityOf(billing, cityNames),
                 NameOf(billing.DepartmentId, departmentNames),
                 billing.Phone ?? string.Empty,
                 billing.Email ?? string.Empty),
@@ -485,7 +494,7 @@ public sealed class OrdersExportProcessor(
                 shipping.IdentificationNumber ?? string.Empty,
                 shipping.PersonType?.ToWireValue() ?? string.Empty,
                 shipping.Address ?? string.Empty,
-                NameOf(shipping.CityId, cityNames),
+                CityOf(shipping, cityNames),
                 NameOf(shipping.DepartmentId, departmentNames),
                 shipping.Phone ?? string.Empty,
                 shipping.Email ?? string.Empty)
@@ -500,6 +509,10 @@ public sealed class OrdersExportProcessor(
                 customer?.Phone ?? string.Empty,
                 customer?.Email ?? string.Empty);
 
+    // Una parte de afuera no tiene ciudad de DIVIPOLA: la columna lleva el texto que se escribió.
+    private static string CityOf(OrderParty party, IReadOnlyDictionary<Guid, string> cityNames) =>
+        party.Country is null ? NameOf(party.CityId, cityNames) : party.CityName ?? string.Empty;
+
     private static string NameOf(Guid? id, IReadOnlyDictionary<Guid, string> names) =>
         id is { } value && names.TryGetValue(value, out var name) ? name : string.Empty;
 
@@ -510,10 +523,7 @@ public sealed class OrdersExportProcessor(
     {
         if (shipping is not null)
         {
-            var ciudad = shipping.CityId is { } cityId && cityNames.TryGetValue(cityId, out var name)
-                ? name
-                : string.Empty;
-            return (ciudad, shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
+            return (CityOf(shipping, cityNames), shipping.Address ?? string.Empty, shipping.Phone ?? string.Empty, shipping.Email ?? string.Empty);
         }
 
         return (
@@ -534,7 +544,8 @@ public sealed class OrdersExportProcessor(
             : string.Empty;
     }
 
-    // El NIT como lo importa el ERP: sin dígito de verificación, puntos ni espacios.
+    // El documento como lo importa el ERP: sin puntos ni espacios; el guion y el dígito de
+    // verificación se conservan (decisión del dueño, D11). No depende del tipo de documento.
     private static string ErpTaxId(string? taxId)
     {
         if (string.IsNullOrEmpty(taxId))
@@ -542,9 +553,7 @@ public sealed class OrdersExportProcessor(
             return string.Empty;
         }
 
-        var hyphen = taxId.IndexOf('-', StringComparison.Ordinal);
-        var withoutCheckDigit = hyphen < 0 ? taxId : taxId[..hyphen];
-        return string.Concat(withoutCheckDigit.Where(character => character != '.' && !char.IsWhiteSpace(character)));
+        return string.Concat(taxId.Where(character => character != '.' && !char.IsWhiteSpace(character)));
     }
 
     private static ExportCell AdvisorCodeCell(

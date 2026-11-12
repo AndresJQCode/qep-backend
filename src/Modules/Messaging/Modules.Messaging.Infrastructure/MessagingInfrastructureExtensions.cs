@@ -10,6 +10,7 @@ using Modules.Messaging.Infrastructure.Meta;
 using Modules.Messaging.Infrastructure.Options;
 using Modules.Messaging.Infrastructure.Persistence;
 using Modules.Messaging.Infrastructure.Realtime;
+using Modules.Messaging.Infrastructure.ScheduledMessages;
 using Modules.Messaging.Infrastructure.Webhook;
 
 namespace Modules.Messaging.Infrastructure;
@@ -30,9 +31,12 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IQuotationTemplateOutbound, QuotationTemplateOutbound>();
         services.AddScoped<TemplateSenderValues>();
         services.AddScoped<IBillingTemplateOutbound, BillingTemplateOutbound>();
+        services.AddScoped<IOrderTemplateOutbound, OrderTemplateOutbound>();
         // Spec 2026-10-11 decisión 9: abrir la conversación de un cliente desde la plataforma (SQL, como la ingesta).
         services.AddScoped<IConversationOpener, ConversationOpener>();
         services.AddScoped<IMessagingUnitOfWork, MessagingUnitOfWork>();
+        // Borrar clientes (A-12 y P4): el candado compartido del cliente al colgarle una conversación, sobre la conexión de Mensajería.
+        services.AddScoped<IMessagingCustomerReferenceLock, MessagingCustomerReferenceLock>();
         // §8.5: auditoría atómica propia, en la misma transacción que el agregado (nunca el IAuditRecorder de Tenancy).
         services.AddScoped<IMessagingAuditRecorder, MessagingAuditRecorder>();
         // Spec 2026-10-10 §8.7: los eventos que escriben los handlers, en el mismo SaveChanges que el agregado.
@@ -93,6 +97,8 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<IMessageTemplates, MirroredTemplateCatalog>();
         // Spec 2026-10-11 §6: las campañas. El agregado con tracking, las lecturas con sus contadores y el armado de los DTO.
         services.AddScoped<ICampaignRepository, CampaignRepository>();
+        // Spec 2026-11-09: los mensajes programados, con tracking.
+        services.AddScoped<IScheduledMessageRepository, ScheduledMessageRepository>();
         services.AddScoped<ICampaignQueries, CampaignQueries>();
         services.AddScoped<CampaignMapper>();
         // Spec 2026-10-12 §3.1: las respuestas rápidas, con tracking; el atajo repetido lo traduce MessagingUnitOfWork.
@@ -112,6 +118,8 @@ public static class MessagingInfrastructureExtensions
         // Spec 2026-10-14 §5: la señal que el consumidor Quotations leerá por un adaptador en Bootstrapper.
         services.AddScoped<IQuotationTemplateReadiness, QuotationTemplateReadiness>();
         services.AddScoped<IBillingTemplateReadiness, BillingTemplateReadiness>();
+        // Spec 2026-11-09 D5: la del pedido, para el directorio de canales y el sender de Meta en Bootstrapper.
+        services.AddScoped<IOrderTemplateReadiness, OrderTemplateReadiness>();
         // §8.6: la copia de medios entrantes a R2 (por IMessagingMediaStore) y su lectura para servirlos.
         services.AddScoped<IMediaReads, MediaReads>();
         services.AddScoped<MediaTransfer>();
@@ -125,9 +133,19 @@ public static class MessagingInfrastructureExtensions
         services.AddScoped<ICampaignDispatchStore, CampaignDispatchStore>();
         services.AddScoped<CampaignDispatcher>();
         services.AddHostedService<CampaignDispatchWorker>();
+        // Spec 2026-11-09 «Worker y ejecución»: el worker de mensajes programados. El SQL del reclamo y del cierre, el despachador
+        // (recuperación y purga) y el ejecutor, scoped: un scope por fila.
+        services.AddScoped<IScheduledMessageStore, ScheduledMessageStore>();
+        services.AddScoped<ScheduledMessageDispatcher>();
+        services.AddScoped<ScheduledMessageExecutor>();
+        services.AddHostedService<ScheduledMessageWorker>();
         // Spec 2026-10-29: el evento de coexistencia crea la importación de historial Pending. El procesador es singleton (el estado es del proceso).
         services.AddSingleton<Coexistence.CoexistenceEventsProcessor>();
         services.AddHostedService<Coexistence.CoexistenceEventsWorker>();
+        // Spec 2026-11-10 (borrar clientes) A-9: borra de R2 los adjuntos que dejó un cliente borrado. Singleton: el estado es del proceso.
+        services.AddSingleton<CustomerDeletion.CustomerMediaPurgeProcessor>();
+        services.AddSingleton<CustomerDeletion.ICustomerMediaPurgeProcessor>(provider => provider.GetRequiredService<CustomerDeletion.CustomerMediaPurgeProcessor>());
+        services.AddHostedService<CustomerDeletion.CustomerMediaPurgeWorker>();
         // Spec 2026-10-29: el worker que le pide a Meta los contactos y el historial de cada importación Pending.
         services.TryAddSingleton(Coexistence.HistorySyncRequestSchedule.Default);
         services.AddSingleton<Coexistence.HistorySyncRequestProcessor>();

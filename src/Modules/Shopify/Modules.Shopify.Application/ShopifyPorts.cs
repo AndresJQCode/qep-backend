@@ -387,7 +387,7 @@ public enum ShopifyOrderOutcomeKind
 }
 
 /// <summary>Cómo terminó un cambio posterior (§6.3). <see cref="ShopifyOrderOutcomeKind.Ignored"/> lleva el código de la regla
-/// del pedido que lo rechazó (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>), que va a <c>last_error</c>
+/// del pedido que lo rechazó (<c>order.order.not_editable</c>, <c>order.order.payment_has_proofs</c>), que va a <c>last_error</c>
 /// del espejo. <see cref="ShopifyOrderOutcomeKind.Unchanged"/> es un <c>financial_status</c> que no cambia nada (<c>refunded</c>,
 /// <c>partially_refunded</c>, <c>voided</c>): no lleva código ni deja <c>last_error</c>, y Quotations no se llama.</summary>
 public sealed record ShopifyOrderOutcome(ShopifyOrderOutcomeKind Kind, string? Code)
@@ -527,11 +527,13 @@ public sealed record ShopifyCityWriteResult(
 
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa lee de un pedido ya importado. <see cref="Status"/> es el
-/// nombre del enum de Quotations (<c>Pending</c>, <c>Approved</c>…). <see cref="NotesHaveRawAddress"/>: alguna línea de las notas
-/// empieza por <see cref="ShopifyOrderImporter.RawAddressLabel"/>, que es la marca de que la dirección no quedó como parte de
-/// envío (la importación la deja mientras no hay parte, y poner la parte la quita).
+/// nombre del enum de Quotations (<c>Open</c>, <c>Archived</c>, <c>Cancelled</c>). <see cref="NotesHaveRawAddress"/>: alguna línea
+/// de las notas empieza por <see cref="ShopifyOrderImporter.RawAddressLabel"/>, que es la marca de que la dirección no quedó como
+/// parte de envío (la importación la deja mientras no hay parte, y poner la parte la quita). <see cref="IsEditable"/> es la regla
+/// de Quotations (spec 2026-11-10 §3.6: abierto, sin preparar y sin facturar), la que decide si el pedido admite la parte.
 /// </summary>
-public sealed record ShopifyOrderCityState(string Status, bool IsStorePickup, bool HasShippingParty, bool NotesHaveRawAddress);
+public sealed record ShopifyOrderCityState(
+    string Status, bool IsStorePickup, bool HasShippingParty, bool NotesHaveRawAddress, bool IsEditable);
 
 /// <summary>
 /// Spec 2026-10-26 §4.4 y §4.6: lo que el trabajo de corrección escribe en Quotations y en Customers. Adaptador en Bootstrapper sobre

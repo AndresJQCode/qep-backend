@@ -103,6 +103,135 @@ public sealed class TenantSettingsApiTests
         Assert.Equal("OnCustomerSave", kept.GetProperty("personTypeRequirement").GetString());
     }
 
+    private static readonly object RelaxedPolicyBody = new
+    {
+        document = new { onCustomerSave = false, onBilling = true },
+        city = new { onCustomerSave = false, onBilling = false },
+    };
+
+    private const string SettingsOutboxCountSql =
+        "SELECT count(*)::text FROM platform.outbox_messages WHERE event_name = 'tenancy.tenant-settings-updated.v1'";
+
+    [Fact]
+    public async Task CustomerFieldPolicyRoundTripsAndDefaultsToRequired()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var settings = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        var policy = settings.GetProperty("customerFieldPolicy");
+        Assert.True(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var put = await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+        Assert.NotEqual(etag, put.Headers.ETag?.Tag);
+        var again = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/v1/tenants/{TenantId}/settings", TestContext.Current.CancellationToken);
+        var stored = again.GetProperty("customerFieldPolicy");
+        Assert.False(stored.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(stored.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.False(stored.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(stored.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PutWithoutCustomerFieldPolicyKeepsTheStoredValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody);
+        first.EnsureSuccessStatusCode();
+
+        var second = await PutAsync(client, TenantId, first.Headers.ETag!.Tag, NewDisplayName());
+
+        second.EnsureSuccessStatusCode();
+        var body = await second.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        var kept = body.GetProperty("customerFieldPolicy");
+        Assert.False(kept.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(kept.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PutWithAnInconsistentPolicyIsA422WithTheDomainCode()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+
+        var response = await PutAsync(
+            client, TenantId, etag, NewDisplayName(),
+            customerFieldPolicy: new
+            {
+                document = new { onCustomerSave = true, onBilling = true },
+                city = new { onCustomerSave = true, onBilling = false },
+            });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(
+            "tenancy.settings.customer_field_policy.invalid", problem.GetProperty("code").GetString());
+    }
+
+    // Review Focus 5: reenviar la política guardada no es un cambio.
+    [Fact]
+    public async Task PutResendingTheStoredPolicyDoesNotBumpTheVersion()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var displayName = NewDisplayName();
+        var etag = await GetEtagAsync(client, TenantId);
+        var first = await PutAsync(client, TenantId, etag, displayName, customerFieldPolicy: RelaxedPolicyBody);
+        first.EnsureSuccessStatusCode();
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var before = await QueryRowAsync(connection, SettingsOutboxCountSql);
+
+        var second = await PutAsync(
+            client, TenantId, first.Headers.ETag!.Tag, displayName, customerFieldPolicy: RelaxedPolicyBody);
+
+        second.EnsureSuccessStatusCode();
+        Assert.Equal(first.Headers.ETag!.Tag, second.Headers.ETag?.Tag);
+        var after = await QueryRowAsync(connection, SettingsOutboxCountSql);
+        Assert.Equal(before![0], after![0]);
+    }
+
+    [Fact]
+    public async Task TheRegionalSettingsCarryThePolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        using var client = CreateClient(factory, SubjectId, TenantId);
+        var etag = await GetEtagAsync(client, TenantId);
+        (await PutAsync(client, TenantId, etag, NewDisplayName(), customerFieldPolicy: RelaxedPolicyBody))
+            .EnsureSuccessStatusCode();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var directory = scope.ServiceProvider.GetRequiredService<Modules.Tenancy.Application.ITenantDirectory>();
+        var regional = await directory.GetRegionalSettingsAsync(
+            new Modules.Tenancy.Domain.TenantId(Guid.Parse(TenantId)), TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new CustomerFieldPolicy(new FieldRequirement(false, true), new FieldRequirement(false, false)),
+            regional!.EffectiveCustomerFieldPolicy);
+    }
+
     [Fact]
     public async Task GetReturnsColombiaAndPutChangesTheCountry()
     {
@@ -448,7 +577,8 @@ public sealed class TenantSettingsApiTests
         string defaultCurrency = "COP",
         string numberFormat = "1.234,56",
         string country = "CO",
-        string? personTypeRequirement = null)
+        string? personTypeRequirement = null,
+        object? customerFieldPolicy = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Put,
@@ -463,7 +593,8 @@ public sealed class TenantSettingsApiTests
                 defaultCurrency,
                 numberFormat,
                 country,
-                personTypeRequirement
+                personTypeRequirement,
+                customerFieldPolicy
             })
         };
         request.Headers.TryAddWithoutValidation("If-Match", ifMatch);

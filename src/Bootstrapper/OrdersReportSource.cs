@@ -578,6 +578,7 @@ internal sealed class OrdersReportSource(
         OrderPaymentStatusFilter.FullPaymentReceived => OrderPaymentStatus.FullPaymentReceived,
         OrderPaymentStatusFilter.PartialPaymentReceived => OrderPaymentStatus.PartialPaymentReceived,
         OrderPaymentStatusFilter.PaymentPending => OrderPaymentStatus.PaymentPending,
+        OrderPaymentStatusFilter.PendingVerification => OrderPaymentStatus.PendingVerification,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown payment status.")
     };
 
@@ -588,10 +589,11 @@ internal sealed class OrdersReportSource(
         OrderSourceFilter.Manual => OrderSource.Manual,
         OrderSourceFilter.Shopify => OrderSource.Shopify,
         OrderSourceFilter.Pos => null,
+        OrderSourceFilter.Store => OrderSource.Store,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown order source.")
     };
 
-    // Las cuatro entradas siempre, en el orden del enum, con cero donde no hubo nada.
+    // Todas las entradas del enum siempre, en el orden del enum, con cero donde no hubo nada.
     private static ReportSourceSliceDto[] CompleteBySource(
         IReadOnlyList<(string Source, string Currency, int Count, decimal Total)> rows) =>
         Enum.GetValues<OrderSourceFilter>()
