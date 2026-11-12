@@ -297,7 +297,7 @@ public sealed class OrderItemEditsTests
         var order = PendingOrder((CamisetaM, 1m, 30_000m, null));
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, UpdatedBy, Now));
+            order.AddItem(OrderItemId.New(), CamisetaM, Camiseta, 2m, 30_000m, 0m, 0, OrderLineCosts.None, UpdatedBy, Now));
 
         Assert.Equal("order.item.duplicate_product", error.Code);
         Assert.Single(order.Items);

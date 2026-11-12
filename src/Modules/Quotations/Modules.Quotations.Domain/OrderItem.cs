@@ -76,6 +76,31 @@ public sealed class OrderItem
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// El costo unitario de la variante cuando la línea contó como vendida (spec 2026-11-10 §4.2), en la moneda
+    /// del pedido. Null con <see cref="CostCapturedAt"/> lleno es «se congeló sin costo»; con él vacío, «todavía
+    /// no se congeló». Nunca se expone por la API de pedidos.
+    /// </summary>
+    public decimal? UnitCost { get; private set; }
+
+    public LineCostSource? CostSource { get; private set; }
+
+    public DateTimeOffset? CostCapturedAt { get; private set; }
+
+    /// <summary>Congela el costo una sola vez (§4.3): una línea ya congelada no se reescribe, aunque el pedido
+    /// salga de pagado y vuelva, o el costo del catálogo cambie.</summary>
+    internal void FreezeCost(decimal? unitCost, DateTimeOffset at)
+    {
+        if (CostCapturedAt is not null)
+        {
+            return;
+        }
+
+        UnitCost = unitCost;
+        CostSource = LineCostSource.Manual;
+        CostCapturedAt = at;
+    }
+
     /// <summary>El unitario de la fórmula con la regla del documento (<see cref="Order.PriceRounding"/>),
     /// la misma con que se cobró la línea. Derivado, no persistido.</summary>
     public decimal DiscountedUnitPriceUnder(PriceRounding rounding) =>

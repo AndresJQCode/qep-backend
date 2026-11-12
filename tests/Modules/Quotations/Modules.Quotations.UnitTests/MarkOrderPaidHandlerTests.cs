@@ -153,7 +153,7 @@ public sealed class MarkOrderPaidHandlerTests
     public async Task AlreadyPaidAnswersBeforeTheBillingChecks()
     {
         var row = NewRow();
-        row.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        row.MarkPaid(AdvisorId, requirePaymentProof: false, row.WithoutCosts(), Now);
 
         // El cliente perdió el tipo después de pagar: un pedido pagado no pregunta por él.
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
@@ -209,7 +209,7 @@ public sealed class MarkOrderPaidHandlerTests
     public async Task UnmarkingPaidNeedsApproveAndReturnsToTheCalculatedStatus()
     {
         var row = NewRow();
-        row.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        row.MarkPaid(AdvisorId, requirePaymentProof: false, row.WithoutCosts(), Now);
         var audit = new RecordingQuotationAuditPublisher();
         var repository = new StubOrderListRepository(row);
 

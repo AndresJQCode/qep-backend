@@ -155,13 +155,17 @@ public sealed class RecognizeOrderCarrierHandlerTests
     private static Order NewExternal(
         ShippingDetails shipping,
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
-        string? title = Title) =>
-        Order.CreateExternal(
+        string? title = Title)
+    {
+        var line = new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19);
+        return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002",
             new OrderHeader(Guid.CreateVersion7(), Advisor, "COP", null, false, null, false, false),
             new QuotationParties(null, null, IsStorePickup: false), OrderBuilders.BillingAccount,
-            [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19)], paymentStatus, null, Advisor, [], Now,
-            OrderSource.Shopify, "#1001", shipping, "shop-1:1001", title);
+            [line], paymentStatus, null, Advisor, [], Now,
+            OrderSource.Shopify, "#1001", shipping, "shop-1:1001", title,
+            OrderCostFixtures.WithoutCosts([line]));
+    }
 
     private static RecognizeOrderCarrierHandler NewHandler(Order order, Carrier carrier) =>
         NewHandler(

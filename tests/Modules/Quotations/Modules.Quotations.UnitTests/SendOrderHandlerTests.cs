@@ -627,7 +627,7 @@ public sealed class SendOrderHandlerTests
                 : new QuotationParties(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
         if (invoiced)
         {
-            order.MarkPaid(AdvisorId, requirePaymentProof: false, Now.AddHours(-3));
+            order.MarkPaid(AdvisorId, requirePaymentProof: false, order.WithoutCosts(), Now.AddHours(-3));
             order.Invoice(AdvisorId, requireFullPayment: true, Now.AddHours(-2));
         }
 

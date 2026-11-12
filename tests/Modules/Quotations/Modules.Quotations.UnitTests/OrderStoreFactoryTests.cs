@@ -110,7 +110,7 @@ public sealed class OrderStoreFactoryTests
             Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()],
                 OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Store, "T-0001",
-                ShippingDetails.None, null, null));
+                ShippingDetails.None, null, null, OrderLineCosts.None));
 
         Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
     }
