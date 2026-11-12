@@ -274,6 +274,22 @@ internal sealed partial class IntegrationsTestBed
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Modules, Providers, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
 
+    /// <summary>La clave de Anthropic del tenant (plan 2026-11-12, C-1).</summary>
+    public IntegrationConnection SeedAnthropic(string apiKey, string name = "Cuenta de Anthropic")
+    {
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Anthropic,
+            TenantId,
+            name,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string> { ["apiKey"] = apiKey },
+            Protector.Protect,
+            MemberId,
+            Now);
+        Repository.Connections.Add(connection);
+        return connection;
+    }
+
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")
     {
