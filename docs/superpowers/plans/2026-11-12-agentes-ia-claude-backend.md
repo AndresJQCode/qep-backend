@@ -78,7 +78,7 @@ Cada fila reemplaza la decisión del spec que nombra. Donde no se nombra una dec
 | C-17 | **Cambiar de proveedor es cambiar el borrador y publicar.** La versión publicada guarda `provider` y `model` (columnas de `ai.agent_versions` del spec) y la sesión termina con la versión con que empezó (D-A5): una conversación en curso **nunca** cambia de proveedor a mitad. | Un historial armado para un proveedor se manda entero al otro como texto sin problema, pero los topes, el consumo y la actividad de una sesión quedan atados a un solo proveedor, que es lo que el tenant va a leer. |
 | C-18 (reemplaza D-A8) | **Publicar exige la conexión del proveedor del agente** en `Active`: 422 `ai.provider.not_configured` con `provider` en el detalle. Una conexión de Anthropic no habilita un agente de OpenAI ni al revés. | Cada proveedor es una cuenta y una clave distintas. |
 | C-19 (concreta §6.7 y §10) | **El `issue` bloqueante es por proveedor, no por tenant.** Un 402 de Anthropic deja sin atender las conversaciones nuevas de los agentes `anthropic`; los `openai` siguen. Quitar la conexión de un proveedor deja a sus agentes publicados sin tomar conversaciones (`issue` `not_configured`), no a los del otro. | El saldo o la clave de una cuenta no dicen nada de la otra. |
-| C-20 | **Sin respaldo entre proveedores.** Un error agotado del proveedor de un agente termina en traspaso (§«Errores del proveedor»), nunca en una llamada al otro proveedor. El respaldo por rechazo de Anthropic (C-9) es **dentro** de Anthropic. | Mandar el historial de un cliente a una cuenta que el tenant no eligió para ese agente sería un tratamiento de datos que nadie aprobó (P-14), y le gastaría saldo de una cuenta sin aviso. |
+| C-20 | **Sin respaldo entre proveedores.** Un error agotado del proveedor de un agente termina en traspaso (§«Errores del proveedor»), nunca en una llamada al otro proveedor. El respaldo por rechazo de Anthropic (C-9) es **dentro** de Anthropic. | Mandar el historial de un cliente a una cuenta que el tenant no eligió para ese agente sería un tratamiento de datos en una cuenta que el tenant no eligió para ese agente (P-14 resuelta: el tratamiento va por la cuenta que el tenant elige), y le gastaría saldo de esa cuenta sin aviso. |
 
 ### Proveedor, clave y modelos
 
@@ -88,7 +88,7 @@ Cada fila reemplaza la decisión del spec que nombra. Donde no se nombra una dec
 | C-2 (reemplaza D-A24, resuelve P-6 para Anthropic) | Un probador por proveedor. `AnthropicConnectionTester` llama **`GET /v1/models`** con la clave (no consume tokens) y después `GET /v1/models/{id}` del modelo predeterminado de Anthropic en `Ai:Providers`. 401 → `credentials_rejected`; 403 → `permission_denied`; 404 del modelo → `model_unavailable`; 429/5xx/529/red → `unreachable`. El saldo **no** se verifica sin gastar: un 402 `billing_error` se ve en la primera llamada real. `OpenAiConnectionTester`: endpoint y códigos según P-6, que sigue abierta para OpenAI. | Validar sin costo y distinguir «clave mala» de «modelo no habilitado». |
 | C-3 (reemplaza D-A26) | Lista curada **por proveedor** en `Ai:Providers:{provider}:Models` (`id`, `label`, `description`, `isDefault`, `available`, `effort`), un predeterminado por proveedor y uno global (`Ai:DefaultProvider`). Valores iniciales: **anthropic** → `claude-opus-5-5` (predeterminado), `claude-sonnet-5-5`, `claude-haiku-5-5`; **openai** → los de D-4a (`gpt-6-luna` predeterminado, `gpt-6.1-terra`, `gpt-6.1-sol`). `GET /ai/models` responde agrupado por proveedor, con `configured` (si el tenant tiene la conexión `Active`) e `issue` por proveedor: la pantalla no tiene que cruzar con Integraciones para saber qué se puede elegir (backend for frontend). | Cambiar o retirar un modelo es configuración, no despliegue del SPA. Que el tenant elija un modelo más barato es **su** decisión (D-4a). |
 | C-4 (complementa D-A25 y D-A27) | `ai.usage_records` conserva `provider` y suma `cache_creation_input_tokens` y `cache_read_input_tokens` (nullable: un proveedor que no los reporta deja `NULL`, no `0`) y `served_model` (el modelo que de verdad respondió; con el respaldo de C-9 puede no ser el pedido). La lista de agentes suma el mes **por proveedor**. | Con dos cuentas, un total mezclado no se puede contrastar con ninguna factura. Un `0` diría «no hubo caché» cuando el dato no existe. |
-| C-5 | **BYOK se conserva** (spec de producto D-4): cada tenant paga la cuenta del proveedor que elige. Una clave de plataforma de QEP es una decisión del owner que **no** toma este plan: queda como P-13. | El diseño admite las dos: sólo cambia el adaptador de `IAiProviderCredentials`. |
+| C-5 | **BYOK** (spec de producto D-4, confirmado por el owner el 2026-11-12, P-13): cada tenant usa y paga **su propia cuenta** del proveedor que elige. QEP no tiene clave de plataforma ni cobra consumo. | El adaptador de `IAiProviderCredentials` sólo resuelve conexiones del tenant; no hay configuración de clave en la plataforma. |
 
 ### Llamada al modelo con Anthropic (resuelve P-1 para Anthropic)
 
@@ -128,15 +128,21 @@ texto; los nombres de las excepciones del SDK se confirman contra el compilador 
 
 ## Decisiones pendientes del owner
 
-Las del spec siguen abiertas salvo P-6 para Anthropic y la parte de P-1 que toca a Anthropic. Se suman:
+Las del spec siguen abiertas salvo P-6 para Anthropic, la parte de P-1 que toca a Anthropic y P-7 (resuelta con P-14, abajo). Siguen abiertas además:
 
 | # | Pregunta | Por qué importa |
 | --- | --- | --- |
 | P-1 (sólo OpenAI) | API de OpenAI (Responses o Chat Completions), cliente (.NET oficial o `HttpClient`), herramientas, salida estructurada, `usage`, cuota contra tasa y estado del lado del proveedor. | Bloquea la Tarea 6 (adaptador de OpenAI). No bloquea los slices de Anthropic. |
-| P-13 | ¿BYOK (cada tenant trae la clave del proveedor que elige) o una clave de plataforma de QEP con cobro por consumo? Con dos proveedores, la de plataforma serían dos cuentas de QEP. | Cambia sólo el adaptador de `IAiProviderCredentials` y la pantalla, pero con clave de plataforma QEP paga y los topes de P-11 pasan a ser obligatorios. |
-| P-14 (complementa P-7) | Términos de tratamiento de datos **por proveedor**: el historial del cliente final viaja a la cuenta del tenant en Anthropic o en OpenAI, según el agente. ¿Bastan los términos del tenant o QEP tiene que avisar o pedir consentimiento, y el aviso nombra al proveedor? | Legal. Bloquea encender canales reales (AI-B6), no los slices anteriores. |
 | P-15 | ¿Se muestra un costo estimado junto a los tokens? Exigiría precios por modelo en `Ai:Providers` que alguien mantiene para los dos proveedores. | El spec dice «se muestra, no se cobra», en tokens. |
-| P-16 | ¿Algún tenant puede quedar restringido a un solo proveedor (por contrato o por plan)? Hoy cualquiera de los dos queda disponible para todo tenant con módulo `ai`. | Si la respuesta es sí, hace falta `requiresTenantEnablement` en el proveedor de Integrations, que hoy es `false`. |
+
+### Resueltas por el owner (2026-11-12)
+
+- **P-13 → BYOK.** El tenant usa su propia cuenta del proveedor (C-5). No hay clave de plataforma.
+- **P-14 (y P-7 del spec) → la cuenta es del tenant.** El historial del cliente final viaja a la cuenta del tenant en el
+  proveedor que el tenant eligió para el agente, bajo los términos entre el tenant y ese proveedor. QEP no agrega aviso
+  ni consentimiento propio. Ya no bloquea encender canales reales.
+- **P-16 → no.** Ningún tenant queda restringido a un proveedor: todo tenant con el módulo `ai` puede conectar los dos.
+  Los proveedores de Integrations quedan con `requiresTenantEnablement: false`.
 
 ## Review Focus
 
@@ -303,7 +309,7 @@ módulo). Cambia:
   `sent_by_kind IN (1,2,3,4)`.
 - [ ] Cola `ai.model_jobs` en `QueueNames`, `QueueMetricsSource`, dashboard y alertas; métricas de llamadas y errores
   etiquetadas por `provider`.
-- [ ] **Bloqueado por P-14** para habilitarse en un tenant real; el código se mergea apagado por el módulo `ai`.
+- [ ] El código se mergea apagado por el módulo `ai` (fuera de `DefaultForNewTenants`); se enciende tenant por tenant.
 
 ### Task 8 (AI-B7): `create_quotation_draft`
 
