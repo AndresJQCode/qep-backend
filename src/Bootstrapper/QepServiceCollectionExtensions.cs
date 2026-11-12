@@ -1176,6 +1176,22 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetAiSettingsQuery, AiSettingsDto>, GetAiSettingsHandler>();
         // Plan 2026-11-12, C-1: la clave de cada proveedor es su conexión en Integrations; Ai no la ve, así que el adaptador va acá.
         services.AddScoped<IAiProviderCredentials, AiProviderCredentials>();
+        // Spec 2026-10-29 §5: los agentes. Los validadores entran con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<IQueryHandler<ListAgentsQuery, AgentListResponse>, ListAgentsHandler>();
+        services.AddScoped<IQueryHandler<GetAgentQuery, AgentEditorDto>, GetAgentHandler>();
+        services.AddScoped<IQueryHandler<ListAiConnectionsQuery, IReadOnlyList<AiConnectionDto>>, ListAiConnectionsHandler>();
+        services.AddScoped<ICommandHandler<CreateAgentCommand, AgentEditorDto>, CreateAgentHandler>();
+        services.AddScoped<ICommandHandler<UpdateAgentCommand, AgentEditorDto>, UpdateAgentHandler>();
+        services.AddScoped<ICommandHandler<SaveAgentDraftCommand, AgentDraftSavedDto>, SaveAgentDraftHandler>();
+        services.AddScoped<ICommandHandler<PublishAgentCommand, AgentEditorDto>, PublishAgentHandler>();
+        services.AddScoped<ICommandHandler<PauseAgentCommand, AgentEditorDto>, PauseAgentHandler>();
+        services.AddScoped<ICommandHandler<ResumeAgentCommand, AgentEditorDto>, ResumeAgentHandler>();
+        services.AddScoped<ICommandHandler<DeleteAgentCommand, bool>, DeleteAgentHandler>();
+        services.AddValidatorsFromAssemblyContaining<CreateAgentValidator>();
+        // Spec 2026-10-29 D-A3 y §4.3: conexiones, miembros y la ocupación neutral, por adaptadores (Ai no ve Mensajería).
+        services.AddScoped<IAiConnections, AiConnections>();
+        services.AddScoped<IAiMembers, AiMembers>();
+        services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
 
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.

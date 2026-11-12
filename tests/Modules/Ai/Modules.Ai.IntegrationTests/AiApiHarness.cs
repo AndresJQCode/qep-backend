@@ -1,9 +1,14 @@
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Ai.IntegrationTests;
@@ -103,8 +108,123 @@ internal static class AiApiHarness
     public static async Task<string> BodyAsync(HttpResponseMessage response) =>
         await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
+    public static async Task<JsonElement> JsonAsync(HttpResponseMessage response) =>
+        await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+
+    /// <summary>Una escritura con <c>If-Match</c> opcional. El cuerpo va como JSON; <c>null</c> manda la petición sin cuerpo.</summary>
+    public static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, string url, object? body = null, long? ifMatch = null)
+    {
+        using var request = new HttpRequestMessage(method, url);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        if (ifMatch is { } version)
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
+        }
+
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Una conexión whatsapp-cloud escrita directo por el repositorio de Integrations (sin Meta), cifrada con la llave del host.
+    /// Copia de <c>AutomationsApiHarness.SeedWhatsAppConnectionAsync</c>.</summary>
+    public static Task<Guid> SeedWhatsAppConnectionAsync(QepApiFactory factory, string name, string phoneNumberId, string tenantId = TenantId) =>
+        SeedConnectionAsync(
+            factory,
+            IntegrationProviders.WhatsAppCloud,
+            tenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [WhatsAppCloudFieldKeys.DisplayPhoneNumber] = "+57 300 123 4567",
+                [WhatsAppCloudFieldKeys.VerifiedName] = "Prueba",
+                [WhatsAppCloudFieldKeys.PhoneNumberId] = phoneNumberId,
+                [WhatsAppCloudFieldKeys.WabaId] = $"9{phoneNumberId}",
+                [WhatsAppCloudFieldKeys.QualityRating] = "GREEN",
+            },
+            new Dictionary<string, string> { [WhatsAppCloudFieldKeys.AccessToken] = "meta-access-token-SENTINEL-a1" },
+            route: (phoneNumberId, $"9{phoneNumberId}"));
+
+    public static Task<Guid> SeedInstagramConnectionAsync(QepApiFactory factory, string name, string igUserId) =>
+        SeedConnectionAsync(
+            factory,
+            IntegrationProviders.Instagram,
+            TenantId,
+            name,
+            new Dictionary<string, string>
+            {
+                [InstagramFieldKeys.Username] = "origenbotanico",
+                [InstagramFieldKeys.AccountName] = "Origen Botánico",
+                [InstagramFieldKeys.IgUserId] = igUserId,
+                [InstagramFieldKeys.TokenExpiresAt] = DateTimeOffset.UtcNow.AddDays(60).ToString("O"),
+            },
+            new Dictionary<string, string> { [InstagramFieldKeys.AccessToken] = "ig-access-token-SENTINEL-a2" },
+            route: (igUserId, null));
+
+    /// <summary>La conexión de Anthropic del tenant, sin pasar por el probador (que se ejerce en <c>AiSettingsApiTests</c>).</summary>
+    public static Task<Guid> SeedAnthropicConnectionAsync(QepApiFactory factory) =>
+        SeedConnectionAsync(
+            factory,
+            IntegrationProviders.Anthropic,
+            TenantId,
+            "Cuenta de Anthropic",
+            new Dictionary<string, string>(),
+            new Dictionary<string, string> { [AnthropicFieldKeys.ApiKey] = "sk-ant-api03-SENTINEL-a3" },
+            route: null);
+
+    private static async Task<Guid> SeedConnectionAsync(
+        QepApiFactory factory, IntegrationProvider provider, string tenantId, string name, IReadOnlyDictionary<string, string> fields,
+        IReadOnlyDictionary<string, string> secrets, (string ExternalId, string? WabaId)? route)
+    {
+        using var scope = factory.Services.CreateScope();
+        var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+        var tenant = Guid.Parse(tenantId);
+        var connection = IntegrationConnection.Create(
+            provider, tenant, name, fields, secrets, protector.Protect, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
+        if (route is { } value)
+        {
+            scope.ServiceProvider.GetRequiredService<IConnectionRouteRepository>().Add(
+                IntegrationConnectionRoute.Create(provider.Key, value.ExternalId, value.WabaId, tenant, connection.Id));
+        }
+
+        await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(TestContext.Current.CancellationToken);
+        return connection.Id;
+    }
+
+    public static async Task<T?> ScalarAsync<T>(string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        var result = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return result is null or DBNull ? default : (T)result;
+    }
+
+    public static async Task<int> ExecuteAsync(string connectionString, string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        return await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+    }
+
     /// <param name="configureServices">Sustituciones de servicios para la prueba; corre después del registro de la aplicación.</param>
-    public sealed class QepApiFactory(string connectionString, Action<IServiceCollection>? configureServices = null)
+    /// <param name="settings">Claves de configuración que la prueba fija además de las de siempre (por ejemplo, un modelo disponible).</param>
+    public sealed class QepApiFactory(
+        string connectionString, Action<IServiceCollection>? configureServices = null, IReadOnlyDictionary<string, string>? settings = null)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -126,6 +246,10 @@ internal static class AiApiHarness
             builder.UseSetting("Integrations:SecretProtection:ActiveKeyId", "test");
             builder.UseSetting("Integrations:SecretProtection:Keys:test", TestSecretProtectionKey);
             builder.UseSetting("Integrations:SecretProtection:Keys:k1", string.Empty);
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
 
             if (configureServices is not null)
             {

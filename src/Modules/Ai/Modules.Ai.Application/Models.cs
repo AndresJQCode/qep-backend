@@ -45,6 +45,16 @@ public sealed class ListAiModelsHandler(IExecutionContext executionContext, ITen
     public async Task<AiModelCatalogDto> HandleAsync(ListAiModelsQuery query, CancellationToken cancellationToken)
     {
         await AiAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, AiPermissions.AgentRead, cancellationToken);
+        return ModelCatalog.ToDto(catalog);
+    }
+}
+
+/// <summary>La lista curada como la ve la pantalla, la misma en <c>GET /models</c> y en el editor del agente.</summary>
+public static class ModelCatalog
+{
+    public static AiModelCatalogDto ToDto(IAiModelCatalog catalog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
         return new AiModelCatalogDto(
             catalog.DefaultProvider.Value,
             [
@@ -52,5 +62,14 @@ public sealed class ListAiModelsHandler(IExecutionContext executionContext, ITen
                     provider.Provider.Value,
                     [.. provider.Models.Select(model => new AiModelDto(model.Id, model.Label, model.Description, model.IsDefault, model.Available))])),
             ]);
+    }
+
+    /// <summary>El modelo que toma un borrador nuevo: el predeterminado del proveedor predeterminado (<c>Ai:DefaultProvider</c>).</summary>
+    public static AgentModelRef DefaultFor(IAiModelCatalog catalog)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        var provider = catalog.Providers.Single(entry => entry.Provider == catalog.DefaultProvider);
+        var model = provider.Models.FirstOrDefault(candidate => candidate.IsDefault) ?? provider.Models[0];
+        return new AgentModelRef(provider.Provider.Value, model.Id);
     }
 }

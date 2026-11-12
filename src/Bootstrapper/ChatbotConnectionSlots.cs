@@ -55,5 +55,16 @@ internal sealed class ChatbotConnectionSlots(AutomationsDbContext automations) :
             row.ConnectionId, row.BotKind == 2 ? ConnectionOccupant.Agent : ConnectionOccupant.Chatbot, row.BotId, row.BotName))];
     }
 
+    public async Task<IReadOnlyList<ConnectionOccupant>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var rows = await automations.Database.SqlQuery<TakenRow>($"""
+            SELECT connection_id AS "ConnectionId", bot_kind AS "BotKind", bot_id AS "BotId", bot_name AS "BotName"
+            FROM messaging.connection_bots
+            WHERE tenant_id = {tenantId}
+            """).ToListAsync(cancellationToken);
+        return [.. rows.Select(row => new ConnectionOccupant(
+            row.ConnectionId, row.BotKind == 2 ? ConnectionOccupant.Agent : ConnectionOccupant.Chatbot, row.BotId, row.BotName))];
+    }
+
     private sealed record TakenRow(Guid ConnectionId, short BotKind, Guid BotId, string BotName);
 }

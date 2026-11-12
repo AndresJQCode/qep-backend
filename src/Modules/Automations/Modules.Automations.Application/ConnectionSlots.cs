@@ -25,6 +25,9 @@ public interface IChatbotConnectionSlots
     /// chatbot quiere y otro bot (un agente) ya ocupa: el llamador responde 409 y no confirma.
     /// </summary>
     Task<IReadOnlyList<ConnectionOccupant>> SyncChatbotsAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Quién ocupa cada conexión del tenant, chatbot o agente (la tabla entera, sin mirar la transacción en curso).</summary>
+    Task<IReadOnlyList<ConnectionOccupant>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>

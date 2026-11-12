@@ -231,17 +231,36 @@ Construida en `feat/agentes-ia-modulo` (`8051922a`). Cambia respecto del spec (�
 - [x] Regresión: Architecture 200, Automations unit 690, Bootstrapper unit 534, Automations integración 301, Messaging
   integración 393, todas en verde; `TheMigrationBackfillsTheChatbotsAlreadyPublished` en verde.
 
-### Task 4 (AI-B4): Agregado `Agent`, borrador, publicar y conexiones
+### Task 4 (AI-B4): Agregado `Agent`, borrador, publicar y conexiones — hecha
 
-Como §4.6, §4.7 y §5 del spec, con estos cambios:
+Construida en `feat/agentes-ia-modulo`. Esquema `ai` con `agents`, `agent_versions` y `agent_connections` (migración `AddAi`); las
+demás tablas de §4.2 llegan con las tareas que las usan. Rutas de §5: `GET /connections`, `GET|POST /agents`,
+`GET|PUT|DELETE /agents/{id}`, `PUT /agents/{id}/draft`, `POST /agents/{id}/{publish,pause,resume}`. Cambia respecto de lo planeado:
 
-- [ ] RED: `AgentConfigValidatorTests`: `model` es `{ provider, id }`; proveedor desconocido → error; modelo fuera de
-  la lista de **su** proveedor → aviso al guardar y error al publicar; modelo retirado → `modelRetired`.
-- [ ] RED: `PublishAgentTests`: sin conexión `Active` **del proveedor del agente** → 422 `ai.provider.not_configured`
-  con `provider`; con la conexión del otro proveedor, igual 422 (C-18).
-- [ ] GREEN: `agent_versions.provider` y `.model` se llenan desde el borrador al publicar (C-17). Un borrador nuevo toma
-  `Ai:DefaultProvider` y su modelo predeterminado.
-- [ ] Commit `feat(ai): agent aggregate with per-agent provider and model`.
+- **La ocupación se sincroniza en la misma transacción que el agente**, como en la Tarea 3 (`AiUnitOfWork` +
+  `IAgentConnectionSlots`, SQL en `src/Bootstrapper/AgentConnectionSlots.cs` con `bot_kind = 2`). Sin compensación ni barrido. Un
+  agente ocupa sus conexiones desde que se publica y las conserva en pausa (D-A10); quitar una conexión o borrar el agente la libera.
+- **Un modelo fuera de la lista no tiene código propio de 422:** es el problema `model_unavailable` (aviso al guardar, error al
+  publicar), así que publicar responde `ai.agent.invalid` con `errors.model`, igual que cualquier otro problema del borrador. Un
+  proveedor desconocido es `model_provider_unknown` en `model.provider`.
+- **Orden al publicar:** primero los problemas del borrador (`ai.agent.invalid`), después la cuenta del proveedor del agente
+  (`ai.provider.not_configured` con `provider` en las extensiones). La conexión del otro proveedor no habilita (C-18), probado con
+  OpenAI habilitado por configuración en la prueba.
+- **Los topes del `config` son 422 `validation.failed`** con el campo (`Config.Tone`, `Config.Handoff.MaxRepliesWithoutHuman`…), no
+  problemas del borrador. El tope de 256 KB del documento no se mide aparte: los topes de cada campo lo acotan (≈130 KB).
+- **`GET /automations/connections` muestra también a un agente:** `servedBy` sale de `messaging.connection_bots` y suma `kind` e `id`.
+  `chatbotId` se conserva, con el id del bot sea cual sea, porque el frontend actual lo exige como texto y lo compara con el chatbot
+  abierto: con un agente, la conexión se ve ocupada sin cambiar nada en la pantalla.
+- **Quedan para después:** el 409 `has_live_sessions` al borrar (Tarea 7, con las sesiones); el consumo del mes y la actividad del día
+  en la lista (Tareas 5 y 9); el aviso de `tools.quotationDraft` sin asesor (P-8 del spec, sin resolver); Instagram con
+  `botSupported: true` (Tarea 7, con su salida de bot).
+- **Duplicar copia el borrador, nunca las conexiones**, que al publicarse chocarían con las del original.
+
+- [x] RED/GREEN `AgentConfigValidatorTests` y `AgentTests` (dominio).
+- [x] RED/GREEN `AgentsApiTests` (14): borrador nuevo con el modelo predeterminado, nombre repetido, `If-Match`, topes, publicar con
+  errores, sin cuenta del proveedor, con la cuenta del otro proveedor, modelo retirado, publicar ocupa y guarda proveedor y modelo,
+  409 con el ocupante, pausar, renombrar, quitar y borrar, conexiones ajenas y de Instagram, lista y duplicado, permisos y módulo.
+- [x] `ConnectionsApiTests.AConnectionHeldByAnAgentShowsTheAgent` (Automations).
 
 ### Task 5 (AI-B5): Núcleo común y adaptador de Claude
 

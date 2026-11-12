@@ -193,6 +193,7 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "FluentValidation": "[12.1.1, )",
           "Modules.Ai.Domain": "[1.0.0, )",
           "Modules.Tenancy.Application": "[1.0.0, )"
         }
@@ -207,8 +208,12 @@
         "type": "Project",
         "dependencies": {
           "BuildingBlocks.Application": "[1.0.0, )",
+          "Microsoft.EntityFrameworkCore": "[10.0.13, )",
           "Modules.Ai.Application": "[1.0.0, )",
-          "Modules.Ai.Domain": "[1.0.0, )"
+          "Modules.Ai.Domain": "[1.0.0, )",
+          "Modules.Audit.Domain": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
       "modules.apiaccess.application": {
