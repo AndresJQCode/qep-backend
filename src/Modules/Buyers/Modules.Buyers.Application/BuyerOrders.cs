@@ -5,9 +5,15 @@ namespace Modules.Buyers.Application;
 
 public sealed record BuyerOrderLineDto(string Name, decimal Quantity, decimal UnitPrice, decimal LineTotal);
 
+/// <summary>Contrato con <c>qep-storefront</c>. Los cuatro ejes del pedido viajan por nombre (spec 2026-11-10 §9):
+/// <c>Status</c> (<c>Open</c> | <c>Archived</c> | <c>Cancelled</c>), <c>PaymentStatus</c>, <c>FulfillmentStatus</c>
+/// (<c>NotPrepared</c> | <c>Prepared</c>) e <c>Invoiced</c>. <c>IsStorePickup</c> es el mismo valor del detalle y va también
+/// en la lista (owner, 2026-11-11) porque la tienda muestra «Listo para recoger» o «Enviado» para un pedido preparado
+/// directamente en la lista: sin él tendría que pedir el detalle de cada pedido.</summary>
 public sealed record BuyerOrderSummaryDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
-    decimal Total, string Currency, int LineCount, string FirstLineName, bool CanCancel);
+    string FulfillmentStatus, bool Invoiced,
+    decimal Total, string Currency, int LineCount, string FirstLineName, bool CanCancel, bool IsStorePickup);
 
 public sealed record BuyerOrderBillingDto(
     string Name, string? IdentificationType, string? IdentificationNumber, string? Email, string? Phone,
@@ -25,6 +31,7 @@ public sealed record BuyerOrderShippingDto(
 /// </summary>
 public sealed record BuyerOrderDetailDto(
     Guid Id, string Number, DateTimeOffset CreatedAt, string Status, string PaymentStatus,
+    string FulfillmentStatus, bool Invoiced,
     decimal Total, string Currency, int LineCount, string FirstLineName,
     IReadOnlyList<BuyerOrderLineDto> Lines, DateTimeOffset? CancelledAt, bool CanCancel,
     decimal Subtotal, decimal TaxAmount, decimal FreightTotal, bool IsStorePickup, string? CarrierName,

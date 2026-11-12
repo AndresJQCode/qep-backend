@@ -35,6 +35,40 @@ public sealed class OrderResponseComposerTests
         Assert.Equal("Asesora Uno", response.AdvisorName);
     }
 
+    // Spec 2026-11-10 §5: el detalle trae los cuatro ejes, quién y cuándo de cada marca y el saldo, para que la
+    // pantalla no los deduzca del historial ni reste comprobantes.
+    [Fact]
+    public async Task TheResponseCarriesTheAxesTheirMarksAndTheBalance()
+    {
+        var marker = new MemberId(Guid.CreateVersion7());
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now, ClientId, proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+        order.MarkPaid(marker, requirePaymentProof: false, Now.AddMinutes(1));
+        order.Prepare(marker, Now.AddMinutes(2));
+        order.Archive(marker, Now.AddMinutes(3));
+
+        var response = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order.ToDto(), null, []), TestContext.Current.CancellationToken);
+
+        var result = response.Order;
+        Assert.Equal(
+            ("Archived", "FullPaymentReceived", "Prepared", false),
+            (result.Status, result.PaymentStatus, result.FulfillmentStatus, result.Invoiced));
+        Assert.Equal((Now.AddMinutes(1), marker.Value), (result.PaidMarkedAt!.Value, result.PaidMarkedBy!.Value));
+        Assert.Equal((Now.AddMinutes(2), marker.Value), (result.PreparedAt!.Value, result.PreparedBy!.Value));
+        Assert.Equal((Now.AddMinutes(3), marker.Value), (result.ArchivedAt!.Value, result.ArchivedBy!.Value));
+        Assert.Equal(19_000m, result.Balance);
+    }
+
+    [Fact]
+    public void TheApprovalFieldsAreGone()
+    {
+        Assert.Null(typeof(OrderResponse).GetProperty("ApprovedAt"));
+        Assert.Null(typeof(OrderResponse).GetProperty("ApprovedBy"));
+        Assert.Null(typeof(OrderDto).GetProperty("ApprovedAt"));
+        Assert.Null(typeof(OrderDto).GetProperty("ApprovedBy"));
+    }
+
     [Fact]
     public async Task TheOrderDetailCarriesTheClientsContacts()
     {

@@ -264,8 +264,8 @@ public sealed class OrphanUserCleanupTests
         Assert.Equal(1, await CountUsersAsync(connection, member.UserId));
     }
 
-    // El aprobador no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
-    // que retiene al usuario es advisor_id (ya cubierto arriba) o approved_by.
+    // Quien marca pagado no es el asesor: si compartieran membresía, la prueba no distinguiría si lo
+    // que retiene al usuario es advisor_id (ya cubierto arriba) o paid_marked_by.
     [Fact]
     public async Task ApprovingAnOrderKeepsTheUser()
     {
@@ -828,7 +828,7 @@ public sealed class OrphanUserCleanupTests
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
 
-    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es approved_by,
+    // Por el DbContext, misma razón que SeedQuotationAsync: lo que importa acá es paid_marked_by,
     // cancelled_by o invoiced_by, no el resto del contrato de pedidos. Desde el spec 2026-10-15 el
     // pedido tiene datos propios y no necesita cotización: se siembra uno manual.
     private static async Task SeedOrderAsync(
@@ -860,7 +860,6 @@ public sealed class OrphanUserCleanupTests
             },
             ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 119_000m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             convertedBy,
             proofs: [],
@@ -868,14 +867,14 @@ public sealed class OrphanUserCleanupTests
 
         if (approvedByMembershipId is { } approvedBy)
         {
-            order.Approve(new MemberId(approvedBy), occurredAt);
+            order.MarkPaid(new MemberId(approvedBy), requirePaymentProof: false, occurredAt);
         }
 
-        // Facturar exige Approved (spec 2026-10-05, decisión 1): quien pida invoicedBy tiene que
+        // Facturar exige pagado (spec 2026-11-10 §3.4, ajuste por defecto): quien pida invoicedBy tiene que
         // pedir también approvedBy.
         if (invoicedByMembershipId is { } invoicedBy)
         {
-            order.Invoice(new MemberId(invoicedBy), occurredAt);
+            order.Invoice(new MemberId(invoicedBy), requireFullPayment: true, occurredAt);
         }
 
         if (cancelledByMembershipId is { } cancelledBy)

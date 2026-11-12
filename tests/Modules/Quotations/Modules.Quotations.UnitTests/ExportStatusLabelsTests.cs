@@ -30,12 +30,10 @@ public sealed class ExportStatusLabelsTests
         AssertLabels(
             new Dictionary<OrderStatus, string>
             {
-                [OrderStatus.Pending] = "Pendiente",
-                [OrderStatus.Approved] = "Aprobado",
+                [OrderStatus.Open] = "Abierto",
+                [OrderStatus.Archived] = "Archivado",
                 // Decisión 6 del spec 2026-09-16: la exportación muestra los anulados.
                 [OrderStatus.Cancelled] = "Anulado",
-                // Decisión 7 del spec 2026-10-05: y los facturados.
-                [OrderStatus.Invoiced] = "Facturado",
             },
             ExportStatusLabels.For);
 
@@ -45,9 +43,21 @@ public sealed class ExportStatusLabelsTests
         AssertLabels(
             new Dictionary<OrderPaymentStatus, string>
             {
-                [OrderPaymentStatus.FullPaymentReceived] = "Pago total",
+                [OrderPaymentStatus.FullPaymentReceived] = "Pagado",
                 [OrderPaymentStatus.PartialPaymentReceived] = "Pago parcial",
                 [OrderPaymentStatus.PaymentPending] = "Pago pendiente",
+                [OrderPaymentStatus.PendingVerification] = "Por verificar",
+            },
+            ExportStatusLabels.For);
+
+    // order-list.ts (frontend), las etiquetas del envío (spec 2026-11-10 §5)
+    [Fact]
+    public void EveryFulfillmentStatusHasTheLabelOfTheOrdersTable() =>
+        AssertLabels(
+            new Dictionary<OrderFulfillmentStatus, string>
+            {
+                [OrderFulfillmentStatus.NotPrepared] = "Sin preparar",
+                [OrderFulfillmentStatus.Prepared] = "Preparado",
             },
             ExportStatusLabels.For);
 

@@ -97,6 +97,38 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(expectedCode, error.Code);
     }
 
+    [Theory]
+    [InlineData("Shipped", null, "order.order.fulfillment_status_invalid")]
+    [InlineData(null, "yes", "order.order.invoiced_invalid")]
+    public async Task ExportWithAnInvalidFulfillmentOrInvoicedFailsLikeTheList(
+        string? fulfillmentStatus, string? invoiced, string expectedCode)
+    {
+        var queue = new InMemoryExportJobQueue();
+        var handler = NewHandler(new StubOrderListRepository(NewRow()), queue);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(
+                NewCommand() with { FulfillmentStatus = fulfillmentStatus, Invoiced = invoiced },
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(expectedCode, error.Code);
+        Assert.Empty(queue.Jobs);
+    }
+
+    // Un trabajo encolado antes de los filtros nuevos se sigue leyendo: los dos quedan en null.
+    [Fact]
+    public void AJobSerializedBeforeTheNewFiltersStillReads()
+    {
+        const string legacy =
+            """{"ClientId":null,"AdvisorId":null,"Status":"Open","PaymentStatus":null,"ConvertedFrom":"2026-09-01","ConvertedTo":"2026-09-12","ClientCuc":null,"OrderNumber":null,"Source":null,"TimeZone":null}""";
+
+        var filters = JsonSerializer.Deserialize<OrdersExportFilters>(legacy);
+
+        Assert.NotNull(filters);
+        Assert.Equal("Open", filters.Status);
+        Assert.Equal(((string?)null, (string?)null), (filters.FulfillmentStatus, filters.Invoiced));
+    }
+
     [Fact]
     public async Task ExportWithNoMatchingOrdersIsRejectedAndEnqueuesNothing()
     {
@@ -153,7 +185,8 @@ public sealed class ExportOrdersHandlerTests
 
         var accepted = await handler.HandleAsync(
             new ExportOrdersCommand(
-                TenantId, ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+                TenantId, ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026",
+                FulfillmentStatus: "prepared", Invoiced: "false"),
             TestContext.Current.CancellationToken);
 
         var job = Assert.Single(queue.Jobs);
@@ -161,11 +194,14 @@ public sealed class ExportOrdersHandlerTests
         Assert.Equal(ExportJobKind.Orders, job.Kind);
         Assert.Equal(SubjectId, job.RequestedBy);
         Assert.Equal(
-            new OrdersExportFilters(ClientId, AdvisorId.Value, "pending", "paymentpending", From, To, null, "PED-2026"),
+            new OrdersExportFilters(
+                ClientId, AdvisorId.Value, "open", "paymentpending", From, To, null, "PED-2026",
+                FulfillmentStatus: "prepared", Invoiced: "false"),
             JsonSerializer.Deserialize<OrdersExportFilters>(job.Filters));
         Assert.Equal(
             new RecordedOrderExportSearch(
-                ClientId, null, AdvisorId, OrderStatus.Pending, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026"),
+                ClientId, null, AdvisorId, OrderStatus.Open, OrderPaymentStatus.PaymentPending, FromUtc, BeforeUtc, "PED-2026",
+                FulfillmentStatus: OrderFulfillmentStatus.Prepared, Invoiced: false),
             repository.LastExportSearch);
         Assert.Equal(1, unitOfWork.Saves);
     }

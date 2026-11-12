@@ -68,11 +68,11 @@ public sealed class RecognizeOrderCarrierHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "The carrier of an order can only change while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "The carrier of an order can only change while it is editable.");
         }
 
         if (order.ExternalShippingTitle is not { } title)

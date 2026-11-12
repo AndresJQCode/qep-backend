@@ -73,6 +73,6 @@ public sealed class OrderPriceRoundingTests
             },
             ShippingDetails.None,
             [new OrderLineInput(variantId, variantId, 10m, 13.19m, 15m, 19)],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now);
     }
 }

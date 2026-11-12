@@ -193,7 +193,7 @@ public abstract class QuotationEditsValidator<TEdits> : AbstractValidator<TEdits
 /// <c>PUT /orders/{orderId}</c>, y sin esto el rechazo llegaría recién al primer método de dominio,
 /// después de haber ido al catálogo a valorizar líneas que nunca se van a aplicar.
 ///
-/// Mismo criterio que <c>SaveOrderEditsHandler</c> con <c>OrderStatus.Pending</c>.
+/// Mismo criterio que <c>SaveOrderEditsHandler</c> con <c>Order.IsEditable</c>.
 /// </summary>
 internal static class QuotationEditable
 {

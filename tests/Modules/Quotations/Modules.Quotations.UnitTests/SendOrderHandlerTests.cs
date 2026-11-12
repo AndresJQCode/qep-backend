@@ -127,14 +127,14 @@ public sealed class SendOrderHandlerTests
         Assert.Empty(harness.Audit.Actions);
     }
 
-    // Enviar no es una transición: pendiente, aprobado y facturado se mandan igual.
+    // Enviar no es una transición: abierto, archivado, pagado y facturado se mandan igual.
     [Theory]
-    [InlineData(OrderStatus.Pending)]
-    [InlineData(OrderStatus.Approved)]
-    [InlineData(OrderStatus.Invoiced)]
-    public async Task AnOrderThatIsNotCancelledCanBeSent(OrderStatus status)
+    [InlineData(OrderStatus.Open, false)]
+    [InlineData(OrderStatus.Archived, false)]
+    [InlineData(OrderStatus.Open, true)]
+    public async Task AnOrderThatIsNotCancelledCanBeSent(OrderStatus status, bool invoiced)
     {
-        var harness = NewHarness(status: status);
+        var harness = NewHarness(status: status, invoiced: invoiced);
 
         await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
 
@@ -606,7 +606,8 @@ public sealed class SendOrderHandlerTests
     private static Harness NewHarness(
         QuotationPartyDetails? billing = null,
         bool cancelled = false,
-        OrderStatus status = OrderStatus.Pending,
+        OrderStatus status = OrderStatus.Open,
+        bool invoiced = false,
         QuotationCustomerRef? customer = null,
         Exception? whatsAppFailure = null,
         IExecutionContext? executionContext = null,
@@ -624,14 +625,15 @@ public sealed class SendOrderHandlerTests
             parties: billing is null
                 ? null
                 : new QuotationParties(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
-        if (status is OrderStatus.Approved or OrderStatus.Invoiced)
+        if (invoiced)
         {
-            order.Approve(AdvisorId, Now.AddHours(-3));
+            order.MarkPaid(AdvisorId, requirePaymentProof: false, Now.AddHours(-3));
+            order.Invoice(AdvisorId, requireFullPayment: true, Now.AddHours(-2));
         }
 
-        if (status is OrderStatus.Invoiced)
+        if (status is OrderStatus.Archived)
         {
-            order.Invoice(AdvisorId, Now.AddHours(-2));
+            order.Archive(AdvisorId, Now.AddHours(-2));
         }
 
         if (cancelled)

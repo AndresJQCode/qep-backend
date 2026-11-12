@@ -79,13 +79,6 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
-        collection.MapPost("/{orderId:guid}/approve", ApproveOrderAsync)
-            .RequireAuthorization(OrdersPermissions.OrderApprove)
-            .Produces<OrderResponse>()
-            .ProducesProblem(StatusCodes.Status403Forbidden)
-            .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
-
         collection.MapPost("/{orderId:guid}/cancel", CancelOrderAsync)
             .RequireAuthorization(OrdersPermissions.OrderCancel)
             .Accepts<CancelOrderRequest>("application/json")
@@ -107,6 +100,21 @@ public static class OrderEndpoints
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        // Spec 2026-11-10: las acciones del pedido, sin cuerpo ni If-Match, como facturar. Pagado con el
+        // permiso de marcar pagado; preparado y archivado con el de gestión.
+        MapStateAction(collection, "mark-paid", OrdersPermissions.OrderApprove,
+            (tenantId, orderId) => new MarkOrderPaidCommand(tenantId, orderId));
+        MapStateAction(collection, "unmark-paid", OrdersPermissions.OrderApprove,
+            (tenantId, orderId) => new UnmarkOrderPaidCommand(tenantId, orderId));
+        MapStateAction(collection, "prepare", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new PrepareOrderCommand(tenantId, orderId));
+        MapStateAction(collection, "unprepare", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new UndoOrderPreparationCommand(tenantId, orderId));
+        MapStateAction(collection, "archive", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new ArchiveOrderCommand(tenantId, orderId));
+        MapStateAction(collection, "unarchive", OrdersPermissions.OrderManage,
+            (tenantId, orderId) => new UnarchiveOrderCommand(tenantId, orderId));
 
         // «Enviar el pedido por WhatsApp». Mismo contrato que POST /quotations/{id}/send: el cuerpo es
         // opcional de verdad (un cuerpo inferido como requerido rompió aquel envío con 500), y responde el
@@ -180,12 +188,14 @@ public static class OrderEndpoints
         string? source = null,
         int page = 1,
         int pageSize = QuotationPaging.DefaultPageSize,
-        string? timeZone = null)
+        string? timeZone = null,
+        string? fulfillmentStatus = null,
+        string? invoiced = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListOrdersQuery(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, page, pageSize, timeZone),
+                clientCuc, orderNumber, source, page, pageSize, timeZone, fulfillmentStatus, invoiced),
             cancellationToken);
         return Results.Ok(new OrdersPageResponse(
             result.Items.Select(ToListItemResponse).ToArray(),
@@ -207,12 +217,14 @@ public static class OrderEndpoints
         string? clientCuc = null,
         string? orderNumber = null,
         string? source = null,
-        string? timeZone = null)
+        string? timeZone = null,
+        string? fulfillmentStatus = null,
+        string? invoiced = null)
     {
         var accepted = await dispatcher.SendAsync(
             new ExportOrdersCommand(
                 tenantId, clientId, advisorId, status, paymentStatus, convertedFrom, convertedTo,
-                clientCuc, orderNumber, source, timeZone),
+                clientCuc, orderNumber, source, timeZone, fulfillmentStatus, invoiced),
             cancellationToken);
         return Results.Accepted(value: new ExportJobAcceptedResponse(accepted.JobId, accepted.RequestedAt));
     }
@@ -240,6 +252,8 @@ public static class OrderEndpoints
         order.AdvisorName,
         order.Status,
         order.PaymentStatus,
+        order.FulfillmentStatus,
+        order.Invoiced,
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,
@@ -272,7 +286,7 @@ public static class OrderEndpoints
         // dibuja el resumen (líneas, cliente, cotización de origen) sin pedir nada después.
         var detail = await dispatcher.SendAsync(
             new ConvertQuotationToOrderCommand(
-                tenantId, quotationId, request.PaymentStatus, request.Notes, request.PaymentProofs),
+                tenantId, quotationId, request.Notes, request.PaymentProofs),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -307,7 +321,6 @@ public static class OrderEndpoints
             new AddOrderPaymentProofsCommand(
                 tenantId,
                 orderId,
-                request.PaymentStatus,
                 request.Notes,
                 request.PaymentProofs,
                 request.UpdatedProofs ?? []),
@@ -339,7 +352,7 @@ public static class OrderEndpoints
             new CreateOrderCommand(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Created(
             $"/api/v1/tenants/{tenantId}/orders/{detail.Order.Id}",
@@ -357,7 +370,7 @@ public static class OrderEndpoints
             new PreviewOrderQuery(
                 tenantId, request.ClientId, request.PaymentMethod, request.Notes, request.IsRetail,
                 request.GlobalScaleFloor, request.Parties, request.BillingAccount, ToAdditions(request.Items),
-                request.PaymentStatus, request.PaymentProofs, request.Shipping),
+                request.PaymentProofs, request.Shipping),
             cancellationToken);
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
@@ -455,18 +468,6 @@ public static class OrderEndpoints
         return Results.Ok(await composer.ComposeAsync(tenantId, detail, cancellationToken));
     }
 
-    private static async Task<IResult> ApproveOrderAsync(
-        Guid tenantId,
-        Guid orderId,
-        IRequestDispatcher dispatcher,
-        CancellationToken cancellationToken)
-    {
-        var order = await dispatcher.SendAsync(
-            new ApproveOrderCommand(tenantId, orderId),
-            cancellationToken);
-        return Results.Ok(OrderResponses.ToResponse(order));
-    }
-
     private static async Task<IResult> CancelOrderAsync(
         Guid tenantId,
         Guid orderId,
@@ -491,6 +492,23 @@ public static class OrderEndpoints
             cancellationToken);
         return Results.Ok(OrderResponses.ToResponse(order));
     }
+
+    private static void MapStateAction<TCommand>(
+        RouteGroupBuilder collection,
+        string action,
+        string permission,
+        Func<Guid, Guid, TCommand> createCommand)
+        where TCommand : ICommand<OrderDto> =>
+        collection.MapPost(
+                $"/{{orderId:guid}}/{action}",
+                async (Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+                    Results.Ok(OrderResponses.ToResponse(
+                        await dispatcher.SendAsync(createCommand(tenantId, orderId), cancellationToken))))
+            .RequireAuthorization(permission)
+            .Produces<OrderResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
     private static async Task<IResult> RevertOrderInvoicingAsync(
         Guid tenantId,

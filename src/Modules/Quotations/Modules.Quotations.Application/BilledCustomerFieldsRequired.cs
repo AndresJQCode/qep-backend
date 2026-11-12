@@ -6,7 +6,7 @@ using Modules.Tenancy.Domain;
 namespace Modules.Quotations.Application;
 
 /// <summary>
-/// Aprobar exige, según la política de campos del cliente del tenant, el documento del cliente facturado y la
+/// Marcar pagado y facturar exigen (spec 2026-11-10 §3.2 y §3.4; antes, aprobar), según la política de campos del cliente del tenant, el documento del cliente facturado y la
 /// ciudad a la que se le envía. Es un 422 de dominio con <c>missingOn = "Customer"</c>: lo que falta está en la
 /// ficha del cliente, no en el pedido.
 /// </summary>
@@ -57,7 +57,7 @@ internal static class BilledCustomerFieldsRequired
         {
             throw new BilledCustomerFieldRequiredException(
                 DocumentCode,
-                "The tenant requires the document of the invoiced customer before approving the order.");
+                "The tenant requires the document of the invoiced customer before marking the order paid or invoicing it.");
         }
 
         // La ciudad del cliente sólo importa si el envío va a su dirección: con recogida en tienda, sin flete
@@ -69,7 +69,7 @@ internal static class BilledCustomerFieldsRequired
         {
             throw new BilledCustomerFieldRequiredException(
                 ShippingCityCode,
-                "The tenant requires the city of the invoiced customer before approving an order that ships to them.");
+                "The tenant requires the city of the invoiced customer before marking paid or invoicing an order that ships to them.");
         }
     }
 

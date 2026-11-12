@@ -6,7 +6,8 @@ using Modules.Tenancy.Application;
 namespace Modules.Quotations.Application;
 
 /// <summary>Encola la exportación de pedidos a Excel (spec 2026-09-12). Los filtros son los de la
-/// lista, incluido <c>Source</c> (spec 2026-10-15 §6.1).</summary>
+/// lista, incluido <c>Source</c> (spec 2026-10-15 §6.1), el envío y la marca de facturado (spec 2026-11-10 §5).
+/// Sin <c>Status</c> no salen los archivados, igual que en la tabla.</summary>
 public sealed record ExportOrdersCommand(
     Guid TenantId,
     Guid? ClientId,
@@ -19,7 +20,9 @@ public sealed record ExportOrdersCommand(
     string? OrderNumber,
     string? Source = null,
     /// <summary>La zona IANA de quien pide el archivo, igual que en <see cref="ListOrdersQuery"/>.</summary>
-    string? TimeZone = null) : ICommand<ExportJobAccepted>;
+    string? TimeZone = null,
+    string? FulfillmentStatus = null,
+    string? Invoiced = null) : ICommand<ExportJobAccepted>;
 
 /// <summary>Lo que viaja serializado en el trabajo y el procesador vuelve a leer.</summary>
 public sealed record OrdersExportFilters(
@@ -33,7 +36,10 @@ public sealed record OrdersExportFilters(
     string? OrderNumber,
     string? Source = null,
     /// <summary>Nula en los jobs encolados antes de que existiera: cortan en el día del tenant.</summary>
-    string? TimeZone = null);
+    string? TimeZone = null,
+    /// <summary>Nulos en los jobs encolados antes de los filtros del spec 2026-11-10: exportan sin filtrarlos.</summary>
+    string? FulfillmentStatus = null,
+    string? Invoiced = null);
 
 public sealed class ExportOrdersValidator : AbstractValidator<ExportOrdersCommand>
 {
@@ -78,6 +84,8 @@ public sealed class ExportOrdersHandler(
         // trabajo que nace muerto.
         var status = OrderListing.ParseStatus(command.Status);
         var paymentStatus = OrderListing.ParsePaymentStatus(command.PaymentStatus);
+        var fulfillmentStatus = OrderListing.ParseFulfillmentStatus(command.FulfillmentStatus);
+        var invoiced = OrderListing.ParseInvoiced(command.Invoiced);
         var source = OrderListing.ParseSource(command.Source);
         var advisorId = command.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
@@ -96,6 +104,8 @@ public sealed class ExportOrdersHandler(
             advisorId,
             status,
             paymentStatus,
+            fulfillmentStatus,
+            invoiced,
             converted.From,
             converted.Before,
             command.OrderNumber,
@@ -132,7 +142,9 @@ public sealed class ExportOrdersHandler(
                 command.ClientCuc,
                 command.OrderNumber,
                 command.Source,
-                command.TimeZone)),
+                command.TimeZone,
+                command.FulfillmentStatus,
+                command.Invoiced)),
             calendar.UtcNow);
         queue.Add(job);
         await unitOfWork.SaveChangesAsync(cancellationToken);

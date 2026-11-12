@@ -64,7 +64,7 @@ public sealed class BuyerOrderGatewayTests
         DateTimeOffset? createdAt = null,
         Guid? tenantId = null,
         OrderId? id = null,
-        OrderStatus status = OrderStatus.Pending,
+        bool paidMarked = false,
         OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending,
         string? notes = null,
         QuotationParties? parties = null)
@@ -76,12 +76,12 @@ public sealed class BuyerOrderGatewayTests
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
-            order.SyncExternalPaymentStatus(payment, at);
+            order.SyncExternalPaymentStatus(payment, autoArchive: false, at);
         }
 
-        if (status == OrderStatus.Approved)
+        if (paidMarked)
         {
-            order.Approve(Advisor, at);
+            order.MarkPaid(Advisor, requirePaymentProof: false, at);
         }
 
         return order;
@@ -134,21 +134,63 @@ public sealed class BuyerOrderGatewayTests
         Assert.Equal(order.Id.Value, summary.Id);
         Assert.Equal(order.CreatedAt, summary.CreatedAt);
         Assert.Equal((order.Total, "COP"), (summary.Total, summary.Currency));
-        Assert.Equal("Pending", summary.Status);
+        Assert.Equal("Open", summary.Status);
         Assert.Equal("PaymentPending", summary.PaymentStatus);
         Assert.Equal(2, summary.LineCount);
         Assert.Equal("Aceite", summary.FirstLineName);
         Assert.True(summary.CanCancel);
     }
 
-    [Theory]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PaymentPending, true)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PartialPaymentReceived, false)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.FullPaymentReceived, false)]
-    [InlineData(OrderStatus.Approved, OrderPaymentStatus.PaymentPending, false)]
-    public async Task ASummaryReportsCanCancelByRuleD5(OrderStatus status, OrderPaymentStatus payment, bool expected)
+    // Owner 2026-11-11: la lista dice si el pedido se recoge en tienda, para que un pedido preparado muestre
+    // «Listo para recoger» o «Enviado» sin abrir el detalle.
+    [Fact]
+    public async Task ASummarySaysWhetherTheOrderIsPickedUpAtTheStore()
     {
-        var orders = new StubOrderListRepository(StoreOrder(Buyer, status: status, payment: payment));
+        var billing = ColombianParty();
+        var pickup = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0009", Header(),
+            new QuotationParties(
+                billing, ShippingOf(billing), IsStorePickup: true, BillingWithRetention: false, BillingVatSurplus: false),
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+        pickup.LinkBuyerAccount(Buyer);
+        var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
+        var orders = new StubOrderListRepository(pickup, shipped);
+
+        var items = (await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items;
+
+        Assert.Equal(
+            [("PED-2026-0009", true), ("PED-2026-0010", false)],
+            items.Select(item => (item.Number, item.IsStorePickup)));
+    }
+
+    // Spec 2026-11-10 §9: el comprador ve los cuatro ejes, sin capa de compatibilidad.
+    [Fact]
+    public async Task TheBuyerSeesTheFourAxes()
+    {
+        var order = StoreOrder(Buyer);
+        order.Prepare(Advisor, Now);
+        var orders = new StubOrderListRepository(order);
+
+        var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
+        var detail = await Gateway(orders).FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (summary.Status, summary.PaymentStatus, summary.FulfillmentStatus, summary.Invoiced, summary.CanCancel));
+        Assert.NotNull(detail);
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (detail.Status, detail.PaymentStatus, detail.FulfillmentStatus, detail.Invoiced, detail.CanCancel));
+    }
+
+    [Theory]
+    [InlineData(false, OrderPaymentStatus.PaymentPending, true)]
+    [InlineData(false, OrderPaymentStatus.PartialPaymentReceived, false)]
+    [InlineData(false, OrderPaymentStatus.FullPaymentReceived, false)]
+    [InlineData(true, OrderPaymentStatus.PaymentPending, false)]
+    public async Task ASummaryReportsCanCancelByRuleD5(bool paidMarked, OrderPaymentStatus payment, bool expected)
+    {
+        var orders = new StubOrderListRepository(StoreOrder(Buyer, paidMarked: paidMarked, payment: payment));
 
         var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
 
@@ -186,11 +228,11 @@ public sealed class BuyerOrderGatewayTests
 
     private static Order StoreOrderWithProofStillPaymentPending()
     {
+        // AttachPaymentProofs no recalcula el pago (el guardado lo hace después): deja el comprobante con el pago aún
+        // en PaymentPending, el caso que D5 cubre.
         var order = StoreOrder(Buyer);
-        order.AddPaymentProofs(
+        order.AttachPaymentProofs(
             [new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m)],
-            OrderPaymentStatus.PaymentPending,
-            null,
             Advisor,
             Now.AddHours(-1));
         return order;
@@ -254,16 +296,16 @@ public sealed class BuyerOrderGatewayTests
     }
 
     [Fact]
-    public async Task CancelOfAnApprovedOrderIsAConflictAndWritesNothing()
+    public async Task CancelOfAPaidMarkedOrderIsAConflictAndWritesNothing()
     {
-        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var order = StoreOrder(Buyer, paidMarked: true);
         var orders = new StubOrderListRepository(order);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
             Gateway(orders).CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
 
         Assert.Equal("order.order.not_cancellable_by_buyer", error.Code);
-        Assert.Equal(OrderStatus.Approved, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Empty(orders.History);
         Assert.Empty(_audit.Actions);
         Assert.Empty(_lifecycle.Published);
@@ -287,9 +329,9 @@ public sealed class BuyerOrderGatewayTests
     {
         var id = OrderId.New();
         var loaded = StoreOrder(Buyer, id: id);
-        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var paidMeanwhile = StoreOrder(Buyer, id: id, paidMarked: true);
         var orders = new StubOrderListRepository(loaded);
-        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        orders.QueueBuyerReads(loaded, paidMeanwhile);
         var unitOfWork = FailingUnitOfWork(orders, failures: 1);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
@@ -611,7 +653,7 @@ public sealed class BuyerOrderGatewayTests
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
                 billing, ShippingOf(billing), IsStorePickup: true, BillingWithRetention: false, BillingVatSurplus: false),
-            Account, ShippingDetails.None, [Line("Aceite")], OrderPaymentStatus.PaymentPending, null, Advisor, [], Now);
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
         order.LinkBuyerAccount(Buyer);
 
         var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
@@ -656,7 +698,7 @@ public sealed class BuyerOrderGatewayTests
             gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
 
         Assert.Equal("geography down", error.Message);
-        Assert.Equal(OrderStatus.Pending, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Equal(0, unitOfWork.SaveCalls);
         Assert.Empty(orders.History);
         Assert.Empty(_audit.Actions);
@@ -680,7 +722,7 @@ public sealed class BuyerOrderGatewayTests
             gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
 
         Assert.Equal("geography down", error.Message);
-        Assert.Equal(OrderStatus.Pending, editedMeanwhile.Status);
+        Assert.Equal(OrderStatus.Open, editedMeanwhile.Status);
         Assert.Equal(1, unitOfWork.SaveCalls);
         Assert.Empty(orders.History);
         Assert.Empty(_audit.Actions);
@@ -690,7 +732,7 @@ public sealed class BuyerOrderGatewayTests
     [Fact]
     public async Task ANonCancellableOrderWithAFailingLookupStillGetsTheConflictAndMakesNoLookups()
     {
-        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var order = StoreOrder(Buyer, paidMarked: true);
         var geography = new ThrowingGeographyLookup();
         var gateway = Gateway(new StubOrderListRepository(order), geography: geography);
 
@@ -706,9 +748,9 @@ public sealed class BuyerOrderGatewayTests
     {
         var id = OrderId.New();
         var loaded = StoreOrder(Buyer, id: id);
-        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var markedPaidMeanwhile = StoreOrder(Buyer, id: id, paidMarked: true);
         var orders = new StubOrderListRepository(loaded);
-        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        orders.QueueBuyerReads(loaded, markedPaidMeanwhile);
         var unitOfWork = FailingUnitOfWork(orders, failures: 1);
         var geography = new ThrowingGeographyLookup(allowedCalls: 2);
         var gateway = Gateway(orders, unitOfWork, geography);

@@ -41,4 +41,14 @@ public sealed class OrderChangeSummaryTests
     [Fact]
     public void AnUnchangedShippingHasNoSummary() =>
         Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None, Colombian));
+
+    // Spec 2026-11-10 §3.2: una edición que sube el neto por encima de lo consignado baja el pagado.
+    [Fact]
+    public void PaymentStatusRecalculatedNamesBothStatusesAndNets() =>
+        Assert.Equal(
+            "El pago pasó de Pagado a Pago parcial: el neto pasó de 23.800 a 47.600.",
+            OrderChangeSummary.PaymentStatusRecalculated(
+                new OrderPaymentStatusChange(
+                    OrderPaymentStatus.FullPaymentReceived, OrderPaymentStatus.PartialPaymentReceived, 23_800m, 47_600m),
+                Colombian));
 }

@@ -637,9 +637,9 @@ mensaje procesado nunca queda sin sus trabajos. Un mensaje que falla vuelve a lo
 minutos: nunca se abandona. `resolved` siembra un trabajo por pedido (y uno por cliente que sólo le faltaba la ciudad);
 `corrected` siembra una recorrección por cada corrección ya escrita con otra ciudad. `ShopifyCityCorrectionWorker` también
 corre cada 10 s: toma lotes de 50 trabajos, los reclama uno a uno (un solo ganador entre réplicas) y los procesa cada uno en su
-scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido salió de
-`Pending`, o ya tiene parte de envío, el trabajo termina `Skipped` con su motivo (`synonym_deleted`, `order_not_pending`,
-`shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
+scope. Un trabajo aplica la **ciudad actual** del sinónimo, no la del evento; si el sinónimo ya se borró, o el pedido ya no es
+editable (abierto, sin preparar y sin facturar; spec 2026-11-10), o ya tiene parte de envío, el trabajo termina `Skipped` con su
+motivo (`synonym_deleted`, `order_not_pending` —el motivo persistido conserva su nombre—, `shipping_present`, …). Lo que lanza se reintenta al vencer su lease (10 s, 1, 5, 15 y 30 minutos); al quinto intento queda
 `Failed` con la causa. La corrección escribe en Quotations y Customers, deja su huella en `shopify.city_corrections` y una
 auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y las `city_corrected` de la recorrección) en el tenant del pedido.
 
@@ -647,8 +647,8 @@ auditoría (`shopify.order.city_resolved`, `shopify.customer.city_resolved` y la
 los devuelve a `Pending` con los intentos en cero y el worker los toma en su siguiente pasada; el endpoint devuelve el sinónimo
 con los contadores frescos.
 
-**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen `Pending`, sin parte de
-envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
+**Recorrido de la historia.** `POST backfill` revisa los pedidos de Shopify ya importados que siguen editables (abiertos, sin
+preparar y sin facturar), sin parte de envío y con la dirección cruda en las notas, y reporta a la bandeja los que hoy no casan. Responde
 `{ scanned, reported, alreadyReported, nowMatching, skipped }`. Es idempotente: un texto ya reportado cuenta como
 `alreadyReported`, y correrlo otra vez es seguro.
 
@@ -672,7 +672,7 @@ Decisiones aceptadas al cerrar el trabajo; ninguna se arregla sola.
 - **Auditoría del pedido.** La entrada de una corrección de pedido lleva `resource_type = "order"`, no `"quotation"` como las
   auditorías de pedidos del propio Quotations: un filtro por tipo de recurso no las junta.
 - **Reintento tras un commit entre módulos.** El worker escribe en Quotations y Customers en su propia unidad de trabajo y
-  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya fuera de `Pending` y terminar
+  después guarda su fila. Si muere en medio, el reintento puede encontrar el pedido ya no editable y terminar
   `Skipped` con `order_not_pending` aunque la ciudad ya esté escrita. Es no atomicidad inherente a que sean módulos distintos.
 - **`ShopifyClaimedOutboxConsumer` y `ShopifyInbox` son copia literal de las de Pipeline.** Un arreglo a la lógica de reclamo
   va en los dos sitios.
@@ -821,11 +821,11 @@ predeterminada (`tenancy.tenant_price_roundings`); el cambio se audita como
 
 ### Qué documentos se recalculan y cuándo
 
-- **Editables:** cotización `Draft`/`Sent` y pedido `Pending` se recalculan con la regla vigente la
-  próxima vez que alguien los edita. Abrirlos no los recalcula: ningún `GET` escribe, y no hay
-  recálculo masivo al guardar la regla.
-- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`, pedido `Approved`,
-  `Cancelled` o `Invoiced`, venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
+- **Editables:** cotización `Draft`/`Sent` y pedido editable (`Open`, sin preparar y sin facturar)
+  se recalculan con la regla vigente la próxima vez que alguien los edita. Abrirlos no los recalcula:
+  ningún `GET` escribe, y no hay recálculo masivo al guardar la regla.
+- **Lo demás no cambia:** cotización `Converted`, `Voided` o `Expired`; pedido `Archived`, `Cancelled`,
+  preparado o facturado; venta de POS cerrada. Cada documento guarda con qué regla se calculó (dos
   columnas nullable; `null` cuenta como el valor por defecto de su moneda).
 - **Conversión:** el pedido hereda la regla guardada de la cotización.
 - **Pedidos externos (Shopify):** usan siempre el valor por defecto de su moneda, aun editados.
@@ -1155,7 +1155,7 @@ El perfil **no** valida contra la tienda (país vendido, ciudad del departamento
 | 11 | `POST /buyer/account/delete` | `{ "password" }` | `204`; borra cuenta, perfil, sesiones y tokens; conserva el consentimiento; envía «cuenta eliminada» | 401 `store.buyer.session_invalid`, 422 `store.buyer.password_incorrect` (`errors.Password`) | credenciales | no | no | sí |
 | 12 | `GET /buyer/orders?page&pageSize` | — | `200` `{ "items": [BuyerOrderSummary], "page", "pageSize", "total" }`; `page` por defecto 1, `pageSize` por defecto 20; más recientes primero | 400 (`page` o `pageSize` no numéricos: falla el bind), 401 `store.buyer.session_invalid`, 422 `validation.failed` (`Page` < 1, `PageSize` fuera de 1–50) | lectura | sí | no | sí |
 | 13 | `GET /buyer/orders/{orderId}` | — | `200` `BuyerOrderDetail` (`lines`, `cancelledAt`, `canCancel`, totales, partes y `buyerNotes`) | 401 `store.buyer.session_invalid`, 404 `order.order.not_found` (no existe, es de otro comprador o de otro tenant) | lectura | sí | no | sí |
-| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está en `Pending` con pago `PaymentPending` y sin comprobantes, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
+| 14 | `POST /buyer/orders/{orderId}/cancel` | — | `200` `BuyerOrderDetail` ya anulado | 401 `store.buyer.session_invalid`, 404 `order.order.not_found`, 409 `order.order.not_cancellable_by_buyer` (el pedido ya no está `Open` con pago `PaymentPending`, sin comprobantes, sin preparar y sin facturar, o perdió una carrera de concurrencia) | lectura | sí | no | sí |
 
 Notas:
 
@@ -1172,7 +1172,7 @@ Notas:
 
 Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de la petición; el tenant sale del host, nunca del cuerpo.
 
-- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status`, `paymentStatus`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`. `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `isStorePickup`, `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
+- `BuyerOrderSummary`: `id`, `number`, `createdAt`, `status` (`Open` \| `Archived` \| `Cancelled`), `paymentStatus`, `fulfillmentStatus` (`NotPrepared` \| `Prepared`), `invoiced`, `total`, `currency`, `lineCount`, `firstLineName`, `canCancel`, `isStorePickup` (en la lista para que la tienda muestre «Listo para recoger» o «Enviado» sin abrir el detalle). `BuyerOrderDetail` suma `lines` (`name`, `quantity`, `unitPrice`, `lineTotal`), `cancelledAt`, `subtotal`, `taxAmount`, `freightTotal` (`subtotal + taxAmount + freightTotal == total`), `carrierName`, `billedTo` (`FinalConsumer | BillingParty | Customer`), `billing` (sólo con `BillingParty`), `shipping` (sin correo ni documento; `null` con recogida) y `buyerNotes`. Con excedente de IVA, las líneas van sin IVA.
 - **Sólo aparecen los pedidos creados cuando el vínculo con la cuenta ya existía** (D3). No hay retrocarga: salvo el pedido que pidió el alta diferida (punto 2), un pedido hecho antes de crear la cuenta, o sin cuenta, no se lista ni se puede abrir.
 - **Cómo llega la cuenta al pedido** (`quotations.orders.buyer_account_id`, sin FK):
   1. **En el checkout.** Si llega `X-Qep-Buyer-Session`, Store resuelve la cuenta **antes** de crear el pedido, con o sin `updateProfile`. Una sesión que no
@@ -1182,7 +1182,7 @@ Rutas 12 a 14. Un comprador ve y anula sus pedidos de **la tienda del host** de 
      mensaje (`IBuyerOrderLinker`, después del commit del alta y fuera de él). Si el email ya tenía una cuenta verificada no se enlaza nada: esa rama no
      toca la cuenta. El enlace sólo escribe si el pedido no tiene cuenta, así que nunca pisa la del checkout; si falla, queda un `Warning` y el pedido
      sin cuenta, sin reintento.
-- **La anulación del comprador es más estricta que la del equipo** (D5): sólo si `Status == Pending`, `PaymentStatus == PaymentPending` **y** no hay ningún comprobante de pago registrado (un asesor puede registrar un comprobante dejando el pago en `PaymentPending`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
+- **La anulación del comprador es más estricta que la del equipo** (D5, spec 2026-11-10): sólo si `Status == Open`, `PaymentStatus == PaymentPending`, no hay ningún comprobante de pago registrado, el pedido no está preparado **y** no está facturado (`Order.CanBeCancelledByBuyer`), y es la misma regla que alimenta `canCancel`. Fuera de eso, `409 order.order.not_cancellable_by_buyer`. Perder una carrera de concurrencia responde ese mismo `409`, nunca `412`: la tienda no tiene versión que mandar.
 - Orden de chequeos: IP del visitante (422 `store.public.visitor_ip_required`), host (404), paginación (422, sólo en la lista), sesión (401), pedido del comprador en ese tenant (404).
 #### Cambios en `POST /order-requests`
 
@@ -1311,7 +1311,8 @@ Los flujos que cruzan varios endpoints tienen guía propia en [`docs/`](docs/):
 | `/api/v1/tenants/{tenantId}/files`                 | `GET`, `POST`, y `complete`, `metadata`, `download-url`, `publication`, borrado por archivo | `storage.file.read` / `.upload` / `.publish` / `.delete`                                     |
 | `/api/v1/tenants/{tenantId}/customers`             | `identification-matches` (`GET`) y `anomalies` (`GET`); el resto del módulo está en sus secciones (ver [Clientes: documento repetido](#clientes-documento-repetido-coincidencias-y-anomalías)) | `customers.customer.read` |
 | `/api/v1/tenants/{tenantId}/customers/{customerId}` | `merge-preview` (`GET`) y `merge` (`POST`, `If-Match`); ver [Clientes: fusión](#clientes-fusión) | `customers.customer.merge` |
-| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `approve`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` / `.approve` / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders`                | `GET` (filtros, entre ellos `source` y `timeZone`), `POST` (pedido manual), `preview` (`POST`), `export` (`POST`, mismos filtros), y por pedido `GET`, `PUT` (`If-Match`), `preview`, `mark-paid`, `unmark-paid`, `prepare`, `unprepare`, `archive`, `unarchive`, `cancel`, `invoice`, `uninvoice`, `proofs` (`POST`, `DELETE`), `items` (`POST`), `send` (`POST`, cuerpo opcional) (ver [Pedidos](#pedidos-datos-propios-y-pedido-manual) y [Enviar el pedido por WhatsApp](#enviar-el-pedido-por-whatsapp)) | `quotations.order.read` / `.manage` (`prepare`, `unprepare`, `archive`, `unarchive`) / `.approve` (`mark-paid`, `unmark-paid`) / `.cancel` / `.invoice` |
+| `/api/v1/tenants/{tenantId}/orders-settings`       | `GET`, `PUT` (los tres ajustes del pedido; ver [Pedidos](#pedidos-datos-propios-y-pedido-manual)) | `tenancy.settings.read` / `.update` |
 | `/api/v1/tenants/{tenantId}/pos`                   | 14 operaciones: caja y ventas del punto de venta (ver [POS](#pos-caja-y-ventas))             | `pos.register.operate` / `pos.sale.read` / `.create` / `.void` / `.customer`                 |
 | `/api/v1/tenants/{tenantId}/suppliers` | `GET` (`search`, `status`=`active`\|`inactive`, `category`, `page`, `pageSize` por defecto 50, tope 200; orden por nombre), `POST` (201 + `Location`), `categories` (`GET`, distintas y ordenadas, máx. 200), `export` (`POST`, mismos filtros sin paginación; 202 `{ fileName, supplierCount, expiresAt }` y el archivo llega por correo), y por proveedor `GET`, `PUT` (las listas `bankAccounts` y `contacts` que llegan son las que quedan), `activate` y `deactivate` (`POST`). Módulo `suppliers` (apagado por defecto). Errores propios: `suppliers.supplier.identification_taken`, `.city_not_found`, `.status_filter_invalid`, `.already_active`, `.already_inactive`, `.not_found`, `suppliers.export.empty`, `suppliers.export.too_many_rows` | `suppliers.supplier.read` (`GET`, `categories`, `export`) / `suppliers.supplier.manage` (`POST`, `PUT`, `activate`, `deactivate`) |
 | `/api/v1/tenants/{tenantId}/operator/tenants`      | `GET`, y por tenant `GET`, `modules/changes` (`POST`), `providers/changes` (`POST`), `status` (`POST`, `If-Match`), `history` (`GET`) | `operator.tenants.read` / `operator.modules.manage` / `operator.tenants.manage`, sólo en el tenant operador |
@@ -1675,21 +1676,76 @@ cobro, partes (facturación y envío), líneas con la foto del producto y totale
 mismas reglas que la cotización. `quotationId` es opcional y `source` dice de dónde nació:
 
 - `Quotation`: `POST /quotations/{id}/order` **copia** la cotización al pedido. La cotización queda
-  `Converted` y congelada; editar el pedido pendiente (`PUT /orders/{id}`, `POST /orders/{id}/items`)
+  `Converted` y congelada; editar el pedido (`PUT /orders/{id}`, `POST /orders/{id}/items`)
   cambia `order_items`, nunca la cotización.
 - `Manual`: `POST /orders` crea un pedido sin cotización desde la pantalla, con el mismo cuerpo que
-  una cotización más el estado de pago y los comprobantes; `POST /orders/preview` lo calcula sin
+  una cotización más los comprobantes (un `paymentStatus` en el cuerpo se ignora: el pago lo calcula
+  el sistema); `POST /orders/preview` lo calcula sin
   guardarlo ni gastar número, y sin cuenta de cobro lo precia en la moneda por defecto del tenant (crear
   sí la exige). Exige cliente completo con CUC, como convertir. Permiso
   `quotations.order.manage`.
 - Integraciones (`Shopify`): sin sesión HTTP, por `IExternalOrderWriter`; acepta un cliente
   incompleto y lleva `externalReference` (`#1001`).
 
-Todos nacen `Pending` y publican `quotations.order.created.v1` con `source` y `quotationId`
+Todos nacen `Open` y publican `quotations.order.created.v1` con `source` y `quotationId`
 (nulo sin cotización). Pipeline lo consume: un pedido sin cotización gana el único negocio abierto
 del cliente o crea uno ganado (`pipeline.deal_orders`). La lista (`GET /orders?source=`), el
 detalle, el Excel y el reporte de pedidos leen del pedido. Los pedidos que existían antes los copió
 la migración `AddOrderOwnData` desde su cotización.
+
+#### Los cuatro ejes del pedido
+
+Desde el spec 2026-11-10 el pedido tiene cuatro ejes independientes, al estilo de Shopify. Viajan por
+la API con su nombre:
+
+| Eje | Campo | Valores | Quién lo mueve |
+| --- | --- | --- | --- |
+| Estado | `status` | `Open`, `Archived`, `Cancelled` | `archive`/`unarchive` (`.manage`), `cancel` (`.cancel`), el archivado automático |
+| Pago | `paymentStatus` | `PaymentPending`, `PartialPaymentReceived`, `PendingVerification`, `FullPaymentReceived` | el sistema con los comprobantes; `mark-paid`/`unmark-paid` (`.approve`); Shopify |
+| Envío | `fulfillmentStatus` | `NotPrepared`, `Prepared` | `prepare`/`unprepare` (`.manage`) |
+| Facturado | `invoiced` (+ `invoicedAt`, `invoicedBy`) | marca | `invoice`/`uninvoice` (`.invoice`) |
+
+- **El pago lo calcula el sistema.** Sin comprobantes es `PaymentPending`; con menos que el neto,
+  `PartialPaymentReceived`; con lo que lo cubre (comparado como lo muestra la moneda: pesos enteros en
+  COP), `PendingVerification` («Por verificar»). `FullPaymentReceived` («Pagado») sólo se alcanza con
+  `mark-paid`, que deja `paidMarkedAt`/`paidMarkedBy`, o con el pago que sincroniza Shopify en un pedido
+  sin comprobantes. Quitar un comprobante de un pedido pagado (por `DELETE …/proofs/{id}` o por
+  `proofs.removeIds` del `PUT`), o corregir su monto (`proofs.update` del `PUT` o `updatedProofs` de
+  `POST …/proofs`), exige `.approve`: con sólo `.manage` es `403`. `balance` es neto menos
+  consignado (negativo es sobrante).
+- **Editable** es `Open`, sin preparar y sin facturar (`Order.IsEditable`). Pagado sigue siendo editable;
+  preparado congela el pedido. Fuera de eso, `PUT`, `preview`, `items` y `proofs` responden
+  `422 order.order.not_editable`. Anular desde la consola tampoco deja un preparado
+  (`order.order.already_prepared`) ni un archivado; la anulación que llega de Shopify sí gana sobre los
+  dos y conserva la marca de preparado.
+- **Facturar es una marca, no un estado**: `status` no cambia. Por defecto exige pagado
+  (`order.order.not_paid`); no exige preparado.
+- **El listado oculta los archivados** si no se pide `status`. Filtros nuevos: `fulfillmentStatus` e
+  `invoiced` (`true`/`false`), también en la exportación.
+- **Ajustes por tenant** en `GET`/`PUT /orders-settings` (`tenancy.settings.read` / `.update`; los tres
+  campos son obligatorios en el `PUT`):
+
+  | Campo | Por defecto | Efecto |
+  | --- | --- | --- |
+  | `requirePaymentProofToMarkPaid` | `false` | `mark-paid` exige al menos un comprobante (`order.order.payment_proof_required`) |
+  | `requireFullPaymentToInvoice` | `true` | `invoice` exige pagado (`order.order.not_paid`) |
+  | `autoArchive` | `false` | un pedido que queda pagado y preparado se archiva solo, con historial «Archivado automáticamente» |
+
+- Cada acción deja historial (`PaidMarked`, `PaidUnmarked`, `Prepared`, `PreparationUndone`, `Archived`,
+  `Unarchived`) y auditoría (`quotation.order.paid_marked`, `…paid_unmarked`, `…prepared`,
+  `…preparation_undone`, `…archived`, `…unarchived`). `POST …/approve` ya no existe; el permiso
+  `quotations.order.approve` conserva su nombre y ahora se llama «Marcar pedidos como pagados».
+- **Migración `OrderStatusAxes`:** `Pending`, `Approved` e `Invoiced` pasan a `Open` (la marca de facturado
+  queda); quien aprobó un pedido pagado queda como quien lo marcó pagado; un `FullPaymentReceived` que nadie
+  aprobó vuelve a lo que digan sus comprobantes (`PaymentPending`, `PartialPaymentReceived` o
+  `PendingVerification`, con el neto redondeado como lo muestra la moneda), salvo los de Shopify sin
+  comprobantes, cuyo pago lo dice la tienda. **Es sin pérdida:** `approved_at` y `approved_by` se quedan como
+  columnas históricas, y el estado y el pago de antes quedan respaldados en `legacy_status` y
+  `legacy_payment_status`. Ninguna de las cuatro está en el modelo de EF; todas llevan un `COMMENT` que lo dice.
+  Para revertir, baja a `AddOrderBuyerAccount` con `$env:ConnectionStrings__QepDatabase` apuntando a la base
+  (`dotnet ef database update AddOrderBuyerAccount --project src/Modules/Quotations/Modules.Quotations.Infrastructure --context QuotationsDbContext`):
+  cada pedido anterior vuelve exacto a su estado y su pago, y el `Down` borra lo que agregó el `Up`. Un pedido
+  creado después no tiene respaldo y se traduce al esquema viejo (spec 2026-11-10 §8).
 
 **Rollback.** El código anterior no sabe escribir las siete columnas que `AddOrderOwnData` deja
 `NOT NULL` sin default: sin este paso, toda conversión falla con `23502`. Se corre **antes** de
@@ -1728,7 +1784,7 @@ pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran lo
 - **Lo anulado no suma**: un pedido `Cancelled` y una venta `Voided` no cuentan en ningún agregado ni en el período
   anterior, pero se ven en el listado con su estado. El estado de una venta es `Completed` o `Voided`, y su
   estado de pago siempre `FullPaymentReceived`: por eso `paymentStatus` con cualquier otro valor
-  (`PartialPaymentReceived` o `PaymentPending`) la excluye.
+  (`PartialPaymentReceived`, `PaymentPending` o `PendingVerification`) la excluye.
 - **El cajero entra como asesor**: `cashier_id` es una membresía, igual que el `advisor_id` del pedido. El filtro
   `advisorId`, el ranking por asesor y el alcance de quien no tiene `reporting.all_advisors.read` valen para los
   dos. No cambia ningún permiso.
@@ -1746,8 +1802,8 @@ error en [`docs/integracion-cotizaciones-y-pedidos.md`](docs/integracion-cotizac
   propia del pedido (`order.order.billing_phone_missing` si no la tiene). `connectionId` es la conexión elegida
   cuando hay varias disponibles para pedidos (spec 2026-11-09 D8).
 - **Responde el `OrderDetailResponse` entero**, con la entrada `Sent` en el historial.
-- **No cambia el pedido**: ni estado ni `version`. Se manda en `Pending`, `Approved` e `Invoiced`; un
-  anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
+- **No cambia el pedido**: ni estado ni `version`. Se manda abierto o archivado, pagado o no, preparado
+  o facturado; un anulado responde `order.order.already_cancelled` antes de cualquier efecto externo. Deja historial
   (`OrderHistoryEventType.Sent`, que se guarda como texto: sin migración) y auditoría
   `quotation.order.sent`. No exige cliente completo: un pedido de Shopify puede tenerlo incompleto.
 - **El PDF es el de la cotización** (`quotation.typ`, layout único por decisión del owner) con
@@ -4307,9 +4363,11 @@ prendido, al importador:
   cae entre crear el pedido y guardar la fila) deje un solo pedido. Lo que entra con algo que revisar lleva `warnings`
   (`customer_incomplete`, `shipping_address_unresolved`, `total_difference`, `carrier_unrecognized`,
   `cash_on_delivery_unmatched`); la bandeja los saca de «Con avisos» con «Marcar como revisado».
-- Después de importado, sólo se sincronizan el pago (un pedido `Pending` sin comprobantes; con comprobantes o ya
-  aprobado, el rechazo queda en `last_error`) y la cancelación (se anula en QEP a nombre del asesor; uno ya facturado
-  queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
+- Después de importado, sólo se sincronizan el pago (un pedido sin comprobantes, también preparado o archivado: un
+  contraentrega se prepara y se cobra después; con comprobantes, o anulado o facturado, el rechazo queda en `last_error`;
+  con `autoArchive`, un pedido que queda pagado y ya estaba preparado se archiva) y la cancelación (se anula en QEP a
+  nombre del asesor, aunque esté preparado o archivado, y el historial avisa que hay un paquete que recuperar; uno ya
+  facturado queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
   pero con su pedido en QEP también se anula.
 - `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
   actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
@@ -4329,7 +4387,7 @@ filtros (AND): los cancelados después de facturar que todavía tienen avisos si
 Cada fila trae `lastError` —texto libre para soporte y logs, que la pantalla no muestra— y `lastErrorCodes`, siempre
 presente (`[]` sin error): los códigos de `lastError` partidos por `"; "`, en orden y sin repetir. Un código de
 Quotations viaja tal cual; `invalid_payload: …` se vuelve `shopify.order.invalid_payload`; cualquier otra cosa (un
-nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibles son `order.order.not_pending`,
+nombre de enum, un texto) es `shopify.order.sync_failed`. Hoy los valores posibles son `order.order.not_editable`,
 `order.order.payment_has_proofs`, `order.order.not_found`, `tenancy.tenant.not_found`,
 `shopify.order.invalid_payload` y `shopify.order.sync_failed`; el texto de cada uno lo tiene el diccionario del frontend
 (`features/shopify`), y uno que no conozca se muestra con un mensaje genérico. La normalización está en

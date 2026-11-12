@@ -123,6 +123,29 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
         row.DefaultFreightChargeMode = settings.Default?.ToString();
     }
 
+    // Sin fila, los del owner (spec 2026-11-10 §6).
+    public async Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await dbContext.TenantQuotationSettings
+            .AsNoTracking()
+            .Where(settings => settings.TenantId == tenantId)
+            .Select(settings => new OrderSettings(
+                settings.RequirePaymentProofToMarkPaid,
+                settings.RequireFullPaymentToInvoice,
+                settings.AutoArchiveOrders))
+            .SingleOrDefaultAsync(cancellationToken)
+        ?? OrderSettings.Default;
+
+    // Mismo bloqueo que la tasa y los modos del envío.
+    public async Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var row = await LockRowAsync(
+            tenantId, QuotationSettings.Default.MinimumUnits, nameof(SetOrderSettingsAsync), cancellationToken);
+        row.RequirePaymentProofToMarkPaid = settings.RequirePaymentProofToMarkPaid;
+        row.RequireFullPaymentToInvoice = settings.RequireFullPaymentToInvoice;
+        row.AutoArchiveOrders = settings.AutoArchive;
+    }
+
     // The parent row is created if missing (ON CONFLICT waits for, then yields to, a concurrent
     // first save) and locked FOR UPDATE until the caller's transaction ends.
     private async Task<TenantQuotationSettingsRow> LockRowAsync(
@@ -149,7 +172,8 @@ internal sealed class QuotationSettingsStore(QuotationsDbContext dbContext) : IQ
             .FromSql(
                 $"""
                 SELECT tenant_id, minimum_units, freight_tax_rate_id, disabled_freight_charge_modes,
-                       default_freight_charge_mode
+                       default_freight_charge_mode, require_payment_proof_to_mark_paid,
+                       require_full_payment_to_invoice, auto_archive_orders
                 FROM quotations.tenant_quotation_settings
                 WHERE tenant_id = {tenantId}
                 FOR UPDATE

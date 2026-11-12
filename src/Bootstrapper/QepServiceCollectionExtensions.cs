@@ -748,9 +748,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderByIdQuery, OrderDetailDto>,
             GetOrderByIdHandler>();
         services.AddScoped<
-            ICommandHandler<ApproveOrderCommand, OrderDto>,
-            ApproveOrderHandler>();
-        services.AddScoped<
             ICommandHandler<CancelOrderCommand, OrderDto>,
             CancelOrderHandler>();
         services.AddScoped<
@@ -759,6 +756,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // Las acciones del pedido de spec 2026-11-10: pagado, preparado y archivado, con sus deshacer.
+        services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
+        services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
+        services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -820,6 +824,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,
+            GetOrderSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateOrderSettingsCommand, OrderSettingsDto>,
+            UpdateOrderSettingsHandler>();
         // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
         services.AddScoped<
             IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
@@ -2076,29 +2087,30 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
-        // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
+        // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
+        // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
-            "Aprobar pedidos",
-            "Permite dar el visto bueno a un pedido pendiente.",
+            "Marcar pedidos como pagados",
+            "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
-        // persona ya aprobó.
+        // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderCancel,
             "Anular pedidos",
-            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
             RequiredModules: [ModuleKeys.Orders]));
-        // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
-        // de QEP (spec 2026-10-05).
+        // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
+        // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderInvoice,
             "Facturar pedidos",
-            "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
+            "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));

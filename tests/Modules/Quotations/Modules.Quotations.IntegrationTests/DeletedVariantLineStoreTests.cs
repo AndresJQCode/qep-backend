@@ -69,7 +69,7 @@ public sealed class DeletedVariantLineStoreTests
     {
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotationId}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);

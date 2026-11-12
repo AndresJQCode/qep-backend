@@ -83,6 +83,8 @@ public static class OrderResponses
             order.AdvisorId,
             order.Status,
             order.PaymentStatus,
+            order.FulfillmentStatus,
+            order.Invoiced,
             order.PaymentMethod,
             order.Currency,
             order.IsRetail,
@@ -110,8 +112,8 @@ public static class OrderResponses
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
-            order.ApprovedAt,
-            order.ApprovedBy,
+            order.PaidMarkedAt,
+            order.PaidMarkedBy,
             order.CancelledAt,
             order.CancelledBy,
             order.CancellationReason,
@@ -127,6 +129,11 @@ public static class OrderResponses
                 .ToArray(),
             OrderShippingResponse.From(order.Shipping, order.ExternalShippingTitle),
             order.FreightSubtotal,
-            order.FreightTaxAmount);
+            order.FreightTaxAmount,
+            order.PreparedAt,
+            order.PreparedBy,
+            order.ArchivedAt,
+            order.ArchivedBy,
+            order.Balance);
     }
 }

@@ -44,9 +44,36 @@ public sealed class CityCorrectionInsightsTests
         Assert.Empty(await insights.ReadOrdersAsync([new TenantOrderKey(Guid.CreateVersion7(), shop.OrderId)], Ct));
         var order = Assert.Single(await insights.ReadOrdersAsync([new TenantOrderKey(shop.World.TenantId, shop.OrderId)], Ct));
         Assert.Equal(
-            (shop.World.TenantId, shop.OrderId, "Pending", false, false),
-            (order.TenantId, order.OrderId, order.Status, order.HasShippingParty, order.IsStorePickup));
+            (shop.World.TenantId, shop.OrderId, "Open", false, false, true),
+            (order.TenantId, order.OrderId, order.Status, order.HasShippingParty, order.IsStorePickup, order.IsEditable));
         Assert.False(string.IsNullOrWhiteSpace(order.OrderNumber));
+    }
+
+    // Review Focus 5 (spec 2026-11-10): «editable» sale de los tres ejes —abierto, sin preparar y sin facturar—, no del texto del
+    // estado. Un pedido abierto pero preparado, o abierto pero facturado, ya no se recorrige.
+    [Fact]
+    public async Task TheInsightsReadEditabilityFromTheThreeAxes()
+    {
+        await using var shop = await CalliShop.StartAsync();
+        await using var scope = shop.Factory.Services.CreateAsyncScope();
+        var insights = scope.ServiceProvider.GetRequiredService<ICityCorrectionInsights>();
+        var key = new TenantOrderKey(shop.World.TenantId, shop.OrderId);
+
+        await ExecuteAsync(
+            shop.ConnectionString, "UPDATE quotations.orders SET fulfillment_status = 'Prepared' WHERE id = @order", ("order", shop.OrderId));
+        var prepared = Assert.Single(await insights.ReadOrdersAsync([key], Ct));
+        await ExecuteAsync(
+            shop.ConnectionString,
+            "UPDATE quotations.orders SET fulfillment_status = 'NotPrepared', invoiced_at = now() WHERE id = @order",
+            ("order", shop.OrderId));
+        var invoiced = Assert.Single(await insights.ReadOrdersAsync([key], Ct));
+        await ExecuteAsync(
+            shop.ConnectionString, "UPDATE quotations.orders SET invoiced_at = NULL WHERE id = @order", ("order", shop.OrderId));
+        var editable = Assert.Single(await insights.ReadOrdersAsync([key], Ct));
+
+        Assert.Equal(("Open", false), (prepared.Status, prepared.IsEditable));
+        Assert.Equal(("Open", false), (invoiced.Status, invoiced.IsEditable));
+        Assert.Equal(("Open", true), (editable.Status, editable.IsEditable));
     }
 
     // El cliente que la importación creó incompleto: el mismo filtro por tenant, y lo que el impacto necesita para decidir si se
@@ -122,8 +149,9 @@ public sealed class CityCorrectionInsightsTests
 
         var written = Assert.Single(await insights.ReadCorrectionsAsync(synonymId, Ct));
         Assert.Equal(
-            (shop.World.TenantId, "Order", shop.OrderId, shop.CaliId, "Pending", true),
-            (written.TenantId, written.Target, written.TargetId, written.CityId, written.OrderStatus, written.StillAsWritten));
+            (shop.World.TenantId, "Order", shop.OrderId, shop.CaliId, "Open", true, (bool?)true),
+            (written.TenantId, written.Target, written.TargetId, written.CityId, written.OrderStatus, written.StillAsWritten,
+                written.OrderEditable));
         Assert.False(string.IsNullOrWhiteSpace(written.OrderNumber));
 
         await ExecuteAsync(
@@ -146,7 +174,7 @@ public sealed class CityCorrectionInsightsTests
         var insights = scope.ServiceProvider.GetRequiredService<ICityCorrectionInsights>();
 
         Assert.Equal(
-            new CorrectionInsight(shop.World.TenantId, "Customer", shop.CustomerId, shop.CaliId, null, null, StillAsWritten: true),
+            new CorrectionInsight(shop.World.TenantId, "Customer", shop.CustomerId, shop.CaliId, null, null, StillAsWritten: true, OrderEditable: null),
             Assert.Single(await insights.ReadCorrectionsAsync(synonymId, Ct)));
 
         await ExecuteAsync(

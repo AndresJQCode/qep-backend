@@ -63,12 +63,23 @@ public sealed class SaveOrderEditsHandler(
         var order = await orderRepository.FindByIdAsync(
             command.TenantId, new OrderId(command.OrderId), cancellationToken)
             ?? throw OrderNotFound.ById(command.OrderId);
-        if (order.Status != OrderStatus.Pending)
+        if (!order.IsEditable)
         {
             throw new QuotationsDomainException(
-                "order.order.not_pending",
-                "An order can only be edited while it is pending.");
+                ExternalOrderErrors.NotEditable,
+                "An order can only be edited while it is open, not prepared and not invoiced.");
         }
+
+        if (command.Proofs.RemoveIds.Count > 0)
+        {
+            PaidOrderProofRemoval.EnsureAuthorized(executionContext, command.TenantId, order);
+        }
+
+        PaidOrderProofRemoval.EnsureAmountCorrectionAuthorized(
+            executionContext,
+            command.TenantId,
+            order,
+            command.Proofs.Update.Select(update => (update.ProofId, update.Amount)));
 
         // El If-Match se comprueba contra lo cargado, antes de tocar nada: un 412 no deja ni la
         // copia pública de un comprobante publicada.
@@ -78,6 +89,9 @@ public sealed class SaveOrderEditsHandler(
                 "concurrency.conflict",
                 "The order changed after it was loaded.");
         }
+
+        // El neto de antes de tocar nada: el recálculo del pago compara contra él (spec 2026-11-10 §3.2).
+        var previousNetTotal = order.NetTotal;
 
         // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular.
         var customer = await customerLookup.FindAsync(command.TenantId, order.ClientId, cancellationToken);
@@ -309,7 +323,13 @@ public sealed class SaveOrderEditsHandler(
             // con ellas, y el detal o el piso cambian todos los descuentos.
             await OrderPricingRecalculation.ApplyAsync(
                 pricingLookup, settingsStore, priceRounding, command.TenantId, order, now, cancellationToken);
-            order.RecalculatePaymentStatus(now);
+            if (order.RecalculatePaymentStatus(previousNetTotal, now) is { } paymentChange)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.PaymentStatusRecalculated, updatedBy,
+                    OrderChangeSummary.PaymentStatusRecalculated(paymentChange, format), now));
+            }
+
             await unitOfWork.SaveChangesAsync(cancellationToken);
         }
         catch

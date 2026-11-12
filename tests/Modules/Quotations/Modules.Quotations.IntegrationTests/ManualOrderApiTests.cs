@@ -19,7 +19,7 @@ public sealed class ManualOrderApiTests
         return new CreateOrderRequest(
             clientId, "Transferencia", "Pedido de mostrador", false, null, null,
             new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-            [new OrderEditItemRequest(productId, 3m)], "PaymentPending", []);
+            [new OrderEditItemRequest(productId, 3m)], []);
     }
 
     private static async Task<string> CodeOfAsync(HttpResponseMessage response)
@@ -45,7 +45,7 @@ public sealed class ManualOrderApiTests
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
         Assert.NotNull(detail);
         Assert.Equal(
-            ("Pending", "Manual", (Guid?)null, "COP"),
+            ("Open", "Manual", (Guid?)null, "COP"),
             (detail.Order.Status, detail.Order.Source, detail.Order.QuotationId, detail.Order.Currency));
         Assert.StartsWith("PED-", detail.Order.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(3m, Assert.Single(detail.Items).Quantity);
