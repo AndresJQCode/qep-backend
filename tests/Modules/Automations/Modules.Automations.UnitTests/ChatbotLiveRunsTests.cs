@@ -84,6 +84,20 @@ public sealed class ChatbotLiveRunsTests
     }
 
     [Fact]
+    public async Task ANonAttendingRunBeforeAnAttendingOneStillBlocks()
+    {
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+        var conversations = new Conversations();
+        conversations.Add(first, State(member: Guid.CreateVersion7(), automation: "Paused", pauseReason: "AdvisorTook"));
+        conversations.Add(second, State());
+
+        Assert.True(await ChatbotLiveRuns.AnyAttendingAsync(
+            new Runs(Run(first), Run(second)), conversations, TenantId, ChatbotId, Ct));
+        Assert.Equal(2, conversations.Reads);
+    }
+
+    [Fact]
     public async Task NoLiveRunsReadsNothing()
     {
         var conversations = new Conversations();

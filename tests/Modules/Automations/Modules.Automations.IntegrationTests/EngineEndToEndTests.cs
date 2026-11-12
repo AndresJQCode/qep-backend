@@ -112,14 +112,10 @@ public sealed partial class EngineEndToEndTests
     private static Task<string> RunAsync(Fixture f, string columns) =>
         ScalarAsync<string>(f.ConnectionString, $"SELECT {columns} FROM automations.conversation_runs ORDER BY started_at DESC LIMIT 1");
 
-    // Sólo las filas del motor: la señal ReleaseRun de una acción humana (spec 2026-11-03) se asierta aparte con ReleaseOutcomesAsync.
+    // Sólo las filas del motor: la señal ReleaseRun de una acción humana (spec 2026-11-03) se asierta aparte con ReleaseRowsAsync.
     private static Task<string> OutcomesAsync(Fixture f) =>
         ScalarAsync<string>(f.ConnectionString,
             "SELECT coalesce(string_agg(coalesce(outcome, '-'), ',' ORDER BY created_at, message_id), '') FROM messaging.automation_inbox WHERE kind = 'Engine'");
-
-    private static Task<string> ReleaseOutcomesAsync(Fixture f) =>
-        ScalarAsync<string>(f.ConnectionString,
-            "SELECT coalesce(string_agg(coalesce(outcome, '-'), ',' ORDER BY created_at, message_id), '') FROM messaging.automation_inbox WHERE kind = 'ReleaseRun'");
 
     private static Task<long> ReleaseRowsAsync(Fixture f) =>
         CountAsync(f.ConnectionString, "SELECT count(*) FROM messaging.automation_inbox WHERE kind = 'ReleaseRun'");
