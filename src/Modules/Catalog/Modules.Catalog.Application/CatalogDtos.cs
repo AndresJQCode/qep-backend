@@ -394,8 +394,13 @@ public sealed record CreateTaxRateRequest(
 // un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
 public sealed record UpdateTaxRateRequest(
     string Name,
-    decimal Percentage,
-    JsonElement MinimumBase = default);
+    decimal Percentage)
+{
+    // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
+    // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
+    // Ausente queda en default (ValueKind Undefined), igual que antes.
+    public JsonElement MinimumBase { get; init; }
+}
 
 /// <summary>
 /// Lo que la pantalla de tasas puede elegir: sólo los países donde el tenant tiene empresa y que además
