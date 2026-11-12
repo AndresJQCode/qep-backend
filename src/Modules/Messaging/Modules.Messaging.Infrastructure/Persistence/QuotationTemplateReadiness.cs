@@ -17,6 +17,18 @@ internal sealed class QuotationTemplateReadiness(MessagingDbContext dbContext) :
             .FirstOrDefaultAsync(cancellationToken);
 }
 
+/// <summary>Spec 2026-11-09 D5: una lectura del espejo, hermana de <see cref="QuotationTemplateReadiness"/>. Sin caché: va por el índice único
+/// parcial <c>UX_message_templates_order</c> (a lo sumo una fila <c>Order</c> por conexión).</summary>
+internal sealed class OrderTemplateReadiness(MessagingDbContext dbContext) : IOrderTemplateReadiness
+{
+    public Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        dbContext.MessageTemplates.AsNoTracking()
+            .Where(template => template.TenantId == tenantId && template.ConnectionId == connectionId
+                && template.Kind == MessageTemplateKind.Order && template.Status == MessageTemplateStatuses.Approved)
+            .Select(template => new ApprovedTemplate(template.Name, template.Language, template.Category, template.ParameterFormat, template.ComponentsJson))
+            .FirstOrDefaultAsync(cancellationToken);
+}
+
 /// <summary>Cobros recurrentes §5: una lectura del espejo, hermana de <see cref="QuotationTemplateReadiness"/>. Sin caché: va por el índice único
 /// parcial <c>UX_message_templates_billing</c> (a lo sumo una fila por tipo de aviso y conexión).</summary>
 internal sealed class BillingTemplateReadiness(MessagingDbContext dbContext) : IBillingTemplateReadiness

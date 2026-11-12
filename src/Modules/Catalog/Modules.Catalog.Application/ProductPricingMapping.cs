@@ -21,6 +21,10 @@ internal static class ProductPricingMapping
         PackagingUnits = (request.PackagingUnits ?? []).ToArray()
     };
 
+    /// <summary>Same safety net as the prices: the validator reports bad codes by field first.</summary>
+    public static IReadOnlyDictionary<string, decimal> ToDomainCosts(this IReadOnlyDictionary<string, decimal> costs) =>
+        costs.ToDictionary(entry => Currencies.Normalize(entry.Key), entry => entry.Value, StringComparer.Ordinal);
+
     private static PriceScaleInput ToDomain(PriceScaleRequest request) => new(
         request.FromUnit,
         request.ToUnit,

@@ -9,6 +9,28 @@ public sealed class PosSaleTests
 {
     private static decimal D(string value) => decimal.Parse(value, CultureInfo.InvariantCulture);
 
+    // Spec 2026-11-10 §4.2: el costo se congela una vez, al crear; sin costo se congela como «sin costo».
+    [Fact]
+    public void CreateFreezesEachLineCostOnce()
+    {
+        var lines = new PosSaleLineInput[]
+        {
+            new(Shampoo, Shampoo, "SH-400", "Shampoo 400 ml", 1m, 11_900m, 0m, 19, 6_000m),
+            new(Avena, Avena, "AV-01", "Avena granel (kg)", 1m, 5_000m, 0m, 0),
+        };
+
+        var sale = Sale(OpenSession(), lines, [Cash(20_000m)]);
+
+        var costed = sale.Lines[0];
+        Assert.Equal(6_000m, costed.UnitCost);
+        Assert.Equal(LineCostSource.Manual, costed.CostSource);
+        Assert.Equal(Now, costed.CostCapturedAt);
+        var uncosted = sale.Lines[1];
+        Assert.Null(uncosted.UnitCost);
+        Assert.Equal(LineCostSource.Manual, uncosted.CostSource);
+        Assert.Equal(Now, uncosted.CostCapturedAt);
+    }
+
     // La moneda es la de la caja, congelada al abrir: cambiar la del tenant con la caja abierta no
     // mezcla monedas dentro de un mismo arqueo.
     [Fact]
@@ -109,6 +131,29 @@ public sealed class PosSaleTests
         Assert.Equal("Laura Gómez", sale.CustomerName);
         Assert.Equal("CC", sale.CustomerIdentificationType);
         Assert.Equal("1020304050", sale.CustomerIdentificationNumber);
+    }
+
+    [Fact]
+    public void ACustomerWithoutDocumentNeverTakesTheFinalConsumerNumber()
+    {
+        var id = Guid.CreateVersion7();
+        var sale = PosSale.Create(
+            PosSaleId.New(), Fingerprint, OpenSession(), WorkedExampleLines(), [Card(20_000m, "1234"), Cash(20_000m)], Now,
+            new PosSaleCustomer(id, "Laura de WhatsApp", null, null));
+
+        Assert.Equal(id, sale.CustomerId);
+        Assert.Null(sale.CustomerIdentificationType);
+        Assert.Null(sale.CustomerIdentificationNumber);
+        Assert.NotEqual("222222222222", sale.CustomerIdentificationNumber);
+    }
+
+    [Fact]
+    public void WithoutCustomerTheSaleKeepsTheFinalConsumerNumber()
+    {
+        var sale = Sale(OpenSession());
+
+        Assert.Null(sale.CustomerId);
+        Assert.Equal("222222222222", sale.CustomerIdentificationNumber);
     }
 
     [Fact]

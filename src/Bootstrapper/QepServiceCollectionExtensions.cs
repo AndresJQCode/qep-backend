@@ -60,6 +60,7 @@ using Modules.Loans.Infrastructure;
 using Modules.ServiceContracts.Infrastructure;
 using Modules.Suppliers.Application;
 using Modules.Store.Infrastructure;
+using Modules.Buyers.Infrastructure;
 using Modules.Suppliers.Infrastructure;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Infrastructure;
@@ -209,6 +210,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateProductCommand, ProductDto>,
             UpdateProductHandler>();
+        services.AddScoped<
+            ICommandHandler<DeleteProductCommand, ProductDeletedResult>,
+            DeleteProductHandler>();
         services.AddScoped<
             ICommandHandler<CopyPriceScalesCommand, IReadOnlyList<ProductDto>>,
             CopyPriceScalesHandler>();
@@ -517,6 +521,10 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<MergeCustomersCommand, CustomerMergeResult>,
             MergeCustomersHandler>();
+        // Spec 2026-11-10 (borrar clientes) §4.1: el borrado en lote.
+        services.AddScoped<
+            ICommandHandler<BulkDeleteCustomersCommand, BulkDeleteCustomersResult>,
+            BulkDeleteCustomersHandler>();
         services.AddScoped<
             IQueryHandler<FindCustomerIdentificationMatchesQuery, CustomerIdentificationMatchesResponse>,
             FindCustomerIdentificationMatchesHandler>();
@@ -548,6 +556,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<ActivateCustomerCommand, CustomerDto>,
             ActivateCustomerHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCustomerCompanyCommand, CustomerDto>,
+            SetCustomerCompanyHandler>();
         services.AddScoped<
             ICommandHandler<ImportCustomersCommand, ImportCustomersResponse>,
             ImportCustomersHandler>();
@@ -737,9 +748,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetOrderByIdQuery, OrderDetailDto>,
             GetOrderByIdHandler>();
         services.AddScoped<
-            ICommandHandler<ApproveOrderCommand, OrderDto>,
-            ApproveOrderHandler>();
-        services.AddScoped<
             ICommandHandler<CancelOrderCommand, OrderDto>,
             CancelOrderHandler>();
         services.AddScoped<
@@ -748,6 +756,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<RevertOrderInvoicingCommand, OrderDto>,
             RevertOrderInvoicingHandler>();
+        // Las acciones del pedido de spec 2026-11-10: pagado, preparado y archivado, con sus deshacer.
+        services.AddScoped<ICommandHandler<MarkOrderPaidCommand, OrderDto>, MarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<UnmarkOrderPaidCommand, OrderDto>, UnmarkOrderPaidHandler>();
+        services.AddScoped<ICommandHandler<PrepareOrderCommand, OrderDto>, PrepareOrderHandler>();
+        services.AddScoped<ICommandHandler<UndoOrderPreparationCommand, OrderDto>, UndoOrderPreparationHandler>();
+        services.AddScoped<ICommandHandler<ArchiveOrderCommand, OrderDto>, ArchiveOrderHandler>();
+        services.AddScoped<ICommandHandler<UnarchiveOrderCommand, OrderDto>, UnarchiveOrderHandler>();
         // «Enviar el pedido por WhatsApp»: el PDF del pedido con la plantilla propia del pedido.
         services.AddScoped<
             ICommandHandler<SendOrderCommand, OrderDetailDto>,
@@ -789,6 +804,11 @@ public static class QepServiceCollectionExtensions
         // El puerto de la tienda pública hacia el motor de pedidos (spec de la tienda §5): cotiza el carrito y crea el
         // pedido al «Tomar». Store lo consume por un adaptador; no referencia Modules.Quotations.Application.
         services.AddScoped<IStoreOrderGateway, StoreOrderGateway>();
+        // Los pedidos del comprador de la tienda (spec 2026-11-09): listar, leer, anular y enlazar.
+        services.AddScoped<IBuyerOrderGateway, BuyerOrderGateway>();
+        // La limpieza de cotizaciones al borrar variantes (spec 2026-11-08): el puerto que consume un adaptador de
+        // Bootstrapper dentro de la transacción de Catalog; nadie más referencia Modules.Quotations.Application.
+        services.AddScoped<IQuotationVariantDeletion, QuotationVariantDeletion>();
         // La homologación de columnas del Excel de pedidos (spec 2026-09-24). A mano, como el
         // resto: un handler que falte compila, mapea su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -804,6 +824,13 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<UpdateQuotationSettingsCommand, QuotationSettingsDto>,
             UpdateQuotationSettingsHandler>();
+        // Los ajustes del pedido por tenant (spec 2026-11-10 §6); el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<
+            IQueryHandler<GetOrderSettingsQuery, OrderSettingsDto>,
+            GetOrderSettingsHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateOrderSettingsCommand, OrderSettingsDto>,
+            UpdateOrderSettingsHandler>();
         // Los canales de WhatsApp del tenant y su elección desde Configuración (spec 2026-10-21 §4.4, §5.2).
         services.AddScoped<
             IQueryHandler<GetWhatsAppChannelsQuery, WhatsAppChannelsDto>,
@@ -820,7 +847,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>, SetFreightTaxRateHandler>();
         services.AddScoped<ICommandHandler<SetFreightChargeModesCommand, CarrierSettingsDto>, SetFreightChargeModesHandler>();
         services.AddScoped<IQueryHandler<GetShippingOptionsQuery, ShippingOptionsDto>, GetShippingOptionsHandler>();
-        // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
+        // Reporting. Los diez van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
         services.AddScoped<
@@ -847,6 +874,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
+        services.AddScoped<
+            IQueryHandler<ListMarginReportQuery, ReportPage<MarginReportProductDto>>,
+            ListMarginReportHandler>();
+        services.AddScoped<
+            IQueryHandler<GetMarginReportSummaryQuery, MarginReportSummaryDto>,
+            GetMarginReportSummaryHandler>();
         // Integrations (spec 2026-10-08). A mano, como el resto: un handler que falte compila, mapea
         // su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -943,6 +976,19 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<LaunchCampaignCommand, CampaignDetailDto>, LaunchCampaignHandler>();
         services.AddScoped<ICommandHandler<CancelCampaignCommand, CampaignDetailDto>, CancelCampaignHandler>();
         services.AddScoped<ICommandHandler<RetryCampaignCommand, CampaignDetailDto>, RetryCampaignHandler>();
+        // Messaging (spec 2026-11-09): el mensaje programado de una conversación. Cada handler a mano: sin registro, 500 (lo cubre
+        // ScheduledMessageApiTests.EveryRouteIsRegisteredAndAnswersItsStatus). Los validadores entran con AddValidatorsFromAssemblyContaining
+        // de arriba. Los cinco de gestión arman a mano su ScheduledMessageManager (es internal de Application): no se registra.
+        services.AddScoped<ScheduledMessageMapper>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageQuery, ScheduledMessageEnvelopeDto>, GetScheduledMessageHandler>();
+        services.AddScoped<IQueryHandler<GetScheduledMessageMediaQuery, MediaStreamDto?>, GetScheduledMessageMediaHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledMessageCommand, ScheduleMessageResult>, CreateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CreateScheduledVoiceNoteCommand, ScheduleMessageResult>, CreateScheduledVoiceNoteHandler>();
+        services.AddScoped<ICommandHandler<UpdateScheduledMessageCommand, ScheduledMessageDto>, UpdateScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<CancelScheduledMessageCommand, bool>, CancelScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<SendScheduledMessageNowCommand, ScheduledMessageDto>, SendScheduledMessageNowHandler>();
+        services.AddScoped<ICommandHandler<RetryScheduledMessageCommand, ScheduledMessageDto>, RetryScheduledMessageHandler>();
+        services.AddScoped<ICommandHandler<DiscardScheduledMessageCommand, bool>, DiscardScheduledMessageHandler>();
         // Messaging (spec 2026-10-12 §3.3): respuestas rápidas. Cada handler a mano: sin registro, 500.
         services.AddScoped<IQueryHandler<ListQuickRepliesQuery, QuickReplyListDto>, ListQuickRepliesHandler>();
         services.AddScoped<ICommandHandler<CreateQuickReplyCommand, QuickReplyDto>, CreateQuickReplyHandler>();
@@ -976,6 +1022,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<ProvisionBillingTemplatesCommand, IReadOnlyList<ManagedTemplateDto>>, ProvisionBillingTemplatesHandler>();
         services.AddScoped<IQueryHandler<GetQuotationTemplateDraftQuery, SystemTemplateDraftDto>, GetQuotationTemplateDraftHandler>();
         services.AddScoped<IQueryHandler<GetBillingTemplatesDraftQuery, BillingTemplatesDraftDto>, GetBillingTemplatesDraftHandler>();
+        // Messaging (spec 2026-11-09 D3): la plantilla de pedido, calcada de la de cotización; el validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<ICommandHandler<ProvisionOrderTemplateCommand, ManagedTemplateDto>, ProvisionOrderTemplateHandler>();
+        services.AddScoped<IQueryHandler<GetOrderTemplateDraftQuery, SystemTemplateDraftDto>, GetOrderTemplateDraftHandler>();
         // Messaging (spec 2026-10-14 §4.3): borrar una plantilla en Meta y en el espejo.
         services.AddScoped<ICommandHandler<DeleteTemplateCommand, bool>, DeleteTemplateHandler>();
         // Messaging (spec 2026-10-09 §8.4–§8.5): marcar leído, resolver y reabrir.
@@ -1087,6 +1136,7 @@ public static class QepServiceCollectionExtensions
         services.AddServiceContractsInfrastructure(configuration);
         services.AddLoansInfrastructure(configuration);
         services.AddStoreInfrastructure(configuration);
+        services.AddBuyersInfrastructure(configuration);
         services.AddCustomersInfrastructure(configuration);
         services.AddGeographyInfrastructure(configuration);
         services.AddQuotationsInfrastructure(configuration);
@@ -1193,16 +1243,26 @@ public static class QepServiceCollectionExtensions
         // Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que la
         // consulta comparta la transacción del PUT.
         services.AddScoped<IVariantUsageChecker, CatalogVariantUsageChecker>();
+        // Borrado de producto (spec 2026-11-08): congelar y quitar las líneas de Quotations y las de las solicitudes
+        // nuevas de la tienda, que Catalog no referencia. Scoped como el CatalogDbContext sobre el que corre, para que
+        // todo comparta la transacción del DELETE.
+        services.AddScoped<IProductDeletionCleanup, CatalogProductDeletionCleanup>();
         // Fusión de clientes (spec 2026-10-24 §4): mover las referencias de Quotations, Pos, Pipeline, Messaging y
         // Shopify, que Customers no referencia. Scoped como el CustomersDbContext sobre el que corre, para que los UPDATE
         // compartan la transacción de la fusión.
         services.AddScoped<ICustomerMergeReferences, CustomerMergeReferences>();
+        // Borrado de clientes (spec 2026-11-10 §4.2 y §4.3): los bloqueos y la limpieza en los otros módulos. Scoped como el
+        // CustomersDbContext sobre el que corre, para que todo quede en la transacción del lote.
+        services.AddScoped<ICustomerDeletionReferences, CustomerDeletionReferences>();
 
         services.AddScoped<IProductExportStorage, ProductExportStorage>();
 
         // Pos (spec 2026-10-07): Catalog, Companies y Tenancy/Identity entran por adaptadores
         // (PosLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules).
         services.AddScoped<IPosProductLookup, PosProductLookup>();
+        services.AddScoped<IPosVariantCostLookup, CatalogVariantCostLookup>();
+        // El pedido congela el mismo costo con su propio puerto (spec costo de producto §4.3); mismo adaptador.
+        services.AddScoped<IOrderVariantCostLookup, CatalogVariantCostLookup>();
         services.AddScoped<IPosCategoryLookup, PosCategoryLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
@@ -1366,10 +1426,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<Modules.Store.Application.IStoreOrders, StoreOrdersAdapter>();
         services.AddScoped<Modules.Store.Application.IStoreCustomerDirectory, StoreCustomerDirectory>();
         services.AddScoped<Modules.Store.Application.IStoreMemberDirectory, StoreMemberDirectory>();
-        services.AddScoped<Modules.Store.Application.OrderRequestRowComposer>();
         services.AddScoped<Modules.Store.Application.IStoreGeography, StoreGeography>();
-        // Quotations → Store: el detalle de un pedido de la tienda muestra su solicitud (teléfono y total que vio el visitante).
-        services.AddScoped<IOrderStoreRequestLookup, OrderStoreRequestLookup>();
         services.AddScoped<Modules.Store.Application.StorefrontResolver>();
         services.AddScoped<Modules.Store.Application.PublicCartPricing>();
         services.AddScoped<
@@ -1397,24 +1454,6 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<Modules.Store.Application.ListPublicCitiesQuery, Modules.Store.Application.PublicGeoListDto>,
             Modules.Store.Application.ListPublicCitiesHandler>();
         services.AddScoped<
-            IQueryHandler<Modules.Store.Application.ListOrderRequestsQuery, Modules.Store.Application.StoreOrderRequestPageDto>,
-            Modules.Store.Application.ListOrderRequestsHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestSummaryQuery, Modules.Store.Application.StoreInboxSummaryDto>,
-            Modules.Store.Application.GetOrderRequestSummaryHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetOrderRequestQuery, Modules.Store.Application.StoreOrderRequestDetailDto>,
-            Modules.Store.Application.GetOrderRequestHandler>();
-        services.AddScoped<
-            IQueryHandler<Modules.Store.Application.GetCustomerCandidatesQuery, Modules.Store.Application.StoreCustomerCandidatesDto>,
-            Modules.Store.Application.GetCustomerCandidatesHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.TakeOrderRequestCommand, Modules.Store.Application.StoreTakeResultDto>,
-            Modules.Store.Application.TakeOrderRequestHandler>();
-        services.AddScoped<
-            ICommandHandler<Modules.Store.Application.DiscardOrderRequestCommand, Modules.Store.Application.StoreOrderRequestRowDto>,
-            Modules.Store.Application.DiscardOrderRequestHandler>();
-        services.AddScoped<
             IQueryHandler<Modules.Store.Application.GetStoreSettingsQuery, Modules.Store.Application.StoreSettingsDto>,
             Modules.Store.Application.GetStoreSettingsHandler>();
         services.AddScoped<
@@ -1429,6 +1468,64 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<Modules.Store.Application.ListStoreBillingAccountsQuery, Modules.Store.Application.StoreBillingAccountListDto>,
             Modules.Store.Application.ListStoreBillingAccountsHandler>();
+
+        // `buyers` (spec 2026-11-07): cuenta de comprador de plataforma. Buyers no referencia Store: el host de la ruta y Turnstile
+        // entran por puertos que el composition root cablea. Los manejadores, a mano y con ruta completa: uno olvidado compila,
+        // mapea su endpoint y responde 500. El validador entra con AddValidatorsFromAssemblyContaining.
+        services.AddScoped<Modules.Buyers.Application.IBuyerStorefronts, BuyerStorefronts>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrders, BuyerOrdersAdapter>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerOrderLinker, BuyerOrderLinker>();
+        services.AddScoped<Modules.Buyers.Application.IBuyerCaptcha, BuyerCaptcha>();
+        services.AddScoped<Modules.Buyers.Application.BuyerProfileWriter>();
+        services.AddScoped<Modules.Buyers.Application.BuyerEmailTokenIssuer>();
+        services.AddScoped<Modules.Buyers.Application.BuyerSignup>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.RegisterBuyerCommand, bool>,
+            Modules.Buyers.Application.RegisterBuyerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.VerifyBuyerEmailCommand, bool>,
+            Modules.Buyers.Application.VerifyBuyerEmailHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResendBuyerVerificationCommand, bool>,
+            Modules.Buyers.Application.ResendBuyerVerificationHandler>();
+        services.AddScoped<Modules.Buyers.Application.BuyerSessions>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.LoginBuyerCommand, Modules.Buyers.Application.BuyerSessionDto>,
+            Modules.Buyers.Application.LoginBuyerHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerSessionQuery, Modules.Buyers.Application.BuyerDto>,
+            Modules.Buyers.Application.GetBuyerSessionHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.ListBuyerOrdersQuery, Modules.Buyers.Application.BuyerOrderPageDto>,
+            Modules.Buyers.Application.ListBuyerOrdersHandler>();
+        services.AddScoped<
+            IQueryHandler<Modules.Buyers.Application.GetBuyerOrderQuery, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.GetBuyerOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.CancelBuyerOrderCommand, Modules.Buyers.Application.BuyerOrderDetailDto>,
+            Modules.Buyers.Application.CancelBuyerOrderHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.LogoutBuyerCommand, bool>,
+            Modules.Buyers.Application.LogoutBuyerHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.UpdateBuyerProfileCommand, Modules.Buyers.Application.BuyerDto>,
+            Modules.Buyers.Application.UpdateBuyerProfileHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ChangeBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ChangeBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.DeleteBuyerAccountCommand, bool>,
+            Modules.Buyers.Application.DeleteBuyerAccountHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ForgotBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ForgotBuyerPasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<Modules.Buyers.Application.ResetBuyerPasswordCommand, bool>,
+            Modules.Buyers.Application.ResetBuyerPasswordHandler>();
+        services.AddValidatorsFromAssemblyContaining<Modules.Buyers.Application.RegisterBuyerBodyValidator>();
+        // Store → Buyers (D7): el pedido hashea la contraseña del alta y actualiza el perfil guardado sin ver Buyers.
+        services.AddScoped<Modules.Buyers.Application.ReplaceBuyerProfileFromOrder>();
+        services.AddScoped<Modules.Store.Application.IStoreBuyerAccounts, StoreBuyerAccounts>();
 
         // Mismo patron (CAT-05) entre `quotations` y `customers`/`catalog`: ninguno referencia al
         // otro directo — QuotationsLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules
@@ -1492,6 +1589,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationsReportSource, QuotationsReportSource>();
         services.AddScoped<IPriceChangeReportSource, PriceChangeReportSource>();
         services.AddScoped<ICustomerReportSource, CustomerReportSource>();
+        services.AddScoped<IMarginReportSource, MarginReportSource>();
 
         // La semilla de arranque del ambiente desplegado (ver SeedOptions): apagada por
         // defecto, y ValidateOnStart la revisa antes de aceptar tráfico, mismo criterio que el
@@ -1576,6 +1674,8 @@ public static class QepServiceCollectionExtensions
                 CustomersPermissions.CustomerImport,
                 // Spec 2026-10-24 D-F1: fusionar duplicados es trabajo de quien atiende al cliente y del admin.
                 CustomersPermissions.CustomerMerge,
+                // Spec 2026-11-10 D-8: borrar es definitivo; sólo admin (el owner del tenant siempre lo es, `Membership.cs:529`).
+                CustomersPermissions.CustomerDelete,
                 // Spec 2026-10-26 D-9: quien atiende al titular registra su revocación; el admin también.
                 CustomersPermissions.DataConsentRevoke,
                 CustomersPermissions.ClassificationRead,
@@ -1670,7 +1770,11 @@ public static class QepServiceCollectionExtensions
                 // La bandeja de solicitudes ya la tiene: es quotations.order.manage, el permiso de Pedidos.
                 StorePermissions.SettingsManage,
                 // Spec 2026-10-30: una clave de API actúa en nombre de la empresa sin que nadie esté conectado; de fábrica sólo en admin.
-                ApiAccessPermissions.ApiKeyManage
+                ApiAccessPermissions.ApiKeyManage,
+                // Spec 2026-11-10 §5: el costo y el margen son dato comercial sensible; de fábrica sólo en admin.
+                CatalogPermissions.ProductCostRead,
+                CatalogPermissions.ProductCostManage,
+                ReportingPermissions.MarginRead
             ]));
         services.AddSingleton(new RoleDefinition(
             "advisor",
@@ -1883,6 +1987,20 @@ public static class QepServiceCollectionExtensions
             "high",
             RequiredModules: [ModuleKeys.Catalog]));
         services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductCostRead,
+            "Ver costos de productos",
+            "Permite ver el costo unitario de las variantes.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogPermissions.ProductCostManage,
+            "Gestionar costos de productos",
+            "Permite escribir y borrar el costo unitario de las variantes.",
+            "Catalog",
+            "medium",
+            RequiredModules: [ModuleKeys.Catalog]));
+        services.AddSingleton(new PermissionDefinition(
             CompaniesPermissions.CompanyRead,
             "Leer empresas",
             "Permite consultar las empresas del tenant.",
@@ -1924,6 +2042,13 @@ public static class QepServiceCollectionExtensions
             CustomersPermissions.CustomerMerge,
             "Fusionar clientes",
             "Permite fusionar clientes duplicados en uno. No se puede deshacer.",
+            "Customers",
+            "high",
+            RequiredModules: [ModuleKeys.Customers]));
+        services.AddSingleton(new PermissionDefinition(
+            CustomersPermissions.CustomerDelete,
+            "Borrar clientes",
+            "Permite borrar clientes de forma definitiva. No se puede deshacer.",
             "Customers",
             "high",
             RequiredModules: [ModuleKeys.Customers]));
@@ -1990,29 +2115,30 @@ public static class QepServiceCollectionExtensions
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
-        // Aparte de OrderManage: quien registra el pedido (el asesor) no es quien lo revisa.
+        // Aparte de OrderManage: quien carga los comprobantes (el asesor) no es quien verifica la plata.
+        // Spec 2026-11-10 §7: la constante y el valor siguen; cambia lo que significa y su nombre visible.
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderApprove,
-            "Aprobar pedidos",
-            "Permite dar el visto bueno a un pedido pendiente.",
+            "Marcar pedidos como pagados",
+            "Permite marcar un pedido como pagado, deshacerlo y quitar comprobantes de un pedido pagado.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
         // High y sólo en admin, mismo criterio que TaxRateManage: revierte un pedido que otra
-        // persona ya aprobó.
+        // persona ya registró (spec 2026-11-10: abierto, sin preparar ni facturar).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderCancel,
             "Anular pedidos",
-            "Permite anular un pedido pendiente o aprobado, con un motivo obligatorio.",
+            "Permite anular un pedido abierto que no esté preparado ni facturado, con un motivo obligatorio.",
             "Quotations",
             "high",
             RequiredModules: [ModuleKeys.Orders]));
-        // Medium, igual que aprobar: sólo cambia el estado del pedido, no emite ni anula nada fuera
-        // de QEP (spec 2026-10-05).
+        // Medium, igual que marcar pagado: sólo cambia la marca del pedido, no emite ni anula nada fuera
+        // de QEP (spec 2026-10-05). Exigir el pago antes es el ajuste RequireFullPaymentToInvoice (spec 2026-11-10).
         services.AddSingleton(new PermissionDefinition(
             OrdersPermissions.OrderInvoice,
             "Facturar pedidos",
-            "Permite marcar como facturado un pedido aprobado y revertir esa marca.",
+            "Permite marcar un pedido como facturado y revertir esa marca. Si antes debe estar pagado lo decide el ajuste del pedido de cada tenant.",
             "Quotations",
             "medium",
             RequiredModules: [ModuleKeys.Orders]));
@@ -2057,6 +2183,13 @@ public static class QepServiceCollectionExtensions
             "Reporting",
             "medium",
             RequiredModules: [ModuleKeys.Reporting]));
+        services.AddSingleton(new PermissionDefinition(
+            ReportingPermissions.MarginRead,
+            "Reporte de margen",
+            "Permite consultar ventas netas, costo y margen bruto por producto.",
+            "Reporting",
+            "medium",
+            RequiredModules: [ModuleKeys.Reporting, ModuleKeys.Catalog]));
         // "high" las dos: el log arrastra la traza y el mensaje crudo de cualquier modulo --lo
         // que un 500 lleve adentro-- y el purgado borra en lote y no se deshace.
         services.AddSingleton(new PermissionDefinition(
@@ -2506,6 +2639,12 @@ public static class QepServiceCollectionExtensions
                 CatalogPermissions.ProductManage,
                 policy => AddPermissionRequirement(policy, CatalogPermissions.ProductManage))
             .AddPolicy(
+                CatalogPermissions.ProductCostRead,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostRead))
+            .AddPolicy(
+                CatalogPermissions.ProductCostManage,
+                policy => AddPermissionRequirement(policy, CatalogPermissions.ProductCostManage))
+            .AddPolicy(
                 CompaniesPermissions.CompanyRead,
                 policy => AddPermissionRequirement(policy, CompaniesPermissions.CompanyRead))
             .AddPolicy(
@@ -2534,6 +2673,10 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 CustomersPermissions.CustomerMerge,
                 policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerMerge))
+            // La otra mitad del permiso de borrar clientes (spec 2026-11-10 D-8). Sin esta política la ruta no resuelve y el síntoma es 500.
+            .AddPolicy(
+                CustomersPermissions.CustomerDelete,
+                policy => AddPermissionRequirement(policy, CustomersPermissions.CustomerDelete))
             // La otra mitad del permiso de revocar la autorización de datos (spec 2026-10-26 D-9). Sin esta política la ruta
             // POST …/data-consent/revocations no resuelve y el síntoma es 500.
             .AddPolicy(
@@ -2566,15 +2709,16 @@ public static class QepServiceCollectionExtensions
                     policy.RequireClaim(
                         QepClaimTypes.Permission, CustomersPermissions.CustomerManage, CustomersPermissions.NoteModerate);
                 })
-            // Leer los canales de WhatsApp: gestionar cotizaciones o actualizar la configuración (decisión del owner
-            // 2026-10-25). RequireClaim con varios valores deja pasar a quien tenga cualquiera.
+            // Leer los canales de WhatsApp: gestionar cotizaciones o pedidos (spec 2026-11-09 D8: quien manda pedidos pregunta por el
+            // canal) o actualizar la configuración (decisión del owner 2026-10-25). RequireClaim con varios valores deja pasar a quien
+            // tenga cualquiera.
             .AddPolicy(
                 QuotationsPolicies.WhatsAppChannelsRead,
                 policy =>
                 {
                     policy.RequireAuthenticatedUser();
                     policy.RequireClaim(
-                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, TenancyPermissions.SettingsUpdate);
+                        QepClaimTypes.Permission, QuotationsPermissions.QuotationManage, OrdersPermissions.OrderManage, TenancyPermissions.SettingsUpdate);
                 })
             // La otra mitad del permiso, para los dos de Quotations. Sin esta politica
             // RequireAuthorization no resuelve y el sintoma es 500, no 403 — mismo gotcha que
@@ -2623,6 +2767,9 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 ReportingPermissions.AllAdvisorsRead,
                 policy => AddPermissionRequirement(policy, ReportingPermissions.AllAdvisorsRead))
+            .AddPolicy(
+                ReportingPermissions.MarginRead,
+                policy => AddPermissionRequirement(policy, ReportingPermissions.MarginRead))
             .AddPolicy(
                 PlatformPermissions.RequestLogRead,
                 policy => AddPermissionRequirement(policy, PlatformPermissions.RequestLogRead))

@@ -11,7 +11,10 @@ public sealed record UpdateCompanyCommand(
     string Name,
     IReadOnlyList<CompanyBankAccountPayload> BankAccounts,
     string TaxId,
-    Guid CityId,
+    string? Country,
+    string? DocumentType,
+    Guid? CityId,
+    string? CityName,
     string? Phone,
     string? Email,
     string? Address) : ICommand<CompanyDto>, ICompanyWriteCommand;
@@ -39,6 +42,11 @@ public sealed class UpdateCompanyHandler(
         // Autorizar antes de validar. Ver la razon en CreateCompanyHandler.
         CompaniesAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CompaniesPermissions.CompanyManage);
+
+        // El pais se normaliza una sola vez, antes de validar. Ver la razon en CreateCompanyHandler.
+        // Validar va antes de cargar la empresa: el pais y el tipo llegan siempre en el cuerpo, asi
+        // que la empresa guardada no hace falta para saber que carril de ciudad validar.
+        command = command with { Country = CompanyWriteRules.NormalizeCountry(command.Country) };
         await validator.ValidateAndThrowAsync(command, cancellationToken);
 
         var company = await repository.FindAsync(
@@ -47,10 +55,15 @@ public sealed class UpdateCompanyHandler(
             cancellationToken)
             ?? throw CompanyNotFound.For(command.CompanyId);
 
-        var city = await geographyLookup.FindCityAsync(command.CityId, cancellationToken)
-            ?? throw new CompaniesDomainException(
-                "companies.company.city_not_found",
-                "The city was not found.");
+        // Fuera de Colombia la ciudad es texto libre: no hay nada que buscar en Geography.
+        CompanyCityRef? city = null;
+        if (command.Country == Company.ColombiaCountryCode)
+        {
+            city = await geographyLookup.FindCityAsync(command.CityId!.Value, cancellationToken)
+                ?? throw new CompaniesDomainException(
+                    "companies.company.city_not_found",
+                    "The city was not found.");
+        }
 
         var now = clock.UtcNow;
 
@@ -62,7 +75,10 @@ public sealed class UpdateCompanyHandler(
             command.Name,
             command.BankAccounts.ToDomain(),
             command.TaxId,
+            command.Country!,
+            CompanyDocumentTypes.Parse(command.DocumentType!),
             command.CityId,
+            command.CityName,
             new CompanyContactInfo
             {
                 Phone = command.Phone,

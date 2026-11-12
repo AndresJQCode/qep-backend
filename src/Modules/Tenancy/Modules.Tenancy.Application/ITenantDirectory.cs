@@ -45,9 +45,15 @@ public sealed record TenantRegionalSettings(
     string DefaultCurrency,
     string NumberFormat,
     string Country = "CO",
-    PersonTypeRequirement PersonTypeRequirement = PersonTypeRequirement.Never)
+    PersonTypeRequirement PersonTypeRequirement = PersonTypeRequirement.Never,
+    CustomerFieldPolicy? CustomerFieldPolicy = null)
 {
-    /// <summary>Lo guardado sólo manda si el tenant es colombiano; es lo que se publica.</summary>
+    /// <summary>La política guardada, o el default (todo exigido) si quien armó el registro no la
+    /// conoce. Un parámetro de record no admite <c>CustomerFieldPolicy.Default</c> como default.</summary>
+    public CustomerFieldPolicy EffectiveCustomerFieldPolicy =>
+        CustomerFieldPolicy ?? Domain.CustomerFieldPolicy.Default;
+
+    /// <summary>Lo guardado manda en todos los países; es lo que se publica.</summary>
     public PersonTypeRequirement EffectivePersonTypeRequirement =>
         PersonTypeRequirementPolicy.Effective(Country, PersonTypeRequirement);
 }

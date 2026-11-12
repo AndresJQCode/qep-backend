@@ -17,9 +17,27 @@ namespace Bootstrapper;
 /// </summary>
 internal sealed class QuotationCustomerLookup(
     ICustomerRepository repository,
-    ICustomerGeographyLookup geographyLookup)
+    ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companies)
     : IQuotationCustomerLookup
 {
+    /// <summary>El tope de contactos que viajan en el documento (spec 2026-11-10 §4.6): el diálogo de envío no pagina.</summary>
+    public const int ContactCap = 100;
+
+    public async Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken)
+    {
+        var contact = await companies.FindContactOfAsync(tenantId, clientId, contactId, cancellationToken);
+        return contact is null ? null : new QuotationClientContact(contact.Id, contact.Name, contact.Phone);
+    }
+
+    public async Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        var contacts = await companies.ListContactsAsync(tenantId, clientId, ContactCap, cancellationToken);
+        return [.. contacts.Select(contact => new QuotationClientContact(contact.Id, contact.Name, contact.Phone))];
+    }
+
     public async Task<QuotationCustomerRef?> FindAsync(
         Guid tenantId, Guid clientId, CancellationToken cancellationToken)
     {

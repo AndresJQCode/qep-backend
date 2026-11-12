@@ -53,6 +53,7 @@ internal sealed class TenantDirectory(TenancyDbContext dbContext) : ITenantDirec
                 tenant.DefaultCurrency,
                 tenant.NumberFormat,
                 tenant.Country,
-                tenant.PersonTypeRequirement))
+                tenant.PersonTypeRequirement,
+                tenant.CustomerFieldPolicy))
             .SingleOrDefaultAsync(cancellationToken);
 }

@@ -18,4 +18,6 @@ public sealed record StoreSettingsInput(
     IReadOnlyList<StoreCurrency> Currencies,
     string? PrimaryCurrency,
     IReadOnlyList<string> SalesCountries,
-    IReadOnlyList<Guid> FeaturedCategoryIds);
+    IReadOnlyList<Guid> FeaturedCategoryIds,
+    Guid? AdvisorMembershipId,
+    bool ShowPrices);

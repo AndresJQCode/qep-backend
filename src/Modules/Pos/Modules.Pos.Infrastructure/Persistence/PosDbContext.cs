@@ -50,6 +50,7 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         session.Property(value => value.CompanyId).HasColumnName("company_id");
         session.Property(value => value.CompanyName).HasColumnName("company_name").HasMaxLength(160);
         session.Property(value => value.CompanyTaxId).HasColumnName("company_tax_id").HasMaxLength(32);
+        session.Property(value => value.CompanyDocumentType).HasColumnName("company_document_type").HasMaxLength(16).IsRequired();
         session.Property(value => value.CompanyAddress).HasColumnName("company_address").HasMaxLength(200);
         session.Property(value => value.CompanyPhone).HasColumnName("company_phone").HasMaxLength(32);
         session.Property(value => value.Currency).HasColumnName("currency").HasMaxLength(3).IsRequired();
@@ -187,6 +188,13 @@ public sealed class PosDbContext(DbContextOptions<PosDbContext> options) : DbCon
         line.Property(value => value.DiscountAmount).HasColumnName("discount_amount").HasPrecision(14, 2);
         line.Property(value => value.TaxAmount).HasColumnName("tax_amount").HasPrecision(14, 2);
         line.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
+        // Costo congelado al vender (spec 2026-11-10 §4.2): los tres nulos para las ventas anteriores.
+        line.Property(value => value.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+        line.Property(value => value.CostSource)
+            .HasColumnName("cost_source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        line.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
         line.Ignore(value => value.LineTotal);
         line.HasIndex(value => new { value.SaleId, value.Position }).IsUnique();
         // La consulta de uso de Catalog (Bootstrapper.CatalogVariantUsageChecker) filtra

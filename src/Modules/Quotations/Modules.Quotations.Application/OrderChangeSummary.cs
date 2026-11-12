@@ -14,8 +14,8 @@ public static class OrderChangeSummary
     public static string CreatedFromExternal(OrderSource source, string reference) =>
         Trim($"Creado desde {source} ({reference}).");
 
-    public static string CreatedFromStore(string requestNumber) =>
-        Trim($"Creado desde la tienda (solicitud {requestNumber}).");
+    // El pedido de la tienda sale directo del checkout: no hay solicitud que nombrar.
+    public static string CreatedFromStore() => "Creado desde la tienda.";
 
     public static string ItemAdded(string productName, decimal quantity, HistoryFormat format) =>
         QuotationChangeSummary.ItemAdded(productName, quantity, format);
@@ -71,17 +71,37 @@ public static class OrderChangeSummary
             : Trim($"Cambió la facturación de {before} a {after}.");
 
     /// <summary>El PDF salió por WhatsApp. Dice a quién porque quien factura no siempre es quien recibe.</summary>
-    public static string Sent(QuotationRecipient recipient) => recipient == QuotationRecipient.Billing
-        ? "Enviado por WhatsApp a facturación."
-        : "Enviado por WhatsApp al cliente.";
-
-    public static string Approved() => "Aprobado.";
+    public static string Sent(QuotationRecipient recipient, string? contactName = null) => recipient switch
+    {
+        QuotationRecipient.Billing => "Enviado por WhatsApp a facturación.",
+        QuotationRecipient.Contact when contactName is not null => Trim($"Enviado por WhatsApp a {contactName}."),
+        _ => "Enviado por WhatsApp al cliente.",
+    };
 
     public static string Cancelled(string reason) => Trim($"Anulado: {reason}");
+
+    /// <summary>La anulación de la plataforma sobre un pedido ya preparado (spec 2026-11-10 §3.1): el pedido conserva la
+    /// marca y el historial avisa que hay un paquete que recuperar.</summary>
+    public static string CancelledWhilePrepared(string reason) =>
+        Trim($"Anulado con el pedido ya preparado: {reason}. Hay un paquete despachado que recuperar.");
 
     public static string Invoiced() => "Marcado como facturado.";
 
     public static string InvoicingReverted() => "Se revirtió la facturación.";
+
+    public static string PaidMarked() => "Marcado como pagado.";
+
+    public static string PaidUnmarked() => "Se deshizo el pagado.";
+
+    public static string Prepared() => "Marcado como preparado.";
+
+    public static string PreparationUndone() => "Se deshizo el preparado.";
+
+    public static string Archived() => "Archivado.";
+
+    public static string ArchivedAutomatically() => "Archivado automáticamente: quedó pagado y preparado.";
+
+    public static string Unarchived() => "Desarchivado.";
 
     public static string PaymentProofsChanged(int added, int corrected, int removed)
     {
@@ -102,6 +122,17 @@ public static class OrderChangeSummary
         }
 
         return Trim($"Comprobantes: {string.Join(", ", parts)}.");
+    }
+
+    /// <summary>El pago lo cambió el sistema, no una persona (spec 2026-11-10 §3.2): nombra los dos estados y los dos
+    /// netos para que se entienda por qué.</summary>
+    public static string PaymentStatusRecalculated(OrderPaymentStatusChange change, HistoryFormat format)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        ArgumentNullException.ThrowIfNull(format);
+        return Trim(
+            $"El pago pasó de {ExportStatusLabels.For(change.From)} a {ExportStatusLabels.For(change.To)}: " +
+            $"el neto pasó de {format.Number(change.PreviousNetTotal)} a {format.Number(change.NetTotal)}.");
     }
 
     private static string Trim(string summary) =>

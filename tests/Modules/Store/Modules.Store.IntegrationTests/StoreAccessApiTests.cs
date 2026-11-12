@@ -49,4 +49,27 @@ public sealed class StoreAccessApiTests
         Assert.DoesNotContain("tenancy.module_not_enabled", await BodyAsync(read));
         Assert.Equal(HttpStatusCode.Forbidden, write.StatusCode);
     }
+
+    [Theory]
+    [InlineData("GET", "/order-requests")]
+    [InlineData("GET", "/order-requests/summary")]
+    [InlineData("GET", "/order-requests/0195f0a0-0000-7000-8000-000000000001")]
+    [InlineData("GET", "/order-requests/0195f0a0-0000-7000-8000-000000000001/customer-candidates")]
+    [InlineData("POST", "/order-requests/0195f0a0-0000-7000-8000-000000000001/take")]
+    [InlineData("POST", "/order-requests/0195f0a0-0000-7000-8000-000000000001/discard")]
+    public async Task TheInboxRoutesAreGone(string method, string path)
+    {
+        // La bandeja se quitó (spec 2026-11-09, D6): con el permiso de pedidos y el módulo encendido, la ruta ya no existe.
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var client = fixture.ClientFor(TenantId, "quotations.order.manage", "store.settings.manage");
+        using var request = new HttpRequestMessage(
+            new HttpMethod(method), $"/api/v1/tenants/{TenantId}/store{path}")
+        {
+            Content = method == "POST" ? new StringContent("{}", System.Text.Encoding.UTF8, "application/json") : null,
+        };
+
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
 }

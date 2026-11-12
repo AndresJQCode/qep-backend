@@ -11,6 +11,11 @@ public sealed class MessagingWorkerOptionsTests
     public void TheDefaultCampaignPollIsTenSeconds() =>
         Assert.Equal(10, new MessagingWorkerOptions().CampaignPollSeconds);
 
+    /// <summary>Spec 2026-11-09 «Worker y ejecución»: el tick de programados, 5 s por defecto.</summary>
+    [Fact]
+    public void TheDefaultScheduledPollIsFiveSeconds() =>
+        Assert.Equal(5, new MessagingWorkerOptions().ScheduledPollSeconds);
+
     [Fact]
     public void DeliveryAndMediaPollsKeepTheirDefaults()
     {

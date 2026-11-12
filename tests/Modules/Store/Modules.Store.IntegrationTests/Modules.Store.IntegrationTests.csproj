@@ -13,5 +13,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Api\Api.csproj" />
+    <!-- PublicOrderBuyerAccountApiTests drena el worker de altas de Buyers (InternalsVisibleTo) y lee sus tablas. Sólo el proyecto de
+         pruebas: ninguna capa de Store referencia Buyers (StoreLayerTests). -->
+    <ProjectReference Include="..\..\..\..\src\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

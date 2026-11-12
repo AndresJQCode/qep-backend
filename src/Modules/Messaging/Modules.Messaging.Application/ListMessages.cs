@@ -61,6 +61,10 @@ public sealed class ListMessagesHandler(
         var chatbots = await chatbotNames.ResolveAsync(query.TenantId, MessageMapping.ChatbotIdsOf(page), cancellationToken);
         var customerIds = MessageMapping.CustomerIdsOf(page);
         var customerRefs = customerIds.Count == 0 ? null : await customers.FindRefsAsync(query.TenantId, customerIds, cancellationToken);
-        return new MessagePageDto(page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots, customerRefs)).ToArray(), hasMore);
+        // Spec 2026-11-10: los teléfonos de todas las tarjetas de la página, en una sola llamada y sólo si hay tarjetas.
+        var sharedWaIds = MessageMapping.SharedContactWaIdsOf(page);
+        var sharedPhones = sharedWaIds.Count == 0 ? null : await customers.ResolveSharedPhonesAsync(query.TenantId, sharedWaIds, cancellationToken);
+        return new MessagePageDto(
+            page.Select(row => MessageMapping.ToDto(row, query.TenantId, names, targets, reasons, chatbots, customerRefs, sharedPhones)).ToArray(), hasMore);
     }
 }

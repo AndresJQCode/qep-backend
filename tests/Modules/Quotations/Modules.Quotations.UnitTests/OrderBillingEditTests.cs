@@ -40,7 +40,7 @@ public sealed class OrderBillingEditTests
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", Header, parties ?? QuotationParties.Empty,
             Account, new ShippingDetails(null, null, null, 0m, 0, false), [Line],
-            OrderPaymentStatus.PaymentPending, null, Advisor, [], Now);
+            null, Advisor, [], Now);
 
     private static Order OrderWithRow(QuotationPartyDetails? row = null) =>
         NewOrder(QuotationParties.Empty with
@@ -118,15 +118,15 @@ public sealed class OrderBillingEditTests
     }
 
     [Fact]
-    public void ANonPendingOrderCannotChangeItsBilling()
+    public void APreparedOrderCannotChangeItsBilling()
     {
         var order = NewOrder();
-        order.Approve(Advisor, Now);
+        order.Prepare(Advisor, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.SetBilling(Row(), false, false, false, false, Advisor, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
     }
 
     [Fact]

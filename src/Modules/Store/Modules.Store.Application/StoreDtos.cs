@@ -26,7 +26,11 @@ public sealed record StoreSettingsRequest(
     IReadOnlyList<StoreCurrencyRequest?>? Currencies,
     string? PrimaryCurrency,
     IReadOnlyList<string?>? SalesCountries,
-    IReadOnlyList<Guid>? FeaturedCategoryIds);
+    IReadOnlyList<Guid>? FeaturedCategoryIds,
+    Guid? AdvisorMembershipId,
+    // Ausente o null conserva el valor guardado, a propósito fuera de la regla de arriba: un frontend en producción durante
+    // el despliegue no conoce el campo, y un 422 trabaría cada guardado o un null leído como false apagaría los precios.
+    bool? ShowPrices);
 
 public sealed record StoreCurrencyRequest(string? Currency, StoreBillingAccountRequest? BillingAccount);
 
@@ -55,8 +59,12 @@ public sealed record StoreSettingsDto(
     IReadOnlyList<StoreCurrencyDto> Currencies,
     string? PrimaryCurrency,
     string PricingMode,
+    bool ShowPrices,
     IReadOnlyList<string> SalesCountries,
     IReadOnlyList<StoreFeaturedCategoryDto> FeaturedCategories,
+    Guid? AdvisorMembershipId,
+    // El nombre viaja con el id porque la pantalla de ajustes lo pinta sin consultar membresías (BFF).
+    string? AdvisorName,
     IReadOnlyList<string> PublishBlockers,
     long Version,
     DateTimeOffset? UpdatedAt);

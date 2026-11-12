@@ -295,10 +295,9 @@ public sealed class AuthSessionApiTests
         Assert.Equal("OnCustomerSave", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
-    // Un tenant no colombiano guarda el valor pero la sesión publica Never: el cliente no tiene que
-    // repetir la regla del país.
+    // El requisito guardado se publica tal cual en cualquier país.
     [Fact]
-    public async Task ANonColombianTenantPublishesNever()
+    public async Task ANonColombianTenantPublishesTheStoredRequirement()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -308,7 +307,7 @@ public sealed class AuthSessionApiTests
         var tenant = await LoginAndGetSeededTenantAsync(factory);
 
         Assert.Equal("ES", tenant.GetProperty("country").GetString());
-        Assert.Equal("Never", tenant.GetProperty("personTypeRequirement").GetString());
+        Assert.Equal("OnOrderApproval", tenant.GetProperty("personTypeRequirement").GetString());
     }
 
     // Spec de redondeo de precios (D9): el cajero no tiene `tenancy.settings.read`, así que la regla de
@@ -360,6 +359,66 @@ public sealed class AuthSessionApiTests
         Assert.Equal(
             new (string?, int, string?)[] { ("COP", 0, "Nearest"), ("USD", 2, "Up"), ("EUR", 2, "Nearest") },
             roundings);
+    }
+
+    // Customer field policy spec (2026-11-09): the policy travels in the session, like the person type
+    // requirement, because the cashier cannot read /settings.
+    [Fact]
+    public async Task TheSessionCarriesTheDefaultCustomerFieldPolicy()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+
+        var tenant = await LoginAndGetSeededTenantAsync(factory);
+
+        var policy = tenant.GetProperty("customerFieldPolicy");
+        Assert.True(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TheSessionCarriesTheStoredCustomerFieldPolicyToACashier()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedSeededTenantAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
+            var stored = dbContext.Tenants.Single();
+            stored.UpdateSettings(
+                stored.DisplayName, stored.DefaultCulture, stored.TimeZone, stored.DateFormat,
+                stored.DefaultCurrency, stored.NumberFormat, stored.Country, stored.PersonTypeRequirement,
+                DateTimeOffset.UtcNow,
+                new CustomerFieldPolicy(new FieldRequirement(false, true), new FieldRequirement(false, false)));
+            await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var email = NewEmail();
+        using (var admin = CreateAdminClient(factory))
+        {
+            Assert.Equal(HttpStatusCode.Created, (await InviteAsync(admin, email)).StatusCode);
+        }
+
+        using var client = CreateLoginClient(factory, Guid.CreateVersion7().ToString(), email, verified: true);
+        // Any non-settings permission: without X-Permissions the stub grants settings.read.
+        client.DefaultRequestHeaders.Add("X-Permissions", TenancyPermissions.AdvisorshipRead);
+        var login = await client.PostAsync(
+            "/api/v1/auth/session", null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var body = await login.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+        var tenant = body.GetProperty("activeTenants").EnumerateArray()
+            .Single(item => item.GetProperty("tenantId").GetGuid() == Guid.Parse(SeededTenantId));
+
+        var policy = tenant.GetProperty("customerFieldPolicy");
+        Assert.False(policy.GetProperty("document").GetProperty("onCustomerSave").GetBoolean());
+        Assert.True(policy.GetProperty("document").GetProperty("onBilling").GetBoolean());
+        Assert.False(policy.GetProperty("city").GetProperty("onCustomerSave").GetBoolean());
+        Assert.False(policy.GetProperty("city").GetProperty("onBilling").GetBoolean());
     }
 
     private static async Task StoreSettingsAsync(

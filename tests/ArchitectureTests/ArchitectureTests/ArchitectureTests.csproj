@@ -47,6 +47,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Application\Modules.Store.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Domain\Modules.Store.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Store\Modules.Store.Infrastructure\Modules.Store.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Api\Modules.Buyers.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Domain\Modules.Buyers.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Buyers\Modules.Buyers.Infrastructure\Modules.Buyers.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Api\Modules.ApiAccess.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Application\Modules.ApiAccess.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\ApiAccess\Modules.ApiAccess.Domain\Modules.ApiAccess.Domain.csproj" />

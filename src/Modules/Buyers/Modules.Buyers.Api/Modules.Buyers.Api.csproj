@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Buyers.Application\Modules.Buyers.Application.csproj" />
+    <ProjectReference Include="..\Modules.Buyers.Domain\Modules.Buyers.Domain.csproj" />
+    <ProjectReference Include="..\..\Store\Modules.Store.Api\Modules.Store.Api.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

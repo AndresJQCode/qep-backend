@@ -21,7 +21,7 @@ public sealed class QuotationPartiesApiTests
     // por el país del tenant), y estas pruebas son del carril de ciudad, no de esa regla.
     private static QuotationPartyRequest ForeignBilling() => new(
         "Lucía Fernández", "X1234567L", "+34600111222", "fact@madrid.es", "Calle Mayor 1", null, null,
-        PersonType: "Natural", IdentificationType: "CE", Country: "ES", CityName: "Madrid");
+        PersonType: "Natural", IdentificationType: "NIE", Country: "ES", CityName: "Madrid");
 
     private static QuotationPartyRequest ForeignShipping() => new(
         "Bodega Madrid", null, "+34600111333", "bodega@madrid.es", "Calle Alcalá 20", null, null,
@@ -106,6 +106,49 @@ public sealed class QuotationPartiesApiTests
     }
 
     [Fact]
+    public async Task ASpanishBillingPartyWithACcIsA422OnItsType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(ForeignBilling() with { IdentificationType = "CC" }, null));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Problem>(TestContext.Current.CancellationToken);
+        Assert.Contains("Parties.Billing.IdentificationType", problem!.Errors!.Keys);
+    }
+
+    [Fact]
+    public async Task ASpanishBillingPartyWithANifRoundTrips()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var customerId = await CreateActiveCustomerAsync(client, tenantId);
+        var created = await CreateQuotationAsync(client, tenantId, customerId);
+
+        var response = await PutAsync(
+            client, tenantId, created,
+            new QuotationPartiesRequest(ForeignBilling() with { IdentificationType = "NIF" }, null));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var fetched = await client.GetFromJsonAsync<QuotationResponse>(
+            QuotationUrl(tenantId, created.Id), TestContext.Current.CancellationToken);
+        Assert.NotNull(fetched);
+        foreach (var quotation in new[] { await ReadQuotationAsync(response), fetched })
+        {
+            Assert.Equal("NIF", Assert.Single(quotation.Parties, party => party.Role == "Billing").IdentificationType);
+        }
+    }
+
+    [Fact]
     public async Task AForeignPartyWithDivipolaIdsIsRejectedWithItsField()
     {
         await using var database = await StartDatabaseAsync();
@@ -142,7 +185,7 @@ public sealed class QuotationPartiesApiTests
 
         var response = await client.PostAsJsonAsync(
             ConvertUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

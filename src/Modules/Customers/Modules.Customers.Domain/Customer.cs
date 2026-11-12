@@ -58,7 +58,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -66,7 +66,13 @@ public sealed class Customer
         IPhoneNumberNormalizer? phoneNormalizer)
     {
         // Antes de cualquier asignación: el país que cuenta es el del contacto ya normalizado.
-        EnsurePersonTypeMatches(personType, identification.Type, contact.Normalized().Country);
+        var country = contact.Normalized().Country;
+        if (identification is not null)
+        {
+            EnsureDocumentAllowedForCountry(identification.Type, country);
+            EnsurePersonTypeMatches(personType, identification.Type, country);
+        }
+
         Id = id;
         TenantId = tenantId;
         Cuc = cuc;
@@ -90,8 +96,8 @@ public sealed class Customer
         // que asignar IdentificationNumber alla deja el constructor con un CS8618. Country tiene
         // el mismo problema: se inicializa aca por lo mismo, y Assign(contact) la pisa enseguida
         // con el valor normalizado real.
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
         PersonType = personType;
         Country = string.Empty;
         Assign(contact);
@@ -308,6 +314,11 @@ public sealed class Customer
 
     public bool IsMerged => MergedIntoId is not null;
 
+    /// <summary>Spec 2026-11-10 §3.2: la empresa (otro cliente) de la que esta persona es contacto. Un solo nivel: quien
+    /// tiene empresa no puede tener contactos. Sólo lo escriben <see cref="LinkToCompany"/>, <see cref="UnlinkFromCompany"/>
+    /// y la fusión; crear y editar un cliente nunca lo tocan.</summary>
+    public CustomerId? CompanyId { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -319,7 +330,7 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -332,7 +343,7 @@ public sealed class Customer
             NormalizeName(name),
             NormalizeBusinessName(businessName),
             principalAddress,
-            identification.Normalized(),
+            identification?.Normalized(),
             personType,
             contact,
             commercial,
@@ -387,16 +398,20 @@ public sealed class Customer
         CustomerId id,
         Guid tenantId,
         string name,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         string? phone,
         DateTimeOffset now,
         IPhoneNumberNormalizer phoneNormalizer,
         string? email = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(phoneNormalizer);
         var normalizedName = NormalizeName(name);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
+        if (normalizedIdentification is not null)
+        {
+            EnsureDocumentAllowedForCountry(normalizedIdentification.Type, ColombiaCountryCode);
+        }
+
         var normalizedPhone = string.IsNullOrWhiteSpace(phone) ? null : phone.Trim();
         if (normalizedPhone?.Length > CustomerContactInfo.PhoneMaxLength)
         {
@@ -434,14 +449,13 @@ public sealed class Customer
         string name,
         string? businessName,
         CustomerAddressDetails? principalAddress,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
         DateTimeOffset occurredAt,
         IPhoneNumberNormalizer? phoneNormalizer = null)
     {
-        ArgumentNullException.ThrowIfNull(identification);
         ArgumentNullException.ThrowIfNull(contact);
         ArgumentNullException.ThrowIfNull(commercial);
         EnsureNotMerged();
@@ -454,10 +468,10 @@ public sealed class Customer
         var normalizedCuc = NormalizeCuc(cuc);
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         var location = EnsureValidLocation(normalizedContact);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         _ = EnsureValidClassificationId(commercial.ClassificationId);
 
         Cuc = normalizedCuc;
@@ -859,7 +873,7 @@ public sealed class Customer
     public void Update(
         string name,
         string? businessName,
-        CustomerIdentification identification,
+        CustomerIdentification? identification,
         PersonType? personType,
         CustomerContactInfo contact,
         CustomerCommercialInfo commercial,
@@ -880,12 +894,12 @@ public sealed class Customer
         // CUC, y ese cambio tiene que quedar cubierto por la misma garantia de todo-o-nada.
         var normalizedName = NormalizeName(name);
         var normalizedBusinessName = NormalizeBusinessName(businessName);
-        var normalizedIdentification = identification.Normalized();
+        var normalizedIdentification = identification?.Normalized();
         var normalizedContact = contact.Normalized();
         // El pais y la ciudad se comprueban acá y no sólo en Assign: hacen falta **antes** de
         // asignar el nombre, dentro de la misma garantía de todo-o-nada que el resto del método.
         EnsureValidLocation(normalizedContact);
-        EnsurePersonTypeMatches(personType, normalizedIdentification.Type, normalizedContact.Country);
+        EnsureIdentificationAllowed(normalizedIdentification, personType, normalizedContact.Country);
         var normalizedClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
         // Sin clasificacion no hay prefijo que validar: el CUC queda con sus ocho caracteres
         // estables. Con clasificacion, el prefijo es obligatorio, llegue nulo o en blanco.
@@ -929,10 +943,10 @@ public sealed class Customer
 
     // Desarma el value object en las dos columnas. Ver Customer.Identification para el porque del
     // aplanado.
-    private void Assign(CustomerIdentification identification)
+    private void Assign(CustomerIdentification? identification)
     {
-        IdentificationType = identification.Type;
-        IdentificationNumber = identification.Number;
+        IdentificationType = identification?.Type;
+        IdentificationNumber = identification?.Number;
     }
 
     // Asigna todo siempre. Telefono y correo se pueden **limpiar**, no solo setear: una
@@ -1040,6 +1054,73 @@ public sealed class Customer
         return true;
     }
 
+    /// <summary>
+    /// Vincula este cliente como contacto de <paramref name="company"/>. <c>false</c> y sin cambios si ya lo era.
+    ///
+    /// El orden de las reglas importa: el no-op va antes de «inactiva» para que repetir el vínculo existente responda igual
+    /// aunque la empresa se inactivara después (ruling P10). <paramref name="hasContacts"/> lo calcula quien llama, porque
+    /// los contactos de este cliente no cuelgan del agregado. No exige <see cref="EnsureActive"/> a este cliente: las
+    /// notas y las etiquetas tampoco, y vincular no es editar la ficha.
+    /// </summary>
+    public bool LinkToCompany(Customer company, bool hasContacts, DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (company.Id == Id)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsSelf, "A customer cannot be its own company.");
+        }
+
+        if (company.TenantId != TenantId || company.IsMerged)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyNotFound, "The company does not exist.");
+        }
+
+        if (CompanyId == company.Id)
+        {
+            return false;
+        }
+
+        if (!company.IsActive)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyInactive, "The company is inactive.");
+        }
+
+        if (company.CompanyId is not null)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.CompanyIsContact, "A contact cannot be the company of another customer.");
+        }
+
+        if (hasContacts)
+        {
+            throw new CustomersDomainException(
+                CustomersErrorCodes.HasContacts, "A customer that has contacts cannot become a contact.");
+        }
+
+        CompanyId = company.Id;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
+    /// <summary>La vuelta de <see cref="LinkToCompany"/>. <c>false</c> y sin cambios si no tenía empresa.</summary>
+    public bool UnlinkFromCompany(DateTimeOffset occurredAt)
+    {
+        EnsureNotMerged();
+        if (CompanyId is null)
+        {
+            return false;
+        }
+
+        CompanyId = null;
+        Version++;
+        UpdatedAt = occurredAt;
+        return true;
+    }
+
     /// <summary>Spec 2026-10-24 §3.1: va primero en toda escritura, antes de <see cref="EnsureActive"/>, para que el
     /// código diga «fusionado» y no «inactivo».</summary>
     public void EnsureNotMerged()
@@ -1057,6 +1138,8 @@ public sealed class Customer
         MergedIntoId = survivorId;
         MergedAt = now;
         IsActive = false;
+        // Spec 2026-11-10 §4.7: un fusionado deja de ser contacto; los suyos se mueven al que queda.
+        CompanyId = null;
         if (releaseWhatsAppUserId)
         {
             WhatsAppUserId = null;
@@ -1076,6 +1159,9 @@ public sealed class Customer
 
         Touch(now);
     }
+
+    // Sin versión ni auditoría propias: el que queda ya sube su versión en TouchForMerge.
+    internal void ClearCompanyLink() => CompanyId = null;
 
     internal void FillEmail(string value) => Email = value;
 
@@ -1202,7 +1288,10 @@ public sealed class Customer
     /// los dos dejaria dos respuestas a "donde esta el cliente" sin nada que diga cual gana al
     /// pintar la ficha — y la que sobra envejece sola, porque el formulario ya no la muestra.
     ///
-    /// Para Colombia el chequeo es estructural y minimo (no vacia): la FK de base
+    /// La obligacion de tener ciudad ya no vive aca: depende del tenant y la decide
+    /// <c>CustomerFieldPolicyRequirement</c> (Application). Sin ciudad el trio queda en null.
+    ///
+    /// Para Colombia el chequeo es estructural y minimo (no Guid.Empty): la FK de base
     /// (<c>customers.customers.city_id -> geography.cities.id</c>) garantiza que la ciudad exista,
     /// pero no corre hasta el SaveChanges, y fallar rapido con un codigo de dominio es mejor que
     /// dejar que un Guid.Empty vuelva como una violacion de FK que no dice nada util.
@@ -1215,18 +1304,52 @@ public sealed class Customer
 
         if (country == ColombiaCountryCode)
         {
-            return normalized.CityId is { } cityId && cityId != Guid.Empty
-                ? (country, cityId, null)
-                : throw new CustomersDomainException(
-                    "customers.customer.city_required",
-                    "The customer city is required.");
+            // Solo null es "sin ciudad"; un Guid.Empty es un id roto y se sigue rechazando (G5).
+            return normalized.CityId is { } cityId
+                ? (country, cityId != Guid.Empty
+                    ? cityId
+                    : throw new CustomersDomainException(
+                        "customers.customer.city_required",
+                        "The customer city is required."), null)
+                : (country, null, null);
         }
 
-        return string.IsNullOrWhiteSpace(normalized.CityName)
-            ? throw new CustomersDomainException(
-                "customers.customer.city_name_required",
-                "The customer city is required for a customer outside Colombia.")
-            : (country, null, normalized.CityName);
+        return (country, null, string.IsNullOrWhiteSpace(normalized.CityName) ? null : normalized.CityName);
+    }
+
+    // Con documento corren las dos reglas de pais; sin documento no hay nada que comprobar.
+    private static void EnsureIdentificationAllowed(
+        CustomerIdentification? identification, PersonType? personType, string country)
+    {
+        if (identification is null)
+        {
+            return;
+        }
+
+        EnsureDocumentAllowedForCountry(identification.Type, country);
+        EnsurePersonTypeMatches(personType, identification.Type, country);
+    }
+
+    /// <summary>
+    /// El tipo de documento tiene que estar en la lista del país del cliente
+    /// (<see cref="IdentificationTypeParser.IsAllowedFor"/>). Va **antes** de
+    /// <see cref="EnsurePersonTypeMatches"/>: una jurídica colombiana con NIF es un problema de país
+    /// antes que un problema de NIT. Sólo en escrituras: nunca en el constructor de EF, para que un
+    /// cliente guardado con un par que ya no cumple se siga leyendo. Marca <c>IdentificationType</c>,
+    /// el campo que la persona corrige en el formulario.
+    /// </summary>
+    private static void EnsureDocumentAllowedForCountry(IdentificationType type, string country)
+    {
+        if (type.IsAllowedFor(country))
+        {
+            return;
+        }
+
+        const string message = "The identification type is not allowed for the country.";
+        throw new CustomersDomainException(
+            CustomersErrorCodes.DocumentTypeNotAllowed,
+            message,
+            new Dictionary<string, string[]>(StringComparer.Ordinal) { ["IdentificationType"] = [message] });
     }
 
     /// <summary>

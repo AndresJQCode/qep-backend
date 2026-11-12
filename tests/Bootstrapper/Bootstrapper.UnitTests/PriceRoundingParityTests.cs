@@ -51,13 +51,13 @@ public sealed class PriceRoundingParityTests
             },
             ShippingDetails.None,
             [new OrderLineInput(variant, variant, quantity, price, discount, 0)],
-            OrderPaymentStatus.PaymentPending, null, Advisor, [], Now);
+            null, Advisor, [], Now);
         order.UsePriceRounding(rule, Now);
         var orderItem = Assert.Single(order.Items);
 
         var session = CashSession.Open(
             CashSessionId.New(), TenantId, Cashier, "Cajero",
-            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "Calle 1", "6045551234"),
+            new PosCompanySnapshot(Guid.CreateVersion7(), "Empresa", "900123456-1", "NIT", "Calle 1", "6045551234"),
             currency, 0m, Now);
         var sale = PosSale.Create(
             PosSaleId.New(), new string('a', 64), session,

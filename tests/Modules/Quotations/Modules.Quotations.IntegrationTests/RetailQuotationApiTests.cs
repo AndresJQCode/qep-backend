@@ -223,9 +223,9 @@ public sealed class RetailQuotationApiTests
         Assert.False((await GetQuotationAsync(client, tenantId, quotation.Id)).IsRetail);
     }
 
-    // El pedido que ya no esta Pending no admite cambiarlo: el mismo error que ya da su guardado.
+    // El pedido que ya no es editable no admite cambiarlo: el mismo error que ya da su guardado.
     [Fact]
-    public async Task AnOrderThatIsNoLongerPendingRejectsTheChange()
+    public async Task AnOrderThatIsNoLongerEditableRejectsTheChange()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -243,7 +243,7 @@ public sealed class RetailQuotationApiTests
             client, tenantId, order, OrderRequestFor(quotation, quantity: null, isRetail: true));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", (await ReadProblemAsync(response)).Code);
+        Assert.Equal("order.order.not_editable", (await ReadProblemAsync(response)).Code);
     }
 
     // Una cotizacion anulada no es editable y no tiene pedido que la rescate: el mismo error que
@@ -473,7 +473,7 @@ public sealed class RetailQuotationApiTests
             client, factory, tenantId, clientId, productId, paymentMethod: null);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var order = await converted.Content.ReadConvertedOrderAsync(

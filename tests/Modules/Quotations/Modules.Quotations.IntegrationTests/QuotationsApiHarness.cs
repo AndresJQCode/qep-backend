@@ -334,7 +334,10 @@ internal static class QuotationsApiHarness
         string? identificationNumber = null,
         bool withRetention = false,
         bool vatSurplus = false,
-        string? personType = null)
+        string? personType = null,
+        bool withDocument = true,
+        string name = "Verde Esencial S.A.S.",
+        string? phone = "310 935 2187")
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -343,11 +346,11 @@ internal static class QuotationsApiHarness
             $"/api/v1/tenants/{tenantId}/customers",
             new
             {
-                name = "Verde Esencial S.A.S.",
-                identificationType = "NIT",
-                identificationNumber = identificationNumber
+                name,
+                identificationType = withDocument ? "NIT" : null,
+                identificationNumber = !withDocument ? null : identificationNumber
                     ?? $"900.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-1",
-                phone = "310 935 2187",
+                phone,
                 email = "compras@verde.co",
                 address = "Calle 10 # 45-12",
                 // Desde ff107a7 el pais es obligatorio en el alta y en el PUT, que reemplaza el
@@ -367,6 +370,29 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body.Id;
+    }
+
+    /// <summary>El alta exige teléfono (<c>CustomerWriteRules</c>): un contacto sin teléfono sólo existe por datos que no pasaron
+    /// por el alta, así que la prueba le borra el teléfono por SQL.</summary>
+    public static async Task ClearCustomerPhoneAsync(string connectionString, Guid customerId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "UPDATE customers.customers SET phone = NULL, phone_e164 = NULL WHERE id = @id", connection);
+        command.Parameters.AddWithValue("id", customerId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Spec 2026-11-10 §4.1: <c>contactId</c> pasa a ser contacto de <c>companyId</c>
+    /// (<c>PUT /customers/{id}/company</c>). Sin ligar, un cliente es una empresa o una persona suelta.</summary>
+    public static async Task LinkContactAsync(HttpClient client, Guid tenantId, Guid contactId, Guid companyId)
+    {
+        var response = await client.PutAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/customers/{contactId}/company",
+            new { companyId },
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
     }
 
     /// <summary>Prende o apaga retención/excedente de IVA de un cliente ya creado -- para probar
@@ -555,6 +581,74 @@ internal static class QuotationsApiHarness
                 }
             ]);
 
+    private static readonly string[] Sizes = ["M", "L"];
+
+    public sealed record Shirt(Guid ProductId, Guid M, Guid L, Guid OptionId, Guid ValueM, Guid ValueL);
+
+    public sealed record OptionValueDto(Guid Id, string Name);
+
+    public sealed record OptionDto(Guid Id, IReadOnlyList<OptionValueDto> Values);
+
+    public sealed record VariantDto(Guid Id, string Code, string Name);
+
+    public sealed record ProductDto(Guid Id, long Version, IReadOnlyList<VariantDto> Variants);
+
+    public static object[] NoDiscountScales() =>
+    [
+        new { fromUnit = 1, toUnit = 999_999, discount = 0m, restriction = "multiple", multiple = 1 }
+    ];
+
+    public static object Pricing(decimal cop, object[] scales) => new
+    {
+        prices = new Dictionary<string, decimal> { ["COP"] = cop },
+        scales,
+        packagingUnits = Array.Empty<int>()
+    };
+
+    /// <summary>Un producto con la opción «Talla» M y L: CAM-M a 30.000 y CAM-L a 32.000 COP, con las
+    /// mismas escalas salvo que <paramref name="scalesL"/> le dé a L las suyas. El nombre visible de cada
+    /// variante es «{<paramref name="name"/>} – M» y «{<paramref name="name"/>} – L».</summary>
+    public static async Task<Shirt> CreateShirtInTwoSizesAsync(
+        HttpClient client, Guid tenantId, object[]? scales = null, object[]? scalesL = null, string name = "Camiseta")
+    {
+        scales ??= NoDiscountScales();
+        scalesL ??= scales;
+        var optionResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/options",
+            new { name = "Talla", values = Sizes },
+            TestContext.Current.CancellationToken);
+        Assert.True(optionResponse.IsSuccessStatusCode, await optionResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var option = await optionResponse.Content.ReadFromJsonAsync<OptionDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(option);
+        var valueM = option.Values.Single(value => value.Name == "M").Id;
+        var valueL = option.Values.Single(value => value.Name == "L").Id;
+
+        var productResponse = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/products",
+            new
+            {
+                name,
+                optionIds = new[] { option.Id },
+                variants = new object[]
+                {
+                    new { code = "CAM-M", optionValueIds = new[] { valueM }, pricing = Pricing(30_000m, scales) },
+                    new { code = "CAM-L", optionValueIds = new[] { valueL }, pricing = Pricing(32_000m, scalesL) },
+                }
+            },
+            TestContext.Current.CancellationToken);
+        Assert.True(productResponse.IsSuccessStatusCode, await productResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        var product = await productResponse.Content.ReadFromJsonAsync<ProductDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(product);
+
+        return new Shirt(
+            product.Id,
+            product.Variants.Single(variant => variant.Code == "CAM-M").Id,
+            product.Variants.Single(variant => variant.Code == "CAM-L").Id,
+            option.Id,
+            valueM,
+            valueL);
+    }
+
     /// <summary>
     /// Sube un archivo real a Storage (misma sesión de carga firmada que ya usa el resto del
     /// backend) y lo deja en <c>Available</c>. Devuelve su id. Necesita
@@ -647,6 +741,8 @@ internal static class QuotationsApiHarness
                     new { bankName, accountNumber, currency },
                 },
                 taxId = $"901.{Random.Shared.Next(100, 999)}.{Random.Shared.Next(100, 999)}-2",
+                country = "CO",
+                documentType = "NIT",
                 cityId,
                 phone = "6015550000",
                 email = "facturacion@qep.example.co",
@@ -814,6 +910,32 @@ internal static class QuotationsApiHarness
             UPDATE tenancy.tenants
             SET date_format = COALESCE({dateFormat}, date_format),
                 number_format = COALESCE({numberFormat}, number_format)
+            WHERE id = {tenantId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Politica de campos del cliente del tenant (documento y ciudad x al guardar / al facturar), por SQL como lo
+    /// haria una pantalla de configuracion.
+    /// </summary>
+    public static async Task SetTenantCustomerFieldPolicyAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        bool documentOnSave,
+        bool documentOnBilling,
+        bool cityOnSave,
+        bool cityOnBilling)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE tenancy.tenants SET
+                customer_document_required_on_save = {documentOnSave},
+                customer_document_required_on_billing = {documentOnBilling},
+                customer_city_required_on_save = {cityOnSave},
+                customer_city_required_on_billing = {cityOnBilling}
             WHERE id = {tenantId}
             """,
             TestContext.Current.CancellationToken);

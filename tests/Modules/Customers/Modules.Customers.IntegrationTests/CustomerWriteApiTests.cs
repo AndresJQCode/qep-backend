@@ -380,7 +380,6 @@ public sealed class CustomerWriteApiTests
         var fields = await ValidationFieldsAsync(response);
         Assert.Contains("Name", fields);
         Assert.Contains("IdentificationType", fields);
-        Assert.Contains("IdentificationNumber", fields);
         Assert.Contains("Email", fields);
         Assert.Contains("Phone", fields);
         Assert.Contains("Country", fields);
@@ -897,6 +896,83 @@ public sealed class CustomerWriteApiTests
         Assert.Null(customer.Department);
     }
 
+    [Fact]
+    public async Task ASpanishNifRoundTripsThroughPostGetAndPut()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+        var body = NewForeignCustomerBody(classification.Id, identificationNumber: "12345678Z");
+
+        var created = await client.PostAsJsonAsync(CustomersUrl(), body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var customer = await created.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(customer);
+        var read = await client.GetFromJsonAsync<CustomerResponse>(
+            $"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+        Assert.Equal("NIF", read?.IdentificationType);
+
+        var updated = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}", body, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+        var saved = await updated.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("NIF", saved?.IdentificationType);
+    }
+
+    [Fact]
+    public async Task AColombianTypeForASpanishCustomerIsA422OnIdentificationType()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(),
+            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(["IdentificationType"], await ValidationFieldsAsync(response));
+        Assert.Equal("validation.failed", await ProblemCodeAsync(response));
+    }
+
+    // Una fila guardada antes de la regla se sigue leyendo, y la regla sólo le exige corregirse al guardar.
+    [Fact]
+    public async Task ANonConformingStoredCustomerStillReadsAndIsFixedOnItsNextSave()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+        var customer = await CreateCustomerAsync(client, city.CityId, classification.Id);
+        await ForceIdentificationAsync(connectionString, customer.Id, "ES", "Madrid", "Cc");
+
+        var read = await client.GetAsync($"{CustomersUrl()}/{customer.Id}", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var stored = await read.Content.ReadFromJsonAsync<CustomerResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("CC", stored?.IdentificationType);
+
+        var rejected = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}",
+            NewForeignCustomerBody(classification.Id, identificationType: "CC"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, rejected.StatusCode);
+        Assert.Equal(["IdentificationType"], await ValidationFieldsAsync(rejected));
+
+        var fixedUp = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{customer.Id}", NewForeignCustomerBody(classification.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, fixedUp.StatusCode);
+    }
+
     /// <summary>
     /// El CUC es <c>{prefijo}{depto}{consecutivo}</c> y un cliente de afuera no tiene departamento
     /// DIVIPOLA. Van <c>00</c> en ese lugar y **no** se omiten: los ultimos ocho caracteres son la
@@ -968,11 +1044,11 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var fields = await ValidationFieldsAsync(response);
-        Assert.Contains("CityName", fields);
+        // La ciudad la exige la politica del tenant (por defecto, al guardar), no el validador.
+        Assert.Equal("customers.customer.city_name_required", await ProblemCodeAsync(response));
         // El carril que no aplica no se reclama: pedirle un `cityId` a un cliente de Madrid
         // seria pedirle un dato que no existe.
-        Assert.DoesNotContain("CityId", fields);
+        Assert.Equal(["CityName"], await ValidationFieldsAsync(response));
     }
 
     [Fact]
@@ -1001,9 +1077,8 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var fields = await ValidationFieldsAsync(response);
-        Assert.Contains("CityId", fields);
-        Assert.DoesNotContain("CityName", fields);
+        Assert.Equal("customers.customer.city_required", await ProblemCodeAsync(response));
+        Assert.Equal(["CityId"], await ValidationFieldsAsync(response));
     }
 
     [Fact]
@@ -1156,5 +1231,135 @@ public sealed class CustomerWriteApiTests
         var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.Contains("customers.customer.person_type_required", text);
         Assert.Contains("PersonType", await ValidationFieldsAsync(response));
+    }
+
+    private static object BodyWithoutDocument(
+        Guid? cityId, Guid classificationId, string? type = null, string? number = null, string name = "Sin Documento S.A.S.") =>
+        new
+        {
+            name,
+            identificationType = type,
+            identificationNumber = number,
+            phone = "310 935 2187",
+            email = "compras@verde.co",
+            address = "Calle 10 # 45-12",
+            country = "CO",
+            cityId,
+            classificationId,
+            withRetention = false,
+            vatSurplus = false
+        };
+
+    [Fact]
+    public async Task ACustomerWithoutDocumentGetsACucWhenThePolicyAllowsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.True(body.GetProperty("isComplete").GetBoolean());
+        Assert.False(string.IsNullOrEmpty(body.GetProperty("cuc").GetString()));
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, body.GetProperty("identificationType").ValueKind);
+    }
+
+    [Fact]
+    public async Task TwoCustomersWithoutDocumentCoexist()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var first = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id, name: "Uno"), TestContext.Current.CancellationToken);
+        var second = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id, name: "Dos"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+    }
+
+    // Ruling P2: un tipo sin numero conserva el codigo que ya daba el dominio.
+    [Fact]
+    public async Task ATypeWithoutNumberIsA422OnTheNumber()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id, type: "NIT"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.identification_number_required", await ProblemCodeAsync(response));
+        Assert.Equal(["IdentificationNumber"], await ValidationFieldsAsync(response));
+    }
+
+    [Fact]
+    public async Task TheDefaultPolicyStillRequiresTheDocument()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var response = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("customers.customer.identification_required", await ProblemCodeAsync(response));
+        Assert.Equal(
+            ["IdentificationNumber", "IdentificationType"],
+            (await ValidationFieldsAsync(response)).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task ReenablingThePolicyDoesNotBlockEditingAnOldCustomer()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        await SeedTenantAsync(factory);
+        await SetTenantCustomerFieldPolicyAsync(factory, false, true, false, true);
+        using var client = CreateManager(factory);
+        var city = await EnsureCityAsync(client);
+        var classification = await CreateClassificationAsync(client);
+
+        var old = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(null, classification.Id, name: "Antiguo"), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, old.StatusCode);
+        var oldId = (await old.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
+        var withCity = await client.PostAsJsonAsync(
+            CustomersUrl(), BodyWithoutDocument(city.CityId, classification.Id, name: "Con ciudad"), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, withCity.StatusCode);
+        var withCityId = (await withCity.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken)).GetProperty("id").GetGuid();
+
+        await SetTenantCustomerFieldPolicyAsync(factory, true, true, true, true);
+
+        var rename = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{oldId}", BodyWithoutDocument(null, classification.Id, name: "Antiguo renombrado"), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, rename.StatusCode);
+
+        // Ruling P4: el cliente que SI tenia ciudad. Borrarla es un cambio, asi que la opcion B la exige.
+        var clearCity = await client.PutAsJsonAsync(
+            $"{CustomersUrl()}/{withCityId}", BodyWithoutDocument(null, classification.Id, name: "Con ciudad"), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, clearCity.StatusCode);
+        Assert.Equal("customers.customer.city_required", await ProblemCodeAsync(clearCity));
     }
 }

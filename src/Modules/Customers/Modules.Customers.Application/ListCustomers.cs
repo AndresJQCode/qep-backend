@@ -9,12 +9,18 @@ namespace Modules.Customers.Application;
 /// <c>Name</c>/<c>IdentificationNumber</c>/<c>Cuc</c> son las tres cajas separadas del listado
 /// (CLI-FILTROS-01), cada una filtrando su propio campo con ILIKE — se combinan con AND cuando
 /// se llena mas de una. <c>Search</c> es el criterio combinado de un solo termino (OR entre
-/// identificacion y CUC, <b>sin</b> nombre): existe porque el combobox de clientes de
-/// <c>quotes</c> (<c>useQuoteCustomerOptions</c>) necesita un unico cuadro de texto libre, no
-/// tres — y ahi se busca por NIT o CUC a proposito, que es lo que quien cotiza tiene a mano y
-/// lo que distingue a un cliente de su homonimo. Los dos criterios son independientes y se
+/// nombre, identificacion, CUC y telefono; el telefono por sus digitos, desde siete): existe
+/// porque el combobox de clientes de <c>quotes</c> (<c>useQuoteCustomerOptions</c>) necesita un
+/// unico cuadro de texto libre, no tres. Los dos criterios son independientes y se
 /// pueden combinar (Search Y ademas Name/IdentificationNumber/Cuc), aunque en la practica cada
 /// consumidor usa solo uno de los dos.
+///
+/// <c>Phone</c> es una cuarta caja al nivel de esas tres (AND): solo los digitos del valor contra el
+/// telefono normalizado, sin el minimo de siete de <c>Search</c> — quien llena el campo Telefono ya
+/// dijo que busca un telefono. Sin ningun digito el filtro no aplica.
+///
+/// <c>Contacts</c> (spec 2026-11-10 §5) es <c>include</c> o <c>exclude</c>: sin el, los contactos de una empresa aparecen solo
+/// cuando hay una busqueda (<see cref="CustomerContactsRule"/>). <c>Search</c> y <c>Name</c> tambien comparan la razon social.
 /// </summary>
 public sealed record ListCustomersQuery(
     Guid TenantId,
@@ -26,7 +32,9 @@ public sealed record ListCustomersQuery(
     IReadOnlyCollection<Guid>? CityIds,
     int Page,
     int PageSize,
-    string? IsComplete = null) : IQuery<CustomerPage>;
+    string? IsComplete = null,
+    string? Phone = null,
+    string? Contacts = null) : IQuery<CustomerPage>;
 
 /// <summary>Spec 2026-10-10 §5.2 (P2): <c>isComplete</c> llega como texto para que un valor raro sea 422 con su
 /// clave y no un 400 del binding.</summary>
@@ -38,6 +46,11 @@ public sealed class ListCustomersValidator : AbstractValidator<ListCustomersQuer
             .Must(value => value is null || bool.TryParse(value, out _))
             .OverridePropertyName("isComplete")
             .WithMessage("isComplete debe ser true o false.");
+
+        RuleFor(query => query.Contacts)
+            .Must(value => CustomerContactsRule.TryParse(value, out _))
+            .OverridePropertyName(CustomerContactsRule.ParameterName)
+            .WithMessage(CustomerContactsRule.Message);
     }
 }
 
@@ -78,6 +91,7 @@ public sealed class ListCustomersHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     IExecutionContext executionContext,
     IValidator<ListCustomersQuery> validator)
     : IQueryHandler<ListCustomersQuery, CustomerPage>
@@ -91,6 +105,10 @@ public sealed class ListCustomersHandler(
         await validator.ValidateAndThrowAsync(query, cancellationToken);
         bool? isComplete = query.IsComplete is null ? null : bool.Parse(query.IsComplete);
 
+        var contactsFilter = CustomerContactsRule.ParseOrThrow(query.Contacts);
+        var includeContacts = CustomerContactsRule.IncludeContacts(
+            contactsFilter, query.Search, query.Name, query.IdentificationNumber, query.Cuc, query.Phone);
+
         var page = CustomerPaging.NormalizePage(query.Page);
         var pageSize = CustomerPaging.NormalizePageSize(query.PageSize);
         var cityIds = await ResolveCityIdsAsync(query.DepartmentIds, query.CityIds, cancellationToken);
@@ -101,10 +119,12 @@ public sealed class ListCustomersHandler(
             query.Name,
             query.IdentificationNumber,
             query.Cuc,
+            query.Phone,
             cityIds,
             isComplete,
             page,
             pageSize,
+            includeContacts,
             cancellationToken);
 
         var items = await ToDtosAsync(query.TenantId, customers, cancellationToken);
@@ -172,6 +192,12 @@ public sealed class ListCustomersHandler(
         var classificationsById = classifications.ToDictionary(
             classification => classification.Id);
 
+        // Spec 2026-11-10 §4.1: la empresa de cada contacto y los contactos de cada empresa, una consulta en lote cada una para
+        // toda la pagina (nunca una por fila).
+        var pageIds = customers.Select(customer => customer.Id.Value).ToArray();
+        var companies = await companyDirectory.FindCompaniesAsync(tenantId, pageIds, cancellationToken);
+        var contactCounts = await companyDirectory.CountContactsAsync(tenantId, pageIds, cancellationToken);
+
         var items = new List<CustomerDto>(customers.Count);
         foreach (var customer in customers)
         {
@@ -186,7 +212,11 @@ public sealed class ListCustomersHandler(
                         $"'{customer.Id}' was not found.");
             }
 
-            items.Add(customer.ToDto(city, classification, citiesById, []));
+            var company = companies.TryGetValue(customer.Id.Value, out var companyRef)
+                ? new CustomerCompanyDto(companyRef.Id, companyRef.Name, companyRef.IsComplete, companyRef.IsActive)
+                : null;
+            items.Add(customer.ToDto(
+                city, classification, citiesById, [], company, contactCounts.GetValueOrDefault(customer.Id.Value)));
         }
 
         return items;

@@ -89,7 +89,32 @@ public sealed record CustomerDto(
     /// los demás handlers devuelven <c>null</c> porque un fusionado no se escribe.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>; <c>null</c> es «sin tipo».</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: la empresa de la que este cliente es contacto; <c>null</c> si no tiene. Siempre se llena por
+    /// <c>CustomerMapping.ToDtoAsync</c>, el camino que comparten todos los handlers que responden la ficha.</summary>
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: cuántos contactos sin fusionar tiene la empresa (0 si no es empresa). Lo llenan el listado y
+    /// <c>CustomerMapping.ToDtoAsync</c>.</summary>
+    int ContactCount = 0,
+    /// <summary>Los contactos de la empresa, hasta <see cref="CustomerContactsLimits.MaxInDetail"/>, por nombre. Sólo lo llena
+    /// <c>CustomerMapping.ToDtoAsync</c> (la ficha); el listado no los trae y deja <c>null</c>.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null);
+
+/// <summary>Spec 2026-11-10 §4.2: un contacto como lo pinta la ficha de su empresa.</summary>
+public sealed record CustomerContactDto(Guid Id, string Name, string? Phone, string? Email, bool IsComplete, bool IsActive);
+
+/// <summary>G12: la ficha de una empresa trae a lo sumo estos contactos; <c>contactCount</c> sigue contando todos.</summary>
+public static class CustomerContactsLimits
+{
+    public const int MaxInDetail = 100;
+}
+
+/// <summary>Spec 2026-11-10 §4.1: la empresa de un contacto, ya con su etiqueta (<c>BusinessName ?? Name</c>, A4). Es un objeto
+/// y no un id suelto (BFF): la ficha pinta el nombre, el aviso de «incompleta» y «inactiva» sin un segundo <c>GET</c>.</summary>
+public sealed record CustomerCompanyDto(Guid Id, string Name, bool IsComplete, bool IsActive);
+
+/// <summary>El cuerpo de <c>PUT /customers/{id}/company</c>: <c>null</c> desvincula.</summary>
+public sealed record SetCustomerCompanyRequest(Guid? CompanyId);
 
 /// <summary>
 /// A dónde fue un cliente fusionado. Es un objeto y no un id suelto (BFF): la ficha del fusionado muestra «Fusionado con
@@ -127,7 +152,13 @@ public sealed record CustomerResponse(
     /// no existe». <c>CustomerMergeResponse</c> lo copia; una prueba de paridad amarra que los dos records tengan los mismos campos.</summary>
     CustomerMergedIntoDto? MergedInto = null,
     /// <summary>Spec 2026-10-26: <c>null</c> es «sin tipo» y viaja igual (sin <c>JsonIgnore</c>).</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec 2026-11-10: viaja siempre, <c>null</c> incluido (sin <c>JsonIgnore</c>), como <c>MergedInto</c>.</summary>
+    CustomerCompanyDto? Company = null,
+    /// <summary>Spec 2026-11-10 §4.2: los contactos de la empresa por nombre (hasta 100); <c>[]</c> para quien no tiene.</summary>
+    IReadOnlyList<CustomerContactDto>? Contacts = null,
+    /// <summary>Todos los contactos sin fusionar, aunque <c>Contacts</c> venga recortada.</summary>
+    int ContactCount = 0);
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -159,7 +190,14 @@ public sealed record CustomerListItemResponse(
     bool IsComplete,
     /// <summary>Spec 2026-10-24 (B4): «Fusionar con…» propone como el que queda al cliente más viejo, y la pantalla lo elige con
     /// esta fecha sin pedir la ficha de cada candidato.</summary>
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>Spec 2026-11-10 §4.1: la razón social, para que la grilla distinga a una empresa de una persona sin pedir la ficha.</summary>
+    string? BusinessName,
+    string? PersonType,
+    /// <summary>La empresa de un contacto (<c>null</c> si no lo es), resuelta en lote para toda la página.</summary>
+    CustomerCompanyDto? Company,
+    /// <summary>Cuántos contactos sin fusionar tiene la fila (0 si no es empresa), contados en lote para toda la página.</summary>
+    int ContactCount);
 
 /// <summary>
 /// El sobre del listado, con el total que la paginacion necesita.
@@ -263,7 +301,9 @@ public sealed record CustomerImportRowData(
     string City,
     string Classification,
     string? WithRetention,
-    string? VatSurplus);
+    string? VatSurplus,
+    /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>
+    string? CompanyIdentificationNumber = null);
 
 /// <summary>
 /// Una fila que NO se importo, con lo que la persona que subio el archivo necesita para
@@ -453,18 +493,21 @@ public sealed record CustomerMergePartyDto(
 public sealed record CustomerMergeMoveDto(string Kind, int Count);
 
 /// <summary>
-/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las ocho clases siempre, en el orden del enum y también
+/// La vista previa de una fusión (§3.4). BFF: <c>Moves</c> viaja con las nueve clases siempre (<c>Contacts</c> al final), en el orden del enum y también
 /// en cero, para que la confirmación dibuje en gris la que está en cero sin conocer el enum; <c>Tags</c> son las que el que
 /// queda gana de verdad (sin repetir y dentro del tope), no las que traen los fusionados. <c>FilledFields</c> son nombres
 /// de <c>CustomerMergeField</c> (B2): lo que la ficha del que queda recibe. <c>DocumentsDiffer</c> avisa que algún
 /// fusionado tiene un número distinto del que queda al normalizar ambos; si a uno de los dos le falta el número, no cuenta.
+/// <c>CompanyConflict</c> avisa que el que queda seguiría siendo contacto y además tendría contactos: la vista previa responde 200
+/// y el POST de la fusión de esa misma selección responde 422 <c>customers.customer.merge_company_conflict</c>.
 /// </summary>
 public sealed record CustomerMergePreviewResponse(
     CustomerMergePartyDto Survivor,
     IReadOnlyList<CustomerMergePartyDto> Merged,
     bool DocumentsDiffer,
     IReadOnlyList<CustomerMergeMoveDto> Moves,
-    IReadOnlyList<string> FilledFields);
+    IReadOnlyList<string> FilledFields,
+    bool CompanyConflict = false);
 
 /// <summary>D-F5: una etiqueta que no cupo en el que queda. Sólo lo que el aviso nombra: el color y el conteo no hacen falta
 /// para decir cuáles no cupieron.</summary>
@@ -473,6 +516,10 @@ public sealed record CustomerMergeDroppedTagDto(Guid Id, string Name);
 /// <summary>El cuerpo de <c>POST /customers/{survivorId}/merge</c>. Opcional en el binding para que una lista ausente sea un
 /// 422 con <c>errors.MergedCustomerIds</c> del validador y no un 400 del deserializador.</summary>
 public sealed record MergeCustomersRequest(IReadOnlyList<Guid>? MergedCustomerIds);
+
+/// <summary>El cuerpo de <c>POST /customers/bulk-delete</c>. Opcional en el binding para que una lista ausente sea un 422 con
+/// <c>errors.CustomerIds</c> del validador y no un 400 del deserializador.</summary>
+public sealed record BulkDeleteCustomersRequest(IReadOnlyList<Guid>? CustomerIds);
 
 /// <summary>
 /// La respuesta de la fusión (B3). BFF: los mismos campos que <see cref="CustomerResponse"/>, en el mismo objeto, para que
@@ -507,4 +554,7 @@ public sealed record CustomerMergeResponse(
     MarketingConsentDto MarketingConsent,
     CustomerMergedIntoDto? MergedInto,
     string? PersonType,
+    CustomerCompanyDto? Company,
+    IReadOnlyList<CustomerContactDto> Contacts,
+    int ContactCount,
     IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);

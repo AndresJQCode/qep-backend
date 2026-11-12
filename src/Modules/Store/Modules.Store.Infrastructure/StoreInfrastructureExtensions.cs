@@ -29,10 +29,10 @@ public static class StoreInfrastructureExtensions
 
         services.AddScoped<IOnlineStoreRepository, OnlineStoreRepository>();
         services.AddScoped<IStoreDomainRepository, StoreDomainRepository>();
-        services.AddScoped<IStoreOrderRequestRepository, StoreOrderRequestRepository>();
-        services.AddScoped<IStoreRequestNumberGenerator, StoreRequestNumberGenerator>();
+        services.AddScoped<IStoreOrderConsents, StoreOrderConsentRepository>();
         services.AddScoped<IStoreUnitOfWork, StoreUnitOfWork>();
         services.AddScoped<IStoreAuditPublisher, StoreAuditPublisher>();
+        services.AddScoped<IStoreOutbox, StoreOutboxWriter>();
 
         // Secretos y topes de la tienda: validados al arrancar (los secretos son obligatorios sólo en Production).
         services.AddOptions<StoreOptions>().Bind(configuration.GetSection(StoreOptions.SectionName)).ValidateOnStart();

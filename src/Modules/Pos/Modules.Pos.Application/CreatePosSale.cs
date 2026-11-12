@@ -4,6 +4,7 @@ using BuildingBlocks.Domain.Pricing;
 using FluentValidation;
 using Modules.Pos.Domain;
 using Modules.Tenancy.Application;
+using Modules.Tenancy.Domain;
 
 namespace Modules.Pos.Application;
 
@@ -84,9 +85,11 @@ public sealed class CreatePosSaleHandler(
     IPosSaleIdLock saleIdLock,
     IPosAuditPublisher auditPublisher,
     IPosProductLookup products,
+    IPosVariantCostLookup costs,
     IPosCashierLookup cashiers,
     IMembershipDirectory membershipDirectory,
     IPosCustomerLookup customers,
+    ITenantDirectory tenantDirectory,
     ITenantPriceRounding priceRounding,
     IExecutionContext executionContext,
     IClock clock,
@@ -162,10 +165,18 @@ public sealed class CreatePosSaleHandler(
                     throw new PosDomainException("pos.sale.customer_inactive", "The customer is inactive.");
                 }
 
+                // Spec 2026-11-09: sin documento sólo se vende si el tenant no lo exige al facturar. La política
+                // se lee sólo cuando falta el documento, y un tenant sin fila rige por el default (todo exigido).
                 if (found.IdentificationType is null || found.IdentificationNumber is null)
                 {
-                    throw new PosDomainException(
-                        "pos.sale.customer_identification_missing", "The customer has no identification document.");
+                    var regional = await tenantDirectory.GetRegionalSettingsAsync(
+                        new TenantId(command.TenantId), cancellationToken);
+                    var policy = regional?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default;
+                    if (policy.Document.OnBilling)
+                    {
+                        throw new PosDomainException(
+                            "pos.sale.customer_identification_missing", "The customer has no identification document.");
+                    }
                 }
 
                 customer = new PosSaleCustomer(found.Id, found.Name, found.IdentificationType, found.IdentificationNumber);
@@ -239,8 +250,10 @@ public sealed class CreatePosSaleHandler(
         // Por variante (spec 2026-10-20 §4): dos tallas del mismo producto son dos líneas, cada una
         // con su precio y su foto. Los códigos pos.sale.product_* se conservan: son contrato con el
         // frontend.
-        var found = await products.FindManyAsync(
-            command.TenantId, command.Lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken);
+        var variantIds = command.Lines.Select(line => line.VariantId).Distinct().ToArray();
+        var found = await products.FindManyAsync(command.TenantId, variantIds, cancellationToken);
+        // El costo de la lista de la caja, igual que el precio (spec 2026-11-10 §4.2): se congela en la línea.
+        var unitCosts = await costs.FindAsync(command.TenantId, session.Currency, variantIds, cancellationToken);
 
         return command.Lines.Select(line =>
         {
@@ -269,9 +282,11 @@ public sealed class CreatePosSaleHandler(
                     "pos.sale.price_changed", $"The price or tax rate of '{product.Code}' changed.");
             }
 
+            // Sin costo en esta moneda queda null: el catálogo exige > 0, así que un cero no existe.
+            decimal? unitCost = unitCosts.TryGetValue(line.VariantId, out var cost) ? cost : null;
             return new PosSaleLineInput(
                 product.VariantId, product.ProductId, product.Code, product.Name, line.Quantity, price,
-                line.DiscountPercentage, product.TaxPercentage);
+                line.DiscountPercentage, product.TaxPercentage, unitCost);
         }).ToArray();
     }
 

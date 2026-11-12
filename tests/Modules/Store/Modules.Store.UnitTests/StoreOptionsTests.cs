@@ -17,7 +17,6 @@ public sealed class StoreOptionsTests
 
         Assert.Equal("Store", StoreOptions.SectionName);
         Assert.Equal("lulocrm.com", options.RootDomain);
-        Assert.Equal(TimeSpan.FromMinutes(2), options.ConversionLease);
         Assert.Equal(500, options.DailyRequestCap);
         Assert.True(options.Turnstile.Enabled);
         Assert.Equal("https://challenges.cloudflare.com/turnstile/v0/siteverify", options.Turnstile.VerifyUrl);
@@ -105,15 +104,6 @@ public sealed class StoreOptionsTests
         options.DailyRequestCap = cap;
 
         Assert.Contains("Store:DailyRequestCap", Assert.Single(options.Validate()), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void TheConversionLeaseMustBePositive()
-    {
-        var options = Valid();
-        options.ConversionLease = TimeSpan.Zero;
-
-        Assert.Contains("Store:ConversionLease", Assert.Single(options.Validate()), StringComparison.Ordinal);
     }
 
     [Fact]

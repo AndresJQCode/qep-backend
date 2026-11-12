@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Identification;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Pos.Application;
@@ -24,10 +25,40 @@ public sealed class PosCustomerLookupTests
         var customer = Registered("Laura Verde", IdentificationType.Cc, "1020304050");
         var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
 
-        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, Ct);
+        var found = await lookup.SearchAsync(TenantId, "laura", PosCustomerRules.Take, false, Ct);
 
         var item = Assert.Single(found);
         Assert.Equal(new PosCustomerRef(customer.Id.Value, "Laura Verde", "CC", "1020304050", false, true), item);
+    }
+
+    [Fact]
+    public async Task SearchMapsACompleteCustomerWithoutDocumentToARefWithNulls()
+    {
+        var customer = Customer.Create(
+            CustomerId.New(), TenantId, "CLI08000001", "Verde Esencial", null, null, null, null,
+            new CustomerContactInfo { Phone = "3000000000", Email = "v@verde.co", Address = "Calle 1", Country = "CO", CityId = Guid.CreateVersion7() },
+            new CustomerCommercialInfo(),
+            Now,
+            new PassThroughPhones());
+        var lookup = Lookup(new PosFakeCustomers(customer), new PosFakeProvisioning(), new PosFakeExecutionContext());
+
+        var found = await lookup.SearchAsync(TenantId, null, PosCustomerRules.Take, false, Ct);
+
+        var item = Assert.Single(found);
+        Assert.Equal(new PosCustomerRef(customer.Id.Value, "Verde Esencial", null, null, true, true), item);
+    }
+
+    [Fact]
+    public async Task CreateFromRegisterPassesAMissingDocumentThroughAsNulls()
+    {
+        var stored = Customer.CreateFromRegister(CustomerId.New(), TenantId, "Laura Verde", null, null, Now, new PassThroughPhones());
+        var provisioning = new PosFakeProvisioning { Result = stored.Id.Value };
+        var lookup = Lookup(new PosFakeCustomers(stored), provisioning, new PosFakeExecutionContext());
+
+        var created = await lookup.CreateFromRegisterAsync(TenantId, new NewPosCustomer("Laura Verde", null, null, null), Ct);
+
+        Assert.Equal(new PosCustomerRef(stored.Id.Value, "Laura Verde", null, null, false, true), created);
+        Assert.Equal(new RegisterCustomerData("Laura Verde", null, null, null), Assert.Single(provisioning.Calls).Data);
     }
 
     [Fact]
@@ -95,12 +126,16 @@ public sealed class PosCustomerLookupTests
     }
 
     // Pos.Application no ve Customers y por eso copia la lista de tipos; esta prueba es lo que impide que las dos diverjan.
+    // La alta rápida es sólo colombiana: sigue en los cuatro códigos de CO aunque Customers ya conozca siete.
     [Fact]
     public void TheIdentificationTypesMatchTheCustomersModule()
     {
         Assert.True(
             PosCustomerRules.IdentificationTypes.ToHashSet(StringComparer.OrdinalIgnoreCase)
-                .SetEquals(IdentificationTypeParser.SupportedWireValues));
+                .SetEquals(DocumentTypesByCountry.AllowedFor("CO")));
+        Assert.All(
+            PosCustomerRules.IdentificationTypes,
+            type => Assert.Contains(type, IdentificationTypeParser.SupportedWireValues, StringComparer.OrdinalIgnoreCase));
     }
 
     // Pos copia los anchos de nombre, documento y teléfono; si Customers los cambia, el alta rápida debe seguirlos.
@@ -145,15 +180,15 @@ public sealed class PosCustomerLookupTests
         public Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken, Guid? actorUserId = null, string? source = null) =>
             throw new NotSupportedException();
 
-        public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken) =>
+        public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid? actorUserId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-    public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public Task<ProvisionedCustomer> CreateIncompleteAsync(
-            Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ProvisionedCustomer> CreateIncompleteAsync(
+                Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken) =>
+                throw new NotSupportedException();
 
         public Task<ExternalCustomerCityOutcome> CompleteExternalSaleAsync(
             Guid tenantId,
@@ -180,7 +215,7 @@ public sealed class PosCustomerLookupTests
         public Dictionary<(IdentificationType Type, string Number), CustomerId> Identifications { get; } = [];
 
         public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
-            Guid tenantId, string? search, int take, CancellationToken cancellationToken) =>
+            Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Customer>>(
                 customers.Where(customer => customer.TenantId == tenantId && customer.IsActive).Take(take).ToList());
 
@@ -193,11 +228,11 @@ public sealed class PosCustomerLookupTests
                 Identifications.Where(pair => identifications.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
 
         public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
-            Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds,
-            bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+            Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds,
+            bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<Customer>> ListForExportAsync(
-            Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take,
+            Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> AnyWithClassificationAsync(
@@ -205,6 +240,9 @@ public sealed class PosCustomerLookupTests
 
         public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
             Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+            Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -230,11 +268,11 @@ public sealed class PosCustomerLookupTests
         public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
-public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+                throw new NotSupportedException();
 
-public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+        public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken) =>
+                    throw new NotSupportedException();
 
         public Task<bool> TryAttachWhatsAppUserIdAsync(Guid tenantId, CustomerId customerId, string whatsAppUserId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -249,6 +287,12 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
             throw new NotSupportedException();
 
         public Task<CustomerId?> FindIdByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public void Add(Customer customer) => throw new NotSupportedException();

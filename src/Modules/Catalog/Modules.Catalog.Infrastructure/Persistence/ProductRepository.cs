@@ -697,6 +697,10 @@ internal sealed class ProductRepository(CatalogDbContext dbContext) : IProductRe
 
     public void Add(Product product) => dbContext.Products.Add(product);
 
+    // Remove y no un ExecuteDelete: el producto viene rastreado de FindAsync y el DELETE tiene que salir en el mismo
+    // SaveChanges que el outbox, con el token de concurrencia de la fila (una versión que cambió es 412, no un borrado).
+    public void Remove(Product product) => dbContext.Products.Remove(product);
+
     // AddRange y no un SaveChanges propio: las filas quedan en el change tracker y salen en el
     // commit de CatalogUnitOfWork, junto al producto que las originó. Una lista vacía —el caso
     // normal de un PUT que no toca precios— es un no-op de EF, así que no hace falta guardarla.

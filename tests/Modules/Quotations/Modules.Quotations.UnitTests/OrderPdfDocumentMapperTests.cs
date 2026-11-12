@@ -195,25 +195,25 @@ public sealed class OrderPdfDocumentMapperTests
             15000m, 19, 12605.04m, 2394.96m, true, null);
         var order = new OrderResponse(
             Guid.CreateVersion7(), "PED-2026-0042", "Manual", null, null, Guid.CreateVersion7(), Guid.CreateVersion7(),
-            "Approved", "PaymentPending", "Transferencia", "COP", false, null, false, false, false, null, null, false,
+            "Open", "PaymentPending", "NotPrepared", false, "Transferencia", "COP", false, null, false, false, false, null, null, false,
             307714.29m, 19m, 58465.71m, 64620m, 381180m, 0m, 381180m, "Notas internas",
             new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123-456789-01", "COP"),
             [], new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), Guid.CreateVersion7(), null, null, null,
             null, null, null, null, null,
             new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero),
-            1, [], shipping, 12605.04m, 2394.96m);
+            1, [], shipping, 12605.04m, 2394.96m, null, null, null, null, 381180m);
         var client = new QuotationClientResponse(
             order.ClientId, "CUC-0042", "Comercializadora del Norte S.A.S.", "3001234567", "compras@ejemplo.co",
             "Calle 100 #15-20", Guid.CreateVersion7(), "Bogotá", Guid.CreateVersion7(), "Cundinamarca", null, false, false,
             true, DateTimeOffset.UtcNow, []);
         var billing = new QuotationBillingResponse(
-            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "Carrera 7 #71-52, Bogotá", "6015550100",
+            Guid.CreateVersion7(), "Ferretería Andina S.A.S.", "900.123.456-7", "NIT", "Carrera 7 #71-52, Bogotá", "6015550100",
             "Bancolombia", "123-456789-01", "COP");
         // 12 x 35.900 = 430.800; 15% = 64.620; línea = 366.180 con IVA adentro.
         var item = new QuotationItemResponse(
             Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "BRONCEADOR RITUAL DEL SOL", "BRO-01", null, [], 12m, 35900m,
             15m, 64620m, 30515m, 307714.29m, 19, 58465.71m, 1, nameof(QuotationDiscountOrigin.Own));
 
-        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], null);
+        return new OrderDetailResponse(order, client, "Ana Pérez", "ana@qep.co", billing, [item], null, [], [], []);
     }
 }

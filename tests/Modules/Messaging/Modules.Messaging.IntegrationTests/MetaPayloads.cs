@@ -70,6 +70,30 @@ internal static class MetaPayloads
         return Change("messages", value.ToJsonString());
     }
 
+    /// <summary>Spec 2026-11-10: un entrante <c>type = "contacts"</c> (el contacto compartido), con la forma del webhook de Meta:
+    /// <c>messages[].contacts</c> es el arreglo que trae <paramref name="contactsJson"/> tal cual (name, phones[].wa_id…). El
+    /// resto es como <see cref="Inbound"/>: BSUID, <c>from</c> y el perfil «Laura».</summary>
+    public static string InboundContacts(string phoneNumberId, string waId, string wamid, long timestamp, string contactsJson)
+    {
+        var message = new JsonObject
+        {
+            ["from"] = waId,
+            ["from_user_id"] = UserIdFor(waId),
+            ["id"] = wamid,
+            ["timestamp"] = Seconds(timestamp),
+            ["type"] = "contacts",
+            ["contacts"] = JsonNode.Parse(contactsJson),
+        };
+        var value = new JsonObject
+        {
+            ["messaging_product"] = "whatsapp",
+            ["metadata"] = Metadata(phoneNumberId, "15550000000"),
+            ["contacts"] = new JsonArray(new JsonObject { ["profile"] = new JsonObject { ["name"] = "Laura" }, ["user_id"] = UserIdFor(waId), ["wa_id"] = waId }),
+            ["messages"] = new JsonArray(message),
+        };
+        return Change("messages", value.ToJsonString());
+    }
+
     public static string InboundText(
         string phoneNumberId,
         string waId,

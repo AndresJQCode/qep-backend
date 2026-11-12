@@ -28,6 +28,17 @@ public sealed class ExcelCustomerRowDeduplicatorTests
             "No");
 
     [Fact]
+    public void RowsWithoutDocumentAreNeverDuplicatesOfEachOther()
+    {
+        var rows = new[] { Row(2, "", ""), Row(3, "", ""), Row(4, "NIT", "900.111.111-1") };
+
+        var (firstOccurrences, duplicates) = ExcelCustomerRowDeduplicator.Partition(rows);
+
+        Assert.Equal(3, firstOccurrences.Count);
+        Assert.Empty(duplicates);
+    }
+
+    [Fact]
     public void RowsWithDistinctIdentificationsAreAllFirstOccurrences()
     {
         var rows = new[]

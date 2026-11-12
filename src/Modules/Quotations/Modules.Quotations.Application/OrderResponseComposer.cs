@@ -14,8 +14,7 @@ public sealed class OrderResponseComposer(
     IQuotationCustomerLookup customerLookup,
     IQuotationAdvisorLookup advisorLookup,
     IQuotationProductLookup productLookup,
-    IQuotationCompanyLookup companyLookup,
-    IOrderStoreRequestLookup storeRequestLookup)
+    IQuotationCompanyLookup companyLookup)
     : IOrderResponseComposer
 {
     public async Task<OrderDetailResponse> ComposeAsync(
@@ -38,10 +37,8 @@ public sealed class OrderResponseComposer(
             : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
-        // Sólo un pedido de la tienda tiene solicitud: los demás no pagan la consulta.
-        var storeRequest = order.Source == nameof(Domain.OrderSource.Store)
-            ? await storeRequestLookup.FindAsync(tenantId, order.Id, cancellationToken)
-            : null;
+        var clientContacts = await QuotationResponseComposer.ClientContactsAsync(
+            customerLookup, tenantId, customer, cancellationToken);
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -65,19 +62,7 @@ public sealed class OrderResponseComposer(
                     entry.Details))
                 .ToArray(),
             QuotationResponseComposer.AvailableFloors(order.Items, products),
-            storeRequest is null
-                ? null
-                : new OrderStoreRequestResponse(
-                    storeRequest.Id,
-                    storeRequest.Number,
-                    storeRequest.CustomerId,
-                    storeRequest.CustomerName,
-                    storeRequest.Phone,
-                    storeRequest.PhoneE164,
-                    storeRequest.Email,
-                    storeRequest.DisplayedTotal,
-                    storeRequest.Currency,
-                    storeRequest.TotalDifference));
+            clientContacts);
     }
 }
 
@@ -98,6 +83,8 @@ public static class OrderResponses
             order.AdvisorId,
             order.Status,
             order.PaymentStatus,
+            order.FulfillmentStatus,
+            order.Invoiced,
             order.PaymentMethod,
             order.Currency,
             order.IsRetail,
@@ -125,8 +112,8 @@ public static class OrderResponses
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
-            order.ApprovedAt,
-            order.ApprovedBy,
+            order.PaidMarkedAt,
+            order.PaidMarkedBy,
             order.CancelledAt,
             order.CancelledBy,
             order.CancellationReason,
@@ -142,6 +129,11 @@ public static class OrderResponses
                 .ToArray(),
             OrderShippingResponse.From(order.Shipping, order.ExternalShippingTitle),
             order.FreightSubtotal,
-            order.FreightTaxAmount);
+            order.FreightTaxAmount,
+            order.PreparedAt,
+            order.PreparedBy,
+            order.ArchivedAt,
+            order.ArchivedBy,
+            order.Balance);
     }
 }

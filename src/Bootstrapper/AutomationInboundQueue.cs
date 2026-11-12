@@ -13,7 +13,8 @@ internal sealed class AutomationInboundQueue(IAutomationInbox inbox) : IAutomati
     public async Task<IReadOnlyList<InboundQueueItem>> ClaimAsync(DateTimeOffset now, int batch, CancellationToken cancellationToken) =>
     [
         .. (await inbox.ClaimAsync(now, batch, cancellationToken)).Select(item => new InboundQueueItem(
-            item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.Opened, item.CreatedAt, item.Attempts)),
+            item.MessageId, item.TenantId, item.ConnectionId, item.ConversationId, item.Opened, item.CreatedAt, item.Attempts,
+            ReleaseRun: item.Kind == AutomationInboxKinds.ReleaseRun)),
     ];
 
     public Task<bool> CompleteAsync(Guid tenantId, Guid messageId, int attempts, string outcome, CancellationToken cancellationToken) =>

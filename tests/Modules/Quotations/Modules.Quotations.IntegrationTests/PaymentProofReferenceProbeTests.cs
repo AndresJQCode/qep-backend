@@ -80,7 +80,7 @@ public sealed class PaymentProofReferenceProbeTests
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotationId}/order",
             new ConvertQuotationToOrderRequest(
-                "FullPaymentReceived", null, [new OrderPaymentProofRequest(proofFileId, 10_000m)]),
+                null, [new OrderPaymentProofRequest(proofFileId, 10_000m)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);

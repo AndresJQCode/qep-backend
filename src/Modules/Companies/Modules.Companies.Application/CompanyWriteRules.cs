@@ -21,7 +21,13 @@ public interface ICompanyWriteCommand
 
     string TaxId { get; }
 
-    Guid CityId { get; }
+    string? Country { get; }
+
+    string? DocumentType { get; }
+
+    Guid? CityId { get; }
+
+    string? CityName { get; }
 
     string? Phone { get; }
 
@@ -42,7 +48,7 @@ public interface ICompanyWriteCommand
 /// los dos repos.
 ///
 /// Los nombres de propiedad viajan en PascalCase y asi los espera el consumidor
-/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, CityId, Phone, Email, Address. Los de la coleccion llegan
+/// (<c>FIELD_BY_BACKEND_NAME</c>): Name, TaxId, Country, DocumentType, CityId, CityName, Phone, Email, Address. Los de la coleccion llegan
 /// indexados —<c>BankAccounts[0].AccountNumber</c>— porque marcar la fila equivocada de un campo
 /// repetido es lo mismo que no marcar ninguna.
 /// </summary>
@@ -57,10 +63,51 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
             .NotEmpty()
             .MaximumLength(Company.TaxIdMaxLength);
 
-        // Sólo se comprueba que no venga vacía — que la fila exista y sea del tenant lo
-        // resuelve el handler contra ICompanyGeographyLookup, y en la carrera, la FK de base.
-        // Mismo criterio que CityId/ClassificationId en CustomerWriteRules.
-        RuleFor(command => command.CityId).NotEmpty();
+        // Dos RuleFor por campo: el When() gobierna toda la cadena que lo precede, y un NotEmpty()
+        // delante quedaría apagado justo cuando el valor viene vacío.
+        // País y tipo de documento son obligatorios en POST y PUT: la ventana que resolvía un
+        // cuerpo sin país (Colombia/NIT o el país guardado) se cerró el 2026-11-08, por decisión
+        // del owner, al desplegar backend y frontend juntos.
+        RuleFor(command => command.Country)
+            .NotEmpty();
+        RuleFor(command => command.Country)
+            .Must(country => IsValidCountry(country!))
+            .WithMessage(
+                $"The country must be an ISO-3166-1 alpha-2 code ({Company.CountryLength} letters).")
+            .When(command => !string.IsNullOrWhiteSpace(command.Country));
+
+        // El tipo de documento tiene que estar permitido para el país (misma tabla que el
+        // dominio, no una lista repetida aquí).
+        RuleFor(command => command.DocumentType)
+            .NotEmpty();
+        RuleFor(command => command.DocumentType)
+            .Must(type => CompanyDocumentTypes.TryParse(type, out _))
+            .WithMessage("The document type is not recognized.")
+            .When(command => !string.IsNullOrWhiteSpace(command.DocumentType));
+        RuleFor(command => command.DocumentType)
+            .Must((command, type) =>
+                CompanyDocumentTypes.TryParse(type, out var parsed)
+                && CompanyDocumentTypes.AllowedFor(EffectiveCountry(command)).Contains(parsed))
+            .WithMessage("The document type is not allowed for the country.")
+            .When(command =>
+                CompanyDocumentTypes.TryParse(command.DocumentType, out _) && HasValidCountry(command));
+
+        // El país decide cuál de los dos carriles de ciudad se exige, y el error tiene que caer en
+        // el campo que el formulario tiene en pantalla (combobox o texto). Sin un país válido no
+        // hay carril que exigir: el error ya cae en Country. Que la fila exista y sea del tenant
+        // lo resuelve el handler contra ICompanyGeographyLookup. Guid.Empty cuenta como ausente:
+        // NotEmpty() en un Guid? sólo rechaza null.
+        RuleFor(command => command.CityId)
+            .Must(cityId => cityId is { } value && value != Guid.Empty)
+            .WithMessage("The city is required.")
+            .When(command => HasValidCountry(command) && IsColombian(command));
+        RuleFor(command => command.CityName)
+            .NotEmpty()
+            .WithMessage("The city is required.")
+            .When(command => HasValidCountry(command) && !IsColombian(command));
+        RuleFor(command => command.CityName)
+            .MaximumLength(Company.CityNameMaxLength)
+            .When(command => !string.IsNullOrWhiteSpace(command.CityName));
 
         RuleFor(command => command.Phone)
             .MaximumLength(CompanyContactInfo.PhoneMaxLength);
@@ -117,6 +164,29 @@ internal sealed class CompanyWriteRules : AbstractValidator<ICompanyWriteCommand
             .WithMessage("The same bank account is listed more than once.")
             .When(command => command.BankAccounts is not null);
     }
+
+    /// <summary>
+    /// El país recortado y en mayúsculas. Los handlers lo aplican al comando antes de validar, así
+    /// validador, handler y dominio comparan contra el mismo valor: "co" y " CO" son Colombia para
+    /// los tres, y la búsqueda de ciudad del handler no se salta por la caja.
+    /// </summary>
+    internal static string? NormalizeCountry(string? country) =>
+        country?.Trim().ToUpperInvariant();
+
+    // Recortado y en mayúsculas también aquí: el validador no depende de que el llamador haya
+    // normalizado.
+    private static string EffectiveCountry(ICompanyWriteCommand command) =>
+        NormalizeCountry(command.Country) ?? string.Empty;
+
+    private static bool IsColombian(ICompanyWriteCommand command) =>
+        EffectiveCountry(command) == Company.ColombiaCountryCode;
+
+    private static bool HasValidCountry(ICompanyWriteCommand command) =>
+        command.Country is not null && IsValidCountry(command.Country);
+
+    // Se recorta antes de medir, igual que el dominio: " es " llega bien formado.
+    private static bool IsValidCountry(string country) =>
+        country.Trim().Length == Company.CountryLength && country.Trim().All(char.IsAsciiLetter);
 
     private static bool HasNoDuplicates(IReadOnlyList<CompanyBankAccountPayload> accounts)
     {

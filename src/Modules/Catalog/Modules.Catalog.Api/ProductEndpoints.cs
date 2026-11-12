@@ -59,6 +59,18 @@ public static class ProductEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Borrar es permanente aunque el producto esté en uso (modelo Shopify, spec 2026-11-08 D-5): las líneas que lo
+        // vendieron se quedan con su código y su nombre congelados. En cambio, deletedVariantIds del PUT sigue
+        // desactivando la variante usada en vez de borrarla; la diferencia es deliberada (decisión del owner 6). La
+        // versión va en If-Match, como en las categorías: un DELETE no lleva cuerpo.
+        group.MapDelete("/products/{productId:guid}", DeleteProductAsync)
+            .RequireAuthorization(CatalogPermissions.ProductManage)
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
+
         // Un recurso propio y no un PUT por destino: la operación es "copiar estas escalas a
         // estas variantes", y partirla en N escrituras deja al cliente orquestando una
         // transacción que no puede cerrar. Bajo /products y no bajo la variante origen porque
@@ -213,6 +225,20 @@ public static class ProductEndpoints
             cancellationToken);
 
         return Results.Ok(ToResponse(product));
+    }
+
+    private static async Task<IResult> DeleteProductAsync(
+        Guid tenantId,
+        Guid productId,
+        HttpContext httpContext,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        await dispatcher.SendAsync(
+            new DeleteProductCommand(tenantId, productId, CatalogIfMatch.RequireVersion(httpContext, "product")),
+            cancellationToken);
+
+        return Results.NoContent();
     }
 
     private static async Task<IResult> SetStoreVisibilityAsync(

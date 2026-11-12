@@ -20,4 +20,12 @@ internal sealed class TenantQuotationSettingsRow
     /// <summary>La opción de quién paga que el formulario elige por defecto (spec 2026-10-17 §4.4.1), por nombre
     /// del enum. Nula hasta que el tenant la elige; el CHECK impide que sea una de las apagadas.</summary>
     public string? DefaultFreightChargeMode { get; set; }
+
+    /// <summary>Ajustes del pedido (spec 2026-11-10 §6). Los defaults de la columna son los del owner, así que una
+    /// fila de antes de la migración o recién creada por <c>LockRowAsync</c> los tiene sin escribir nada.</summary>
+    public bool RequirePaymentProofToMarkPaid { get; set; }
+
+    public bool RequireFullPaymentToInvoice { get; set; } = true;
+
+    public bool AutoArchiveOrders { get; set; }
 }

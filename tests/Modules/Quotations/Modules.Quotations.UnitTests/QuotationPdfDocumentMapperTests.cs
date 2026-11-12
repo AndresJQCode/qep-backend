@@ -419,6 +419,32 @@ public sealed class QuotationPdfDocumentMapperTests
         Assert.DoesNotContain("transporte", json);
     }
 
+    // La etiqueta del documento de la empresa emisora sigue su tipo, no un «NIT» fijo.
+    [Theory]
+    [InlineData("NIF", "NIF")]
+    [InlineData(null, "NIT")]
+    public void TheIssuerDocumentIsLabelledByItsType(string? documentType, string expectedLabel)
+    {
+        var billing = new QuotationBillingResponse(
+            Guid.CreateVersion7(), "Empresa", "B12345678", documentType, null, null,
+            "Bancolombia", "123", "COP");
+
+        var document = Map(Response() with { BillingAccount = billing });
+
+        Assert.Equal(expectedLabel, document.BillingAccount!.CompanyDocumentLabel);
+    }
+
+    [Fact]
+    public void TheBillingResponseCarriesTheCompanyDocumentType()
+    {
+        var account = new QuotationBillingAccountDto(Guid.CreateVersion7(), "Bancolombia", "123", "COP");
+        var company = new QuotationCompanyRef(
+            account.CompanyId, "Empresa", "B12345678", "NIF", true, null, null, []);
+
+        Assert.Equal("NIF", QuotationResponseComposer.ToBillingResponse(account, company)!.CompanyDocumentType);
+        Assert.Null(QuotationResponseComposer.ToBillingResponse(account, null)!.CompanyDocumentType);
+    }
+
     private static QuotationResponse Response() => new(
         Guid.CreateVersion7(),
         "QUO-2026-0042",
@@ -513,5 +539,7 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin envío registrado: el PDF del envío lo cubre su propia tarea.
         new ShippingResponse(false, null, null, 0m, 0, 0m, 0m, false),
         0m,
-        0m);
+        0m,
+        // El PDF no imprime los contactos: son del diálogo de envío.
+        []);
 }

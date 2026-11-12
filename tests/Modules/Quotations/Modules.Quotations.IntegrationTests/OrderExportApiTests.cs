@@ -40,6 +40,52 @@ public sealed class OrderExportApiTests
         Assert.Equal(ownerUserId, job.RequestedBy);
     }
 
+    // Spec 2026-11-10 §5: el archivo es «lo que estoy viendo». Sin estado no trae archivados, y el envío y la marca de
+    // facturado filtran como en la tabla.
+    [Fact]
+    public async Task TheExportHonoursTheNewFiltersAndHidesArchived()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var archived = await CreateOrderAsync(client, factory, tenantId);
+        var prepared = await CreateOrderAsync(client, factory, tenantId);
+        await CreateOrderAsync(client, factory, tenantId);
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{archived.Id}/archive", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+        (await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/{prepared.Id}/prepare", content: null, TestContext.Current.CancellationToken))
+            .EnsureSuccessStatusCode();
+
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, string.Empty));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&status=Archived"));
+        Assert.Equal(1, await ExportedRowsAsync(client, factory, tenantId, "&fulfillmentStatus=Prepared"));
+        Assert.Equal(2, await ExportedRowsAsync(client, factory, tenantId, "&invoiced=false"));
+
+        var noneInvoiced = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&invoiced=true", content: null, TestContext.Current.CancellationToken);
+        var problem = await noneInvoiced.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.export.empty", problem?.Code);
+
+        var invalid = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}&fulfillmentStatus=Shipped", content: null, TestContext.Current.CancellationToken);
+        problem = await invalid.Content.ReadFromJsonAsync<ProblemDto>(TestContext.Current.CancellationToken);
+        Assert.Equal("order.order.fulfillment_status_invalid", problem?.Code);
+    }
+
+    private static async Task<int?> ExportedRowsAsync(HttpClient client, QepApiFactory factory, Guid tenantId, string filters)
+    {
+        var response = await client.PostAsync(
+            $"{OrdersUrl(tenantId)}/export?{CurrentRange()}{filters}", content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var accepted = await response.Content.ReadFromJsonAsync<AcceptedDto>(TestContext.Current.CancellationToken);
+        Assert.NotNull(accepted);
+        Assert.Equal(ExportJobRunOutcome.Completed, await RunExportJobAsync(factory));
+        return (await FindExportJobAsync(factory, accepted.JobId)).RowCount;
+    }
+
     [Fact]
     public async Task ExportWithoutDatesIsUnprocessableWithTheFieldErrors()
     {
@@ -233,11 +279,11 @@ public sealed class OrderExportApiTests
         // que la línea se tomó con 0 %. Número, no texto.
         Assert.Equal("0", first[36]);
         Assert.True(sheet.NumericCells[1][36]);
-        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Desde
-        // el 2026-09-28 sale como lo lee el ERP —sin puntos ni dígito de verificación—, así que
-        // sólo dígitos y número, no texto.
-        Assert.Matches(@"^901\d{6}$", first[37]);
-        Assert.True(sheet.NumericCells[1][37]);
+        // "NIT Empresa" (2026-09-26): el de la empresa de CreateCompanyWithBankAccountAsync. Sale
+        // sin puntos ni espacios, pero conserva el guion y el dígito de verificación (D11), así
+        // que es texto, no número.
+        Assert.Matches(@"^901\d{6}-\d$", first[37]);
+        Assert.False(sheet.NumericCells[1][37]);
 
         Assert.Equal("Sent", await WaitForEmailStatusAsync(
             database.GetConnectionString(), ownerUserId, "quotations.export-ready.v1"));
@@ -267,7 +313,7 @@ public sealed class OrderExportApiTests
         var first = await ReadPendingBatchAsync(factory, tenantId, after: null, limit: 1);
         await CreateOrderAsync(client, factory, tenantId);
         var second = await ReadPendingBatchAsync(factory, tenantId, CursorOf(first), limit: 1);
-        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Approved);
+        await SetOrderStatusAsync(factory, second.Single().Id, OrderStatus.Archived);
         var third = await ReadPendingBatchAsync(factory, tenantId, CursorOf(second), limit: 1);
         var fourth = await ReadPendingBatchAsync(factory, tenantId, CursorOf(third), limit: 1);
 
@@ -275,7 +321,7 @@ public sealed class OrderExportApiTests
         Assert.Empty(fourth);
     }
 
-    // El repositorio real, contra Postgres. `Pending` es el filtro que el pedido aprobado abandona.
+    // El repositorio real, contra Postgres. `Open` es el filtro que el pedido archivado abandona.
     private static async Task<IReadOnlyList<Order>> ReadPendingBatchAsync(
         QepApiFactory factory, Guid tenantId, OrderExportCursor? after, int limit)
     {
@@ -288,8 +334,10 @@ public sealed class OrderExportApiTests
             clientId: null,
             clientIds: null,
             advisorId: null,
-            OrderStatus.Pending,
+            OrderStatus.Open,
             paymentStatus: null,
+            fulfillmentStatus: null,
+            invoiced: null,
             now.AddDays(-7),
             now.AddDays(2),
             orderNumber: null,
@@ -706,11 +754,11 @@ public sealed class OrderExportApiTests
         Assert.NotEqual(line.UnitPrice, decimal.Parse(row[20], CultureInfo.InvariantCulture));
         Assert.True(sheet.NumericCells[1][20]);
         Assert.Equal("Nit", sheet.Rows[0][46]);
-        // El NIT guardado ("901.463.203-2") sale como lo lee el ERP: sin puntos ni dígito de
-        // verificación, y número (2026-09-28).
-        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Split('-')[0].Replace(".", string.Empty);
+        // El NIT guardado ("901.463.203-2") sale sin puntos ni espacios, con el guion y el dígito
+        // de verificación (D11), y por eso como texto.
+        var erpTaxId = detail.BillingAccount!.CompanyTaxId!.Replace(".", string.Empty).Replace(" ", string.Empty);
         Assert.Equal(erpTaxId, row[46]);
-        Assert.True(sheet.NumericCells[1][46]);
+        Assert.False(sheet.NumericCells[1][46]);
         // Ajuste 2026-09-26: "IVA" es la tasa de la línea como fracción, y número —un Excel en
         // es-CO la muestra "0,19"—. Las fijas numéricas también salen como número; "FV" es fija de
         // texto, y Transportadora (carrier) sale de texto también.
@@ -852,7 +900,7 @@ public sealed class OrderExportApiTests
             parties: isStorePickup ? new QuotationPartiesRequest(null, null, IsStorePickup: true) : null);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -961,7 +1009,7 @@ public sealed class OrderExportApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("PartialPaymentReceived", null, proofs),
+            new ConvertQuotationToOrderRequest(null, proofs),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -978,7 +1026,7 @@ public sealed class OrderExportApiTests
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/orders/{orderId}/proofs",
             new AddOrderPaymentProofsRequest(
-                "PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 5_000m)]),
+                [new OrderPaymentProofRequest(fileId, 5_000m)]),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var order = await response.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);

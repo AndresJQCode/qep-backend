@@ -10,6 +10,7 @@ public sealed class StoreSettingsComposer(
     IStoreTenantLookup tenants,
     IStoreFileLookup files,
     IStoreCatalogReader catalog,
+    IStoreMemberDirectory members,
     StoreOptions options)
 {
     public async Task<StoreSettingsDto> ComposeAsync(OnlineStore store, CancellationToken cancellationToken)
@@ -28,6 +29,14 @@ public sealed class StoreSettingsComposer(
             .Where(names.ContainsKey)
             .Select(id => new StoreFeaturedCategoryDto(id, names[id]))
             .ToList();
+
+        // Un asesor que ya no aparece en el directorio viaja sin nombre: la pantalla muestra el id sin romperse.
+        string? advisorName = null;
+        if (store.AdvisorMembershipId is { } advisorId)
+        {
+            var advisorNames = await members.NamesAsync(store.TenantId, [advisorId], cancellationToken);
+            advisorName = advisorNames.GetValueOrDefault(advisorId);
+        }
 
         var resolved = store.ResolveColors();
 
@@ -65,8 +74,11 @@ public sealed class StoreSettingsComposer(
                 .ToList(),
             store.PrimaryCurrency,
             store.PricingMode.ToString(),
+            store.ShowPrices,
             store.SalesCountries.ToList(),
             featured,
+            store.AdvisorMembershipId,
+            advisorName,
             store.PublishBlockers().Select(blocker => blocker.ToString()).ToList(),
             store.Version,
             store.UpdatedAt);

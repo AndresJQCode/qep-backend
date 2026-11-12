@@ -22,6 +22,9 @@ public interface IMessageTemplateRepository
     /// <summary>La única fila <c>Quotation</c> de la conexión, con tracking, o <c>null</c>.</summary>
     Task<MessageTemplate?> FindQuotationAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
+    /// <summary>Spec 2026-11-09 D1: la única fila <c>Order</c> de la conexión, con tracking, o <c>null</c>.</summary>
+    Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+
     /// <summary>Todas, con tracking, por nombre e idioma en orden ordinal: el refresco las recorre y las modifica.</summary>
     Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 
@@ -47,6 +50,14 @@ public interface IMessageTemplateRepository
 /// (<c>qep_cotizacion</c>, <c>qep_cotizacion_v2</c>…; enmienda del owner, 2026-10-15): el sender de Meta manda el nombre de la fila, no
 /// una constante. El adaptador hacia Quotations va en Bootstrapper cuando ese spec llegue.</summary>
 public interface IQuotationTemplateReadiness
+{
+    Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
+}
+
+/// <summary>Spec 2026-11-09 D5: la señal para el envío del pedido por Meta, hermana de <see cref="IQuotationTemplateReadiness"/>. Devuelve la
+/// fila <c>Order</c> en <c>APPROVED</c> de esa conexión del tenant, o <c>null</c>; la lee el directorio de canales (D6) y el sender al
+/// enviar (D9).</summary>
+public interface IOrderTemplateReadiness
 {
     Task<ApprovedTemplate?> FindApprovedAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }

@@ -74,6 +74,15 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status428PreconditionRequired);
 
+        // Spec 2026-11-10 §4.1: borra un lote (hasta 100) elegido en la lista. Sin If-Match: el lote no tiene una versión única.
+        // Siempre 200 con las tres listas; 422 solo si la lista de ids es inválida.
+        group.MapPost("/bulk-delete", BulkDeleteCustomersAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerDelete)
+            .Accepts<BulkDeleteCustomersRequest>("application/json")
+            .Produces<BulkDeleteCustomersResult>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/", CreateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Accepts<CreateCustomerRequest>("application/json")
@@ -123,6 +132,16 @@ public static class CustomerEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
 
+        // Spec 2026-11-10 §4.1: vincular o desvincular la empresa de un contacto. Sin If-Match: no edita la ficha, y repetir el
+        // vínculo es un 200 sin cambios (ruling P10). Un solo permiso, el de administrar clientes.
+        group.MapPut("/{customerId:guid}/company", SetCustomerCompanyAsync)
+            .RequireAuthorization(CustomersPermissions.CustomerManage)
+            .Accepts<SetCustomerCompanyRequest>("application/json")
+            .Produces<CustomerResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
         group.MapPost("/{customerId:guid}/deactivate", DeactivateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Produces<CustomerResponse>()
@@ -135,8 +154,9 @@ public static class CustomerEndpoints
         // que CAT-07 tuvo que corregir en producto despues. Sin permiso nuevo: reactivar es
         // administrar.
         //
-        // No hay DELETE. Un cliente lo referencian cotizaciones y documentos ya emitidos, y
-        // borrarlo en duro deja huerfano lo que ya se emitio; catalogo y empresas tampoco borran.
+        // Un cliente no se borra uno a uno: ver /bulk-delete arriba. Lo que ya se emitio (cotizaciones, pedidos,
+        // prestamos, contratos de servicio) bloquea el borrado en vez de quedar huerfano, y desactivar sigue siendo
+        // la salida para quien tiene historial.
         group.MapPost("/{customerId:guid}/activate", ActivateCustomerAsync)
             .RequireAuthorization(CustomersPermissions.CustomerManage)
             .Produces<CustomerResponse>()
@@ -197,7 +217,9 @@ public static class CustomerEndpoints
         Guid[]? cityIds = null,
         int page = 1,
         int pageSize = CustomerPaging.DefaultPageSize,
-        string? isComplete = null)
+        string? isComplete = null,
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.QueryAsync(
             new ListCustomersQuery(
@@ -210,7 +232,9 @@ public static class CustomerEndpoints
                 cityIds,
                 page,
                 pageSize,
-                isComplete),
+                isComplete,
+                phone,
+                contacts),
             cancellationToken);
 
         return Results.Ok(new CustomersResponse(
@@ -264,6 +288,14 @@ public static class CustomerEndpoints
         Results.Ok(await dispatcher.QueryAsync(
             new GetCustomerMergePreviewQuery(tenantId, customerId, mergedCustomerIds), cancellationToken));
 
+    private static async Task<IResult> BulkDeleteCustomersAsync(
+        Guid tenantId,
+        BulkDeleteCustomersRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.SendAsync(
+            new BulkDeleteCustomersCommand(tenantId, request.CustomerIds ?? []), cancellationToken));
+
     private static async Task<IResult> MergeCustomersAsync(
         Guid tenantId,
         Guid customerId,
@@ -303,6 +335,9 @@ public static class CustomerEndpoints
             survivor.MarketingConsent,
             survivor.MergedInto,
             survivor.PersonType,
+            survivor.Company,
+            survivor.Contacts ?? [],
+            survivor.ContactCount,
             result.DroppedTags));
     }
 
@@ -361,6 +396,20 @@ public static class CustomerEndpoints
                 request.WithRetention,
                 request.VatSurplus,
                 request.PersonType),
+            cancellationToken);
+
+        return Results.Ok(ToResponse(customer));
+    }
+
+    private static async Task<IResult> SetCustomerCompanyAsync(
+        Guid tenantId,
+        Guid customerId,
+        SetCustomerCompanyRequest request,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var customer = await dispatcher.SendAsync(
+            new SetCustomerCompanyCommand(tenantId, customerId, request.CompanyId),
             cancellationToken);
 
         return Results.Ok(ToResponse(customer));
@@ -441,10 +490,12 @@ public static class CustomerEndpoints
         string? search = null,
         string? name = null,
         string? identificationNumber = null,
-        string? cuc = null)
+        string? cuc = null,
+        string? phone = null,
+        string? contacts = null)
     {
         var result = await dispatcher.SendAsync(
-            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc),
+            new ExportCustomersCommand(tenantId, search, name, identificationNumber, cuc, phone, contacts),
             cancellationToken);
 
         return Results.Accepted(value: new ExportCustomersResponse(
@@ -584,7 +635,10 @@ public static class CustomerEndpoints
         customer.Tags,
         customer.MarketingConsent,
         customer.MergedInto,
-        customer.PersonType);
+        customer.PersonType,
+        customer.Company,
+        customer.Contacts ?? [],
+        customer.ContactCount);
 
     private static CustomerListItemResponse ToListItem(CustomerDto customer) => new(
         customer.Id,
@@ -600,5 +654,9 @@ public static class CustomerEndpoints
         customer.Classification,
         customer.IsActive,
         customer.IsComplete,
-        customer.CreatedAt);
+        customer.CreatedAt,
+        customer.BusinessName,
+        customer.PersonType,
+        customer.Company,
+        customer.ContactCount);
 }

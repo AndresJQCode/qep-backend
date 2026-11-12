@@ -22,6 +22,80 @@ public sealed class StoreSettingsApiTests
     private static string[] Strings(JsonNode? array) => array!.AsArray().Select(node => (string)node!).ToArray();
 
     [Fact]
+    public async Task SavingTheAdvisorRoundTripsWithItsName()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var advisor = await SeedMemberAsync(fixture.Factory, "luis@test.co", "Luis Gómez", "advisor");
+
+        var saved = await fixture.SaveAsync(fixture.Body(body => body["advisorMembershipId"] = advisor));
+
+        Assert.Equal(advisor, (Guid)saved["advisorMembershipId"]!);
+        Assert.Equal("Luis Gómez", (string)saved["advisorName"]!);
+        var read = await StoreSettingsFixture.JsonAsync(await fixture.GetAsync());
+        Assert.Equal(advisor, (Guid)read["advisorMembershipId"]!);
+        Assert.Equal("Luis Gómez", (string)read["advisorName"]!);
+    }
+
+    [Fact]
+    public async Task ARemovedAdvisorIs422AdvisorNotFound()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        var removed = await SeedMemberAsync(fixture.Factory, "baja@test.co", "Baja", "advisor", removed: true);
+
+        var response = await fixture.PutAsync(fixture.Body(body => body["advisorMembershipId"] = removed));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("store.settings.advisor_not_found", await StoreSettingsFixture.CodeAsync(response));
+    }
+
+    [Fact]
+    public async Task ShowPricesRoundTripsAndAnAbsentValueKeepsIt()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+
+        var saved = await fixture.SaveAsync(fixture.Body(b => b["showPrices"] = false));
+        Assert.Equal(false, (bool?)saved["showPrices"]);
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(await fixture.GetAsync()))["showPrices"]);
+
+        var absent = await fixture.PutAsync(fixture.Body(), ifMatch: "1");
+        Assert.Equal(HttpStatusCode.OK, absent.StatusCode);
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(absent))["showPrices"]);
+
+        var nulled = await fixture.PutAsync(fixture.Body(b => b["showPrices"] = null), ifMatch: "1");
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(nulled))["showPrices"]);
+
+        var on = await StoreSettingsFixture.JsonAsync(
+            await fixture.PutAsync(fixture.Body(b => b["showPrices"] = true), ifMatch: "1"));
+        Assert.Equal(true, (bool?)on["showPrices"]);
+        Assert.Equal(2, (int)on["version"]!);
+    }
+
+    [Fact]
+    public async Task TheFirstSaveOfANewStoreKeepsShowPricesFalse()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+
+        await fixture.SaveAsync(fixture.Body(b => b["showPrices"] = false), ifMatch: "0");
+
+        Assert.Equal(false, (bool?)(await StoreSettingsFixture.JsonAsync(await fixture.GetAsync()))["showPrices"]);
+    }
+
+    // No se fija el 400: este repo mapea BadHttpRequestException a 500. Importa que se rechace y que nada cambie.
+    [Fact]
+    public async Task ANonBooleanShowPricesIsRejectedAndChangesNothing()
+    {
+        await using var fixture = await StoreSettingsFixture.OpenAsync();
+        await fixture.SaveAsync(fixture.Body());
+
+        var response = await fixture.PutAsync(fixture.Body(b => b["showPrices"] = "no"), ifMatch: "1");
+
+        Assert.True((int)response.StatusCode >= 400, $"Se esperaba un rechazo, llegó {(int)response.StatusCode}.");
+        var read = await StoreSettingsFixture.JsonAsync(await fixture.GetAsync());
+        Assert.Equal(true, (bool?)read["showPrices"]);
+        Assert.Equal(1, (int)read["version"]!);
+    }
+
+    [Fact]
     public async Task ANeverSavedStoreReadsAsDefaultsWithVersionZero()
     {
         await using var fixture = await StoreSettingsFixture.OpenAsync();
@@ -36,6 +110,7 @@ public sealed class StoreSettingsApiTests
         Assert.Null(settings["resolvedColors"]);
         Assert.Null(settings["colorChecks"]);
         Assert.Equal("RetailOnly", (string)settings["pricingMode"]!);
+        Assert.Equal(true, (bool?)settings["showPrices"]);
         Assert.Equal(
             ["SlugRequired", "CurrencyRequired", "SalesCountryRequired"],
             Strings(settings["publishBlockers"]));

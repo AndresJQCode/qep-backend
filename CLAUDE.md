@@ -283,7 +283,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   una sentencia más antes de la de Shopify, que sigue siendo la última. Renombrar esa columna compila y rompe la fusión en
   ejecución; la amarran `CustomerMergeReferencesTests` y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
 - **`Conversations` como módulo no existe; la bandeja de WhatsApp es `Messaging`** (spec 2026-10-09).
-  Los veintiún módulos construidos son ApiAccess, Audit, Authorization, Catalog, Companies, Customers, Geography,
+  Los veintidós módulos construidos son ApiAccess, Audit, Authorization, Buyers, Catalog, Companies, Customers, Geography,
   Identity, Integrations, Loans, Messaging, Notifications, Pipeline, Pos, Quotations, Reporting, Shopify, Storage, Store, Suppliers y Tenancy — cada
   uno con su `<Modulo>LayerTests.cs` en `tests/ArchitectureTests/` (`ApiAccessLayerTests` el de ApiAccess). `Platform` también existe, pero sin
   `PlatformLayerTests` (H26). Messaging no referencia
@@ -383,7 +383,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **Un pedido tiene datos propios y puede no tener cotización** (spec 2026-10-15). `Order` lleva cliente,
   asesor, cuenta de cobro, partes, líneas y totales; `QuotationId` es opcional y `Source` dice de dónde nació
   (`Quotation`, `Manual`, `Shopify`). Convertir **copia**: la cotización `Converted` queda congelada y editar un
-  pedido pendiente edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
+  pedido editable edita `order_items`, nunca `quotation_items`. Un pedido sin sesión se crea sólo por
   `IExternalOrderWriter` (acepta cliente incompleto); el manual exige cliente completo con CUC. Los eventos
   `quotations.order.created.v1` y `order.cancelled.v1` llevan `source` y `quotationId` nullable: Pipeline los lee
   por nombre y guarda la foto en `pipeline.deal_orders` (un `order.created` **con** cotización no hace nada: ya
@@ -513,10 +513,20 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   hechas a mano: no siguen solas a una migración) y `CustomerMergeAcrossModulesApiTests.TheRealAdapterRunsAgainstTheMigratedSchema`.
   Una tabla nueva que guarde un id de cliente vivo entra en `MoveAsync` y en esas dos pruebas, o la fusión la deja apuntando a un
   cliente inactivo. Y `merged_into_id` apunta siempre a un no fusionado: quien lea un fusionado sigue un solo salto.
+- **`CatalogProductDeletionCleanup` escribe en `store.order_request_lines`/`order_requests` por nombre y enrola el
+  `QuotationsDbContext` en la transacción de Catalog.** El borrado permanente de un producto (`DELETE .../catalog/products/{id}`)
+  vive en Bootstrapper por la misma razón que `CustomerMergeReferences`: borra las líneas de las solicitudes de la tienda en
+  `New` con SQL crudo (`request_id`, `variant_id`, `status`, `version`) y llama a `IQuotationVariantDeletion` de Quotations sobre
+  la conexión del `CatalogDbContext` (`SetDbConnection` + `UseTransactionAsync`), todo envuelto en `CustomersWriteRaces.RunAsync`
+  para que un deadlock o una falla de serialización sea 412 y no 500. Renombrar una de esas columnas compila y deja el `DELETE` del
+  producto en 500 (`42703`/`42P01`); como es una transacción, no queda nada escrito. Lo amarran `ProductDeletionCleanupTests`
+  (Quotations) y `ProductDeletionStoreCleanupTests` (Store), que resuelven el adaptador real y lo corren contra el esquema migrado.
+  Tras confirmar, ese `QuotationsDbContext` queda apuntando a una transacción terminada: nada más en el scope debe usarlo.
 - **El `Version++` del fusionado es lo que impide fusionar al mismo cliente en dos que quedan.** `ApplyMergedInto` pasa por
   `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
   chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
   No quites el `Touch` ni marques fusionados con un `ExecuteUpdate` que se salte el agregado.
+- **`MarginReportSource` lee `quotations.order_items`/`orders` (`unit_cost`, `paid_at`), `pos.sale_lines`/`sales` y `catalog.products`/`product_variants` por nombre.** Renombrar una columna compila y deja `/reports/margin` en 500; lo amarra `MarginReportApiTests`. Una vía nueva a `FullPaymentReceived` pasa `OrderLineCosts` al dominio: si no, el pedido cuenta en el reporte con líneas «sin costo».
 - **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
   Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
   Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran
@@ -548,11 +558,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
-- **Una fila de `automation_inbox` sin mensaje es un arranque manual** (spec 2026-10-31). `POST …/automation/start` encola una fila
-  cuyo `message_id` **no siempre existe en `messages`**: no hay entrante, lo inició una persona. Por eso `run_units.inbound_message_id` y
-  `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
-  el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
-  el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
+- **Una fila de `automation_inbox` tiene tipo** (spec 2026-11-03). `ReleaseRun` es la señal de que una persona resolvió, tomó, transfirió o
+  devolvió la conversación: `RunProcessor` sólo cierra la corrida viva (`Interrupted`, `human_took_over`) si arrancó antes de la fila y
+  `HumanTookOver` sigue siendo verdadero, y nunca arranca ni avanza nada. Dentro de `Engine`, una fila sin mensaje sigue siendo un arranque
+  manual: todo lector nuevo usa `LEFT JOIN` y filtra por `kind`. Una acción humana nueva sobre una conversación con asistente decide si
+  encola la señal, en el handler y no en el agregado (el bot también resuelve). Una fila del inbox puede existir sin mensaje —un arranque
+  manual (spec 2026-10-31) o una señal—, y por eso `run_units.inbound_message_id` y `conversation_runs.last_inbound_message_id` pueden
+  apuntar a una fila y no a un mensaje; el camino manual del motor es `ResumeAsync`, no el de un entrante. Un `INNER JOIN` del inbox a
+  `messages` pierde esas filas en silencio: el arranque se encola, se marca procesado y el bot no contesta, sin error. La regla del
+  `LEFT JOIN` cubre también a quien lea esas dos columnas: tiene que tratar el mensaje `null`.
 - **`Conversation.ContinueAutomation` no escribe `AutomationResumedAt`, y esa ausencia es todo el mecanismo** (spec 2026-11-01). Sellarlo
   hace que `BotAttendance.HumanTookOver` dé verdadero, la corrida termine `Interrupted` y el flujo reinicie: justo lo que `automation/continue`
   evita. No hay columna ni bandera de «continuada». Por la misma razón `AutomationPauseReason = Manual` **no** prueba que ningún asesor
@@ -638,7 +652,8 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   intentos sin salida conectada manda `Chatbot.ExhaustedAction` (`Restart` por defecto), no el flujo. El traspaso a un miembro pasa por
   `IMessagingAssignees.CanReplyAsync` en el adaptador: si no puede, cae sin asignar sin fallar.
 - **`customers.data_consents` es prueba legal: sólo se inserta** (spec 2026-10-26 D-5). Nada la edita ni la borra salvo la fusión,
-  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`); el estado vigente es la última fila por `(occurred_at, sequence)`.
+  que mueve `customer_id` (`CustomerMergeStore.MoveOwnedAsync`), y el borrado de clientes, que **no la borra**: la tabla ya no tiene
+  FK a `customers` y cada fila guarda `customer_name` y `customer_phone_e164`, una foto tomada al borrar (spec 2026-11-10); el estado vigente es la última fila por `(occurred_at, sequence)`.
   Una respuesta es una fila: el reintento de una unidad del motor lo frena `IX_data_consents_reply_message`, que `CustomersUnitOfWork`
   traduce por nombre; no lo cambies por la consulta previa. Los CHECK de la tabla exigen identidad de canal en lo que escribe el bot y
   en `Revoked` + `ThisConversation`, y la prohíben en `Revoked` + `Other`: un `INSERT` a mano tiene que cumplirlos. El texto que se
@@ -741,8 +756,51 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
 - **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
   `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
   Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+- **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
+  Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
+  y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
+  La regla del tipo de documento ya no es una copia: Store y Buyers leen la misma `DocumentTypesByCountry` (`BuildingBlocks.Domain`), y los casos de paridad cubren la regla por país.
+- **La tabla de tipos de documento por país vive una sola vez, en `DocumentTypesByCountry` (`BuildingBlocks.Domain`, carpeta `Identification`).** Companies conserva su tabla tipada
+  propia, atada por `DocumentTypesByCountryTests`; Customers (`IdentificationTypeParser`) y Quotations (`PartyFiscalTypesParser`) las atan sus pruebas de paridad. Customers y las
+  partes de facturación comparan el tipo con **su propio** país en cada escritura (una fila guardada que no cumple se lee, pero no se puede volver a guardar igual); un país vacío
+  en una parte es `CO`.
+- **`PosCustomerLookupTests.TheIdentificationTypesMatchTheCustomersModule` compara Pos con `AllowedFor("CO")`, igual que la importación de clientes por Excel y la de contratos de
+  servicio.** Ensanchar Customers no ensancha a ninguno de ellos; si el owner lo quiere, es una decisión aparte.
+- **`MergeForStore` toma el país de la solicitud junto con su documento cuando el cliente no tiene documento** (la dirección sale de la solicitud y el teléfono conserva su E.164
+  anterior cuando se reemplaza el país); `CustomerMergePlan` rellena documento y país como un par.
+- **El payload de `store.buyer-signup-requested.v1` es un contrato entre Store y Buyers, leído por nombre.** Store lo escribe como `StoreBuyerSignupRequestedPayload` y Buyers
+  lo lee como `BuyerSignupRequestedMessage` (record propio, camelCase), sin referencia entre los módulos; lo amarra `BuyerParityTests.TheSignupEventContractMatches`. Renombrar un
+  campo en un lado compila y deja las altas procesadas sin efecto. El payload **nunca** lleva la contraseña en claro, sólo `passwordHash`; por eso el housekeeping de Buyers
+  borra a las 24 h esas filas del outbox de plataforma.
+- **`buyers.consents` es prueba legal: sin clave foránea a propósito, nunca se borra, y el `Down` de `InitialBuyers` no se corre** (borraría los consentimientos de todos los
+  compradores). Ni borrar la cuenta ni `BuyerHousekeepingWorker` lo tocan; cualquier purga nueva de Buyers tiene que dejarlo fuera.
+- **Todo `/api/v1/public/stores/{host}/buyer/*` responde `Cache-Control: no-store`, y lo pone `BuyerNoStoreMiddleware` antes de `UseRateLimiter`.** Un endpoint nuevo del
+  comprador no necesita hacer nada, pero mover el middleware después del limitador deja los `429` cacheables. Las rutas de Buyers leen el cuerpo a mano con tope de 64 KB
+  (`ReadBodyAsync`): no uses el binder de minimal API ahí.
+- **El header de sesión del comprador está declarado dos veces.** `PublicBuyerEndpoints.BuyerSessionHeader` (Buyers) y `StorefrontClient.BuyerSessionHeader` (Store, que no
+  ve a Buyers); `BuyerParityTests.TheBuyerSessionHeaderMatches` los ata. El BFF sólo borra la cookie con el código `store.buyer.session_invalid`: no devuelvas un 401 con
+  sesión válida (por eso la contraseña actual mala es `422 store.buyer.password_incorrect`).
+- **La anulación del comprador es más estricta que `Order.Cancel`, y su 409 también cubre la carrera.** Sólo anula con `Status == Open && PaymentStatus == PaymentPending && PaymentProofs.Count == 0 && !IsPrepared && !IsInvoiced` (D5 y spec 2026-11-10, `Order.CanBeCancelledByBuyer`: un pedido con cualquier comprobante, preparado o facturado ya no se anula desde la tienda); fuera de eso responde `409 order.order.not_cancellable_by_buyer`. La `RequestConcurrencyException` se traduce en `BuyerOrderGateway` al mismo 409 tras un reintento: la tienda nunca ve un 412, no tiene versión que mandar. El dominio no puede lanzar `ResourceConflictException` (Domain sólo ve `BuildingBlocks.Domain`): lanza con el código de `BuyerOrderErrors` y Application lo traduce. `BuyerStorefront` lleva `TenantId`: una prueba que lo construya a mano necesita los tres argumentos.
+- **`Order.LinkBuyerAccount` no sube `Version`, pero `Version` es token de concurrencia.** El enlace del alta diferida es invisible para el `If-Match` de la consola, y aun así su `UPDATE` lleva `WHERE version = …`: si otra escritura ganó, `BuyerOrderGateway.LinkAsync` relee y reintenta una vez (sólo si sigue vacío). El checkout resuelve la sesión del comprador siempre que llega el header, no sólo con `updateProfile`; `ScalarTextAsync` de las pruebas de Store devuelve `""` para un `NULL`.
+- **La nota del comprador es `Order.BuyerNotes`, no `Order.Notes`** (spec 2026-11-10, D9). `Notes` es del asesor: la sobrescriben `UpdateNotes`, `AddPaymentProofs` y `AttachExternalShipping`. `BuyerNotes` la escribe sólo `CreateFromStore` y nada más la toca; un método nuevo que la edite le muestra al comprador un texto que no escribió. Los pedidos anteriores a `AddOrderBuyerNotes` la tienen en `NULL` a propósito (sin backfill).
 
 ## Verificación
 
 Los comandos (`restore` / `format` / `build` / `test`) están en
 [README § Verificación](README.md#verificación).
+
+- **Borrar clientes escribe en muchos esquemas por nombre** (spec 2026-11-10; `src/Bootstrapper/CustomerDeletionReferences.cs`, igual que
+  `CustomerMergeReferences`). Toca `messaging` (conversaciones y todo lo que cuelga: mensajes, adjuntos, mensajes programados,
+  `automation_inbox`, destinatarios de campañas con `customer_id` en `NULL`, `audience_customer_ids`), `automations`
+  (`conversation_runs`, `run_units`, `http_calls`), `pipeline` (`deals`, `deal_stage_history`, `deal_quotations`, `deal_orders`,
+  `triage_decisions`; `origin_conversation_id` de otros negocios a `NULL`), `pos.sales`, `shopify.orders`, `billing.customer_profiles`
+  y `geography.unresolved_city_occurrences`. Si una tabla nueva guarda un id de cliente, hay que agregarla ahí; lo fijan
+  `CustomerDeletionAcrossModulesTests` (Customers.IntegrationTests) y los dobles de `CustomerWriteDoubles`. Bloquean el borrado
+  cotizaciones, pedidos, préstamos, contratos de servicio (y sus cobros) y una conversación bloqueada.
+- **`CustomerReferenceLock` serializa el borrado contra quien referencia al cliente** (advisory lock por cliente, `Exclusive` para el
+  borrado, `Shared` para escritores). Lo toman las unidades de trabajo de Quotations, Loans y ServiceContracts; en Messaging, el ingreso
+  (entrante y coexistencia), el opener, el cambio de cliente y el despacho de campañas, con **un solo candado compartido antes de
+  cualquier candado de fila de conversación**. El borrado además toma el candado por conversación del runner de Automations
+  (`AutomationsConversationLock.Namespace`) antes del `FOR UPDATE` de `conversations`: sin ese orden hay un ciclo de espera que la base
+  no detecta. Todo esto exige `READ COMMITTED`; en `REPEATABLE READ` el chequeo de bloqueadores vería una foto vieja. El POS y los
+  escritores del pipeline **no** lo toman: una venta creada en plena corrida puede conservar el id borrado (su foto sigue mostrándose).

@@ -1403,7 +1403,7 @@ public sealed class ChatbotsApiTests
     }
 
     [Fact]
-    public async Task DeleteWithLiveRunsIs409()
+    public async Task DeleteWithALiveRunOfAMissingConversationIs204()
     {
         await using var database = await StartDatabaseAsync();
         var connectionString = database.GetConnectionString();
@@ -1423,10 +1423,9 @@ public sealed class ChatbotsApiTests
 
         var response = await DeleteAsync(setup, id, published.Chatbot.Version);
 
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal("automations.chatbot.has_live_runs", (await ProblemAsync(response)).Code);
-        Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", id)));
-        Assert.Equal(1L, await ActiveRowsAsync(connectionString, setup.WhatsAppId));
+        // D-7: la conversación de la corrida no existe, así que no hay a quién dejar hablando solo y el borrado sigue.
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(0L, await CountAsync(connectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", id)));
     }
 
     // D-C13: borrar sí libera la conexión; versiones y conexiones se van en cascada.

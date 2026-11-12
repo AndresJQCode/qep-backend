@@ -121,6 +121,28 @@ public sealed class CustomerCompletenessTests
         Assert.Equal(Now.AddHours(1), customer.UpdatedAt);
     }
 
+    [Fact]
+    public void CompleteWithoutIdentificationLeavesBothFieldsNull()
+    {
+        var customer = Incomplete();
+
+        customer.Complete(
+            "CLI08000001",
+            "Laura Pérez",
+            null,
+            null,
+            identification: null,
+            null,
+            ColombianContact(),
+            Commercial(ClassificationId),
+            Now.AddHours(1),
+            new FakeNormalizer());
+
+        Assert.True(customer.IsComplete);
+        Assert.Null(customer.IdentificationType);
+        Assert.Null(customer.IdentificationNumber);
+    }
+
     // Sin calle no hay fila de libreta que sembrar: el handler manda el principalAddress en null.
     [Theory]
     [InlineData(null)]

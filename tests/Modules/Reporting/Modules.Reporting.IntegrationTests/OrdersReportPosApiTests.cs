@@ -112,7 +112,9 @@ public sealed class OrdersReportPosApiTests
             ("source=Pos", true, false),
             ("source=Quotation", false, true),
             ("paymentStatus=PaymentPending", false, false),
-            ("paymentStatus=FullPaymentReceived", true, true),
+            // El pedido convertido con comprobante por el total queda «Por verificar» (spec 2026-11-10 §3.2).
+            ("paymentStatus=FullPaymentReceived", true, false),
+            ("paymentStatus=PendingVerification", false, true),
             ($"clientId={order.ClientId}", false, true),
             ($"from={outside:yyyy-MM-dd}&to={outside:yyyy-MM-dd}", false, false),
             ($"from={today:yyyy-MM-dd}&to={today:yyyy-MM-dd}", true, true),
@@ -507,7 +509,7 @@ public sealed class OrdersReportPosApiTests
     /// <summary>
     /// Un filtro que deja el resumen sin filas sigue trayendo <c>bySource</c> completo, en cero, y
     /// <c>withoutClient</c> en cero: <c>paymentStatus=PaymentPending</c> excluye las ventas (siempre
-    /// pagadas) y el pedido pagado, y <c>source=Manual</c> no tiene ninguno.
+    /// pagadas) y el pedido por verificar, y <c>source=Manual</c> no tiene ninguno.
     /// </summary>
     [Theory]
     [InlineData("paymentStatus=PaymentPending")]

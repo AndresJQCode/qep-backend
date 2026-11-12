@@ -41,7 +41,7 @@ public sealed class OrderPricingRecalculationTests
                 new OrderLineInput(gone, gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
                 new OrderLineInput(kept, kept, 10m, 10_000m, 0m, 19),
             ],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now);
 
         await OrderPricingRecalculation.ApplyAsync(
             new StubPricingLookup(Product(kept)), new FixedQuotationSettingsStore(), new FixedTenantPriceRounding(), TenantId, order, Now.AddDays(1),
@@ -63,7 +63,7 @@ public sealed class OrderPricingRecalculationTests
             new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 150_000m, 5m, 19)],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now);
         order.SetShipping(new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), AdvisorId, Now);
         var settings = QuotationSettings.Create(6, new Dictionary<string, decimal> { ["COP"] = 200_000m });
 
@@ -90,7 +90,7 @@ public sealed class OrderPricingRecalculationTests
                 new OrderLineInput(sizeM, shirt, 6m, 10_000m, 0m, 19),
                 new OrderLineInput(sizeL, shirt, 6m, 10_000m, 0m, 19),
             ],
-            OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            null, AdvisorId, [], Now);
         var prices = new Dictionary<string, decimal> { ["COP"] = 10_000m };
 
         await OrderPricingRecalculation.ApplyAsync(
@@ -183,17 +183,17 @@ public sealed class OrderPricingRecalculationTests
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,
                 new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
-                lines, null, AdvisorId, Now, "T-0001", "store-request:1");
+                lines, null, AdvisorId, Now, "store-checkout:1");
         }
 
         return source == OrderSource.Manual
             ? Order.CreateManual(
                 OrderId.New(), TenantId, "PED-2026-0009", header, QuotationParties.Empty, account, ShippingDetails.None,
-                lines, OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now)
+                lines, null, AdvisorId, [], Now)
             : Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0010", header, QuotationParties.Empty, account, lines,
                 OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now, source, "1001", ShippingDetails.None,
-                "1:1001", null);
+                "1:1001", null, OrderLineCosts.None);
     }
 
     private sealed class StubPricingLookup(params QuotationVariantPricingRef[] products) : IQuotationProductPricingLookup

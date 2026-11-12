@@ -9,6 +9,8 @@ public sealed class SystemTemplateVariablesTests
     {
         string[] fixedKeys = ["nombre_contacto", "asesor", "empresa", "saludo"];
         Assert.Equal([.. fixedKeys, "numero_cotizacion", "valor_total", "vigencia"], SystemTemplateVariables.Quotation.Select(v => v.Key));
+        // Spec 2026-11-09 D2: el pedido no tiene vigencia.
+        Assert.Equal([.. fixedKeys, "numero_pedido", "valor_total"], SystemTemplateVariables.Order.Select(v => v.Key));
         Assert.Equal([.. fixedKeys, "servicio", "valor", "vencimiento"], SystemTemplateVariables.BillingReminder.Select(v => v.Key));
         Assert.Equal([.. fixedKeys, "cantidad_cobros", "total_vencido"], SystemTemplateVariables.BillingOverdue.Select(v => v.Key));
         Assert.Equal(

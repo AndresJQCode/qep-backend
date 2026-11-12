@@ -37,13 +37,15 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
                    EXISTS (
                        SELECT 1 FROM quotations.order_parties p WHERE p.order_id = o.id AND p.role = 'Shipping'
                    ) AS "HasShippingParty",
-                   o.is_store_pickup AS "IsStorePickup"
+                   o.is_store_pickup AS "IsStorePickup",
+                   (o.status = 'Open' AND o.fulfillment_status = 'NotPrepared' AND o.invoiced_at IS NULL) AS "IsEditable"
             FROM unnest({tenantIds}, {orderIds}) AS k(tenant_id, order_id)
             JOIN quotations.orders o ON o.tenant_id = k.tenant_id AND o.id = k.order_id
             """).ToListAsync(cancellationToken);
 
         return rows
-            .Select(row => new OrderInsight(row.TenantId, row.OrderId, row.OrderNumber, row.Status, row.HasShippingParty, row.IsStorePickup))
+            .Select(row => new OrderInsight(
+                row.TenantId, row.OrderId, row.OrderNumber, row.Status, row.HasShippingParty, row.IsStorePickup, row.IsEditable))
             .ToArray();
     }
 
@@ -83,6 +85,9 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
         var rows = await geography.Database.SqlQuery<CorrectionRow>($"""
             SELECT c.tenant_id AS "TenantId", c.target AS "Target", c.target_id AS "TargetId", c.city_id AS "CityId",
                    o.order_number AS "OrderNumber", o.status AS "OrderStatus",
+                   CASE WHEN o.id IS NULL THEN NULL
+                        ELSE (o.status = 'Open' AND o.fulfillment_status = 'NotPrepared' AND o.invoiced_at IS NULL)
+                   END AS "OrderEditable",
                    CASE c.target
                        WHEN 'Order' THEN p.id IS NOT NULL
                            AND p.name IS NOT DISTINCT FROM c.party_name
@@ -103,7 +108,8 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
 
         return rows
             .Select(row => new CorrectionInsight(
-                row.TenantId, row.Target, row.TargetId, row.CityId, row.OrderNumber, row.OrderStatus, row.StillAsWritten))
+                row.TenantId, row.Target, row.TargetId, row.CityId, row.OrderNumber, row.OrderStatus, row.StillAsWritten,
+                row.OrderEditable))
             .ToArray();
     }
 
@@ -183,6 +189,8 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
         public bool HasShippingParty { get; init; }
 
         public bool IsStorePickup { get; init; }
+
+        public bool IsEditable { get; init; }
     }
 
     private sealed class CustomerRow
@@ -213,6 +221,8 @@ internal sealed class CityCorrectionInsights(GeographyDbContext geography) : ICi
         public string? OrderNumber { get; init; }
 
         public string? OrderStatus { get; init; }
+
+        public bool? OrderEditable { get; init; }
 
         public bool StillAsWritten { get; init; }
     }

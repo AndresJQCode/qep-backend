@@ -127,14 +127,14 @@ public sealed class SendOrderHandlerTests
         Assert.Empty(harness.Audit.Actions);
     }
 
-    // Enviar no es una transición: pendiente, aprobado y facturado se mandan igual.
+    // Enviar no es una transición: abierto, archivado, pagado y facturado se mandan igual.
     [Theory]
-    [InlineData(OrderStatus.Pending)]
-    [InlineData(OrderStatus.Approved)]
-    [InlineData(OrderStatus.Invoiced)]
-    public async Task AnOrderThatIsNotCancelledCanBeSent(OrderStatus status)
+    [InlineData(OrderStatus.Open, false)]
+    [InlineData(OrderStatus.Archived, false)]
+    [InlineData(OrderStatus.Open, true)]
+    public async Task AnOrderThatIsNotCancelledCanBeSent(OrderStatus status, bool invoiced)
     {
-        var harness = NewHarness(status: status);
+        var harness = NewHarness(status: status, invoiced: invoiced);
 
         await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
 
@@ -248,8 +248,153 @@ public sealed class SendOrderHandlerTests
         Assert.Empty(harness.Audit.Actions);
     }
 
-    private static SendOrderCommand NewCommand(Harness harness, string? recipient = null) =>
-        new(TenantId, harness.Order.Id.Value, recipient);
+    private static SendOrderCommand NewCommand(
+        Harness harness, string? recipient = null, Guid? connectionId = null, Guid? contactId = null, Guid? threadConnectionId = null) =>
+        new(TenantId, harness.Order.Id.Value, recipient, connectionId, contactId, threadConnectionId);
+
+    private static readonly Guid ContactId = Guid.CreateVersion7();
+
+    private static readonly QuotationClientContact Contact = new(ContactId, "Laura Gómez", "3115550101");
+
+    // Spec 2026-11-10 §4.6: a un contacto de la empresa del documento, con su teléfono y a su nombre.
+    [Fact]
+    public async Task ContactSendsToTheContactsPhoneAndName()
+    {
+        var harness = NewHarness(contacts: [Contact]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness, "Contact", contactId: ContactId), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(harness.Sender.SentOrder);
+        Assert.Equal(
+            ("3115550101", "Laura Gómez", (Guid?)ContactId),
+            (harness.Sender.SentOrder.ToPhone, harness.Sender.SentOrder.FullName, harness.Sender.SentOrder.CustomerId));
+    }
+
+    // El id de un contacto de otra empresa, de otro tenant o fusionado, o el del propio cliente, es lo que el puerto no
+    // devuelve: nada sale y nada queda (ni historial, ni auditoría, ni elección del canal).
+    [Theory]
+    [InlineData("anotherCompanyOrTenantOrMerged")]
+    [InlineData("theDocumentsOwnClient")]
+    [InlineData("noContactId")]
+    public async Task AContactThatIsNotOfTheClientIsRejectedAndNothingIsWritten(string scenario)
+    {
+        var first = WhatsAppChannels.Any();
+        var second = WhatsAppChannels.Meta();
+        var harness = NewHarness(contacts: [Contact], channels: [first, second]);
+        Guid? contactId = scenario switch
+        {
+            "theDocumentsOwnClient" => ClientId,
+            "noContactId" => null,
+            _ => Guid.CreateVersion7(),
+        };
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Handler.HandleAsync(
+            NewCommand(harness, "Contact", connectionId: second.ConnectionId, contactId: contactId),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.contact_not_of_client", error.Code);
+        Assert.Null(harness.Sender.SentOrder);
+        Assert.Empty(harness.Orders.History);
+        Assert.Empty(harness.Audit.Actions);
+        Assert.Null(harness.Choices.Saved);
+        Assert.Equal(0, harness.Choices.Remembered);
+        Assert.Equal(0, harness.Renderer.Calls);
+    }
+
+    [Fact]
+    public async Task ContactWithoutPhoneReachesTheSenderWithoutOneAndTheRouterAnswersRecipientMissing()
+    {
+        var noPhone = Contact with { Phone = null };
+        var harness = NewHarness(contacts: [noPhone]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness, "Contact", contactId: ContactId), TestContext.Current.CancellationToken);
+        Assert.Null(harness.Sender.SentOrder!.ToPhone);
+
+        // La falta de teléfono la responde WhatsAppSenderRouter (WhatsAppSenderRouterTests), con el código de siempre.
+        var failing = NewHarness(contacts: [noPhone], whatsAppFailure: new QuotationsDomainException(
+            "order.whatsapp.recipient_missing", "The recipient has no phone number."));
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            failing.Handler.HandleAsync(NewCommand(failing, "Contact", contactId: ContactId), TestContext.Current.CancellationToken));
+        Assert.Equal("order.whatsapp.recipient_missing", error.Code);
+        Assert.Empty(failing.Orders.History);
+    }
+
+    [Fact]
+    public async Task EligibilityIsStillCheckedOnTheClient()
+    {
+        var harness = NewHarness(contacts: [Contact], customer: Customer with { TenantId = Guid.CreateVersion7() });
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness, "Contact", contactId: ContactId), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.client_not_found", error.Code);
+        Assert.Null(harness.Sender.SentOrder);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Customer")]
+    [InlineData("Billing")]
+    public async Task ContactIdAndThreadAreIgnoredWithoutTheContactRecipient(string? recipient)
+    {
+        var thread = WhatsAppChannels.Meta();
+        var harness = NewHarness(billing: BillingParty, contacts: [Contact], channels: [WhatsAppChannels.Any(), thread]);
+
+        // Con dos canales y ninguno elegido, un hilo ignorado deja el `channel_required` de siempre.
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Handler.HandleAsync(
+            NewCommand(harness, recipient, contactId: ContactId, threadConnectionId: thread.ConnectionId),
+            TestContext.Current.CancellationToken));
+        Assert.Equal("order.whatsapp.channel_required", error.Code);
+
+        var single = NewHarness(billing: BillingParty, contacts: [Contact]);
+        await single.Handler.HandleAsync(NewCommand(single, recipient, contactId: ContactId), TestContext.Current.CancellationToken);
+        Assert.NotEqual(ContactId, single.Sender.SentOrder!.CustomerId);
+        Assert.NotEqual("Laura Gómez", single.Sender.SentOrder.FullName);
+        Assert.Equal(0, single.CustomerLookup.FindContactCalls);
+    }
+
+    [Fact]
+    public async Task TheThreadConnectionDoesNotTouchTheSavedChoice()
+    {
+        var saved = WhatsAppChannels.Any();
+        var thread = WhatsAppChannels.Meta();
+        var harness = NewHarness(contacts: [Contact], channels: [saved, thread], saved: saved.ConnectionId);
+
+        await harness.Handler.HandleAsync(
+            NewCommand(harness, "Contact", contactId: ContactId, threadConnectionId: thread.ConnectionId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(thread.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(saved.ConnectionId, harness.Choices.Saved);
+        Assert.Equal(0, harness.Choices.Remembered);
+        Assert.DoesNotContain(ChooseWhatsAppChannelHandler.AuditAction, harness.Audit.Actions);
+    }
+
+    // La conexión del hilo cuenta sólo si puede mandar pedidos (plantilla de pedido aprobada): si no, rige la resolución de siempre.
+    [Fact]
+    public async Task AThreadConnectionWithoutTheOrderTemplateFallsBackToChannelRequired()
+    {
+        var withoutTemplate = WhatsAppChannels.Any(orderTemplateId: null);
+        var harness = NewHarness(
+            contacts: [Contact], channels: [withoutTemplate, WhatsAppChannels.Any(), WhatsAppChannels.Meta()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() => harness.Handler.HandleAsync(
+            NewCommand(harness, "Contact", contactId: ContactId, threadConnectionId: withoutTemplate.ConnectionId),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.channel_required", error.Code);
+        Assert.Null(harness.Sender.SentOrder);
+    }
+
+    [Fact]
+    public async Task TheHistoryNamesTheContact()
+    {
+        var harness = NewHarness(contacts: [Contact]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness, "Contact", contactId: ContactId), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Enviado por WhatsApp a Laura Gómez.", Assert.Single(harness.Orders.History).Details);
+    }
 
     // Plan 2026-10-21 (Zenvia por tenant).
     [Fact]
@@ -263,24 +408,100 @@ public sealed class SendOrderHandlerTests
         Assert.Equal(channel.ConnectionId, harness.Sender.Channel?.ConnectionId);
     }
 
-    // Spec 2026-10-21 D12: los pedidos salen sólo por Zenvia; una conexión de Meta no cuenta como canal.
+    // Spec 2026-11-09 D6, D7 y D9: una conexión de Meta con plantilla de pedido es un canal más. Sola, el pedido sale por ella sin
+    // publicar copia pública del PDF y con el tenant en el mensaje; junto a una Zenvia, hay que elegir.
     [Fact]
-    public async Task OrderIgnoresMetaChannels()
+    public async Task OrderGoesThroughMetaWithoutPublishingThePdf()
     {
-        var zenvia = WhatsAppChannels.Any();
-        var harness = NewHarness(channels: [WhatsAppChannels.Meta(), zenvia]);
+        var meta = WhatsAppChannels.Meta();
+        var harness = NewHarness(channels: [meta]);
 
         await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
 
-        Assert.Equal(zenvia.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(meta.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        var sent = harness.Sender.SentOrder;
+        Assert.NotNull(sent);
+        Assert.Null(sent.DocumentUrl);
+        Assert.Null(harness.Storage.PublishedKey);
+        Assert.NotNull(sent.DocumentStorageKey);
+        Assert.Equal(TenantId, sent.TenantId);
+        Assert.Equal([WhatsAppDocument.Order], harness.Channels.Documents);
 
-        var onlyMeta = NewHarness(channels: [WhatsAppChannels.Meta()]);
+        var both = NewHarness(channels: [WhatsAppChannels.Meta(), WhatsAppChannels.Any()]);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
-            onlyMeta.Handler.HandleAsync(NewCommand(onlyMeta), TestContext.Current.CancellationToken));
+            both.Handler.HandleAsync(NewCommand(both), TestContext.Current.CancellationToken));
 
-        Assert.Equal("order.whatsapp.no_channel", error.Code);
-        Assert.Null(onlyMeta.Sender.SentOrder);
+        Assert.Equal("order.whatsapp.channel_required", error.Code);
+        Assert.Null(both.Sender.SentOrder);
+    }
+
+    // D7: la elección es la misma que la de cotización. Guardada y disponible, sale por ella sin preguntar; otro id es channel_already_set.
+    [Fact]
+    public async Task ASavedChoiceAvailableForOrdersIsUsedAndAnotherIdIsAlreadySet()
+    {
+        var chosen = WhatsAppChannels.Meta();
+        var other = WhatsAppChannels.Any();
+        var harness = NewHarness(channels: [chosen, other], saved: chosen.ConnectionId);
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(chosen.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(0, harness.Choices.Remembered);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness, connectionId: other.ConnectionId), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.channel_already_set", error.Code);
+    }
+
+    // D7: una elección guardada que no sirve para pedidos (Zenvia sin orderTemplateId) se ignora y rigen las demás reglas.
+    [Fact]
+    public async Task ASavedChoiceNotAvailableForOrdersIsIgnored()
+    {
+        var saved = WhatsAppChannels.Any(orderTemplateId: null);
+        var only = WhatsAppChannels.Meta();
+        var harness = NewHarness(channels: [saved, only], saved: saved.ConnectionId);
+
+        await harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken);
+
+        Assert.Equal(only.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal(0, harness.Choices.Remembered);
+    }
+
+    // D7: un envío de pedido con connectionId guarda la elección, con la misma auditoría que la cotización, y nunca si el envío falla.
+    [Fact]
+    public async Task AnOrderSendWithAConnectionIdRemembersTheChoiceUnlessTheSendFails()
+    {
+        var first = WhatsAppChannels.Meta();
+        var second = WhatsAppChannels.Any();
+        var harness = NewHarness(channels: [first, second]);
+
+        await harness.Handler.HandleAsync(NewCommand(harness, connectionId: second.ConnectionId), TestContext.Current.CancellationToken);
+
+        Assert.Equal(second.ConnectionId, harness.Sender.Channel?.ConnectionId);
+        Assert.Equal((second.ConnectionId, 1), (harness.Choices.Saved, harness.Choices.Remembered));
+        Assert.Equal(["quotation.order.sent", ChooseWhatsAppChannelHandler.AuditAction], harness.Audit.Actions);
+
+        var failing = NewHarness(channels: [first, second], whatsAppFailure: new TaskCanceledException("A task was canceled."));
+
+        await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            failing.Handler.HandleAsync(NewCommand(failing, connectionId: second.ConnectionId), TestContext.Current.CancellationToken));
+
+        Assert.Null(failing.Choices.Saved);
+        Assert.Empty(failing.Audit.Actions);
+    }
+
+    [Fact]
+    public async Task AConnectionIdThatIsNotAvailableIsChannelUnavailable()
+    {
+        var harness = NewHarness(channels: [WhatsAppChannels.Meta()]);
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            harness.Handler.HandleAsync(NewCommand(harness, connectionId: Guid.CreateVersion7()), TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.whatsapp.channel_unavailable", error.Code);
+        Assert.Equal(0, harness.Renderer.Calls);
     }
 
     [Fact]
@@ -323,16 +544,16 @@ public sealed class SendOrderHandlerTests
         Assert.Null(harness.Sender.SentOrder);
     }
 
-    // R4 y Review Focus 4: sin plantilla de pedido no sale ningún pedido, y saberlo no cuesta un PDF.
+    // Spec 2026-11-09 D6: una Zenvia sin plantilla de pedido no está disponible para pedidos; sin otra, no_channel antes del PDF.
     [Fact]
-    public async Task OrderChannelWithoutOrderTemplateIsRejectedBeforeRendering()
+    public async Task OrderChannelWithoutOrderTemplateIsNotAvailableAndIsNoChannelBeforeRendering()
     {
         var harness = NewHarness(channels: [WhatsAppChannels.Any(orderTemplateId: null)]);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             harness.Handler.HandleAsync(NewCommand(harness), TestContext.Current.CancellationToken));
 
-        Assert.Equal("order.whatsapp.not_configured", error.Code);
+        Assert.Equal("order.whatsapp.no_channel", error.Code);
         Assert.Equal(0, harness.Renderer.Calls);
         Assert.Null(harness.Sender.SentOrder);
     }
@@ -377,33 +598,42 @@ public sealed class SendOrderHandlerTests
         RecordingWhatsAppSender Sender,
         CountingPdfRenderer Renderer,
         RecordingPdfStorage Storage,
-        RecordingQuotationAuditPublisher Audit);
+        RecordingQuotationAuditPublisher Audit,
+        StubWhatsAppChannelDirectory Channels,
+        InMemoryWhatsAppChannelChoiceStore Choices,
+        StubQuotationCustomerLookup CustomerLookup);
 
     private static Harness NewHarness(
         QuotationPartyDetails? billing = null,
         bool cancelled = false,
-        OrderStatus status = OrderStatus.Pending,
+        OrderStatus status = OrderStatus.Open,
+        bool invoiced = false,
         QuotationCustomerRef? customer = null,
         Exception? whatsAppFailure = null,
         IExecutionContext? executionContext = null,
         WhatsAppChannel[]? channels = null,
         IMembershipDirectory? membership = null,
-        StubTenantDirectory? tenantDirectory = null)
+        StubTenantDirectory? tenantDirectory = null,
+        Guid? saved = null,
+        IEnumerable<QuotationClientContact>? contacts = null)
     {
         var tenant = tenantDirectory ?? new StubTenantDirectory();
+        var directory = new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]);
+        var choices = new InMemoryWhatsAppChannelChoiceStore(saved);
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
             parties: billing is null
                 ? null
                 : new QuotationParties(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
-        if (status is OrderStatus.Approved or OrderStatus.Invoiced)
+        if (invoiced)
         {
-            order.Approve(AdvisorId, Now.AddHours(-3));
+            order.MarkPaid(AdvisorId, requirePaymentProof: false, order.WithoutCosts(), Now.AddHours(-3));
+            order.Invoice(AdvisorId, requireFullPayment: true, Now.AddHours(-2));
         }
 
-        if (status is OrderStatus.Invoiced)
+        if (status is OrderStatus.Archived)
         {
-            order.Invoice(AdvisorId, Now.AddHours(-2));
+            order.Archive(AdvisorId, Now.AddHours(-2));
         }
 
         if (cancelled)
@@ -417,6 +647,7 @@ public sealed class SendOrderHandlerTests
         var storage = new RecordingPdfStorage("https://r2.example.com/ped.pdf?X-Amz-Signature=abc");
         var audit = new RecordingQuotationAuditPublisher();
         var customers = new StubQuotationCustomerLookup(customer ?? Customer);
+        customers.Contacts.AddRange(contacts ?? []);
 
         var handler = new SendOrderHandler(
             orders,
@@ -427,21 +658,21 @@ public sealed class SendOrderHandlerTests
                 customers,
                 new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
                 new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-                new NoOrderStoreRequestLookup()),
+                new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>())),
             new OrderPdfProvider(
                 renderer, storage, new FixedTenantClock(Now), new StubQuotationLogoLookup(),
                 tenant),
             storage,
             customers,
             whatsAppFailure is null ? sender : new FailingWhatsAppSender(whatsAppFailure),
-            new StubWhatsAppChannelDirectory(channels ?? [WhatsAppChannels.Any()]),
+            directory,
+            choices,
             tenant,
             membership ?? new StubMembershipDirectory(AdvisorId.Value),
             executionContext ?? new StubExecutionContext(SubjectId, TenantId),
             new FixedClock(Now));
 
-        return new Harness(handler, order, orders, sender, renderer, storage, audit);
+        return new Harness(handler, order, orders, sender, renderer, storage, audit, directory, choices, customers);
     }
 
     // El doble de IQuotationRepository exige una cotización; el pedido de estas pruebas es manual,

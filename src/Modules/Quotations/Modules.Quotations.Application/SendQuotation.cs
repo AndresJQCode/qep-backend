@@ -16,14 +16,21 @@ namespace Modules.Quotations.Application;
 /// pantalla mande la cotizacion a donde quiera.
 /// </summary>
 public sealed record SendQuotationCommand(
-    Guid TenantId, Guid QuotationId, string? Recipient = null, Guid? ConnectionId = null) : ICommand<QuotationDto>;
+    Guid TenantId,
+    Guid QuotationId,
+    string? Recipient = null,
+    Guid? ConnectionId = null,
+    Guid? ContactId = null,
+    Guid? ThreadConnectionId = null) : ICommand<QuotationDto>;
 
 /// <summary>A quien va el mensaje. Texto en el borde, enum adentro: llega por HTTP y un valor
 /// que no matchea es un 422 con codigo, no un cast que revienta.</summary>
 public enum QuotationRecipient
 {
     Customer,
-    Billing
+    Billing,
+    /// <summary>Un contacto de la empresa de la cotización (spec 2026-11-10 §4.6), elegido con <c>ContactId</c>.</summary>
+    Contact
 }
 
 public sealed class SendQuotationHandler(
@@ -70,13 +77,23 @@ public sealed class SendQuotationHandler(
         await BillingPersonTypeRequirement.EnsureForQuotationAsync(
             tenantDirectory, command.TenantId, quotation, cancellationToken);
 
+        // El contacto, con el mismo criterio y antes que el canal: uno que no es de este cliente es un envío que nunca empezó,
+        // y fuera del try no anota una falla en la línea de tiempo.
+        var isContact = ContactRecipient.IsRequested(command.Recipient);
+        var contact = isContact
+            ? await ContactRecipient.RequireAsync(
+                customerLookup, command.TenantId, quotation.ClientId, command.ContactId, WhatsAppDocument.Quotation, cancellationToken)
+            : null;
+
         // Por dónde sale, con el mismo criterio: sin canal, o con varios sin elegir, el envío nunca empezó
         // (plan 2026-10-21), y una elección que no corresponde (otra conexión cuando el tenant ya tiene una, o una que no
         // está) tampoco: fuera del try, que anota las fallas. Antes del PDF, que cuesta una llamada a `qcode-pdf`.
         var resolved = WhatsAppChannelSelection.Resolve(
-            await whatsAppChannels.ListAvailableAsync(command.TenantId, cancellationToken),
+            await whatsAppChannels.ListAvailableAsync(command.TenantId, WhatsAppDocument.Quotation, cancellationToken),
             await channelChoices.FindAsync(command.TenantId, cancellationToken),
-            command.ConnectionId);
+            command.ConnectionId,
+            WhatsAppDocument.Quotation,
+            ContactRecipient.ThreadFor(isContact, command.ThreadConnectionId));
         var channel = resolved.Channel;
 
         // Se lee antes de mutar: `Send` deja la cotización en Sent venga de donde venga, así que
@@ -134,7 +151,8 @@ public sealed class SendQuotationHandler(
             // que ningún otro flujo sabe destrabar.
             // A quien se le manda. Se resuelve despues de validar al cliente porque el default
             // --y el respaldo de nombre-- sigue saliendo de ahi.
-            var (recipient, toPhone, fullName) = ResolveRecipient(command.Recipient, quotation, customer!);
+            var (recipient, toPhone, fullName, recipientCustomerId, contactName) =
+                ResolveRecipient(command.Recipient, quotation, customer!, contact);
 
             // El mismo ajuste regional con el que se armó el PDF: mensaje y documento no pueden
             // mostrar el monto con separadores distintos (spec 2026-10-23, D-R4).
@@ -155,8 +173,9 @@ public sealed class SendQuotationHandler(
                     NumberFormat: regional?.NumberFormat,
                     DocumentStorageKey: pdf.StorageKey,
                     SentByMemberId: sentBy.Value.Value,
-                    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha.
-                    CustomerId: recipient == QuotationRecipient.Customer ? quotation.ClientId : null,
+                    // Los datos de facturación no son un cliente: el mensaje no se asocia a ninguna ficha. El del contacto
+                    // sí: cae en la conversación de esa persona.
+                    CustomerId: recipientCustomerId,
                     TenantId: command.TenantId),
                 cancellationToken);
 
@@ -169,7 +188,7 @@ public sealed class SendQuotationHandler(
                 quotation.Id,
                 isResend ? QuotationHistoryEventType.Resent : QuotationHistoryEventType.Sent,
                 sentBy,
-                isResend ? QuotationChangeSummary.Resent() : QuotationChangeSummary.Sent(),
+                isResend ? QuotationChangeSummary.Resent(contactName) : QuotationChangeSummary.Sent(contactName),
                 now));
             auditPublisher.Publish(
                 command.TenantId,
@@ -269,17 +288,21 @@ public sealed class SendQuotationHandler(
     /// se rechaza en vez de caer al cliente en silencio: la pantalla ofrecio una opcion que no
     /// existia, y mandarselo a otro sin avisar es peor que no mandarlo.
     /// </summary>
-    private static (QuotationRecipient Recipient, string? ToPhone, string FullName) ResolveRecipient(
+    private static (QuotationRecipient Recipient, string? ToPhone, string FullName, Guid? CustomerId, string? ContactName) ResolveRecipient(
         string? recipient,
         Quotation quotation,
-        QuotationCustomerRef customer)
+        QuotationCustomerRef customer,
+        QuotationClientContact? contact)
     {
         if (string.IsNullOrWhiteSpace(recipient))
         {
-            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name, customer.Id, null);
         }
 
-        if (!Enum.TryParse<QuotationRecipient>(recipient, ignoreCase: true, out var parsed))
+        // Por nombre y no con Enum.TryParse, que también acepta "2" y lo leería como Contact.
+        var name = Enum.GetNames<QuotationRecipient>()
+            .FirstOrDefault(value => string.Equals(value, recipient.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (name is null || !Enum.TryParse<QuotationRecipient>(name, out var parsed))
         {
             throw new QuotationsDomainException(
                 "quotation.quotation.recipient_invalid",
@@ -288,7 +311,15 @@ public sealed class SendQuotationHandler(
 
         if (parsed == QuotationRecipient.Customer)
         {
-            return (QuotationRecipient.Customer, customer.Phone, customer.Name);
+            return (QuotationRecipient.Customer, customer.Phone, customer.Name, customer.Id, null);
+        }
+
+        if (parsed == QuotationRecipient.Contact)
+        {
+            // Ya se resolvió contra el puerto antes del try; sin él es el mismo 422.
+            var resolved = contact ?? throw new QuotationsDomainException(
+                "quotation.quotation.contact_not_of_client", "The contact does not belong to the client of this document.");
+            return (QuotationRecipient.Contact, resolved.Phone, resolved.Name, resolved.Id, resolved.Name);
         }
 
         var billing = quotation.Billing;
@@ -304,7 +335,9 @@ public sealed class SendQuotationHandler(
         return (
             QuotationRecipient.Billing,
             billing.Phone,
-            string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name);
+            string.IsNullOrWhiteSpace(billing.Name) ? customer.Name : billing.Name,
+            null,
+            null);
     }
 
 }

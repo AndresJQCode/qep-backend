@@ -33,7 +33,22 @@ public sealed class OrderChangeSummaryTests
     public void DescribesTheSendWithItsRecipient(QuotationRecipient recipient, string expected) =>
         Assert.Equal(expected, OrderChangeSummary.Sent(recipient));
 
+    // El pedido de la tienda no nace de una solicitud: el historial no nombra ninguna.
+    [Fact]
+    public void CreatedFromStoreNamesNoRequest() =>
+        Assert.Equal("Creado desde la tienda.", OrderChangeSummary.CreatedFromStore());
+
     [Fact]
     public void AnUnchangedShippingHasNoSummary() =>
         Assert.Null(OrderChangeSummary.ShippingChanged(ShippingDetails.None, ShippingDetails.None, Colombian));
+
+    // Spec 2026-11-10 §3.2: una edición que sube el neto por encima de lo consignado baja el pagado.
+    [Fact]
+    public void PaymentStatusRecalculatedNamesBothStatusesAndNets() =>
+        Assert.Equal(
+            "El pago pasó de Pagado a Pago parcial: el neto pasó de 23.800 a 47.600.",
+            OrderChangeSummary.PaymentStatusRecalculated(
+                new OrderPaymentStatusChange(
+                    OrderPaymentStatus.FullPaymentReceived, OrderPaymentStatus.PartialPaymentReceived, 23_800m, 47_600m),
+                Colombian));
 }

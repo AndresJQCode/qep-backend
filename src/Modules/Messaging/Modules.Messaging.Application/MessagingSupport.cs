@@ -207,7 +207,7 @@ internal static class MessageMapping
     public static MessageDto ToDto(
         MessageRow row, Guid tenantId, IReadOnlyDictionary<Guid, string> memberNames, IReadOnlyDictionary<Guid, ReplyTargetRow> replyTargets,
         IReadOnlyDictionary<Guid, string>? reasonNames = null, IReadOnlyDictionary<Guid, string>? chatbotNames = null,
-        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null)
+        IReadOnlyDictionary<Guid, CustomerRefDto>? customerRefs = null, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones = null)
     {
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(memberNames);
@@ -251,7 +251,9 @@ internal static class MessageMapping
             // Sólo el saliente: el details de un interactivo entrante es la respuesta del cliente (button_reply / list_reply), no una tarjeta.
             row is { Direction: MessageDirection.Outbound, Kind: MessageKind.Interactive } ? InteractiveDetailsJson.Parse(row.DetailsJson) : null,
             mediaState,
-            row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null);
+            row.SentByApiKeyId is { } apiKeyId ? new ApiKeyRefDto(apiKeyId, row.SentByApiKeyName ?? string.Empty) : null,
+            row.RetryDisabled,
+            row.Kind == MessageKind.Contacts ? ContactsFrom(row.DetailsJson, sharedPhones) : null);
     }
 
     /// <summary>Spec 2026-10-21 D-I3: el chatbot que ya no existe (o que el puerto no conoce) firma con este texto.</summary>
@@ -446,4 +448,97 @@ internal static class MessageMapping
             return null;
         }
     }
+
+    /// <summary><c>details</c> de un <c>contacts</c> es el arreglo <c>contacts</c> de Meta tal cual (<c>WebhookPayloadParser</c>).
+    /// Si no es un arreglo, el mensaje sale sin <c>contacts</c> en vez de romper la página; el nombre sigue en <c>text</c>.</summary>
+    private static List<SharedContactDto>? ContactsFrom(string? detailsJson, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(detailsJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            return root.EnumerateArray()
+                .Where(contact => contact.ValueKind == JsonValueKind.Object)
+                .Select(contact => new SharedContactDto(
+                    contact.TryGetProperty("name", out var name) ? JsonString(name, "formatted_name") : null,
+                    contact.TryGetProperty("org", out var org) ? JsonString(org, "company") : null,
+                    ObjectsOf(contact, "phones")
+                        .Select(phone => SharedPhoneFrom(phone, sharedPhones))
+                        .Where(phone => phone.Phone is not null || phone.WaId is not null)
+                        .ToList(),
+                    ObjectsOf(contact, "emails")
+                        .Select(email => (Address: JsonString(email, "email"), Type: JsonString(email, "type")))
+                        .Where(email => email.Address is not null)
+                        .Select(email => new SharedContactEmailDto(email.Address!, email.Type))
+                        .ToList()))
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static SharedContactPhoneDto SharedPhoneFrom(JsonElement phone, IReadOnlyDictionary<string, MessagingSharedPhone>? sharedPhones)
+    {
+        var waId = JsonString(phone, "wa_id");
+        var resolved = waId is null ? null : sharedPhones?.GetValueOrDefault(waId);
+        return new SharedContactPhoneDto(
+            JsonString(phone, "phone"), waId, JsonString(phone, "type"), resolved?.Customer, resolved?.Country, resolved?.NationalNumber);
+    }
+
+    /// <summary>Spec 2026-11-10: los <c>wa_id</c> de los teléfonos de toda tarjeta de contactos de la página, sin repetir, para
+    /// resolverlos en una sola consulta. Un <c>details</c> ilegible no aporta nada y no lanza.</summary>
+    public static IReadOnlyCollection<string> SharedContactWaIdsOf(IEnumerable<MessageRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        var waIds = new List<string>();
+        foreach (var row in rows.Where(row => row.Kind == MessageKind.Contacts && !string.IsNullOrEmpty(row.DetailsJson)))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(row.DetailsJson!);
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                waIds.AddRange(document.RootElement.EnumerateArray()
+                    .Where(contact => contact.ValueKind == JsonValueKind.Object)
+                    .SelectMany(contact => ObjectsOf(contact, "phones"))
+                    .Select(phone => JsonString(phone, "wa_id"))
+                    .OfType<string>());
+            }
+            catch (JsonException)
+            {
+                // Un details roto no aporta nada: ContactsFrom ya deja el mensaje sin tarjeta.
+            }
+        }
+
+        return [.. waIds.Distinct(StringComparer.Ordinal)];
+    }
+
+    private static IEnumerable<JsonElement> ObjectsOf(JsonElement parent, string property) =>
+        parent.TryGetProperty(property, out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.Object)
+            : [];
+
+    /// <summary>El texto de <paramref name="property"/> si <paramref name="element"/> es un objeto y el valor es un string no vacío.</summary>
+    private static string? JsonString(JsonElement element, string property) =>
+        element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.String
+        && value.GetString() is { Length: > 0 } text
+            ? text
+            : null;
 }

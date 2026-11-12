@@ -286,6 +286,9 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FileId")
+                        .HasDatabaseName("IX_product_gallery_images_file");
+
                     b.HasIndex("ProductId")
                         .HasDatabaseName("IX_product_gallery_images_product");
 
@@ -670,6 +673,33 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                                 .HasForeignKey("VariantId");
                         });
 
+                    b.OwnsMany("Modules.Catalog.Domain.ProductVariantCost", "Costs", b1 =>
+                        {
+                            b1.Property<Guid>("VariantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("variant_id");
+
+                            b1.Property<string>("Currency")
+                                .HasMaxLength(3)
+                                .HasColumnType("character(3)")
+                                .HasColumnName("currency");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 2)
+                                .HasColumnType("numeric(18,2)")
+                                .HasColumnName("amount");
+
+                            b1.HasKey("VariantId", "Currency");
+
+                            b1.ToTable("product_variant_costs", "catalog", t =>
+                                {
+                                    t.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0");
+                                });
+
+                            b1.WithOwner()
+                                .HasForeignKey("VariantId");
+                        });
+
                     b.OwnsMany("Modules.Catalog.Domain.ProductVariantOptionValue", "_optionValues", b1 =>
                         {
                             b1.Property<Guid>("VariantId")
@@ -700,6 +730,8 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                             b1.WithOwner()
                                 .HasForeignKey("VariantId");
                         });
+
+                    b.Navigation("Costs");
 
                     b.Navigation("Prices");
 

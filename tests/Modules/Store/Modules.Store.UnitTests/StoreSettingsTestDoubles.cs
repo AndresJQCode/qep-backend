@@ -62,8 +62,11 @@ internal sealed class FakeDomains(CallLog log) : IStoreDomainRepository
 {
     public List<(string? Slug, string RootDomain)> Replaced { get; } = [];
 
+    /// <summary>El dominio que resuelve la tienda pública; otro host no es de nadie.</summary>
+    public StoreDomain? Seeded { get; init; }
+
     public Task<StoreDomain?> FindByHostAsync(string hostname, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(Seeded is not null && Seeded.Hostname == hostname ? Seeded : null);
 
     public Task ReplaceSubdomainAsync(Guid tenantId, string? slug, string rootDomain, CancellationToken cancellationToken)
     {
@@ -83,16 +86,14 @@ internal sealed class FakeUnitOfWork(CallLog log) : IStoreUnitOfWork
         log.Entries.Add("uow.save");
         return Task.CompletedTask;
     }
-
-    public Task<IStoreTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-
-    public void DiscardPendingChanges() => throw new NotSupportedException();
 }
 
-internal sealed class FakeAudit : IStoreAuditPublisher
+internal sealed class FakeAudit(CallLog? log = null) : IStoreAuditPublisher
 {
     public List<(string Action, IReadOnlyCollection<string> ChangedFields)> Entries { get; } = [];
+
+    /// <summary>Lo que audita el visitante de la tienda pública, sin actor.</summary>
+    public List<(string Action, string ResourceType, string ResourceId)> Anonymous { get; } = [];
 
     public void Publish(
         Guid tenantId,
@@ -104,8 +105,11 @@ internal sealed class FakeAudit : IStoreAuditPublisher
         IReadOnlyCollection<string> changedFields,
         DateTimeOffset occurredAt) => Entries.Add((action, changedFields));
 
-    public void PublishAnonymous(Guid tenantId, string action, string resourceType, string resourceId, DateTimeOffset at) =>
-        throw new NotSupportedException();
+    public void PublishAnonymous(Guid tenantId, string action, string resourceType, string resourceId, DateTimeOffset at)
+    {
+        log?.Entries.Add("audit.anonymous");
+        Anonymous.Add((action, resourceType, resourceId));
+    }
 }
 
 internal sealed class FakeCatalog : IStoreCatalogReader
@@ -143,9 +147,17 @@ internal sealed class FakeCatalog : IStoreCatalogReader
         Guid tenantId, Guid productId, string currency, bool includeScales, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Las variantes que la tienda vende; una que no está acá es una línea no disponible.</summary>
+    public Dictionary<Guid, StoreSellableVariant> Sellable { get; } = [];
+
     public Task<IReadOnlyDictionary<Guid, StoreSellableVariant>> SellableVariantsAsync(
         Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyDictionary<Guid, StoreSellableVariant>>(
+            Sellable.Where(pair => variantIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+
+    public Task<IReadOnlyDictionary<Guid, string>> VariantNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 }
 
 internal sealed class FakeBillingAccounts : IStoreBillingAccounts
@@ -195,6 +207,33 @@ internal sealed class FakeTenants : IStoreTenantLookup
             new StoreRegionalFormat("America/Bogota", "yyyy-MM-dd", "es-CO", "COP", "CO")));
 }
 
+/// <summary>El directorio de miembros sembrado: quién está activo, cómo se llama y quién es el owner.</summary>
+internal sealed class FakeMembers : IStoreMemberDirectory
+{
+    public HashSet<Guid> Active { get; } = [];
+
+    /// <summary>La membresía owner del tenant, el asesor de respaldo del checkout.</summary>
+    public Guid Owner { get; set; }
+
+    public Dictionary<Guid, string> Names { get; } = [];
+
+    /// <summary>Cada membresía por la que se preguntó si está activa, en orden.</summary>
+    public List<Guid> ActiveChecks { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, string>> NamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> memberIds, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+            Names.Where(pair => memberIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value));
+
+    public Task<bool> IsActiveMemberAsync(Guid tenantId, Guid membershipId, CancellationToken cancellationToken)
+    {
+        ActiveChecks.Add(membershipId);
+        return Task.FromResult(Active.Contains(membershipId));
+    }
+
+    public Task<Guid> FindOwnerMembershipIdAsync(Guid tenantId, CancellationToken cancellationToken) => Task.FromResult(Owner);
+}
+
 internal sealed class KnownCountries : IStoreCountries
 {
     public bool IsKnown(string country) => country is "CO" or "ES" or "US";
@@ -219,6 +258,8 @@ internal sealed class SettingsRig
 
     public FakeFiles Files { get; } = new();
 
+    public FakeMembers Members { get; } = new();
+
     public StoreSettingsComposer Composer { get; }
 
     public IExecutionContext Context { get; }
@@ -236,7 +277,7 @@ internal sealed class SettingsRig
         UnitOfWork = new FakeUnitOfWork(Log);
         Context = new FakeExecutionContext(callerTenant ?? StoreTestData.TenantId, permissions ?? [StorePermissions.SettingsManage]);
         Modules = modules ?? FakeTenantModules.AllEnabled();
-        Composer = new StoreSettingsComposer(new FakeTenants(), Files, Catalog, new StoreOptions { RootDomain = "lulocrm.com" });
+        Composer = new StoreSettingsComposer(new FakeTenants(), Files, Catalog, Members, new StoreOptions { RootDomain = "lulocrm.com" });
     }
 
     public UpdateStoreSettingsHandler UpdateHandler() =>
@@ -248,6 +289,7 @@ internal sealed class SettingsRig
             Catalog,
             Accounts,
             Files,
+            Members,
             new KnownCountries(),
             UnitOfWork,
             Audit,
@@ -278,7 +320,9 @@ internal sealed class SettingsRig
         Guid? bannerFileId = null,
         string? name = null,
         string? dataPolicyUrl = "https://acme.test/politica",
-        string? instagramUrl = null) =>
+        string? instagramUrl = null,
+        Guid? advisorMembershipId = null,
+        bool? showPrices = null) =>
         new(
             slug,
             name,
@@ -298,7 +342,9 @@ internal sealed class SettingsRig
             currencies ?? [Entry("COP", "A-111")],
             primaryCurrency,
             salesCountries ?? ["co", "es"],
-            featured ?? []);
+            featured ?? [],
+            advisorMembershipId,
+            showPrices);
 
     public static StoreCurrencyRequest Entry(string currency, string account, string? accountCurrency = null) =>
         new(currency, new StoreBillingAccountRequest(CompanyId, "Bancolombia", account, accountCurrency ?? currency));

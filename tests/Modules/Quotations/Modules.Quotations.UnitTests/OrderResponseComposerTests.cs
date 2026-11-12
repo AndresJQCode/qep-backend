@@ -4,8 +4,8 @@ using Modules.Quotations.Domain;
 namespace Modules.Quotations.UnitTests;
 
 /// <summary>
-/// El detalle del pedido trae la solicitud de la tienda sólo cuando el pedido salió de ella: un pedido de otro origen nunca consulta
-/// el puerto, porque todos los detalles pasan por este compositor y la consulta sería un viaje de más por cada uno.
+/// El detalle del pedido ya no trae la solicitud de la tienda (spec 2026-11-09): el checkout crea el pedido directo, así que un pedido
+/// de la tienda se compone como cualquier otro.
 /// </summary>
 public sealed class OrderResponseComposerTests
 {
@@ -19,66 +19,101 @@ public sealed class OrderResponseComposerTests
         "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false);
 
     [Fact]
-    public async Task AManualOrderHasANullStoreRequestAndNoLookup()
-    {
-        var lookup = new RecordingOrderStoreRequestLookup(null);
-        var detail = new OrderDetailDto(OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto(), null, []);
-
-        var response = await Composer(lookup).ComposeAsync(TenantId, detail, TestContext.Current.CancellationToken);
-
-        Assert.Null(response.StoreRequest);
-        Assert.Empty(lookup.Calls);
-    }
+    public void TheDetailResponseHasNoStoreRequestProperty() =>
+        Assert.Null(typeof(OrderDetailResponse).GetProperty("StoreRequest"));
 
     [Fact]
-    public async Task AStoreOrderCarriesItsRequestFromTheLookup()
+    public async Task AStoreOrderComposesLikeAnyOtherOrder()
     {
-        var request = new OrderStoreRequestRef(
-            Guid.CreateVersion7(), "T-0001", ClientId, "Ana Pérez", "300 123 4567", "+573001234567", "ana@test.co",
-            119_000m, "COP", TotalDifference: -5_000m);
-        var lookup = new RecordingOrderStoreRequestLookup(request);
+        // El pedido de la tienda ya es un Order completo: su detalle no le pide nada a Store.
         var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with { Source = "Store" };
 
-        var response = await Composer(lookup).ComposeAsync(
+        var response = await Composer().ComposeAsync(
             TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
 
-        Assert.Equal((TenantId, order.Id), Assert.Single(lookup.Calls));
+        Assert.Equal("Store", response.Order.Source);
+        Assert.Equal("Asesora Uno", response.AdvisorName);
+    }
+
+    // Spec 2026-11-10 §5: el detalle trae los cuatro ejes, quién y cuándo de cada marca y el saldo, para que la
+    // pantalla no los deduzca del historial ni reste comprobantes.
+    [Fact]
+    public async Task TheResponseCarriesTheAxesTheirMarksAndTheBalance()
+    {
+        var marker = new MemberId(Guid.CreateVersion7());
+        var order = OrderBuilders.Pending(
+            TenantId, AdvisorId, Now, ClientId, proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
+        order.MarkPaid(marker, requirePaymentProof: false, order.WithoutCosts(), Now.AddMinutes(1));
+        order.Prepare(marker, Now.AddMinutes(2));
+        order.Archive(marker, Now.AddMinutes(3));
+
+        var response = await Composer().ComposeAsync(
+            TenantId, new OrderDetailDto(order.ToDto(), null, []), TestContext.Current.CancellationToken);
+
+        var result = response.Order;
         Assert.Equal(
-            new OrderStoreRequestResponse(
-                request.Id, "T-0001", ClientId, "Ana Pérez", "300 123 4567", "+573001234567", "ana@test.co", 119_000m, "COP",
-                -5_000m),
-            response.StoreRequest);
+            ("Archived", "FullPaymentReceived", "Prepared", false),
+            (result.Status, result.PaymentStatus, result.FulfillmentStatus, result.Invoiced));
+        Assert.Equal((Now.AddMinutes(1), marker.Value), (result.PaidMarkedAt!.Value, result.PaidMarkedBy!.Value));
+        Assert.Equal((Now.AddMinutes(2), marker.Value), (result.PreparedAt!.Value, result.PreparedBy!.Value));
+        Assert.Equal((Now.AddMinutes(3), marker.Value), (result.ArchivedAt!.Value, result.ArchivedBy!.Value));
+        Assert.Equal(19_000m, result.Balance);
     }
 
     [Fact]
-    public async Task AStoreOrderWithoutARequestHasANullStoreRequest()
+    public void TheApprovalFieldsAreGone()
     {
-        var lookup = new RecordingOrderStoreRequestLookup(null);
-        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto() with { Source = "Store" };
-
-        var response = await Composer(lookup).ComposeAsync(
-            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
-
-        Assert.Null(response.StoreRequest);
-        Assert.Single(lookup.Calls);
+        Assert.Null(typeof(OrderResponse).GetProperty("ApprovedAt"));
+        Assert.Null(typeof(OrderResponse).GetProperty("ApprovedBy"));
+        Assert.Null(typeof(OrderDto).GetProperty("ApprovedAt"));
+        Assert.Null(typeof(OrderDto).GetProperty("ApprovedBy"));
     }
 
-    private static OrderResponseComposer Composer(IOrderStoreRequestLookup storeRequests) =>
+    [Fact]
+    public async Task TheOrderDetailCarriesTheClientsContacts()
+    {
+        var laura = new QuotationClientContact(Guid.CreateVersion7(), "Laura Gómez", "3115550101");
+        var pedro = new QuotationClientContact(Guid.CreateVersion7(), "Pedro Ríos", "3125550102");
+
+        var response = await ComposeAsync(laura, pedro);
+
+        Assert.Equal(
+            [new ClientContactDto(laura.Id, "Laura Gómez", "3115550101"), new ClientContactDto(pedro.Id, "Pedro Ríos", "3125550102")],
+            response.ClientContacts);
+    }
+
+    [Fact]
+    public async Task AClientWithoutContactsCarriesAnEmptyList()
+    {
+        var response = await ComposeAsync();
+
+        Assert.NotNull(response.ClientContacts);
+        Assert.Empty(response.ClientContacts);
+    }
+
+    [Fact]
+    public async Task ContactsWithoutPhoneTravelWithPhoneNull()
+    {
+        var laura = new QuotationClientContact(Guid.CreateVersion7(), "Laura Gómez", null);
+
+        var response = await ComposeAsync(laura);
+
+        Assert.Equal(new ClientContactDto(laura.Id, "Laura Gómez", null), Assert.Single(response.ClientContacts));
+    }
+
+    private static async Task<OrderDetailResponse> ComposeAsync(params QuotationClientContact[] contacts)
+    {
+        var customers = new StubQuotationCustomerLookup(Customer);
+        customers.Contacts.AddRange(contacts);
+        var order = OrderBuilders.Pending(TenantId, AdvisorId, Now, ClientId).ToDto();
+        return await Composer(customers).ComposeAsync(
+            TenantId, new OrderDetailDto(order, null, []), TestContext.Current.CancellationToken);
+    }
+
+    private static OrderResponseComposer Composer(StubQuotationCustomerLookup? customers = null) =>
         new(
-            new StubQuotationCustomerLookup(Customer),
+            customers ?? new StubQuotationCustomerLookup(Customer),
             new StubQuotationAdvisorLookup("asesora@qcode.co", "Asesora Uno"),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()),
-            storeRequests);
-
-    private sealed class RecordingOrderStoreRequestLookup(OrderStoreRequestRef? result) : IOrderStoreRequestLookup
-    {
-        public List<(Guid TenantId, Guid OrderId)> Calls { get; } = [];
-
-        public Task<OrderStoreRequestRef?> FindAsync(Guid tenantId, Guid orderId, CancellationToken cancellationToken)
-        {
-            Calls.Add((tenantId, orderId));
-            return Task.FromResult(result);
-        }
-    }
+            new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>()));
 }

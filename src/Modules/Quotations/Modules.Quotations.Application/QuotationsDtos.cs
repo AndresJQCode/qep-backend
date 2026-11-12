@@ -177,7 +177,7 @@ public sealed record QuotationPartyDto(
     Guid? CityId,
     /// <summary>"Natural" o "Juridica"; sólo en facturación (spec 2026-10-26), siempre null en la entrega.</summary>
     string? PersonType = null,
-    /// <summary>"NIT", "CC", "CE" o "PASAPORTE"; sólo en facturación, siempre null en la entrega.</summary>
+    /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID); sólo en facturación, siempre null en la entrega.</summary>
     string? IdentificationType = null,
     /// <summary>ISO alfa-2. Siempre viaja: una parte sin país es <c>CO</c>.</summary>
     string? Country = null,
@@ -221,7 +221,7 @@ public sealed record QuotationPartyRequest(
     Guid? CityId,
     /// <summary>"Natural" o "Juridica" (spec 2026-10-26). Sólo en facturación; en la entrega se ignora.</summary>
     string? PersonType = null,
-    /// <summary>"NIT", "CC", "CE" o "PASAPORTE": el tipo de <c>IdentificationNumber</c>. En facturación con
+    /// <summary>Uno de los siete códigos (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID; qué país acepta cuáles lo dice <c>DocumentTypesByCountry</c>): el tipo de <c>IdentificationNumber</c>. En facturación con
     /// nombre propio es obligatorio, como el número; en la entrega se ignora.</summary>
     string? IdentificationType = null,
     /// <summary>ISO alfa-2. Ausente (o <c>CO</c>) es Colombia y la ciudad va por <c>DepartmentId</c>/<c>CityId</c>;
@@ -435,11 +435,17 @@ public sealed record SaveQuotationRequest(
 /// <c>ConnectionId</c> (spec 2026-10-21 §4.2) es la conexión de WhatsApp por la que sale, y sólo hace falta cuando el
 /// tenant tiene varias disponibles y todavía no eligió: esa primera elección se guarda con el envío. Con una elección
 /// ya guardada, mandar otra es <c>channel_already_set</c>; el cambio se hace desde Configuración.
+///
+/// Spec 2026-11-10 §4.6: <c>Recipient: "Contact"</c> manda al contacto <c>ContactId</c> de la empresa de la cotización.
+/// <c>ThreadConnectionId</c> es la conexión del hilo desde el que se manda: no pasa por la elección guardada ni la cambia, y
+/// sólo se considera con <c>Contact</c>.
 /// </summary>
 public sealed record SendQuotationRequest(
     Guid? PdfFileId = null,
     string? Recipient = null,
-    Guid? ConnectionId = null);
+    Guid? ConnectionId = null,
+    Guid? ContactId = null,
+    Guid? ThreadConnectionId = null);
 
 /// <summary>El cliente tal como lo muestra la pantalla de la cotización, con su libreta de
 /// direcciones. Viaja acá para que el detalle y el editor no pidan la ficha completa a
@@ -469,7 +475,7 @@ public sealed record QuotationClientResponse(
     string? Country = null,
     /// <summary>"Natural" o "Juridica", tal como está en la ficha del cliente. Null si no lo tiene.</summary>
     string? PersonType = null,
-    /// <summary>"NIT", "CC", "CE" o "PASAPORTE" de la ficha del cliente. Null si no lo tiene.</summary>
+    /// <summary>Uno de los siete códigos de documento (NIT, CC, CE, PASAPORTE, NIF, NIE, TAX_ID) de la ficha del cliente. Null si no lo tiene.</summary>
     string? IdentificationType = null);
 
 public sealed record QuotationClientAddressResponse(
@@ -594,7 +600,14 @@ public sealed record QuotationResponse(
     /// <c>Subtotal + TaxAmount + FreightSubtotal + FreightTaxAmount = Total</c> (spec 2026-10-17 §5.3).</summary>
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
-    decimal FreightTaxAmount);
+    decimal FreightTaxAmount,
+    /// <summary>Spec 2026-11-10 §4.6: los contactos sin fusionar de la empresa del cliente, para elegir a quién se envía el
+    /// documento. Siempre presente: vacío si el cliente no tiene o si él mismo es un contacto. Lo llena el compositor.</summary>
+    IReadOnlyList<ClientContactDto> ClientContacts);
+
+/// <summary>Un contacto de la empresa del cliente tal como lo ve el diálogo de envío (spec 2026-11-10 §4.6). El teléfono es el de su
+/// ficha y puede faltar: ese contacto se muestra pero no se puede elegir.</summary>
+public sealed record ClientContactDto(Guid Id, string Name, string? Phone);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de
@@ -629,6 +642,7 @@ public sealed record QuotationBillingResponse(
     Guid CompanyId,
     string? CompanyName,
     string? CompanyTaxId,
+    string? CompanyDocumentType,
     /// <summary>Membrete del PDF, no congelado: ver <see cref="QuotationCompanyRef"/>.</summary>
     string? CompanyAddress,
     string? CompanyPhone,

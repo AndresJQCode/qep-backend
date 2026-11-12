@@ -28,6 +28,11 @@ public sealed record MessagingAudienceCount(int Total, int Inactive, int OptedOu
 /// (<c>gray</c>, <c>blue</c>…), igual que <c>TagDto</c> de Customers.</summary>
 public sealed record MessagingTagRef(Guid Id, string Name, string Color);
 
+/// <summary>Spec 2026-11-10: un teléfono de una tarjeta de contacto compartida, como lo necesita la tarjeta. <c>Customer</c> es el
+/// cliente activo y no fusionado con ese número (<c>null</c> si no hay); <c>Country</c> y <c>NationalNumber</c> son el número partido
+/// como lo guarda el formulario de cliente (<c>null</c> los dos si el número no es válido).</summary>
+public sealed record MessagingSharedPhone(CustomerRefDto? Customer, string? Country, string? NationalNumber);
+
 /// <summary>Spec 2026-10-09 §6.5: los clientes de QEP por teléfono, con adaptador en Bootstrapper sobre
 /// <c>ICustomerPhoneDirectory</c> (Messaging no referencia Customers). El <c>waId</c> de Meta son los
 /// dígitos del E.164; el adaptador traduce. «Nombres y clientes» de §7.6: una consulta por página.</summary>
@@ -36,6 +41,12 @@ public interface IMessagingCustomerDirectory
     /// <summary>Un cliente por <c>waId</c> (D-M7); los que no tienen cliente no aparecen. Sólo para conversaciones viejas
     /// sin <c>customer_id</c> (spec 2026-10-10 §6.1.2).</summary>
     Task<IReadOnlyDictionary<string, CustomerRefDto>> MatchAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-10: para cada <c>waId</c> pedido (dígitos, sin «+», sin repetir) el cliente al que escribirle y el número
+    /// partido. La regla (sólo activos y no fusionados, se filtra antes de elegir el más viejo y no se sigue la fusión) <b>no</b> es la
+    /// de <see cref="MatchAsync"/>, que la bandeja sigue usando. Todos los <c>waId</c> aparecen en el resultado, aunque los tres valores
+    /// sean <c>null</c>; con la colección vacía no consulta nada.</summary>
+    Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken);
 
     /// <summary>Spec 2026-10-24 §4.1: todos los clientes del tenant con ese número (<paramref name="waId"/> son los dígitos),
     /// el creado primero antes y hasta <paramref name="take"/>. Incluye inactivos e incompletos.</summary>

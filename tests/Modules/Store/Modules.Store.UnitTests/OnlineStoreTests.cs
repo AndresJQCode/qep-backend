@@ -56,6 +56,35 @@ public sealed class OnlineStoreTests
     }
 
     [Fact]
+    public void AnEmptyStoreShowsPrices() => Assert.True(Empty().ShowPrices);
+
+    [Fact]
+    public void ChangingOnlyShowPricesBumpsTheVersion()
+    {
+        var store = ConfiguredStore();
+
+        Assert.True(store.Configure(Input(showPrices: false), KnowsCoAndEs, Member, Now));
+
+        Assert.False(store.ShowPrices);
+        Assert.Equal(2, store.Version);
+    }
+
+    [Fact]
+    public void ReconfiguringWithShowPricesFalseAgainChangesNothing()
+    {
+        var store = ConfiguredStore(Input(showPrices: false));
+        var version = store.Version;
+
+        Assert.False(store.Configure(Input(showPrices: false), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(version, store.Version);
+    }
+
+    [Fact]
+    public void HidingPricesIsNotAPublishBlocker() =>
+        Assert.Empty(ConfiguredStore(Input(showPrices: false)).PublishBlockers());
+
+    [Fact]
     public void ConfiguringBumpsTheVersionOnlyWhenSomethingChanges()
     {
         var store = ConfiguredStore();
@@ -106,6 +135,46 @@ public sealed class OnlineStoreTests
 
         store.Configure(Input(policy: "https://acme.test/b"), KnowsCoAndEs, Member, Now.AddDays(2));
         Assert.Equal(Now.AddDays(2), store.DataPolicySetAt);
+    }
+
+    [Fact]
+    public void ConfiguringTheAdvisorStoresItAndBumpsTheVersion()
+    {
+        var store = ConfiguredStore();
+
+        Assert.True(store.Configure(Input(advisorMembershipId: Member), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(Member, store.AdvisorMembershipId);
+        Assert.Equal(2, store.Version);
+    }
+
+    [Fact]
+    public void ReconfiguringTheSameAdvisorChangesNothing()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+        var version = store.Version;
+
+        Assert.False(store.Configure(Input(advisorMembershipId: Member), KnowsCoAndEs, Member, Now));
+
+        Assert.Equal(version, store.Version);
+    }
+
+    [Fact]
+    public void ClearingTheAdvisorBumpsTheVersion()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+
+        Assert.True(store.Configure(Input(), KnowsCoAndEs, Member, Now));
+
+        Assert.Null(store.AdvisorMembershipId);
+    }
+
+    [Fact]
+    public void AnAdvisorIsNotAPublishBlocker()
+    {
+        var store = ConfiguredStore(Input(advisorMembershipId: Member));
+
+        Assert.Empty(store.PublishBlockers());
     }
 
     [Fact]

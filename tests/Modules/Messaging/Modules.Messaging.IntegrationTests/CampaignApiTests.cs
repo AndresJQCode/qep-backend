@@ -383,6 +383,26 @@ public sealed class CampaignApiTests
     }
 
     [Fact]
+    public async Task ARecipientWithoutACustomerIsListedWithANullCustomerId()
+    {
+        // P10: al borrar el cliente se anula customer_id; el listado debe seguir mostrando la fila, no reventar con un 500.
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        var id = (await CreateAsync(f)).GetProperty("id").GetGuid();
+        await SendAsync(f.Client, HttpMethod.Post, $"{CampaignUrl(f, id)}/launch", new { expectedVersion = 1 });
+        await SeedRecipientAsync(f.ConnectionString, f.Tenant.TenantId, id, "Skipped", name: "Ana", failureCode: "unreachable");
+        await ExecuteAsync(f.ConnectionString, "UPDATE messaging.campaign_recipients SET customer_id = NULL WHERE customer_name = 'Ana'");
+
+        var response = await SendAsync(f.Client, HttpMethod.Get, $"{CampaignUrl(f, id)}/recipients");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var item = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("items")[0];
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("customerId").ValueKind);
+        Assert.Equal("Ana", item.GetProperty("customerName").GetString());
+    }
+
+    [Fact]
     public async Task TheRecipientsComeFilteredWithTheirTextsAndTheMessageStatusOfWhatMetaAccepted()
     {
         await using var database = await StartDatabaseAsync();

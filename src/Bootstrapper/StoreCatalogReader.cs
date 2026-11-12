@@ -211,6 +211,26 @@ internal sealed class StoreCatalogReader(
                 CatalogVariantReads.ImageUrlOf(CatalogVariantReads.ImageFileIdOf(pair.Product, pair.Variant), files, tenantId)));
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> VariantNamesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        if (variantIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        // Sólo el nombre: ni precio ni existencias salen de acá. La consulta va acotada al tenant.
+        var wanted = variantIds.ToHashSet();
+        var found = await products.FindVariantsByIdsAsync(
+            tenantId, variantIds.Select(id => new VariantId(id)).ToArray(), cancellationToken);
+        var selected = CatalogVariantReads.Select(found, wanted);
+        var valueNames = await CatalogVariantReads.LoadValueNamesAsync(
+            options, tenantId, selected.Select(pair => pair.Product).Distinct(), cancellationToken);
+        return selected.ToDictionary(
+            pair => pair.Variant.Id.Value,
+            pair => CatalogVariantReads.DisplayNameOf(pair.Product, pair.Variant, valueNames));
+    }
+
     private static bool IsSellableIn(Product product, ProductVariant variant, string currency) =>
         product.IsActive && product.VisibleInStore && variant.IsActive && variant.PriceIn(currency) is not null;
 

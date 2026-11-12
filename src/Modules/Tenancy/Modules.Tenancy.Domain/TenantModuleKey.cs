@@ -76,7 +76,7 @@ public static class TenantModuleKeys
     /// fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Loans = TenantModuleKey.Define("loans");
 
-    /// <summary>Spec 2026-11-03 §4.2: tienda pública. Depende de <see cref="Orders"/> (una solicitud se convierte en pedido)
+    /// <summary>Spec 2026-11-03 §4.2: tienda pública. Depende de <see cref="Orders"/> (el checkout de la tienda crea el pedido directo)
     /// y queda fuera de <see cref="DefaultForNewTenants"/>: se prende por tenant.</summary>
     public static readonly TenantModuleKey Store = TenantModuleKey.Define("store");
 
@@ -102,7 +102,7 @@ public static class TenantModuleKeys
         [ServiceContracts] = [Customers],
         // Spec 2026-10-31: un préstamo se otorga a un cliente.
         [Loans] = [Customers],
-        // Spec 2026-11-03: una solicitud se convierte en pedido.
+        // Spec 2026-11-03: el checkout de la tienda crea el pedido directo.
         [Store] = [Orders],
     };
 

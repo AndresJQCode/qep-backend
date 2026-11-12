@@ -51,6 +51,12 @@ internal sealed class FakeQuotationSettingsStore(Guid? freightTaxRateId) : IQuot
 
     public Task SetFreightChargeModesAsync(Guid tenantId, FreightChargeModeSettings settings, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
+
+    public Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 }
 
 internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRepository
@@ -183,9 +189,14 @@ internal sealed class MappedPhones : Dictionary<(string Phone, string Country), 
 
 /// <summary>Los clientes que siembra la prueba. <see cref="Calls"/> cuenta toda lectura: lo que se prueba con él es
 /// que el adaptador no fue a la base.</summary>
-internal sealed class FakeCustomerRepository(params Customer[] customers) : ICustomerRepository
+internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustomerRepository
 {
+    private readonly List<Customer> customers = [.. seeded];
+
     public Dictionary<(IdentificationType Type, string Number), CustomerId> Identifications { get; } = [];
+
+    /// <summary>Siembra un cliente después de construir el doble; por ejemplo, el que «crea» <see cref="FakeCustomerProvisioning"/>.</summary>
+    public void Seed(Customer customer) => customers.Add(customer);
 
     public int Calls { get; private set; }
 
@@ -210,12 +221,12 @@ internal sealed class FakeCustomerRepository(params Customer[] customers) : ICus
     }
 
     public Task<IReadOnlyList<Customer>> ListByPhoneE164Async(Guid tenantId, string phoneE164, int take, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult<IReadOnlyList<Customer>>([]);
 
-public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public Task<IReadOnlySet<string>> FindExistingPhonesE164Async(Guid tenantId, IReadOnlyCollection<string> phonesE164, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlySet<string>>(new HashSet<string>());
 
-public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
+    public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string phone, CancellationToken cancellationToken)
     {
         Calls++;
         return Task.FromResult(customers.FirstOrDefault(customer => customer.TenantId == tenantId && customer.PhoneE164 is null && customer.Phone == phone));
@@ -231,14 +242,15 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
     }
 
     public Task<(IReadOnlyList<Customer> Items, int Total)> SearchAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, IReadOnlyCollection<Guid>? cityIds,
-        bool? isComplete, int page, int pageSize, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, IReadOnlyCollection<Guid>? cityIds,
+        bool? isComplete, int page, int pageSize, bool includeContacts, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> SearchSelectableAsync(
-        Guid tenantId, string? search, int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+        Guid tenantId, string? search, int take, bool includeIncompleteWithoutDocument, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 
     public Task<IReadOnlyList<Customer>> ListForExportAsync(
-        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, int skip, int take,
+        Guid tenantId, string? search, string? name, string? identificationNumber, string? cuc, string? phone, int skip, int take, bool includeContacts,
         CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<bool> AnyWithClassificationAsync(
@@ -246,6 +258,9 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
 
     public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<CustomerId>>> FindIdsByIdentificationNumberAsync(
+        Guid tenantId, IReadOnlyCollection<string> numbers, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<IReadOnlySet<Guid>> SearchIdsByIdentificationNumberAsync(Guid tenantId, string term, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -277,6 +292,12 @@ public Task<Customer?> FindOldestByUnnormalizedPhoneAsync(Guid tenantId, string 
     public Task<IReadOnlyList<Guid>> FindIdsByNameAsync(Guid tenantId, string term, int cap, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task LockForMergeAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, IReadOnlyCollection<Guid> companyIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
+    public Task LockForCompanyLinkAsync(Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public void Add(Customer customer) => throw new NotSupportedException();
 }
 
@@ -296,6 +317,14 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, Guid survivorId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<int> CountContactsMovedAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task RepointContactsAsync(
+        Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> mergedIds, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<CustomerMergeOwnedCounts> CountOwnedAsync(
         Guid tenantId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -303,8 +332,11 @@ internal sealed class FakeCustomerMergeStore : ICustomerMergeStore
         Guid tenantId, Guid survivorId, IReadOnlyCollection<Guid> customerIds, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    /// <summary>Por id del fusionado; el que no está no se fusionó.</summary>
+    public Dictionary<Guid, Guid> SurvivorsById { get; } = [];
+
     public Task<Guid?> FindSurvivorIdAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Task.FromResult(SurvivorsById.TryGetValue(customerId, out var survivor) ? survivor : (Guid?)null);
 }
 
 internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
@@ -315,24 +347,55 @@ internal sealed class FakeCustomerProvisioning : ICustomerProvisioning
 
     public Guid LastId { get; private set; }
 
+    /// <summary>El id que devuelven las altas; sin él, uno nuevo. Sirve para apuntar al cliente sembrado en el repositorio falso
+    /// (el que «se creó», o el dueño del documento cuando <see cref="Created"/> es <c>false</c>).</summary>
+    public Guid? NextId { get; set; }
+
+    /// <summary>Lo que lanza <see cref="CreateCompleteAsync"/> en vez de dar el alta.</summary>
+    public Exception? CreateCompleteThrows { get; set; }
+
+    /// <summary>Lo que lanza <see cref="CompleteFromStoreAsync"/>; sin él, el cliente vuelve completo sin tocarse.</summary>
+    public Exception? CompleteFromStoreThrows { get; set; }
+
+    /// <summary>Lo que lanza <see cref="EnsureAddressesAsync"/>; sin él, cada dirección vuelve como agregada.</summary>
+    public Exception? EnsureAddressesThrows { get; set; }
+
+    public List<(Guid CustomerId, Guid? ActorUserId)> StoreCompletes { get; } = [];
+
+    public List<(string? Name, string? Phone, string? Email, string? Country)> Incompletes { get; } = [];
+
     public Task<ProvisionedCustomer> CreateCompleteAsync(Guid tenantId, CompleteCustomerData data, CancellationToken cancellationToken, Guid? actorUserId = null, string? source = null)
     {
         OnComplete?.Invoke();
         Completes.Add((tenantId, data));
-        LastId = Guid.CreateVersion7();
+        if (CreateCompleteThrows is { } failure)
+        {
+            throw failure;
+        }
+
+        LastId = NextId ?? Guid.CreateVersion7();
         return Task.FromResult(new ProvisionedCustomer(LastId, true, true, Created, Version));
     }
 
-    public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid actorUserId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public Task<ProvisionedCustomer> CompleteFromStoreAsync(Guid tenantId, Guid customerId, CompleteCustomerData data, Guid? actorUserId, CancellationToken cancellationToken)
+    {
+        StoreCompletes.Add((customerId, actorUserId));
+        return CompleteFromStoreThrows is { } failure
+            ? throw failure
+            : Task.FromResult(new ProvisionedCustomer(customerId, true, true, false, Version));
+    }
 
     public Task<IReadOnlyList<EnsuredAddress>> EnsureAddressesAsync(Guid tenantId, Guid customerId, IReadOnlyList<CustomerAddressDetails> addresses, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        EnsureAddressesThrows is { } failure
+            ? throw failure
+            : Task.FromResult<IReadOnlyList<EnsuredAddress>>(
+                addresses.Select(_ => new EnsuredAddress(Guid.CreateVersion7(), EnsuredAddressKind.Added)).ToList());
 
     public Task<ProvisionedCustomer> CreateIncompleteAsync(
         Guid tenantId, string? name, string? phone, string? email, string? country, CancellationToken cancellationToken)
     {
-        LastId = Guid.CreateVersion7();
+        Incompletes.Add((name, phone, email, country));
+        LastId = NextId ?? Guid.CreateVersion7();
         return Task.FromResult(new ProvisionedCustomer(LastId, false, true, Created, Version));
     }
 

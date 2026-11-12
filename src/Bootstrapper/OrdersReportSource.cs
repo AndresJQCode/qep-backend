@@ -578,6 +578,7 @@ internal sealed class OrdersReportSource(
         OrderPaymentStatusFilter.FullPaymentReceived => OrderPaymentStatus.FullPaymentReceived,
         OrderPaymentStatusFilter.PartialPaymentReceived => OrderPaymentStatus.PartialPaymentReceived,
         OrderPaymentStatusFilter.PaymentPending => OrderPaymentStatus.PaymentPending,
+        OrderPaymentStatusFilter.PendingVerification => OrderPaymentStatus.PendingVerification,
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown payment status.")
     };
 

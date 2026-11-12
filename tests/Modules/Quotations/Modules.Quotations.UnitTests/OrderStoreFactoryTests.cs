@@ -47,7 +47,39 @@ public sealed class OrderStoreFactoryTests
     private static Order NewStoreOrder(QuotationParties parties) =>
         Order.CreateFromStore(
             OrderId.New(), TenantId, "PED-2026-0001", Header(), parties, Account, [Line()], null, Advisor, Now,
-            "T-0001", "store-request:abc");
+            "store-checkout:abc");
+
+    [Fact]
+    public void CreateFromStoreKeepsTheBuyerAccount()
+    {
+        var buyer = Guid.CreateVersion7();
+        var order = Order.CreateFromStore(
+            OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()], null, Advisor, Now,
+            "store-checkout:abc", buyerAccountId: buyer);
+        Assert.Equal(buyer, order.BuyerAccountId);
+    }
+
+    [Fact]
+    public void CreateFromStoreWithoutABuyerLeavesItNull() =>
+        Assert.Null(NewStoreOrder(Parties()).BuyerAccountId);
+
+    [Fact]
+    public void AStoreOrderKeepsAForeignTaxId()
+    {
+        var billing = Billing() with
+        {
+            IdentificationType = PartyIdentificationType.TaxId,
+            Country = "US",
+            CityName = "Miami",
+            DepartmentId = null,
+            CityId = null,
+        };
+
+        var order = NewStoreOrder(Parties() with { Billing = billing });
+
+        var party = Assert.Single(order.Parties, p => p.Role == QuotationPartyRole.Billing);
+        Assert.Equal((PartyIdentificationType.TaxId, "US"), (party.IdentificationType, party.Country));
+    }
 
     [Fact]
     public void CreateFromStoreSetsSourceReferenceAndKey()
@@ -55,7 +87,7 @@ public sealed class OrderStoreFactoryTests
         var order = NewStoreOrder(Parties());
 
         Assert.Equal(
-            (OrderSource.Store, OrderPaymentStatus.PaymentPending, "T-0001", "store-request:abc"),
+            (OrderSource.Store, OrderPaymentStatus.PaymentPending, (string?)null, "store-checkout:abc"),
             (order.Source, order.PaymentStatus, order.ExternalReference, order.ExternalKey));
         Assert.Empty(order.PaymentProofs);
     }
@@ -78,7 +110,7 @@ public sealed class OrderStoreFactoryTests
             Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()],
                 OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Store, "T-0001",
-                ShippingDetails.None, null, null));
+                ShippingDetails.None, null, null, OrderLineCosts.None));
 
         Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
     }

@@ -209,15 +209,80 @@ public sealed class OrderSendApiTests
         Assert.Equal(sentBefore, factory.WhatsAppSender.Sent.Count);
     }
 
-    private static async Task<OrderResponse> CreateOrderAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId)
+    // Spec 2026-11-09 D6 y D7: una Zenvia sin orderTemplateId no está disponible para pedidos; sin otra es no_channel (ya no
+    // not_configured), y una Meta sola sale por Meta sin publicar copia pública.
+    [Fact]
+    public async Task OrderSendWithoutAnOrderTemplateIsNoChannelAndAMetaChannelAloneSends()
     {
-        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        factory.WhatsAppChannels.Channels.Clear();
+        factory.WhatsAppChannels.Channels.Add((ZenviaWhatsAppChannel)RecordingWhatsAppChannelDirectory.Default with { OrderTemplateId = null });
+
+        var noChannel = await client.PostAsync(SendUrl(tenantId, order.Id), content: null, TestContext.Current.CancellationToken);
+        await AssertDomainRejectionAsync(noChannel, "order.whatsapp.no_channel");
+
+        factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
+        var sentBefore = factory.WhatsAppSender.Sent.Count;
+        var response = await client.PostAsync(SendUrl(tenantId, order.Id), content: null, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var sent = factory.WhatsAppSender.Sent.Skip(sentBefore).Single();
+        Assert.Equal((RecordingWhatsAppChannelDirectory.Meta.ConnectionId, order.OrderNumber), (sent.Channel.ConnectionId, sent.DocumentNumber));
+    }
+
+    // Spec 2026-11-09 D7 y D8: con dos canales hace falta connectionId (channel_required); uno que no está es channel_unavailable; el
+    // elegido se guarda con el envío y el siguiente no pregunta; otro id después es channel_already_set.
+    [Fact]
+    public async Task OrderSendWithSeveralChannelsAsksRemembersAndThenRefusesAnotherChoice()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var order = await CreateOrderAsync(client, factory, tenantId);
+        factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
+
+        var required = await client.PostAsync(SendUrl(tenantId, order.Id), content: null, TestContext.Current.CancellationToken);
+        await AssertDomainRejectionAsync(required, "order.whatsapp.channel_required");
+
+        var unavailable = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id), new SendOrderRequest(null, Guid.CreateVersion7()), TestContext.Current.CancellationToken);
+        await AssertDomainRejectionAsync(unavailable, "order.whatsapp.channel_unavailable");
+
+        var chosen = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id), new SendOrderRequest(null, RecordingWhatsAppChannelDirectory.Meta.ConnectionId), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, chosen.StatusCode);
+        Assert.Equal(RecordingWhatsAppChannelDirectory.Meta.ConnectionId, factory.WhatsAppSender.Sent[^1].Channel.ConnectionId);
+        var actions = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1")).Select(ActionOf);
+        Assert.Contains(ChooseWhatsAppChannelHandler.AuditAction, actions);
+
+        // La elección es la misma que la de la cotización: la pantalla de canales ya la reporta.
+        var channels = await client.GetFromJsonAsync<JsonElement>(
+            $"{QuotationsUrl(tenantId)}/whatsapp-channels?document=order", TestContext.Current.CancellationToken);
+        Assert.Equal(RecordingWhatsAppChannelDirectory.Meta.ConnectionId, channels.GetProperty("selectedConnectionId").GetGuid());
+
+        var again = await client.PostAsync(SendUrl(tenantId, order.Id), content: null, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(RecordingWhatsAppChannelDirectory.Meta.ConnectionId, factory.WhatsAppSender.Sent[^1].Channel.ConnectionId);
+
+        var alreadySet = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id), new SendOrderRequest(null, RecordingWhatsAppChannelDirectory.Default.ConnectionId), TestContext.Current.CancellationToken);
+        await AssertDomainRejectionAsync(alreadySet, "order.whatsapp.channel_already_set");
+    }
+
+    private static async Task<OrderResponse> CreateOrderAsync(
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid? existingClientId = null)
+    {
+        var clientId = existingClientId ?? await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(
             ConvertUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
@@ -238,5 +303,98 @@ public sealed class OrderSendApiTests
     {
         using var payload = JsonDocument.Parse(message.PayloadJson);
         return payload.RootElement.GetProperty("action").GetString()!;
+    }
+
+    // Spec 2026-11-10 §4.6: el destinatario Contact llega al contacto de la empresa del pedido, con su ficha.
+    [Fact]
+    public async Task SendingToAContactDeliversToThatContact()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id),
+            new SendOrderRequest("Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = factory.WhatsAppSender.Messages[^1];
+        Assert.Equal(("311 555 0101", "Laura Gómez", (Guid?)contactId), (message.ToPhone, message.FullName, message.CustomerId));
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.Contains(detail!.History, entry => entry.Details == "Enviado por WhatsApp a Laura Gómez.");
+    }
+
+    [Fact]
+    public async Task AContactOfAnotherClientIs422AndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
+        var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+        var sentBefore = factory.WhatsAppSender.Messages.Count;
+
+        foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
+        {
+            var response = await client.PostAsJsonAsync(
+                SendUrl(tenantId, order.Id),
+                new SendOrderRequest("Contact", ContactId: contactId),
+                TestContext.Current.CancellationToken);
+
+            await AssertDomainRejectionAsync(response, "order.order.contact_not_of_client");
+        }
+
+        Assert.Equal(sentBefore, factory.WhatsAppSender.Messages.Count);
+    }
+
+    [Fact]
+    public async Task AContactWithoutPhoneIs422RecipientMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id),
+            new SendOrderRequest("Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        await AssertDomainRejectionAsync(response, "order.whatsapp.recipient_missing");
+    }
+
+    [Fact]
+    public async Task TheOrderDetailListsTheClientsContacts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        var contact = Assert.Single(detail.ClientContacts);
+        Assert.Equal((contactId, "Laura Gómez", "311 555 0101"), (contact.Id, contact.Name, contact.Phone));
     }
 }

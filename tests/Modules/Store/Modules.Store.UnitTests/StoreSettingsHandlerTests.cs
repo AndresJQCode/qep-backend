@@ -21,6 +21,67 @@ public sealed class StoreSettingsHandlerTests
         Assert.IsType<StoreDomainException>(await Record.ExceptionAsync(act)).Code;
 
     [Fact]
+    public async Task SavingAnActiveAdvisorStoresItAndReturnsItsName()
+    {
+        var rig = new SettingsRig();
+        rig.Members.Active.Add(Member);
+        rig.Members.Names[Member] = "Ana";
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: Member)), Ct);
+
+        Assert.Equal(Member, saved.AdvisorMembershipId);
+        Assert.Equal("Ana", saved.AdvisorName);
+        Assert.Contains("advisorMembershipId", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task AnInactiveOrForeignAdvisorIs422AdvisorNotFound()
+    {
+        var rig = new SettingsRig();
+
+        Assert.Equal(
+            StoreErrorCodes.AdvisorNotFound,
+            await CodeOfAsync(() => rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: OtherMember)), Ct)));
+        Assert.Empty(rig.Log.Entries);
+    }
+
+    [Fact]
+    public async Task KeepingAnAdvisorThatIsNoLongerActiveSavesWithoutCheckingIt()
+    {
+        // El asesor guardado se desactivó después: el checkout ya cae al owner, y cualquier otro cambio de ajustes no debe trabarse.
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva", advisorMembershipId: Member), version: 1), Ct);
+
+        Assert.Equal(Member, saved.AdvisorMembershipId);
+        Assert.Empty(rig.Members.ActiveChecks);
+    }
+
+    [Fact]
+    public async Task ChangingToAnInactiveAdvisorIsStill422AdvisorNotFound()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        Assert.Equal(
+            StoreErrorCodes.AdvisorNotFound,
+            await CodeOfAsync(
+                () => rig.UpdateHandler().HandleAsync(Update(Body(advisorMembershipId: OtherMember), version: 1), Ct)));
+        Assert.Equal([OtherMember], rig.Members.ActiveChecks);
+    }
+
+    [Fact]
+    public async Task ClearingTheAdvisorAuditsTheField()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(advisorMembershipId: Member)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(), version: 1), Ct);
+
+        Assert.Null(saved.AdvisorMembershipId);
+        Assert.Null(saved.AdvisorName);
+        Assert.Contains("advisorMembershipId", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
     public async Task ANeverSavedStoreReadsAsDefaultsWithVersionZero()
     {
         var rig = new SettingsRig();
@@ -32,10 +93,73 @@ public sealed class StoreSettingsHandlerTests
         Assert.Null(settings.ResolvedColors);
         Assert.Null(settings.ColorChecks);
         Assert.Equal("RetailOnly", settings.PricingMode);
+        Assert.True(settings.ShowPrices);
         Assert.Equal(["SlugRequired", "CurrencyRequired", "SalesCountryRequired"], settings.PublishBlockers);
         Assert.Equal("Origen Botánico", settings.EffectiveName);
         Assert.Equal("https://cdn.test/logo.png", settings.LogoUrl);
         Assert.Empty(rig.Log.Entries);
+    }
+
+    [Fact]
+    public async Task SavingShowPricesFalseStoresIt()
+    {
+        var rig = new SettingsRig();
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(showPrices: false)), Ct);
+
+        Assert.False(saved.ShowPrices);
+        Assert.False(rig.Stores.Stored!.ShowPrices);
+        Assert.Contains("showPrices", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task AnAbsentShowPricesKeepsAStoredFalse()
+    {
+        var rig = new SettingsRig(ConfiguredStore(Input(showPrices: false)));
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        Assert.False(saved.ShowPrices);
+    }
+
+    [Fact]
+    public async Task AnAbsentShowPricesKeepsAStoredTrue()
+    {
+        var rig = new SettingsRig(ConfiguredStore());
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        Assert.True(saved.ShowPrices);
+    }
+
+    [Fact]
+    public async Task ANewStoreWithoutShowPricesShowsPrices()
+    {
+        var rig = new SettingsRig();
+
+        var saved = await rig.UpdateHandler().HandleAsync(Update(Body()), Ct);
+
+        Assert.True(saved.ShowPrices);
+        Assert.DoesNotContain("showPrices", Assert.Single(rig.Audit.Entries).ChangedFields);
+    }
+
+    [Fact]
+    public async Task TogglingOnlyShowPricesAuditsIt()
+    {
+        var rig = new SettingsRig(ConfiguredStore());
+        var handler = rig.UpdateHandler();
+        await handler.HandleAsync(Update(Body(name: "Nueva"), 1), Ct);
+
+        var saved = await handler.HandleAsync(Update(Body(name: "Nueva", showPrices: false), 2), Ct);
+
+        Assert.Equal(3, saved.Version);
+        Assert.Equal(["showPrices"], rig.Audit.Entries[^1].ChangedFields);
+
+        var saves = rig.UnitOfWork.Saves;
+        var audits = rig.Audit.Entries.Count;
+        await handler.HandleAsync(Update(Body(name: "Nueva", showPrices: false), 3), Ct);
+        Assert.Equal(saves, rig.UnitOfWork.Saves);
+        Assert.Equal(audits, rig.Audit.Entries.Count);
     }
 
     [Fact]

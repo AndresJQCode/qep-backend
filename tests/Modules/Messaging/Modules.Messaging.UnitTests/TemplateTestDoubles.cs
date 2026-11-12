@@ -48,6 +48,17 @@ internal sealed class FakeCustomerDirectory : IMessagingCustomerDirectory
     public Task<MessagingCustomerContact?> FindContactAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) =>
         Task.FromResult(Contacts.GetValueOrDefault(customerId));
 
+    /// <summary>Los <c>waId</c> de cada llamada a <see cref="ResolveSharedPhonesAsync"/>, en orden.</summary>
+    public List<string[]> SharedPhoneCalls { get; } = [];
+
+    public Task<IReadOnlyDictionary<string, MessagingSharedPhone>> ResolveSharedPhonesAsync(
+        Guid tenantId, IReadOnlyCollection<string> waIds, CancellationToken cancellationToken)
+    {
+        SharedPhoneCalls.Add([.. waIds]);
+        return Task.FromResult<IReadOnlyDictionary<string, MessagingSharedPhone>>(
+            waIds.ToDictionary(waId => waId, _ => new MessagingSharedPhone(null, null, null)));
+    }
+
     /// <summary>Ningún cliente de estas pruebas está fusionado: cada uno es el que quedó.</summary>
     public Task<Guid> ResolveSurvivorAsync(Guid tenantId, Guid customerId, CancellationToken cancellationToken) => Task.FromResult(customerId);
 
@@ -197,6 +208,9 @@ internal sealed class FakeMessageTemplateRepository : IMessageTemplateRepository
 
     public Task<MessageTemplate?> FindQuotationAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.Quotation));
+
+    public Task<MessageTemplate?> FindOrderAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Of(tenantId, connectionId).FirstOrDefault(row => row.Kind == MessageTemplateKind.Order));
 
     public Task<IReadOnlyList<MessageTemplate>> ListAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<MessageTemplate>>(Ordered(Of(tenantId, connectionId)));

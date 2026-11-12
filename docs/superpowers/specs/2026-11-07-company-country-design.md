@@ -294,6 +294,9 @@ Order: **backend first**, then frontend (frontend spec §9).
 - **Removing the fallback.** *Builder's call (orchestrator):* the no-country fallback is temporary. Follow-up after the
   new frontend is in production: make `country` and `documentType` non-nullable in the request and drop both legacy
   branches. Not part of this work.
+- **Window removed 2026-11-08** (owner decision, backend and frontend deployed together): `country` and `documentType`
+  are required on POST and PUT (422 `validation.failed`, `errors.Country` / `errors.DocumentType`); `CompanyLegacyWrite`
+  is gone. The legacy rows of §6.2, §10.1 and §10.2 are historical.
 - Pos migration and Companies migration ship in the same deploy; both are additive with backfill.
 
 ## 10. Testing (TDD: RED before GREEN, literal evidence of both)

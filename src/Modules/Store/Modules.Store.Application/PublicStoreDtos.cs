@@ -47,6 +47,7 @@ public sealed record PublicStoreContactDto(
 
 /// <param name="Colors">Sólo los colores ya resueltos; los contrastes y los overrides son del backoffice.</param>
 /// <param name="Currencies">Los códigos en el orden guardado; la principal se informa aparte y la tienda decide cuál muestra primero.</param>
+/// <param name="ShowPrices">Sólo visual: los montos siguen viajando en /products, /products/{id}, /cart/quote, el recibo y buyer/orders.</param>
 /// <param name="FeaturedCategories">Las destacadas que tienen productos en alguna de las monedas de la tienda; la app las cruza con la moneda elegida.</param>
 public sealed record PublicStoreDto(
     string Name,
@@ -56,6 +57,7 @@ public sealed record PublicStoreDto(
     PublicStoreContactDto Contact,
     string? DataPolicyUrl,
     string PricingMode,
+    bool ShowPrices,
     IReadOnlyList<string> Currencies,
     string? PrimaryCurrency,
     IReadOnlyList<string> SalesCountries,
@@ -143,9 +145,11 @@ public sealed record PublicCartQuoteDto(
     decimal Total);
 
 /// <param name="Reason">Hoy siempre <see cref="NotAvailable"/>; es texto para que un motivo nuevo no rompa al storefront.</param>
-public sealed record PublicUnavailableLineDto(Guid VariantId, string Reason)
+/// <param name="Name">El nombre con que la cotización llama a esa variante, para decirle al comprador cuál línea quedó fuera; null sólo si la
+/// variante ya no existe (borrada) o es de otro tenant. No lleva precio ni existencias.</param>
+public sealed record PublicUnavailableLineDto(Guid VariantId, string Reason, string? Name)
 {
     public const string NotAvailable = "NotAvailable";
 
-    public static PublicUnavailableLineDto Of(Guid variantId) => new(variantId, NotAvailable);
+    public static PublicUnavailableLineDto Of(Guid variantId, string? name) => new(variantId, NotAvailable, name);
 }
