@@ -37,7 +37,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.NotNull(layout);
         Assert.Equal(tenantId, layout.TenantId);
         Assert.Equal(1, layout.Version);
-        Assert.Equal(81, layout.Columns.Count);
+        Assert.Equal(83, layout.Columns.Count);
         Assert.All(layout.Columns, column => Assert.Equal("Catalog", column.Kind));
         // Sin fila, cada columna sale como nace: todas visibles menos "coordinadora_city"
         // (ajuste 2026-10-02), las "payment_method_N" (ajuste 2026-10-03) y "carrier" (ajuste
@@ -89,8 +89,8 @@ public sealed class OrdersExportLayoutApiTests
         var saved = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
         Assert.NotNull(saved);
         Assert.Equal(2, saved.Version);
-        // 81 del catálogo (reorganización de cliente y facturación, 2026-10-28) + 1 fija.
-        Assert.Equal(82, saved.Columns.Count);
+        // 83 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente y ReteICA) + 1 fija.
+        Assert.Equal(84, saved.Columns.Count);
         Assert.Equal(new ColumnPayload("Fixed", null, null, null, null, "Tipo Doc", "FV", true), saved.Columns[0]);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, false), saved.Columns[1]);
         Assert.Equal("Correo", saved.Columns[19].Header);
@@ -278,8 +278,8 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var read = await client.GetAsync(LayoutUrl(tenantId), TestContext.Current.CancellationToken);
         var layout = await read.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        // 81 del catálogo (reorganización de cliente y facturación, 2026-10-28) + la repetida.
-        Assert.Equal(82, layout!.Columns.Count);
+        // 83 del catálogo (81 de la reorganización de cliente y facturación, 2026-10-28, + Retefuente y ReteICA) + la repetida.
+        Assert.Equal(84, layout!.Columns.Count);
         Assert.Equal(
             [
                 new ColumnPayload("Catalog", "email", "Email", 19, true, "Email", null, true),
@@ -448,7 +448,7 @@ public sealed class OrdersExportLayoutApiTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var layout = await response.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(81, layout!.Columns.Count);
+        Assert.Equal(83, layout!.Columns.Count);
         Assert.Equal("email", layout.Columns[0].Key);
         Assert.Equal("order_number", layout.Columns[1].Key);
         Assert.Equal(new ColumnPayload("Catalog", "company", "EMPRESA", 1, true, "EMPRESA", null, true), layout.Columns[2]);
@@ -494,7 +494,7 @@ public sealed class OrdersExportLayoutApiTests
         Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
         Assert.Equal("\"3\"", restored.Headers.ETag?.Tag);
         var layout = await restored.Content.ReadFromJsonAsync<LayoutPayload>(TestContext.Current.CancellationToken);
-        Assert.Equal(81, layout!.Columns.Count);
+        Assert.Equal(83, layout!.Columns.Count);
         Assert.DoesNotContain(layout.Columns, column => column.Kind == "Fixed");
         Assert.Equal(defaults, layout.Columns);
     }

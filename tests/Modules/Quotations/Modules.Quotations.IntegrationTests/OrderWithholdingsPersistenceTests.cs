@@ -73,7 +73,7 @@ public sealed class OrderWithholdingsPersistenceTests
         {
             var tracked = await FindAsync(add, order.Id);
             Assert.True(tracked.SetWithholdings([Retefuente], Advisor, Now));
-            await new QuotationsUnitOfWork(add).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(add);
         }
 
         Assert.Equal([(Retefuente.TaxRateId, 2_500m)], await RowsAsync(connectionString, order.Id));
@@ -82,7 +82,7 @@ public sealed class OrderWithholdingsPersistenceTests
         {
             var tracked = await FindAsync(change, order.Id);
             Assert.True(tracked.SetWithholdings([RetefuenteServicios, ReteIca], Advisor, Now));
-            await new QuotationsUnitOfWork(change).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(change);
         }
 
         Assert.Equal(
@@ -93,7 +93,7 @@ public sealed class OrderWithholdingsPersistenceTests
         {
             var tracked = await FindAsync(clear, order.Id);
             Assert.True(tracked.SetWithholdings([], Advisor, Now));
-            await new QuotationsUnitOfWork(clear).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(clear);
         }
 
         Assert.Empty(await RowsAsync(connectionString, order.Id));
@@ -121,7 +121,7 @@ public sealed class OrderWithholdingsPersistenceTests
             var tracked = await FindAsync(edit, order.Id);
             Assert.True(tracked.SetBillingAccount(
                 ColombianAccount with { CompanyId = Guid.CreateVersion7(), Country = "ES" }, Advisor, Now));
-            await new QuotationsUnitOfWork(edit).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(edit);
         }
 
         await using var read = NewContext(connectionString);
@@ -153,7 +153,7 @@ public sealed class OrderWithholdingsPersistenceTests
     {
         await using var create = NewContext(connectionString);
         create.Orders.Add(order);
-        await new QuotationsUnitOfWork(create).SaveChangesAsync(TestContext.Current.CancellationToken);
+        await CustomerReferenceReplica.SaveAsync(create);
     }
 
     // Como OrderRepository.FindByIdAsync: con comprobantes, líneas y partes, que el recálculo necesita. La foto de

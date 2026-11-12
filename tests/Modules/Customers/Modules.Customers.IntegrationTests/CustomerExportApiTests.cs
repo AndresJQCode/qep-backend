@@ -102,8 +102,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 16).GetString());
+        // Creado y Actualizado: 14 de la importacion + Empresa + Activo, y después estas dos.
         Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 17).GetString());
+        Assert.Equal("2026-12-31 23:00", sheet.Cell(2, 18).GetString());
     }
 
     // D-R7 (spec 2026-10-23): las fechas de texto siguen el formato de fecha del tenant, más la hora;
@@ -133,8 +134,9 @@ public sealed class CustomerExportApiTests
         Assert.NotNull(storage.Content);
         using var workbook = new XLWorkbook(new MemoryStream(storage.Content));
         var sheet = workbook.Worksheets.First();
-        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 16).GetString());
+        // Creado y Actualizado: 14 de la importacion + Empresa + Activo, y después estas dos.
         Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 17).GetString());
+        Assert.Equal("12/31/2026 23:00", sheet.Cell(2, 18).GetString());
     }
 
     // Spec 2026-10-10 §5.2: el export incluye los incompletos, con celdas vacías, y suma la columna

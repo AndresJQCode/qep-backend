@@ -59,7 +59,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using (var create = NewContext(connectionString))
         {
             create.Quotations.Add(quotation);
-            await new QuotationsUnitOfWork(create).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(create);
         }
 
         await using var read = NewContext(connectionString);
@@ -91,7 +91,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using (var create = NewContext(connectionString))
         {
             create.Quotations.Add(quotation);
-            await new QuotationsUnitOfWork(create).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(create);
         }
 
         await using (var add = NewContext(connectionString))
@@ -99,7 +99,7 @@ public sealed class QuotationWithholdingsPersistenceTests
             var tracked = await FindAsync(add, quotation.Id);
             UseOwnBilling(tracked);
             tracked.SetBillingWithholdings([Retefuente], Advisor, Now);
-            await new QuotationsUnitOfWork(add).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(add);
         }
 
         Assert.Equal([(Retefuente.TaxRateId, 2_500m)], await BillingRowsAsync(connectionString, quotation.Id));
@@ -108,7 +108,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         {
             var tracked = await FindAsync(change, quotation.Id);
             tracked.SetBillingWithholdings([RetefuenteServicios, ReteIca], Advisor, Now);
-            await new QuotationsUnitOfWork(change).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(change);
         }
 
         // ReteICA no aplica: su base (4 UVT) es 199.196 y la cotización tiene 100.000.
@@ -120,7 +120,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         {
             var tracked = await FindAsync(clear, quotation.Id);
             tracked.SetBillingWithholdings([], Advisor, Now);
-            await new QuotationsUnitOfWork(clear).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(clear);
         }
 
         Assert.Empty(await BillingRowsAsync(connectionString, quotation.Id));
@@ -146,7 +146,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using (var create = NewContext(connectionString))
         {
             create.Quotations.AddRange(spanish, unknown);
-            await new QuotationsUnitOfWork(create).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(create);
         }
 
         await using (var context = NewContext(connectionString))
@@ -185,7 +185,7 @@ public sealed class QuotationWithholdingsPersistenceTests
         await using (var context = NewContext(connectionString))
         {
             context.Quotations.Add(quotation);
-            await new QuotationsUnitOfWork(context).SaveChangesAsync(TestContext.Current.CancellationToken);
+            await CustomerReferenceReplica.SaveAsync(context);
             var migrator = context.GetService<IMigrator>();
             await migrator.MigrateAsync(LastMigrationBeforeWithholdings, TestContext.Current.CancellationToken);
             await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);

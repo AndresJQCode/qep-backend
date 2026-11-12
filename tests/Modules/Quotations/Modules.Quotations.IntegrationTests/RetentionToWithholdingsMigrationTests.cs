@@ -299,7 +299,9 @@ public sealed class RetentionToWithholdingsMigrationTests
                 ordersBefore = await ScalarAsync<string>(connectionString, $"SELECT {Totals} FROM quotations.orders");
             });
 
-        Assert.Equal(1L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM catalog.tax_rates"));
+        // Por tenant: el host puede sembrar el tenant de desarrollo (con su IVA) si Seed:Enabled llega por la configuración local.
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString, $"SELECT count(*) FROM catalog.tax_rates WHERE tenant_id = '{TenantA}'"));
         Assert.Equal(quotationsBefore, await ScalarAsync<string>(connectionString, $"SELECT {Totals} FROM quotations.quotations"));
         Assert.Equal(ordersBefore, await ScalarAsync<string>(connectionString, $"SELECT {Totals} FROM quotations.orders"));
     }
