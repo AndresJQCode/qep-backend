@@ -6,6 +6,12 @@ Fecha: 2026-11-10. Trabajo que cruza repos: este spec cubre `qep-backend` y **ma
 Estado: diseño, no construido. No existe código, migración ni prueba de nada de lo que sigue. Las rutas y líneas citadas son
 de `develop` al 2026-11-10 (`1255abe3` en el backend, `ccfde16e` en el frontend).
 
+**Enmienda 2026-11-12 (estados del pedido en ejes, `develop` `0e85094d`).** `OrderStatus.Pending` ya no existe. Donde este spec
+dice «pedido `Pending`» se lee «pedido editable» (`Order.IsEditable`: abierto, sin preparar y sin facturar; spec 2026-11-10 de
+estados del pedido §3.6), la misma regla que el resto de la edición del pedido. El rechazo es `order.order.not_editable`, no
+`order.order.not_pending`. Lo amarran `OrderWithholdingsTests` (preparado, facturado, archivado y anulado) y
+`OrderWithholdingsApiTests.APreparedOrderRejectsWithholdingAndAccountEdits`.
+
 Marcas: **[owner]** decisión del owner (2026-11-10); **[asistente]** decisión de este spec, revisable por el owner; **NUEVO**
 = no existe hoy en el código. Todo lo que no lleva NUEVO se verificó en el archivo citado.
 
