@@ -432,6 +432,10 @@ public sealed class AutomationAdaptersTests
         {
         }
 
+        public void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now)
+        {
+        }
+
         public Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken) => Task.FromResult(false);
 
         public int Purged { get; init; }
