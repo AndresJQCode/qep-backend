@@ -126,6 +126,15 @@ public sealed record CustomerReportCriteria(
     Guid? DepartmentId);
 
 /// <summary>
+/// Los filtros del reporte de margen (spec 2026-11-10 §6.3). <c>Source</c> es texto por la misma razón
+/// que en <see cref="OrdersReportFilter"/>. Sin asesor ni cliente en esta versión.
+/// </summary>
+public sealed record MarginReportFilter(Guid TenantId, DateOnly? From, DateOnly? To, string? Source);
+
+/// <summary>Ver <see cref="OrdersReportCriteria"/>.</summary>
+public sealed record MarginReportCriteria(Guid TenantId, ReportPeriod Period, OrderSourceFilter? Source);
+
+/// <summary>
 /// Traduce filtro de entrada a criterio.
 ///
 /// El parseo es la única traducción: los enums ya los valida
@@ -161,6 +170,12 @@ public static class ReportFilterMapping
             ReportFilterParser.ParsePriceChangeField(filter.Field),
             string.IsNullOrWhiteSpace(filter.Currency) ? null : Currencies.Normalize(filter.Currency),
             filter.VariantId);
+
+    public static MarginReportCriteria ToCriteria(this MarginReportFilter filter, TenantCalendar calendar) =>
+        new(
+            filter.TenantId,
+            ReportPeriod.Of(calendar, filter.From, filter.To),
+            ReportFilterParser.ParseSource(filter.Source));
 
     public static CustomerReportCriteria ToCriteria(this CustomerReportFilter filter, TenantCalendar calendar) =>
         new(
@@ -245,6 +260,23 @@ public sealed class CustomerReportFilterValidator : AbstractValidator<CustomerRe
 {
     public CustomerReportFilterValidator()
     {
+        RuleFor(filter => filter.To)
+            .GreaterThanOrEqualTo(filter => filter.From!.Value)
+            .When(filter => filter.From is not null && filter.To is not null)
+            .WithMessage("to must be on or after from.");
+    }
+}
+
+/// <summary>Ver <see cref="OrdersReportFilterValidator"/>: las mismas reglas de <c>source</c> y del
+/// rango.</summary>
+public sealed class MarginReportFilterValidator : AbstractValidator<MarginReportFilter>
+{
+    public MarginReportFilterValidator()
+    {
+        RuleFor(filter => filter.Source)
+            .Must(value => ReportFilterParser.TryParseSource(value, out _))
+            .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)

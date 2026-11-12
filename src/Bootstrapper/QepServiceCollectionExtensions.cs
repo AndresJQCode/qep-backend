@@ -847,7 +847,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<ICommandHandler<SetFreightTaxRateCommand, CarrierSettingsDto>, SetFreightTaxRateHandler>();
         services.AddScoped<ICommandHandler<SetFreightChargeModesCommand, CarrierSettingsDto>, SetFreightChargeModesHandler>();
         services.AddScoped<IQueryHandler<GetShippingOptionsQuery, ShippingOptionsDto>, GetShippingOptionsHandler>();
-        // Reporting. Los ocho van aca por la misma razon que el resto: el dispatcher resuelve por
+        // Reporting. Los diez van aca por la misma razon que el resto: el dispatcher resuelve por
         // registro explicito, y un caso de uso que se olvide compila, mapea su endpoint y falla
         // recien en runtime con 500 al no encontrar handler.
         services.AddScoped<
@@ -874,6 +874,12 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetCustomerReportSummaryQuery, CustomerReportSummaryDto>,
             GetCustomerReportSummaryHandler>();
+        services.AddScoped<
+            IQueryHandler<ListMarginReportQuery, ReportPage<MarginReportProductDto>>,
+            ListMarginReportHandler>();
+        services.AddScoped<
+            IQueryHandler<GetMarginReportSummaryQuery, MarginReportSummaryDto>,
+            GetMarginReportSummaryHandler>();
         // Integrations (spec 2026-10-08). A mano, como el resto: un handler que falte compila, mapea
         // su endpoint y falla recién en runtime con 500.
         services.AddScoped<
@@ -1583,6 +1589,7 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationsReportSource, QuotationsReportSource>();
         services.AddScoped<IPriceChangeReportSource, PriceChangeReportSource>();
         services.AddScoped<ICustomerReportSource, CustomerReportSource>();
+        services.AddScoped<IMarginReportSource, MarginReportSource>();
 
         // La semilla de arranque del ambiente desplegado (ver SeedOptions): apagada por
         // defecto, y ValidateOnStart la revisa antes de aceptar tráfico, mismo criterio que el
