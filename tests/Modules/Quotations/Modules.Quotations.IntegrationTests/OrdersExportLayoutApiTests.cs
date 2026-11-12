@@ -460,18 +460,20 @@ public sealed class OrdersExportLayoutApiTests
                 "billing_name", "billing_identification_type", "billing_identification_number", "billing_person_type",
                 "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
                 "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
-                "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email"],
-            layout.Columns.TakeLast(43).Select(column => column.Key));
+                "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
+                "withholding_retefuente", "withholding_reteica"],
+            layout.Columns.TakeLast(45).Select(column => column.Key));
         // Las siete primeras nacen ocultas; "order_total" (ajuste 2026-10-05), "retention_amount"
         // (ajuste 2026-10-06) y "freight_amount" (2026-10-17) nacen visibles.
-        Assert.All(layout.Columns.TakeLast(43).Take(7), column => Assert.False(column.Visible));
-        Assert.All(layout.Columns.TakeLast(43).Skip(7).Take(3), column => Assert.True(column.Visible));
+        Assert.All(layout.Columns.TakeLast(45).Take(7), column => Assert.False(column.Visible));
+        Assert.All(layout.Columns.TakeLast(45).Skip(7).Take(3), column => Assert.True(column.Visible));
         // El resto del flete y "variant" (2026-10-21) nacen ocultos.
-        Assert.All(layout.Columns.TakeLast(43).Skip(10).Take(5), column => Assert.False(column.Visible));
-        // Grupos de cliente, facturación y envío (2026-10-28): sólo «Cliente» y «Documento de identidad» nacen visibles.
+        Assert.All(layout.Columns.TakeLast(45).Skip(10).Take(5), column => Assert.False(column.Visible));
+        // Grupos de cliente, facturación y envío (2026-10-28) y las retenciones por tipo: sólo «Cliente» y «Documento de
+        // identidad» nacen visibles.
         Assert.Equal(
             ["customer_name", "customer_identification"],
-            layout.Columns.TakeLast(28).Where(column => column.Visible).Select(column => column.Key));
+            layout.Columns.TakeLast(30).Where(column => column.Visible).Select(column => column.Key));
     }
 
     // D10: restaurar es un PUT con el catálogo en su orden y nombres, sin fijas. La fila queda.

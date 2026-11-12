@@ -302,7 +302,7 @@ public sealed class QuotationSendVoidApiTests
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -325,7 +325,7 @@ public sealed class QuotationSendVoidApiTests
         var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
         var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
         await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
         {
@@ -360,7 +360,7 @@ public sealed class QuotationSendVoidApiTests
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
         var survivorId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura G.");
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         // El contacto se fusiona en otro cliente: queda marcado como fusionado y ya no es de la empresa.
         var customersUrl = $"/api/v1/tenants/{tenantId}/customers";
@@ -398,7 +398,7 @@ public sealed class QuotationSendVoidApiTests
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
         await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",

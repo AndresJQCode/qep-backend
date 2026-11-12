@@ -613,7 +613,7 @@ public sealed class WhatsAppChannelApiTests
         using var _ = client;
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
         var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
         using (var saved = await PutChannelAsync(client, tenantId, RecordingWhatsAppChannelDirectory.Default.ConnectionId))
         {
             Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
@@ -640,7 +640,7 @@ public sealed class WhatsAppChannelApiTests
         using var _ = client;
         factory.WhatsAppChannels.Channels.Add(RecordingWhatsAppChannelDirectory.Meta);
         var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         using var response = await SendToContactAsync(client, tenantId, quotation.Id, contactId, Guid.CreateVersion7());
 
@@ -657,7 +657,7 @@ public sealed class WhatsAppChannelApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var (companyId, contactId) = await CompanyWithContactAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
         factory.WhatsAppChannels.Channels.Clear();
 
         using var response = await SendToContactAsync(
