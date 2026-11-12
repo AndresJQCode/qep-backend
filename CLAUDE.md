@@ -558,11 +558,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
-- **Una fila de `automation_inbox` sin mensaje es un arranque manual** (spec 2026-10-31). `POST …/automation/start` encola una fila
-  cuyo `message_id` **no siempre existe en `messages`**: no hay entrante, lo inició una persona. Por eso `run_units.inbound_message_id` y
-  `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
-  el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
-  el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
+- **Una fila de `automation_inbox` tiene tipo** (spec 2026-11-03). `ReleaseRun` es la señal de que una persona resolvió, tomó, transfirió o
+  devolvió la conversación: `RunProcessor` sólo cierra la corrida viva (`Interrupted`, `human_took_over`) si arrancó antes de la fila y
+  `HumanTookOver` sigue siendo verdadero, y nunca arranca ni avanza nada. Dentro de `Engine`, una fila sin mensaje sigue siendo un arranque
+  manual: todo lector nuevo usa `LEFT JOIN` y filtra por `kind`. Una acción humana nueva sobre una conversación con asistente decide si
+  encola la señal, en el handler y no en el agregado (el bot también resuelve). Por eso `run_units.inbound_message_id` y
+  `conversation_runs.last_inbound_message_id` pueden apuntar a una fila sin mensaje —un arranque manual (spec 2026-10-31) o una señal—, y
+  el camino manual del motor es `ResumeAsync`, no el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde esas filas en silencio.
 - **`Conversation.ContinueAutomation` no escribe `AutomationResumedAt`, y esa ausencia es todo el mecanismo** (spec 2026-11-01). Sellarlo
   hace que `BotAttendance.HumanTookOver` dé verdadero, la corrida termine `Interrupted` y el flujo reinicie: justo lo que `automation/continue`
   evita. No hay columna ni bandera de «continuada». Por la misma razón `AutomationPauseReason = Manual` **no** prueba que ningún asesor
