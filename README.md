@@ -3733,7 +3733,7 @@ suma las conversaciones con asistente (activo o en pausa) y `GET …/conversatio
 `POST …/conversations/{id}/automation/start` inicia el asistente desde el hilo (spec 2026-10-31). Pide `messaging.conversation.manage` y
 `If-Match` (428 sin él, 412 si la versión cambió, también si la ingesta tocó la conversación mientras se decidía) y responde 200 con el
 `ConversationSummary`. **Responde antes del envío:** deja la conversación `Active` con el evento `AutomationStarted` y encola una fila
-manual en `automation_inbox` (sin mensaje, ver `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
+manual en `automation_inbox` (sin mensaje; ver «Una fila de `automation_inbox` tiene tipo» en `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
 después de la respuesta. La decisión es la de `ManualRunStarter` (la misma del motor). Los 422, en el orden en que se deciden: `messaging.conversation.not_open`,
 `messaging.automation.has_advisor`, `messaging.contact.blocked`, `messaging.channel_unsupported` (sólo WhatsApp),
 `messaging.automation.not_available` (el módulo no está activo para el tenant), `messaging.automation.already_active` (el asistente ya
@@ -3971,7 +3971,9 @@ tiene que mandar el que le devolvió el último guardado, y al revés.
 - **Publicar.** Copia el borrador a una versión inmutable; `Draft` pasa a `Active` y ocupa todas sus conexiones. Con
   errores responde 422 `automations.chatbot.invalid` y `errors.flow` trae **sólo los errores** (no los avisos), cada uno
   como `"<código>: <mensaje>"` (R16).
-- **Borrar** un chatbot con corridas vivas es 409 `automations.chatbot.has_live_runs`.
+- **Borrar** un chatbot es 409 `automations.chatbot.has_live_runs` sólo mientras alguna corrida viva esté atendida por el bot
+  (`BotAttendance.IsAttending`: corrida viva y nadie humano tomó la conversación; una conversación que no existe no atiende). Una
+  corrida viva que un asesor ya tomó no bloquea (spec 2026-11-03, D-7).
 - **Exportar e importar.** El export lleva el borrador (flujo y layout), nombre, descripción, disparador, palabras clave y
 las «API externa» que usa. El cuerpo de
   `POST /import` tiene un tope propio de 1 MB, para que un export con flujo y layout en sus topes se pueda volver a
@@ -4042,6 +4044,25 @@ empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada. La excepción
 chatbot que atiende la conexión es el mismo de la corrida, está `Active` y publicó una versión distinta, la corrida termina
 `Completed` y en la misma unidad arranca una nueva con la publicada (la conversación sigue `Active`). Con la misma versión, con el
 chatbot pausado o con otro chatbot en la conexión, el reinicio se queda en la corrida vieja.
+
+Cada fila de `automation_inbox` tiene un `kind` (spec 2026-11-03): `Engine` (los entrantes y los arranques manuales) o `ReleaseRun`, la
+señal de que una persona resolvió, tomó, transfirió o devolvió la conversación (también la asignación automática al responder);
+pausar **no** la encola. `RunProcessor` atiende `ReleaseRun` en su propia rama: cierra la corrida viva (`Interrupted`, motivo
+`human_took_over`, outcome `interrupted`) sólo si arrancó antes de la fila (`run.StartedAt < item.CreatedAt`) y
+`BotAttendance.HumanTookOver` sigue siendo verdadero; si no, la fila se cierra `skipped`. Nunca arranca, avanza ni envía. La métrica de
+cola `automation` (`QueueMetricsSource`) cuenta también las `ReleaseRun` pendientes como backlog, a propósito: son trabajo real del
+worker.
+
+**Despliegue y rollback.** Antes de volver a un código que no conoce `kind`, cierra las señales pendientes:
+
+```sql
+UPDATE messaging.automation_inbox SET processed_at = now(), outcome = 'skipped'
+ WHERE kind = 'ReleaseRun' AND processed_at IS NULL;
+```
+
+El código viejo lee una `ReleaseRun` pendiente como un arranque manual y, tras «Devolver al asistente», arrancaría el flujo y mandaría
+el primer mensaje. Lo mismo pasa unos segundos en un despliegue gradual (un pod worker viejo que se solapa con el pod de la API
+nuevo), así que el despliegue va en un momento tranquilo.
 
 - **Reintento sin duplicar.** El `clientId` de cada envío es `DeterministicClientId.For(runId, baseStepNumber, effectIndex)`
   (P2-R5): `baseStepNumber` es el `StepNumber` persistido al empezar la unidad y `effectIndex` el ordinal del envío dentro de ella

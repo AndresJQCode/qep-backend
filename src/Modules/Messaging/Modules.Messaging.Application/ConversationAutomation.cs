@@ -81,7 +81,7 @@ public sealed class PauseAutomationHandler(ConversationAssignmentSteps steps) : 
 }
 
 /// <summary>Spec 2026-10-21 §4.4: devolverle la conversación al asistente. Si un asesor la tiene, la libera primero (dos eventos).</summary>
-public sealed class ResumeAutomationHandler(ConversationAssignmentSteps steps) : ICommandHandler<ResumeAutomationCommand, ConversationSummary>
+public sealed class ResumeAutomationHandler(ConversationAssignmentSteps steps, IAutomationInbox inbox) : ICommandHandler<ResumeAutomationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(ResumeAutomationCommand command, CancellationToken cancellationToken)
     {
@@ -89,6 +89,10 @@ public sealed class ResumeAutomationHandler(ConversationAssignmentSteps steps) :
         var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
-        return await steps.CommitAsync(command.TenantId, conversation, conversation.ResumeAutomation(member, now), now, cancellationToken);
+        var before = conversation.AutomationStatus;
+        var changes = conversation.ResumeAutomation(member, now);
+        // D-6: la corrida vieja se cierra con la señal; el asistente arranca de nuevo con el siguiente entrante.
+        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
+        return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }
