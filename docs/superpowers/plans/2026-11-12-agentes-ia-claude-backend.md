@@ -210,10 +210,26 @@ Construida en `feat/agentes-ia-modulo`. Cambia respecto de lo planeado:
 - [x] `IAiProviderCredentials` (`ResolveAsync`, `DescribeAsync`) + `AiProviderCredentials` en Bootstrapper.
 - [x] `GET /api/v1/tenants/{tenantId}/ai/settings`.
 
-### Task 3 (AI-B3): Ocupación neutral `messaging.connection_bots`
+### Task 3 (AI-B3): Ocupación neutral `messaging.connection_bots` — hecha
 
-Como §4.3 y D-A2 del spec, sin cambios. Incluye el backfill desde `automations.chatbot_connections`, el `409
-connection_taken` con `occupant` y la regresión completa de Automations.
+Construida en `feat/agentes-ia-modulo` (`8051922a`). Cambia respecto del spec (§4.3, D-A2):
+
+- **La ocupación se sincroniza en la misma transacción que el guardado del chatbot, no con compensación ni barrido.**
+  `AutomationsUnitOfWork` abre su transacción si no hay una, guarda, y por cada tenant con cambios en `Chatbot` o
+  `ChatbotConnection` llama a `IChatbotConnectionSlots.SyncChatbotsAsync` (SQL crudo en Bootstrapper,
+  `ChatbotConnectionSlots`): borra las filas `kind = 1` vencidas, inserta o renombra las de los chatbots publicados con
+  `ON CONFLICT (connection_id)` sin pisar a otro ocupante, y devuelve los choques. Un choque deshace todo y responde
+  `409 automations.chatbot.connection_taken` con `occupant { kind, id, name }` (`ConnectionTakenException`, por
+  `IHasProblemExtensions`). No hay estado intermedio que reconciliar.
+- **`ResourceConflictException` dejó de ser `sealed`** para que `ConnectionTakenException` la extienda y conserve el 409.
+- **`servedBy` en `GET /automations/connections` queda para la Tarea 4**, cuando existe el agente que lo llena.
+
+- [x] `messaging.connection_bots` (PK `connection_id`, `CK_connection_bots_kind`, `IX_connection_bots_tenant_bot`) y migración
+  `AddConnectionBots` con backfill desde `automations.chatbot_connections` (protegido con `to_regclass`).
+- [x] Borrador no ocupa; publicar ocupa; pausar conserva; borrar libera; mover y renombrar siguen; tomar la conexión mueve
+  la fila; publicar sobre una conexión de un agente da 409 con el agente (`ChatbotsApiTests.ConnectionSlots`).
+- [x] Regresión: Architecture 200, Automations unit 690, Bootstrapper unit 534, Automations integración 301, Messaging
+  integración 393, todas en verde; `TheMigrationBackfillsTheChatbotsAlreadyPublished` en verde.
 
 ### Task 4 (AI-B4): Agregado `Agent`, borrador, publicar y conexiones
 
