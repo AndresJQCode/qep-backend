@@ -91,17 +91,17 @@ internal sealed class MarginReportSource(
         var products = await QueryAsync<ProductRow>(
             criteria,
             ProductGroupsSql + """
+            , pn AS (
+                SELECT DISTINCT ON (product_id) product_id, line_name FROM l
+                WHERE line_name IS NOT NULL
+                ORDER BY product_id, sold_at DESC NULLS LAST
+            )
             SELECT g.product_id AS "ProductId", g.currency AS "Currency", g.quantity AS "Quantity",
                    g.net_sales AS "NetSales", g.cost AS "Cost",
                    coalesce(p.name::text, latest.line_name, @unnamed) AS "ProductName"
             FROM g
             LEFT JOIN catalog.products AS p ON p.id = g.product_id AND p.tenant_id = @tenant_id
-            LEFT JOIN LATERAL (
-                SELECT named.line_name FROM l AS named
-                WHERE named.product_id = g.product_id AND named.line_name IS NOT NULL
-                ORDER BY named.sold_at DESC NULLS LAST
-                LIMIT 1
-            ) AS latest ON true
+            LEFT JOIN pn AS latest ON latest.product_id = g.product_id
             ORDER BY (g.currency = @default_currency) DESC, (g.net_sales - g.cost) DESC, g.product_id, g.currency
             LIMIT @page_limit OFFSET @page_offset
             """,
@@ -128,24 +128,22 @@ internal sealed class MarginReportSource(
                   ON page.product_id = l.product_id AND page.currency = l.currency
                 WHERE l.costed
                 GROUP BY l.product_id, l.currency, l.variant_id
+            ), vn AS (
+                SELECT DISTINCT ON (variant_id) variant_id, line_name FROM l
+                WHERE line_name IS NOT NULL
+                ORDER BY variant_id, sold_at DESC NULLS LAST
+            ), vc AS (
+                SELECT DISTINCT ON (variant_id) variant_id, line_code FROM l
+                WHERE line_code IS NOT NULL
+                ORDER BY variant_id, sold_at DESC NULLS LAST
             )
             SELECT v.product_id AS "ProductId", v.currency AS "Currency", v.variant_id AS "VariantId",
                    v.quantity AS "Quantity", v.net_sales AS "NetSales", v.cost AS "Cost",
                    coalesce(named.line_name, pv.code::text, coded.line_code, @unnamed) AS "VariantName"
             FROM v
             LEFT JOIN catalog.product_variants AS pv ON pv.id = v.variant_id AND pv.tenant_id = @tenant_id
-            LEFT JOIN LATERAL (
-                SELECT x.line_name FROM l AS x
-                WHERE x.variant_id = v.variant_id AND x.line_name IS NOT NULL
-                ORDER BY x.sold_at DESC NULLS LAST
-                LIMIT 1
-            ) AS named ON true
-            LEFT JOIN LATERAL (
-                SELECT x.line_code FROM l AS x
-                WHERE x.variant_id = v.variant_id AND x.line_code IS NOT NULL
-                ORDER BY x.sold_at DESC NULLS LAST
-                LIMIT 1
-            ) AS coded ON true
+            LEFT JOIN vn AS named ON named.variant_id = v.variant_id
+            LEFT JOIN vc AS coded ON coded.variant_id = v.variant_id
             ORDER BY (v.net_sales - v.cost) DESC, v.variant_id
             """,
             [
