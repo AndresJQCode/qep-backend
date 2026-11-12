@@ -16,6 +16,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Bootstrapper.ApiKeys;
+using Modules.Ai.Application;
+using Modules.Ai.Infrastructure;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
 using Modules.Audit.Infrastructure;
@@ -1164,6 +1166,11 @@ public static class QepServiceCollectionExtensions
         // bot, conexiones y la «API externa» entran por adaptadores que se registran más abajo.
         services.AddAutomationsInfrastructure(configuration);
 
+        // Ai (spec 2026-10-29 D-A1, plan 2026-11-12): los agentes IA. Sólo ve Tenancy; conversaciones, conexiones y datos de negocio
+        // entran por adaptadores en Bootstrapper. A mano, como el resto: sin registro, 500 (CompositionRootTests).
+        services.AddAiInfrastructure(configuration);
+        services.AddScoped<IQueryHandler<ListAiModelsQuery, AiModelCatalogDto>, ListAiModelsHandler>();
+
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.
         services.AddShopifyInfrastructure(configuration);
@@ -1747,6 +1754,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-21 D-C10: el chatbot atiende en nombre de la empresa; de fábrica sólo en admin. De núcleo.
                 AutomationsPermissions.ChatbotRead,
                 AutomationsPermissions.ChatbotManage,
+                // Spec 2026-10-29 §1: un agente IA habla con los clientes en nombre de la empresa; de fábrica sólo en admin. De núcleo.
+                AiPermissions.AgentRead,
+                AiPermissions.AgentManage,
                 // Spec 2026-10-23 D-14: el directorio de proveedores lo administra quien administra la empresa.
                 SuppliersPermissions.Read,
                 SuppliersPermissions.Manage,
@@ -2380,6 +2390,22 @@ public static class QepServiceCollectionExtensions
             "Automations",
             "medium",
             RequiredModules: []));
+        // Spec 2026-10-29 §1: categoría "Ai" y núcleo (RequiredModules vacío), como Automations: con [ai] el 403 con la capacidad
+        // apagada saldría authorization.denied en vez de tenancy.module_not_enabled.
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.AgentRead,
+            "Ver agentes IA",
+            "Permite ver los agentes IA, los modelos disponibles, su consumo y el estado de las claves de los proveedores.",
+            "Ai",
+            "low",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            AiPermissions.AgentManage,
+            "Gestionar agentes IA",
+            "Permite crear, editar, probar, publicar, pausar y borrar agentes IA.",
+            "Ai",
+            "high",
+            RequiredModules: []));
         // Spec 2026-10-23 D-14: proveedores exige el módulo suppliers.
         services.AddSingleton(new PermissionDefinition(
             SuppliersPermissions.Read,
@@ -2821,6 +2847,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 AutomationsPermissions.ChatbotManage,
                 policy => AddPermissionRequirement(policy, AutomationsPermissions.ChatbotManage))
+            // Spec 2026-10-29: la otra mitad de los permisos de agentes IA; sin ella el síntoma es 500, no 403.
+            .AddPolicy(
+                AiPermissions.AgentRead,
+                policy => AddPermissionRequirement(policy, AiPermissions.AgentRead))
+            .AddPolicy(
+                AiPermissions.AgentManage,
+                policy => AddPermissionRequirement(policy, AiPermissions.AgentManage))
             // Spec 2026-10-23 D-14: la otra mitad de los permisos de proveedores; sin ella el síntoma es 500.
             .AddPolicy(
                 SuppliersPermissions.Read,

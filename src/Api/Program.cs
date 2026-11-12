@@ -10,6 +10,7 @@ using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
+using Modules.Ai.Api;
 using Modules.ApiAccess.Api;
 using Modules.ApiAccess.Application;
 using Modules.ApiAccess.Infrastructure;
@@ -314,6 +315,8 @@ app.MapMessagingHub();
 app.MapPipelineEndpoints();
 // Spec 2026-10-21 §4.4: el constructor de chatbots.
 app.MapAutomationsEndpoints();
+// Spec 2026-10-29 y plan 2026-11-12: los agentes IA, con el proveedor que elige el tenant.
+app.MapAiEndpoints();
 app.MapSupplierEndpoints();
 // Spec 2026-10-30: administración de claves de API.
 app.MapApiKeyEndpoints();

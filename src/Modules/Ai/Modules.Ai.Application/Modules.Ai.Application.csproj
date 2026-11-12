@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Modules.Ai.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Ai.Domain\Modules.Ai.Domain.csproj" />
+    <!-- ITenantModules, TenantModuleGuard e IExecutionContext: la única referencia a otro módulo que Application tiene permitida
+         (AiLayerTests). Mensajería, Integrations y los módulos de negocio entran por puertos propios con adaptador en Bootstrapper. -->
+    <ProjectReference Include="..\..\Tenancy\Modules.Tenancy.Application\Modules.Tenancy.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

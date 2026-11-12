@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Modules.Ai.Application;
 using Modules.ApiAccess.Application;
 using Modules.Authorization.Application;
 using Modules.Automations.Application;
@@ -180,9 +181,9 @@ public sealed class CompositionRootTests
     /// specs de 2026-10-08, las dos <c>messaging.*</c> del spec 2026-10-09, las dos de Customers
     /// (<c>customers.tag.manage</c>, <c>customers.note.moderate</c>), <c>messaging.campaign.manage</c>
     /// del spec 2026-10-11 y <c>messaging.quick_reply.manage</c> del spec 2026-10-12 las tres <c>pipeline.*</c> del spec 2026-10-13 <c>messaging.template.manage</c> del spec 2026-10-14 <c>messaging.resolution_reason.manage</c> del spec 2026-10-15 y <c>messaging.business_hours.manage</c> del spec 2026-10-21 y las dos <c>automations.chatbot.*</c> del mismo spec, <c>customers.customer.merge</c> del spec 2026-10-24, <c>customers.data_consent.revoke</c> y las dos
-    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10.</summary>
+    /// <c>operator.cities.*</c> del spec 2026-10-26 y las dos <c>billing.service.*</c> del spec 2026-10-29 y <c>developer.api_key.manage</c> del spec 2026-10-30 y las dos <c>loans.loan.*</c> del spec 2026-10-31 y <c>store.settings.manage</c> del spec 2026-11-03 (la bandeja reusa <c>quotations.order.manage</c>, que ya se contaba) y <c>customers.customer.delete</c> del spec 2026-11-10 y las dos <c>ai.agent.*</c> del spec 2026-10-29.</summary>
     [Fact]
-    public void PermissionDiscoveryFindsTheSeventyFiveConstants()
+    public void PermissionDiscoveryFindsTheSeventySevenConstants()
     {
         // 46 + los dos de Messaging (spec 2026-10-09 §6.3) + los dos de Customers (spec 2026-10-11 §4.3) + el de campañas (§6.4)
         // + el de respuestas rápidas (spec 2026-10-12 §3.5) + los tres del embudo (spec 2026-10-13 D23)
@@ -198,7 +199,8 @@ public sealed class CompositionRootTests
         // + el de uso de la plataforma (operator.usage.read)
         // + el de la tienda en línea (store.settings.manage, spec 2026-11-03; quotations.order.manage ya estaba y .Distinct no lo cuenta dos veces).
         // + el de borrar clientes (customers.customer.delete, spec 2026-11-10 D-8).
-        Assert.Equal(75, PermissionConstants().Length);
+        // + los dos de agentes IA (ai.agent.read|manage, spec 2026-10-29).
+        Assert.Equal(77, PermissionConstants().Length);
     }
 
     /// <summary>Spec 2026-10-26 §6: categoría <c>Operator</c> y de núcleo, como las tres <c>operator.*</c> de la consola. Las lleva
@@ -488,6 +490,48 @@ public sealed class CompositionRootTests
             Assert.Equal("Automations", definition.Category);
             Assert.Empty(definition.RequiredModules!);
         });
+    }
+
+    /// <summary>Spec 2026-10-29 §1: de núcleo (con <c>[ai]</c> el 403 saldría <c>authorization.denied</c> y no
+    /// <c>tenancy.module_not_enabled</c>; cada handler revisa la capacidad) y de fábrica sólo en <c>admin</c>: un agente habla con los
+    /// clientes en nombre de la empresa.</summary>
+    [Fact]
+    public void TheAiPermissionsAreCoreAndGoOnlyToAdmin()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var catalog = provider.GetRequiredService<IRoleCatalog>();
+        string[] aiPermissions = [AiPermissions.AgentRead, AiPermissions.AgentManage];
+
+        Assert.Equal(["ai.agent.read", "ai.agent.manage"], aiPermissions);
+        Assert.All(aiPermissions, permission => Assert.Contains(permission, catalog.PermissionsFor("admin")));
+        foreach (var role in new[] { "advisor", "billing", "cashier" })
+        {
+            Assert.All(aiPermissions, permission => Assert.DoesNotContain(permission, catalog.PermissionsFor(role)));
+        }
+
+        var definitions = catalog.ListPermissions()
+            .Where(definition => aiPermissions.Contains(definition.Permission))
+            .ToArray();
+        Assert.Equal(2, definitions.Length);
+        Assert.All(definitions, definition =>
+        {
+            Assert.Equal("Ai", definition.Category);
+            Assert.Empty(definition.RequiredModules!);
+        });
+    }
+
+    /// <summary>La otra mitad de un permiso nuevo: sin su política, <c>RequireAuthorization</c> no resuelve y la ruta responde 500, no 403
+    /// (CLAUDE.md, «Un permiso nuevo necesita dos mitades»).</summary>
+    [Fact]
+    public async Task TheAiPermissionsHaveTheirPolicies()
+    {
+        using var provider = BuildPlatformServices().BuildServiceProvider();
+        var policies = provider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider>();
+
+        foreach (var permission in new[] { AiPermissions.AgentRead, AiPermissions.AgentManage })
+        {
+            Assert.NotNull(await policies.GetPolicyAsync(permission));
+        }
     }
 
     /// <summary>Spec 2026-10-08 §2: el admin de fábrica los lleva; el filtro decide dónde valen.</summary>

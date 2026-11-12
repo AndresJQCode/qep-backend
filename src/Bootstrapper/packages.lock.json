@@ -189,6 +189,28 @@
           "OpenTelemetry.Instrumentation.Runtime": "[1.16.0, )"
         }
       },
+      "modules.ai.application": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Ai.Domain": "[1.0.0, )",
+          "Modules.Tenancy.Application": "[1.0.0, )"
+        }
+      },
+      "modules.ai.domain": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "modules.ai.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Ai.Application": "[1.0.0, )",
+          "Modules.Ai.Domain": "[1.0.0, )"
+        }
+      },
       "modules.apiaccess.application": {
         "type": "Project",
         "dependencies": {

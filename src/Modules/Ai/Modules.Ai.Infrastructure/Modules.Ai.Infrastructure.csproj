@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- Opciones, IValidateOptions y, cuando lleguen, los workers del modelo: salen del shared framework, como en Automations. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Modules.Ai.Application\Modules.Ai.Application.csproj" />
+    <ProjectReference Include="..\Modules.Ai.Domain\Modules.Ai.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>
