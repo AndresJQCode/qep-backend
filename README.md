@@ -1767,7 +1767,7 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
-**Pagado y costo congelado.** `paidAt` es el instante en que el pedido llegó a pago completo (nulo si no está pagado); con él el costo unitario de cada línea (`unit_cost`) se congela desde el costo de la variante en ese momento y no cambia si la variante se edita después. Toda vía a `FullPaymentReceived` pasa `OrderLineCosts` al dominio.
+**Pagado y costo congelado.** `Order.PaidAt` (columna `paid_at`) es el instante en que el pedido llegó a pago completo (nulo si no está pagado); no viaja en ninguna respuesta de la API, es de uso interno del reporte de margen. Con él, el costo unitario de cada línea (`unit_cost`) se congela desde el costo de la variante en ese momento y no cambia si la variante se edita después. Toda vía a `FullPaymentReceived` pasa `OrderLineCosts` al dominio.
 
 ### Reporte de margen
 
@@ -1900,7 +1900,7 @@ Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.pr
   transacción del `PUT`. Borrar una variante sin uso borra en cascada su historial de precios.
 - **Escalas por variante**: una escala sin agrupación cuenta sólo la cantidad de su variante (6 M y 6 L
   no suman 12); una con `allowGrouping` suma entre variantes, como antes sumaba entre productos.
-- **Costo por variante**: `cost` opcional en cada variante del `POST/PUT /products` (moneda del producto); sólo lo ve y lo escribe quien tenga `catalog.product_cost.read` / `.manage` (sin permiso, 403 `catalog.product_cost.forbidden` al escribir y el campo no viaja al leer).
+- **Costo por variante**: `costs` es un mapa por código de moneda (p. ej. `{ "COP": 12000 }`), sin conversión entre monedas. En la respuesta de cada variante siempre está presente: `null` = el llamador no tiene `catalog.product_cost.read` (`manage` también cuenta como lectura) y `{}` = la variante no tiene costo. En el `POST/PUT /products`, `null` o ausente conserva el costo guardado y un objeto lo reemplaza (`{}` lo borra). Escribirlo exige `catalog.product_cost.manage`; sin él, 403 `catalog.product_cost.forbidden`. Cada monto es > 0 y con máximo 2 decimales; si no, 422 bajo `Variants[i].Costs.<CUR>`.
 - **Historial de precios** por variante: `GET /reports/price-changes` y `/summary` aceptan `variantId`, y
   el resumen desglosa cada producto en `variants[]`, todas incluso en cero.
 - **Excel de productos**: una fila por variante (activas e inactivas), con `Código`, `Código de barras`,
