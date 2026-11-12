@@ -293,6 +293,25 @@ public sealed class AutomationAdaptersTests
     }
 
     [Fact]
+    public async Task TheInboundQueueMapsTheKind()
+    {
+        var createdAt = DateTimeOffset.UtcNow;
+        var inbox = new StubAutomationInbox
+        {
+            Claimed =
+            [
+                new AutomationInboxItem(Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, createdAt, 1, AutomationInboxKinds.Engine),
+                new AutomationInboxItem(Guid.CreateVersion7(), TenantId, Guid.CreateVersion7(), Guid.CreateVersion7(), false, createdAt, 1, AutomationInboxKinds.ReleaseRun),
+            ],
+        };
+        var queue = new AutomationInboundQueue(inbox);
+
+        var items = await queue.ClaimAsync(createdAt, 20, Ct);
+
+        Assert.Equal([false, true], items.Select(i => i.ReleaseRun));
+    }
+
+    [Fact]
     public async Task TheQueueMapsItemsAndInboundKinds()
     {
         var messageId = Guid.CreateVersion7();

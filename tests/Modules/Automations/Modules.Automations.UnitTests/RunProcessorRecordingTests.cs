@@ -52,6 +52,24 @@ public sealed class RunProcessorRecordingTests
             RunState.Initial(RunVariables.Empty()) with { Status = status, CurrentNodeId = nodeId, StepNumber = stepNumber }, updatedAt);
 
     [Fact]
+    public async Task AReleaseRowWritesTheClosedRowWithHumanTookOver()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var bed = new Bed(new AutomationConversationState("Open", MemberId, "Paused", ChatbotId, ConnectionId, now, "Laura", "573001234567"));
+        var run = LiveRun(RunStatus.Waiting, "q", stepNumber: 2, now.AddMinutes(-1));
+        bed.Runs.Added.Add(run);
+        var item = new InboundQueueItem(Guid.CreateVersion7(), TenantId, ConnectionId, ConversationId, Opened: false, now, Attempts: 1, ReleaseRun: true);
+
+        await bed.Processor().ProcessAsync(item, TestContext.Current.CancellationToken);
+
+        var closed = Assert.Single(bed.Units.Saved, row => row.RunId == run.Id);
+        Assert.Equal(
+            (TenantId, 2, RunUnitTriggers.Closed, (Guid?)item.MessageId, RunOutcomes.Interrupted, "[]", (string?)"Interrupted", (string?)RunCloseReasons.HumanTookOver),
+            (closed.TenantId, closed.BaseStep, closed.Trigger, closed.InboundMessageId, closed.Outcome, closed.StepsJson, closed.ClosedStatus, closed.ClosedReason));
+        Assert.Single(bed.Units.Saved);
+    }
+
+    [Fact]
     public async Task AUnitLeavesOneRowWithTheRealClientIds()
     {
         var bed = new Bed();
