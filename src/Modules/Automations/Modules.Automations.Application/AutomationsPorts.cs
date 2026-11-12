@@ -112,8 +112,9 @@ public interface IConversationRunQueries
     Task<IReadOnlyDictionary<Guid, (int Handled, int HandedOff)>> TodayAsync(
         Guid tenantId, IReadOnlyCollection<Guid> chatbotIds, DateTimeOffset dayStartUtc, DateTimeOffset dayEndUtc, CancellationToken cancellationToken);
 
-    /// <summary>¿Hay corridas <c>Running</c> o <c>Waiting</c>? Bloquea el borrado.</summary>
-    Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
+    /// <summary>Las corridas <c>Running</c> o <c>Waiting</c> del chatbot, sin seguimiento, por <c>started_at</c>. El borrado decide con
+    /// ellas si el bot de verdad atiende alguna conversación (spec 2026-11-03 D-7).</summary>
+    Task<IReadOnlyList<ConversationRun>> ListLiveAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken);
 }
 
 /// <summary>Spec 2026-10-21 §4.4 y D-M6: una conexión de Mensajería del tenant, en cualquier estado. <see cref="Channel"/> es el nombre

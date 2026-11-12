@@ -30,6 +30,69 @@ public sealed partial class EngineEndToEndTests
         return await admin.SendAsync(request, Ct);
     }
 
+    private static async Task<HttpResponseMessage> DeleteChatbotAsync(Fixture f)
+    {
+        using var admin = CreateClient(f.Host, f.Tenant.OwnerUserId, f.Tenant.TenantId, ManagePermissions);
+        var url = $"{AutomationsUrl(f.Tenant.TenantId)}/chatbots/{f.ChatbotId}";
+        var editor = (await admin.GetFromJsonAsync<ChatbotEditorDto>(url, Ct))!;
+        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{editor.Chatbot.Version}\"");
+        return await admin.SendAsync(request, Ct);
+    }
+
+    /// <summary>Spec 2026-11-03 D-7: con el bot atendiendo (conversación abierta, sin asesor, asistente activo) borrar es 409, aunque el
+    /// chatbot esté pausado.</summary>
+    [Fact]
+    public async Task DeletingWhileTheBotAttendsIs409()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Waiting", await RunAsync(f, "status"));
+        Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
+
+        var response = await DeleteChatbotAsync(f);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("automations.chatbot.has_live_runs", (await ProblemAsync(response)).Code);
+    }
+
+    /// <summary>D-7: la decisión no depende de la señal. Un asesor tomó la conversación y el worker todavía no cerró la corrida
+    /// (sigue <c>Waiting</c>): ya no hay a quién dejar hablando solo, así que se puede borrar.</summary>
+    [Fact]
+    public async Task DeletingAfterAnAdvisorTookItIs204()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "take")).StatusCode);
+
+        var response = await DeleteChatbotAsync(f);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", f.ChatbotId)));
+    }
+
+    /// <summary>D-6a y D-7: pausar el asistente a mano no encola nada y deja la corrida <c>Waiting</c>, pero nadie la atiende: se puede borrar.</summary>
+    [Fact]
+    public async Task DeletingWithAManualPauseIs204()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "automation/pause")).StatusCode);
+
+        var response = await DeleteChatbotAsync(f);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal("Waiting", await RunAsync(f, "status"));
+    }
+
     /// <summary>§5.2: con una fila por pasada se ve que el segundo entrante espera al primero; al revés, la cédula caería en los botones
     /// como intento inválido y el toque dejaría la corrida esperando la pregunta.</summary>
     [Fact]

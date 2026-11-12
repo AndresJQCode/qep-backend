@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Modules.Automations.Application;
+using Modules.Automations.Domain;
 using Modules.Automations.Domain.Engine;
 
 namespace Modules.Automations.Infrastructure.Persistence;
@@ -35,10 +36,11 @@ internal sealed class ConversationRunQueries(AutomationsDbContext dbContext) : I
         return rows.ToDictionary(row => row.ChatbotId, row => (row.Handled, row.HandedOff));
     }
 
-    public Task<bool> HasLiveRunsAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
-        dbContext.Runs.AsNoTracking().AnyAsync(
-            run => run.TenantId == tenantId && run.ChatbotId == chatbotId && (run.Status == RunStatus.Running || run.Status == RunStatus.Waiting),
-            cancellationToken);
+    public async Task<IReadOnlyList<ConversationRun>> ListLiveAsync(Guid tenantId, Guid chatbotId, CancellationToken cancellationToken) =>
+        await dbContext.Runs.AsNoTracking()
+            .Where(run => run.TenantId == tenantId && run.ChatbotId == chatbotId && (run.Status == RunStatus.Running || run.Status == RunStatus.Waiting))
+            .OrderBy(run => run.StartedAt)
+            .ToListAsync(cancellationToken);
 
     // Clase con setters y no un record: EF no ve a través del constructor de un record en SqlQuery.
     private sealed class TodayRow
