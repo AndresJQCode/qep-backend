@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Modules.Quotations.Domain;
 using Modules.Quotations.Infrastructure.Persistence;
 using Npgsql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
@@ -8,7 +9,8 @@ using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 namespace Modules.Quotations.IntegrationTests;
 
 /// <summary>
-/// El relleno de <c>paid_at</c> de <c>AddLineCostAndPaidAt</c> (spec costo de producto §4.4), contra pedidos sembrados
+/// El relleno de <c>paid_at</c> de <c>AddLineCostAndPaidAt</c> y el congelado sin costo de las líneas ya pagadas de
+/// <c>FreezePreDeployPaidLinesWithoutCost</c> (spec costo de producto §4.4), contra pedidos sembrados
 /// con el esquema anterior. Migra sólo Quotations con <see cref="IMigrator"/>, como
 /// <see cref="OrderStatusAxesMigrationTests"/>: el host de pruebas migra todo a la última al arrancar y no quedaría
 /// esquema anterior donde sembrar.
@@ -43,12 +45,57 @@ public sealed class PaidAtMigrationTests
             await RowsAsync(
                 connectionString,
                 "SELECT id::text, (paid_at AT TIME ZONE 'UTC')::text || '+00' FROM quotations.orders ORDER BY id"));
-        // Lo vendido antes de la migración no congela: su costo nunca se registró y no se inventa.
-        Assert.Equal(3L, await ScalarAsync<long>(connectionString, "SELECT count(*) FROM quotations.order_items"));
-        Assert.Equal(0L, await ScalarAsync<long>(
-            connectionString,
-            "SELECT count(*) FROM quotations.order_items " +
-            "WHERE cost_captured_at IS NOT NULL OR unit_cost IS NOT NULL OR cost_source IS NOT NULL"));
+        // Lo vendido antes de la migración queda congelado sin costo, con la fecha de pago: su costo nunca se
+        // registró y no se inventa. Lo no pagado sigue sin congelar.
+        Assert.Equal(
+            [
+                $"{PaidMarked}|2026-11-01 15:00:00+00|<null>|<null>",
+                $"{PaidByPlatform}|2026-10-01 15:00:00+00|<null>|<null>",
+                $"{Pending}|<null>|<null>|<null>",
+            ],
+            await RowsAsync(
+                connectionString,
+                "SELECT order_id::text, (cost_captured_at AT TIME ZONE 'UTC')::text || '+00', unit_cost::text, " +
+                "cost_source FROM quotations.order_items ORDER BY order_id"));
+    }
+
+    // Bug del review final: sin marca de congelado, volver a marcar pagado un pedido de antes del despliegue le
+    // ponía el costo de hoy a una línea vendida cuando ese costo no existía.
+    [Fact]
+    public async Task APaidOrderFromBeforeTheMigrationStaysUncostedWhenMarkedPaidAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        await using (var context = NewContext(connectionString))
+        {
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync(PreviousMigrationId(context), TestContext.Current.CancellationToken);
+            await ExecuteAsync(connectionString, SeedSql);
+            await migrator.MigrateAsync(null, TestContext.Current.CancellationToken);
+        }
+
+        await using (var context = NewContext(connectionString))
+        {
+            var order = await context.Orders
+                .Include(value => value.Items)
+                .Include(value => value.PaymentProofs)
+                .SingleAsync(value => value.Id == new OrderId(Guid.Parse(PaidMarked)), TestContext.Current.CancellationToken);
+            var variantId = order.Items.Single().VariantId;
+            order.UnmarkPaid(new DateTimeOffset(2026, 11, 20, 15, 0, 0, TimeSpan.Zero));
+            order.MarkPaid(
+                new MemberId(Guid.Parse(Member)),
+                requirePaymentProof: false,
+                OrderLineCosts.Of([variantId], new Dictionary<Guid, decimal> { [variantId] = 50000m }),
+                new DateTimeOffset(2026, 11, 21, 15, 0, 0, TimeSpan.Zero));
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            ["2026-11-01 15:00:00+00|<null>|<null>"],
+            await RowsAsync(
+                connectionString,
+                "SELECT (cost_captured_at AT TIME ZONE 'UTC')::text || '+00', unit_cost::text, cost_source " +
+                $"FROM quotations.order_items WHERE order_id = '{PaidMarked}'"));
     }
 
     private static string OrderValues(

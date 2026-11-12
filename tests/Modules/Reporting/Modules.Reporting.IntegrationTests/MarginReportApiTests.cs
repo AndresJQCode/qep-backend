@@ -240,8 +240,8 @@ public sealed class MarginReportApiTests
         Assert.Equal(0, newYearList.Total);
     }
 
-    /// <summary>Un pedido pagado antes de que existiera el costo no tiene líneas congeladas: aparece
-    /// como sin costo, nunca con costo cero (spec §4.4).</summary>
+    /// <summary>Un pedido pagado antes de que existiera el costo queda, tras FreezePreDeployPaidLinesWithoutCost,
+    /// con sus líneas congeladas sin costo: aparece como sin costo, nunca con costo cero (spec §4.4).</summary>
     [Fact]
     public async Task AnOrderPaidBeforeTheDeployIsCountedAsUncosted()
     {
@@ -253,7 +253,9 @@ public sealed class MarginReportApiTests
         await ExecuteAsync(
             database,
             """
-            UPDATE quotations.order_items SET unit_cost = NULL, cost_source = NULL, cost_captured_at = NULL
+            UPDATE quotations.order_items
+            SET unit_cost = NULL, cost_source = NULL,
+                cost_captured_at = (SELECT paid_at FROM quotations.orders WHERE id = @orderId)
             WHERE order_id = @orderId
             """,
             ("orderId", order.Id));
