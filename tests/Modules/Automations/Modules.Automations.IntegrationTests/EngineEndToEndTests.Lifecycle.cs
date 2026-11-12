@@ -225,11 +225,29 @@ public sealed partial class EngineEndToEndTests
         await DrainAutomationsAsync(f.Host);
 
         Assert.Equal("true,false,false,true", await ScalarAsync<string>(f.ConnectionString,
-            "SELECT string_agg(opened::text, ',' ORDER BY created_at, message_id) FROM messaging.automation_inbox"));
+            "SELECT string_agg(opened::text, ',' ORDER BY created_at, message_id) FROM messaging.automation_inbox WHERE kind = 'Engine'"));
         Assert.Equal("Resolved,Waiting", await RunsAsync(f));
         Assert.Equal("started,advanced,ended,started", await OutcomesAsync(f));
         Assert.Equal($"Open|Active|{f.ChatbotId}", await ConversationAsync(f, "status || '|' || automation_status || '|' || automation_chatbot_id"));
         Assert.Equal(6, f.Meta.Sends().Count);
+    }
+
+    /// <summary>Review Focus 3 (spec 2026-11-03 D-6): el bot resuelve con <c>Conversation.Resolve</c> y se pasa a un asesor por su propio
+    /// camino; ninguna de las dos rutas pasa por un handler de Mensajería, así que ninguna deja una señal <c>ReleaseRun</c>.</summary>
+    [Fact]
+    public async Task TheBotResolvingOrHandingOffQueuesNoReleaseRow()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        await TapAsync(f, "w2", "tech", "Servicio técnico");
+        await DrainAutomationsAsync(f.Host);
+        await InboundAsync(f, "w3", "10203");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Resolved|None", await ConversationAsync(f, "status || '|' || automation_status"));
+
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
     }
 
     // Spec 2026-10-23 D-X7: lo que el chatbot viejo ya atiende termina con él; lo nuevo lo arranca el nuevo.
@@ -328,6 +346,7 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal("Failed|messaging.message.rejected|tech", await RunAsync(f, "status || '|' || failure_code || '|' || (variables->'motivo'->>'id')"));
         Assert.Equal("Open|Paused|Handoff", await ConversationAsync(f, "status || '|' || automation_status || '|' || automation_pause_reason"));
         Assert.Equal("started,run_failed", await OutcomesAsync(f));
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
         Assert.Equal(1L, await AuditAsync(f, "automations.run.failed"));
         Assert.Equal(1L, await CountAsync(f.ConnectionString,
             "SELECT count(*) FROM messaging.messages WHERE kind = 13 AND details->>'type' = 'AutomationPaused'"));
