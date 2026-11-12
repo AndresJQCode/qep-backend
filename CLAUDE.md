@@ -526,6 +526,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
   chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
   No quites el `Touch` ni marques fusionados con un `ExecuteUpdate` que se salte el agregado.
+- **`MarginReportSource` lee `quotations.order_items`/`orders` (`unit_cost`, `paid_at`), `pos.sale_lines`/`sales` y `catalog.products`/`product_variants` por nombre.** Renombrar una columna compila y deja `/reports/margin` en 500; lo amarra `MarginReportApiTests`. Una vía nueva a `FullPaymentReceived` pasa `OrderLineCosts` al dominio: si no, el pedido cuenta en el reporte con líneas «sin costo».
 - **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
   Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
   Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran

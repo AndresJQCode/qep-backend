@@ -89,6 +89,19 @@ internal static class ReportingApiHarness
         ReportingPermissions.AllAdvisorsRead
     ];
 
+    /// <summary>
+    /// Lo que siembra y lee el reporte de margen (spec 2026-11-10): escribir el costo de las variantes,
+    /// marcar pagado, desmarcar y anular un pedido, y leer el reporte.
+    /// </summary>
+    public static readonly string[] MarginPermissions =
+    [
+        .. ManagerPermissions,
+        CatalogPermissions.ProductCostManage,
+        ReportingPermissions.MarginRead,
+        OrdersPermissions.OrderApprove,
+        OrdersPermissions.OrderCancel,
+    ];
+
     /// <summary>Los de <see cref="ManagerPermissions"/> menos
     /// <see cref="ReportingPermissions.AllAdvisorsRead"/>: una asesora que siembra y lee sus
     /// reportes, pero sólo ve lo suyo.</summary>
@@ -363,7 +376,8 @@ internal static class ReportingApiHarness
 
     public static async Task<Guid> CreateProductAsync(
         HttpClient client, Guid tenantId, decimal baseCop = 100_000m,
-        IReadOnlyDictionary<string, decimal>? prices = null)
+        IReadOnlyDictionary<string, decimal>? prices = null,
+        IReadOnlyDictionary<string, decimal>? costs = null)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/catalog/products",
@@ -377,6 +391,9 @@ internal static class ReportingApiHarness
                     new
                     {
                         code = $"VS-{Guid.NewGuid():N}"[..12],
+                        // Spec 2026-11-10: null keeps the variant without cost, and sending a map
+                        // needs catalog.product_cost.manage (only MarginPermissions carries it).
+                        costs,
                         pricing = new
                         {
                             // A given map wins over the COP shorthand, so tests can price in any currency.
@@ -584,7 +601,8 @@ internal static class ReportingApiHarness
         Guid productId,
         DateOnly? validUntil = null,
         string currency = "COP",
-        ShippingRequest? shipping = null)
+        ShippingRequest? shipping = null,
+        decimal quantity = 1m)
     {
         // Sin cuenta de cobro la cotización se envía igual, pero convertirla en pedido devuelve 422
         // `quotation.billing.account_required`: toda prueba del reporte de pedidos se caería en
@@ -610,7 +628,7 @@ internal static class ReportingApiHarness
 
         var added = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/items",
-            new AddQuotationItemRequest(productId, 1m),
+            new AddQuotationItemRequest(productId, quantity),
             TestContext.Current.CancellationToken);
         added.EnsureSuccessStatusCode();
 

@@ -867,7 +867,11 @@ public sealed class OrphanUserCleanupTests
 
         if (approvedByMembershipId is { } approvedBy)
         {
-            order.MarkPaid(new MemberId(approvedBy), requirePaymentProof: false, occurredAt);
+            order.MarkPaid(
+                new MemberId(approvedBy),
+                requirePaymentProof: false,
+                OrderLineCosts.Of(order.UncostedVariantIds, new Dictionary<Guid, decimal>()),
+                occurredAt);
         }
 
         // Facturar exige pagado (spec 2026-11-10 §3.4, ajuste por defecto): quien pida invoicedBy tiene que

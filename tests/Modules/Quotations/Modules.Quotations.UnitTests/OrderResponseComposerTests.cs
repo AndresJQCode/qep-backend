@@ -43,7 +43,7 @@ public sealed class OrderResponseComposerTests
         var marker = new MemberId(Guid.CreateVersion7());
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now, ClientId, proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
-        order.MarkPaid(marker, requirePaymentProof: false, Now.AddMinutes(1));
+        order.MarkPaid(marker, requirePaymentProof: false, order.WithoutCosts(), Now.AddMinutes(1));
         order.Prepare(marker, Now.AddMinutes(2));
         order.Archive(marker, Now.AddMinutes(3));
 

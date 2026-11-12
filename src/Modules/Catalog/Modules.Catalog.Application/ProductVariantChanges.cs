@@ -76,6 +76,8 @@ internal static class ProductVariantChanges
                 Pricing = pricing,
                 GalleryFileId = request.GalleryFileId,
                 IsActive = request.IsActive ?? savedVariant?.IsActive ?? true,
+                // Null keeps the saved cost (also for a new variant: it simply has none).
+                Costs = request.Costs?.ToDomainCosts(),
             });
         }
 

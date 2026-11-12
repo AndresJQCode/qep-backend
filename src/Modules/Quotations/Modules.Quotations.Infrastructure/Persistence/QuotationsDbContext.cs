@@ -594,6 +594,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // Spec 2026-11-10: quién y cuándo marcó pagado, preparado y archivado. Nullables, porque un pedido sin esa
         // marca no tiene nada que guardar acá; misma conversión nullable que invoiced_by.
         order.Property(value => value.PaidMarkedAt).HasColumnName("paid_marked_at");
+        // Spec costo de producto §4.4: cuándo quedó pagado por cualquier vía, la fecha del reporte de margen.
+        order.Property(value => value.PaidAt).HasColumnName("paid_at");
         order.Property(value => value.PaidMarkedBy)
             .HasColumnName("paid_marked_by")
             .HasConversion(
@@ -683,6 +685,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
+        order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 
         // RESTRICT, no CASCADE: el pedido es el registro que sobrevive -- borrar la cotizacion de
         // origen (si algun dia existiera un borrado duro) no deberia poder llevarse el pedido
@@ -734,6 +738,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Costo congelado cuando la línea cuenta como vendida (spec costo de producto §4.2): los tres nulos en las
+        // líneas anteriores y en las que todavía no se vendieron. (18,2) como el costo del catálogo, para que un
+        // costo válido allá no desborde la línea al congelarse.
+        item.Property(value => value.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+        item.Property(value => value.CostSource)
+            .HasColumnName("cost_source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        item.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
         // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.

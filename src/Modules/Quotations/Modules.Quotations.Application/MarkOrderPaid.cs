@@ -26,7 +26,8 @@ public sealed class MarkOrderPaidHandler(
     IClock clock,
     ITenantDirectory tenantDirectory,
     IQuotationCustomerLookup customerLookup,
-    IQuotationSettingsStore settingsStore)
+    IQuotationSettingsStore settingsStore,
+    IOrderVariantCostLookup costLookup)
     : ICommandHandler<MarkOrderPaidCommand, OrderDto>
 {
     public async Task<OrderDto> HandleAsync(MarkOrderPaidCommand command, CancellationToken cancellationToken)
@@ -43,7 +44,10 @@ public sealed class MarkOrderPaidHandler(
             tenantDirectory, customerLookup, command.TenantId, order, cancellationToken);
 
         var now = clock.UtcNow;
-        order.MarkPaid(actor, settings.RequirePaymentProofToMarkPaid, now);
+        // Se busca después de las guardas: un 422 no consulta el catálogo. Sólo lo que no congeló todavía (§4.3).
+        var costs = await OrderLineCostsLoader.LoadAsync(
+            costLookup, command.TenantId, order.Currency, order.UncostedVariantIds, cancellationToken);
+        order.MarkPaid(actor, settings.RequirePaymentProofToMarkPaid, costs, now);
         OrderStateAction.Record(
             repository, auditPublisher, executionContext, command.TenantId, order, actor,
             OrderHistoryEventType.PaidMarked, OrderChangeSummary.PaidMarked(), "quotation.order.paid_marked", now);

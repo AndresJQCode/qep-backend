@@ -227,7 +227,7 @@ public sealed class OrderInvoicingHandlerTests
         var order = OrderBuilders.Pending(
             TenantId, AdvisorId, Now,
             proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
-        order.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        order.MarkPaid(AdvisorId, requirePaymentProof: false, order.WithoutCosts(), Now);
         return order;
     }
 

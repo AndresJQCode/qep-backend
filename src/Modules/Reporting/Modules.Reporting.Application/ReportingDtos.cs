@@ -155,3 +155,49 @@ public sealed record ReportPage<TItem>(
     int Total,
     int Page,
     int PageSize);
+
+/// <summary>
+/// Una moneda del resumen de margen (spec 2026-11-10 §6.3, C10). Venta neta, costo, utilidad y margen
+/// cuentan **sólo** líneas con costo; las demás van en <see cref="UncostedLines"/> y
+/// <see cref="UncostedNetSales"/>. Una moneda con todas sus líneas sin costo viaja igual, con las
+/// cifras del margen en cero y <see cref="MarginPercent"/> nulo: es lo que le permite al frontend
+/// avisar qué quedó fuera en vez de mostrar el reporte vacío.
+/// </summary>
+public sealed record MarginReportCurrencyDto(
+    string Currency,
+    decimal NetSales,
+    decimal Cost,
+    decimal GrossProfit,
+    decimal? MarginPercent,
+    int UncostedLines,
+    decimal UncostedNetSales);
+
+/// <summary>En orden de catálogo de monedas; vacío si el período no tiene ventas.</summary>
+public sealed record MarginReportSummaryDto(IReadOnlyList<MarginReportCurrencyDto> Currencies);
+
+/// <summary>
+/// Una fila del listado de margen: un producto en una moneda, con las cifras sólo de sus líneas con
+/// costo (C9). <see cref="ProductName"/> es el nombre actual del catálogo, o el congelado en su línea
+/// más reciente si el producto ya no existe.
+/// </summary>
+public sealed record MarginReportProductDto(
+    Guid ProductId,
+    string ProductName,
+    string Currency,
+    decimal Quantity,
+    decimal NetSales,
+    decimal Cost,
+    decimal GrossProfit,
+    decimal? MarginPercent,
+    IReadOnlyList<MarginReportVariantDto> Variants);
+
+/// <summary>Una variante de la fila de producto, en la misma moneda. <see cref="VariantName"/> es el
+/// nombre congelado de su línea más reciente.</summary>
+public sealed record MarginReportVariantDto(
+    Guid VariantId,
+    string VariantName,
+    decimal Quantity,
+    decimal NetSales,
+    decimal Cost,
+    decimal GrossProfit,
+    decimal? MarginPercent);

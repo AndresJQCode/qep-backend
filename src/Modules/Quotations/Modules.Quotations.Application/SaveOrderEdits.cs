@@ -49,7 +49,8 @@ public sealed class SaveOrderEditsHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<SaveOrderEditsCommand> validator)
+    IValidator<SaveOrderEditsCommand> validator,
+    IOrderVariantCostLookup costLookup)
     : ICommandHandler<SaveOrderEditsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -137,7 +138,7 @@ public sealed class SaveOrderEditsHandler(
         try
         {
             var itemEdits = await OrderItemEdits.ApplyAsync(
-                order, command.Items, pricingLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
+                order, command.Items, pricingLookup, costLookup, command.TenantId, updatedBy, now, command.IsRetail, cancellationToken);
 
             foreach (var proofId in removedProofIds)
             {

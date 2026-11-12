@@ -257,6 +257,39 @@ public sealed class ProductVariantChangesTests
         Assert.Equal("catalog.product.price_scale.restriction_required", error.Code);
     }
 
+    [Fact]
+    public void NullCostsReachTheDomainAsNull()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Aceite", ProductDetails.Empty,
+            new ProductVariantInput { Code = "ACE-1", Pricing = Pricing(25m, packagingUnits: []) }, [], Now);
+        var variant = product.Variants.Single().Id;
+
+        var saved = Resolve(product, [], new ProductVariantRequest(variant.Value, "ACE-1", null, null, null, null, null));
+        var created = Resolve(product, [], new ProductVariantRequest(null, "ACE-2", null, [], Pricing: new ProductPricingRequest(
+            new Dictionary<string, decimal> { ["USD"] = 1m }, null, null), null, null));
+
+        Assert.Null(Assert.Single(saved).Costs);
+        Assert.Null(Assert.Single(created).Costs);
+    }
+
+    [Fact]
+    public void ACostMapIsNormalised()
+    {
+        var product = Product.Create(
+            ProductId.New(), TenantId, "Aceite", ProductDetails.Empty,
+            new ProductVariantInput { Code = "ACE-1", Pricing = Pricing(25m, packagingUnits: []) }, [], Now);
+        var variant = product.Variants.Single().Id;
+
+        var inputs = Resolve(product, [], new ProductVariantRequest(
+            variant.Value, "ACE-1", null, null, null, null, null,
+            new Dictionary<string, decimal> { ["cop"] = 12_000m }));
+
+        var costs = Assert.Single(inputs).Costs;
+        Assert.Equal(["COP"], costs!.Keys);
+        Assert.Equal(12_000m, costs["COP"]);
+    }
+
     private IReadOnlyList<ProductVariantInput> Resolve(
         Product product,
         IReadOnlyList<Guid> optionIds,

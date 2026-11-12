@@ -1550,3 +1550,21 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
         return all;
     }
 }
+
+/// <summary>El costo de catálogo (spec costo de producto §4.3): devuelve lo que se le da y anota cada consulta, para
+/// verificar qué variantes y en qué moneda pide el handler, o que no pide nada.</summary>
+internal sealed class RecordingOrderVariantCostLookup(IReadOnlyDictionary<Guid, decimal>? costs = null)
+    : IOrderVariantCostLookup
+{
+    public List<(Guid TenantId, string Currency, IReadOnlyCollection<Guid> VariantIds)> Calls { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, decimal>> FindAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        Calls.Add((tenantId, currency, variantIds.ToArray()));
+        IReadOnlyDictionary<Guid, decimal> found = (costs ?? new Dictionary<Guid, decimal>())
+            .Where(pair => variantIds.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        return Task.FromResult(found);
+    }
+}

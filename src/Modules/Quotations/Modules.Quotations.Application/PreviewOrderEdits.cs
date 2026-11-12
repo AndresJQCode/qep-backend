@@ -37,7 +37,8 @@ public sealed class PreviewOrderEditsHandler(
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewOrderEditsQuery> validator)
+    IValidator<PreviewOrderEditsQuery> validator,
+    IOrderVariantCostLookup costLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -72,7 +73,7 @@ public sealed class PreviewOrderEditsHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
         await OrderItemEdits.ApplyAsync(
-            order, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
+            order, query.Items, pricingLookup, costLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);

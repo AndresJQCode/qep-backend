@@ -153,7 +153,7 @@ public sealed class MarkOrderPaidHandlerTests
     public async Task AlreadyPaidAnswersBeforeTheBillingChecks()
     {
         var row = NewRow();
-        row.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        row.MarkPaid(AdvisorId, requirePaymentProof: false, row.WithoutCosts(), Now);
 
         // El cliente perdió el tipo después de pagar: un pedido pagado no pregunta por él.
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
@@ -209,7 +209,7 @@ public sealed class MarkOrderPaidHandlerTests
     public async Task UnmarkingPaidNeedsApproveAndReturnsToTheCalculatedStatus()
     {
         var row = NewRow();
-        row.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        row.MarkPaid(AdvisorId, requirePaymentProof: false, row.WithoutCosts(), Now);
         var audit = new RecordingQuotationAuditPublisher();
         var repository = new StubOrderListRepository(row);
 
@@ -234,6 +234,40 @@ public sealed class MarkOrderPaidHandlerTests
         Assert.Equal(OrderHistoryEventType.PaidUnmarked, Assert.Single(repository.History).EventType);
     }
 
+    // Spec costo de producto §4.3: busca sólo las variantes que todavía no congelaron, en la moneda del pedido.
+    [Fact]
+    public async Task MarkingPaidLooksUpTheUncostedVariantsInTheOrderCurrency()
+    {
+        var v1 = Guid.CreateVersion7();
+        var v2 = Guid.CreateVersion7();
+        var row = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0001",
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false),
+            QuotationParties.Empty,
+            new QuotationBillingAccount
+            {
+                CompanyId = Guid.CreateVersion7(), BankName = "Bancolombia", AccountNumber = "7542", Currency = "USD",
+            },
+            ShippingDetails.None,
+            [
+                new OrderLineInput(v1, Guid.CreateVersion7(), 1m, 100m, 0m, 0),
+                new OrderLineInput(v2, Guid.CreateVersion7(), 1m, 50m, 0m, 0),
+            ],
+            null, AdvisorId, [], Now);
+        var costs = new RecordingOrderVariantCostLookup(new Dictionary<Guid, decimal> { [v1] = 6000m });
+
+        await MarkPaidAsync(NewHandler(row, costs: costs), row);
+
+        var call = Assert.Single(costs.Calls);
+        Assert.Equal(TenantId, call.TenantId);
+        Assert.Equal("USD", call.Currency);
+        Assert.Equal(new[] { v1, v2 }.Order(), call.VariantIds.Order());
+        Assert.Equal(6000m, row.Items.Single(item => item.VariantId == v1).UnitCost);
+        Assert.Null(row.Items.Single(item => item.VariantId == v2).UnitCost);
+        Assert.Equal(Now, row.Items.Single(item => item.VariantId == v2).CostCapturedAt);
+        Assert.Equal(Now, row.PaidAt);
+    }
+
     private static Task<OrderDto> MarkPaidAsync(MarkOrderPaidHandler handler, Order row) =>
         handler.HandleAsync(
             new MarkOrderPaidCommand(TenantId, row.Id.Value),
@@ -247,7 +281,8 @@ public sealed class MarkOrderPaidHandlerTests
         StubTenantDirectory? directory = null,
         StubQuotationCustomerLookup? customer = null,
         FixedQuotationSettingsStore? settings = null,
-        StubOrderListRepository? repository = null) =>
+        StubOrderListRepository? repository = null,
+        RecordingOrderVariantCostLookup? costs = null) =>
         new(
             repository ?? new StubOrderListRepository(row),
             new NoOpQuotationsUnitOfWork(),
@@ -258,7 +293,8 @@ public sealed class MarkOrderPaidHandlerTests
             new FixedClock(Now),
             directory ?? Directory(PersonTypeRequirement.Never),
             customer ?? Customer(personType: "Natural"),
-            settings ?? new FixedQuotationSettingsStore());
+            settings ?? new FixedQuotationSettingsStore(),
+            costs ?? new RecordingOrderVariantCostLookup());
 
     private static StubTenantDirectory Directory(
         PersonTypeRequirement requirement, string tenantCountry = "CO") =>
