@@ -1767,6 +1767,12 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
+**Pagado y costo congelado.** `paidAt` es el instante en que el pedido llegó a pago completo (nulo si no está pagado); con él el costo unitario de cada línea (`unit_cost`) se congela desde el costo de la variante en ese momento y no cambia si la variante se edita después. Toda vía a `FullPaymentReceived` pasa `OrderLineCosts` al dominio.
+
+### Reporte de margen
+
+`GET /api/v1/tenants/{tenantId}/reports/margin` y `GET …/reports/margin/summary` (permiso `reporting.margin.read`) leen el costo **congelado** en cada línea vendida (`unit_cost`), de `quotations.order_items` y `pos.sale_lines`, por producto y variante. Una línea sin costo no suma al margen y se informa aparte. `MarginReportSource` (Bootstrapper) es SQL crudo, como `OrdersReportSource`.
+
 ### Reporte de pedidos: pedidos y ventas POS
 
 `GET /api/v1/tenants/{tenantId}/reports/orders` y `GET …/reports/orders/summary` leen **la unión** de
@@ -1894,6 +1900,7 @@ Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.pr
   transacción del `PUT`. Borrar una variante sin uso borra en cascada su historial de precios.
 - **Escalas por variante**: una escala sin agrupación cuenta sólo la cantidad de su variante (6 M y 6 L
   no suman 12); una con `allowGrouping` suma entre variantes, como antes sumaba entre productos.
+- **Costo por variante**: `cost` opcional en cada variante del `POST/PUT /products` (moneda del producto); sólo lo ve y lo escribe quien tenga `catalog.product_cost.read` / `.manage` (sin permiso, 403 `catalog.product_cost.forbidden` al escribir y el campo no viaja al leer).
 - **Historial de precios** por variante: `GET /reports/price-changes` y `/summary` aceptan `variantId`, y
   el resumen desglosa cada producto en `variants[]`, todas incluso en cero.
 - **Excel de productos**: una fila por variante (activas e inactivas), con `Código`, `Código de barras`,
