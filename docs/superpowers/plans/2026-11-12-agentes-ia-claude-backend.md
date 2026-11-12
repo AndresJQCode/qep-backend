@@ -170,7 +170,7 @@ Las del spec siguen abiertas salvo P-6 para Anthropic, la parte de P-1 que toca 
 Los slices son los de §13 del spec, con el proveedor elegible y el adaptador de OpenAI separado del de Anthropic para
 que el primero no espere a P-1. Las tareas que no cambian se construyen como dice el spec y sólo se listan.
 
-### Task 1 (AI-B1): Módulo `ai`, permisos, proveedores y lista curada
+### Task 1 (AI-B1): Módulo `ai`, permisos, proveedores y lista curada — hecha
 
 - [ ] RED: `TenantModuleKeyTests` espera `ai` en `All`, con dependencia `[Ai] = [Messaging]` y fuera de
   `DefaultForNewTenants`.
@@ -187,23 +187,28 @@ que el primero no espere a P-1. Las tareas que no cambian se construyen como dic
   de credenciales llega en la Tarea 2; hasta entonces `configured: false`).
 - [ ] Commit `feat(ai): add ai module key, permissions and per-provider model list`.
 
-### Task 2 (AI-B2): Proveedores `anthropic` y `openai` en Integrations
+### Task 2 (AI-B2): Proveedor `anthropic` en Integrations y `GET /ai/settings` — hecha
 
-- [ ] RED: `IntegrationProvidersTests` espera `anthropic` y `openai` en `All`, categoría `Ai`, `maxConnections: 1` cada
-  uno, campo `apiKey` secreto con `revealSuffix: 4`, y que un tenant pueda tener los dos a la vez.
-- [ ] GREEN: `IntegrationProviders.Anthropic` y `IntegrationProviders.OpenAi` (C-1); migración `AddAiProviders` (CHECK
-  del proveedor y columna `hint`). `hint` en `FieldDefinition` y `SecretStateResponse` (D-A23).
-- [ ] RED/GREEN: `AnthropicConnectionTester` (C-2) contra un servidor HTTP falso: 200 → ok; 401 →
-  `credentials_rejected`; 403 → `permission_denied`; 404 del modelo → `model_unavailable`; 429, 529 y red →
-  `unreachable`. `HttpClient` directo con `x-api-key` y `anthropic-version` (son dos `GET`), para que el SDK viva sólo
-  en Ai.
-- [ ] `OpenAiConnectionTester`: **sólo si P-6 para OpenAI ya está resuelta**; si no, se registra un probador que
-  responde `unverified` y la conexión queda `Active` sin verificar, con una prueba que lo amarra y un `TODO(P-6)`. Esto
-  no habilita publicar agentes de OpenAI: el adaptador del modelo llega en la Tarea 6.
-- [ ] `IAiProviderCredentials.ResolveAsync(tenantId, provider)` (Ai.Application) + `AiProviderCredentials`
-  (Bootstrapper) sobre `ListActiveAsync` y `ResolveAsync` de Integrations; `MarkNeedsAttentionAsync(connectionId, code)`.
-- [ ] `GET /ai/settings`: una entrada por proveedor (`configured`, `hint`, `issue`), sin la clave.
-- [ ] Commit `feat(integrations): add anthropic and openai providers with key testers`.
+Construida en `feat/agentes-ia-modulo`. Cambia respecto de lo planeado:
+
+- **OpenAI no entra todavía en Integrations.** Un probador que no puede verificar la clave dejaría guardar una conexión que nadie
+  usa; el proveedor `openai` llega en la Tarea 6, con su probador real. Mientras tanto `GET /ai/settings` lo lista con
+  `connectable: false` y `GET /ai/models` con sus modelos no disponibles.
+- **El final visible de la clave (D-A23) se calcula al leer**, de la clave descifrada (`FieldDefinition.RevealSuffix`,
+  `SecretStateResponse.hint`), sin columna `hint` en claro: no hay otra copia que borrar ni que re-cifrar. Con menos del doble de
+  caracteres no se muestra nada.
+- **El probador sólo llama `GET /v1/models`** (`anthropic-version: 2026-10-21`): 2xx Ok; 401 y 403 rechazada; 429, 5xx, 529, 3xx,
+  timeout y red «no pude verificar». No consulta el modelo predeterminado: Integrations no ve la lista de Ai, y un modelo sin
+  acceso llega como `ModelUnavailable` en la primera llamada (Tarea 5).
+- **`GET /ai/settings`** responde por proveedor `{ provider, connectable, connectionId, status }`. El `issue` por proveedor
+  (C-19) llega con la Tarea 7, que es la que lo produce. `MarkNeedsAttentionAsync` llega con la Tarea 5, que es su primer
+  consumidor.
+
+- [x] Proveedor `anthropic` (categoría `Ai`, consumidor `ai`, `maxConnections: 1`, `apiKey` con `revealSuffix: 4`) y migración
+  `AddAnthropicProvider`.
+- [x] `AnthropicConnectionTester` con su cliente sin redirecciones ni loggers.
+- [x] `IAiProviderCredentials` (`ResolveAsync`, `DescribeAsync`) + `AiProviderCredentials` en Bootstrapper.
+- [x] `GET /api/v1/tenants/{tenantId}/ai/settings`.
 
 ### Task 3 (AI-B3): Ocupación neutral `messaging.connection_bots`
 
