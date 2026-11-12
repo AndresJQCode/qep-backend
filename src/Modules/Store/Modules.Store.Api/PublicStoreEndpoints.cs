@@ -17,7 +17,16 @@ public static class PublicStoreEndpoints
 
     // Lecturas del catálogo: un minuto fresco y cinco más sirviendo lo viejo mientras revalida. Un precio cambiado tarda a lo sumo un
     // minuto en verse, y el carrito (POST) nunca se cachea.
-    private const string CatalogCacheControl = "public, max-age=60, stale-while-revalidate=300";
+    private const string CatalogMaxAge = "max-age=60";
+
+    private const string CatalogCacheControl = "public, " + CatalogMaxAge + ", stale-while-revalidate=300";
+
+    /// <summary>
+    /// La tienda inexistente (404 <c>store.public.not_found</c>) se cachea lo mismo que el catálogo, por la misma constante. Sin
+    /// stale-while-revalidate: servir el 404 viejo cinco minutos más dejaría sin tienda a quien acaba de publicarla, y revalidar una
+    /// tienda que no existe cuesta poco.
+    /// </summary>
+    internal const string StoreNotFoundCacheControl = "public, " + CatalogMaxAge;
 
     // La geografía de Colombia casi no cambia.
     private const string GeographyCacheControl = "public, max-age=3600, stale-while-revalidate=86400";
@@ -38,6 +47,7 @@ public static class PublicStoreEndpoints
             .WithTags("Store")
             .AllowAnonymous()
             .AddEndpointFilter<StorefrontKeyFilter>()
+            .AddEndpointFilter<StoreNotFoundCacheFilter>()
             .WithMetadata(new RequestSizeLimitAttribute(MaxRequestBodyBytes))
             .RequireRateLimiting(readPolicy);
 
@@ -255,7 +265,8 @@ public static class PublicStoreEndpoints
             GeographyCacheControl,
             await dispatcher.QueryAsync(new ListPublicCitiesQuery(host, departmentId), cancellationToken));
 
-    // Se fija después de despachar: un 404 o un 422 (que lanzan antes de llegar acá) nunca llevan la cabecera de caché.
+    // Se fija después de despachar: un 404 o un 422 (que lanzan antes de llegar acá) nunca llevan esta cabecera. La única excepción, el
+    // 404 de la tienda inexistente, la pone StoreNotFoundCacheFilter con la suya.
     private static IResult Cached<T>(HttpContext httpContext, string cacheControl, T body)
     {
         httpContext.Response.Headers.CacheControl = cacheControl;
