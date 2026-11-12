@@ -336,6 +336,10 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("order_number");
 
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
                     b.Property<DateTimeOffset?>("PaidMarkedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_marked_at");
@@ -459,6 +463,9 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_orders_tenant_number");
 
+                    b.HasIndex("TenantId", "PaidAt")
+                        .HasDatabaseName("IX_orders_tenant_paid_at");
+
                     b.HasIndex("TenantId", "Source")
                         .HasDatabaseName("IX_orders_tenant_source");
 
@@ -529,6 +536,15 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTimeOffset?>("CostCapturedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cost_captured_at");
+
+                    b.Property<string>("CostSource")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("cost_source");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -589,6 +605,11 @@ namespace Modules.Quotations.Infrastructure.Persistence.Migrations
                     b.Property<int>("TaxPercentage")
                         .HasColumnType("integer")
                         .HasColumnName("tax_percentage");
+
+                    b.Property<decimal?>("UnitCost")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("unit_cost");
 
                     b.Property<decimal>("UnitPrice")
                         .HasPrecision(14, 2)

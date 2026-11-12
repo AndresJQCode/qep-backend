@@ -23,7 +23,10 @@ public sealed class OrderLineCosts
     {
         ArgumentNullException.ThrowIfNull(lookedUp);
         ArgumentNullException.ThrowIfNull(found);
-        return new OrderLineCosts([.. lookedUp], found.ToDictionary(pair => pair.Key, pair => pair.Value));
+        // Un costo entregado se buscó por definición: así un llamador que olvide repetirlo en lookedUp no
+        // convierte un costo conocido en un error de programación.
+        return new OrderLineCosts(
+            [.. lookedUp, .. found.Keys], found.ToDictionary(pair => pair.Key, pair => pair.Value));
     }
 
     internal decimal? For(Guid variantId)

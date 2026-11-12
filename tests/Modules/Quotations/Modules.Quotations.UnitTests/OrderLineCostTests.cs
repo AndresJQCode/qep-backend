@@ -223,4 +223,52 @@ public sealed class OrderLineCostTests
         Assert.Equal(T1, Item(order, V1).CostCapturedAt);
         Assert.Equal(500m, Item(order, V3).UnitCost);
     }
+
+    // Revisión de la tarea 5: si falta el costo de una línea, ninguna congela; nada de pedido a medias.
+    [Fact]
+    public void AMissingCostFreezesNoLine()
+    {
+        var order = NewOrder();
+        var onlyV1 = OrderLineCosts.Of([V1], new Dictionary<Guid, decimal> { [V1] = 6000m });
+
+        Assert.Throws<InvalidOperationException>(
+            () => order.MarkPaid(Advisor, requirePaymentProof: false, onlyV1, T1));
+
+        Assert.All(order.Items, item =>
+        {
+            Assert.Null(item.UnitCost);
+            Assert.Null(item.CostSource);
+            Assert.Null(item.CostCapturedAt);
+        });
+        Assert.Null(order.PaidAt);
+        Assert.NotEqual(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
+    }
+
+    // Anular no saca al pedido de pagado: el reporte lo excluye por estado, no porque pierda su fecha.
+    [Fact]
+    public void CancellingKeepsPaidAtAndTheFrozenCosts()
+    {
+        var order = NewOrder();
+        order.MarkPaid(Advisor, requirePaymentProof: false, Costs(6000m), T1);
+
+        order.Cancel(Advisor, "El cliente desistió.", T2);
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.Equal(T1, order.PaidAt);
+        Assert.Equal(6000m, Item(order, V1).UnitCost);
+    }
+
+    // Un costo entregado siempre cuenta como buscado: pasarlo en found sin repetirlo en lookedUp no puede romper.
+    [Fact]
+    public void ACostSuppliedWithoutBeingListedAsLookedUpStillCounts()
+    {
+        var order = NewOrder();
+        var costs = OrderLineCosts.Of([V2], new Dictionary<Guid, decimal> { [V1] = 6000m });
+
+        order.MarkPaid(Advisor, requirePaymentProof: false, costs, T1);
+
+        Assert.Equal(6000m, Item(order, V1).UnitCost);
+        Assert.Null(Item(order, V2).UnitCost);
+        Assert.Equal(T1, Item(order, V2).CostCapturedAt);
+    }
 }

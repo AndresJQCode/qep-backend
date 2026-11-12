@@ -1255,6 +1255,8 @@ public static class QepServiceCollectionExtensions
         // (PosLayerTests.ApplicationOnlyReferencesTenancyAmongTheBusinessModules).
         services.AddScoped<IPosProductLookup, PosProductLookup>();
         services.AddScoped<IPosVariantCostLookup, CatalogVariantCostLookup>();
+        // El pedido congela el mismo costo con su propio puerto (spec costo de producto §4.3); mismo adaptador.
+        services.AddScoped<IOrderVariantCostLookup, CatalogVariantCostLookup>();
         services.AddScoped<IPosCategoryLookup, PosCategoryLookup>();
         services.AddScoped<IPosCompanyLookup, PosCompanyLookup>();
         services.AddScoped<IPosCashierLookup, PosCashierLookup>();
