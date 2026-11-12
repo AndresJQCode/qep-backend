@@ -2,9 +2,20 @@ using Modules.Messaging.Domain;
 
 namespace Modules.Messaging.Application;
 
+/// <summary>Spec 2026-11-03: qué trae una fila de la cola. <c>Engine</c> es lo de siempre (un entrante o un arranque manual, que el motor
+/// procesa); <c>ReleaseRun</c> es la señal de que una persona tomó la conversación y la corrida viva del bot tiene que cerrarse.</summary>
+public static class AutomationInboxKinds
+{
+    public const string Engine = "Engine";
+    public const string ReleaseRun = "ReleaseRun";
+}
+
 /// <summary>Spec 2026-10-21 §5.1: un entrante pendiente de procesar por el motor de chatbots. <c>Opened</c> (D-M16) dice que este
-/// entrante abrió o reabrió la conversación; <c>Attempts</c> ya cuenta el reclamo que lo devolvió.</summary>
-public sealed record AutomationInboxItem(Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts);
+/// entrante abrió o reabrió la conversación; <c>Attempts</c> ya cuenta el reclamo que lo devolvió. <c>Kind</c> (spec 2026-11-03) es
+/// <see cref="AutomationInboxKinds.Engine"/> o <see cref="AutomationInboxKinds.ReleaseRun"/>.</summary>
+public sealed record AutomationInboxItem(
+    Guid MessageId, Guid TenantId, Guid ConnectionId, Guid ConversationId, bool Opened, DateTimeOffset CreatedAt, int Attempts,
+    string Kind = AutomationInboxKinds.Engine);
 
 /// <summary><c>Stored</c>: la copia a R2 ya terminó; mientras sea <c>false</c> el medio todavía no se puede servir ni reenviar.</summary>
 public sealed record InboundMediaForAutomation(string MimeType, string? FileName, bool Stored);
@@ -17,7 +28,8 @@ public sealed record InboundForAutomation(
 
 /// <summary>Spec 2026-10-21 D-M1: la cola que la ingesta del webhook llena y el worker del motor vacía. El motor no corre dentro del
 /// procesador del webhook porque éste no serializa por conversación y su reintento descarta el mismo wamid. Ojo: <c>message_id</c> no
-/// siempre es un mensaje; la fila de un arranque manual (spec 2026-10-31) lleva un id propio sin fila en <c>messages</c>.</summary>
+/// siempre es un mensaje; la fila de un arranque manual (spec 2026-10-31) lleva un id propio sin fila en <c>messages</c>, y la de una
+/// señal <c>ReleaseRun</c> (spec 2026-11-03) también. «Sin mensaje es manual» vale sólo dentro de <c>Engine</c>.</summary>
 public interface IAutomationInbox
 {
     // Complete y RetryLater toman la hora del reloj; Claim recibe `now` para que los leases y la regla «la más vieja de la conversación» se
@@ -55,7 +67,12 @@ public interface IAutomationInbox
     /// cambio que la pidió, para que el arranque y la fila queden juntos o no queden.</summary>
     void EnqueueManualStart(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now);
 
-    /// <summary>Spec 2026-10-31: <c>true</c> si la conversación tiene una fila manual pendiente (sin cerrar y sin mensaje que la respalde).
-    /// Los entrantes pendientes y las filas ya cerradas no cuentan. Evita encolar un segundo arranque mientras el primero espera.</summary>
+    /// <summary>Spec 2026-10-31: <c>true</c> si la conversación tiene una fila manual pendiente (<c>Engine</c>, sin cerrar y sin mensaje que
+    /// la respalde). Los entrantes pendientes, las señales <c>ReleaseRun</c> y las filas ya cerradas no cuentan. Evita encolar un segundo arranque mientras el primero espera.</summary>
     Task<bool> HasPendingManualStartAsync(Guid tenantId, Guid conversationId, CancellationToken cancellationToken);
+
+    /// <summary>Spec 2026-11-03: encola la señal de soltar la conversación (una persona la tomó y el bot debe cerrar su corrida viva). Igual
+    /// que <see cref="EnqueueManualStart"/>: fila sin mensaje, <c>opened = false</c>, sólo agrega al contexto y viaja en el
+    /// <c>SaveChanges</c> del cambio que la pidió. Se reclama en el orden de su conversación, detrás de lo anterior.</summary>
+    void EnqueueReleaseRun(Guid tenantId, Guid connectionId, Guid conversationId, DateTimeOffset now);
 }

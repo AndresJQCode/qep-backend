@@ -118,6 +118,32 @@ public sealed partial class EngineEndToEndTests
         Assert.Contains("¿Cuál es tu número de documento?", Assert.Single(after), StringComparison.Ordinal);
     }
 
+    /// <summary>Spec 2026-11-03 D-6a: pausar no encola ninguna señal de liberación, así que la corrida sigue <c>Waiting</c> y «Continuar»
+    /// retoma el paso pendiente igual que antes.</summary>
+    [Fact]
+    [Trait("Slice", "Continue")]
+    public async Task PausingKeepsTheRunWaitingAndContinueResumesThePendingStep()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeWaitingAsync(database);
+        var runId = await RunAsync(f, "id::text");
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "automation/pause")).StatusCode);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal($"{runId}|Waiting|{PendingNode}", await RunAsync(f, "id::text || '|' || status || '|' || current_node_id"));
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+
+        Assert.Equal(HttpStatusCode.OK, (await ContinueAsync(f)).StatusCode);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal(0L, await ReleaseRowsAsync(f));
+        await TapAsync(f, "w2", "tech", "Servicio técnico");
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal($"{runId}|Waiting|n3", await RunAsync(f, "id::text || '|' || status || '|' || current_node_id"));
+        Assert.Equal(1L, await RunCountAsync(f));
+    }
+
     /// <summary>D-13: el evento lleva quién y la auditoría es de esa persona; ninguna corrida arranca.</summary>
     [Fact]
     [Trait("Slice", "Continue")]

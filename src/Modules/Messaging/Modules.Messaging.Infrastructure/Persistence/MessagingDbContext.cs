@@ -608,7 +608,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     private static void ConfigureAutomationInbox(ModelBuilder modelBuilder)
     {
         var inbox = modelBuilder.Entity<AutomationInboxRecord>();
-        inbox.ToTable("automation_inbox", Schema);
+        inbox.ToTable("automation_inbox", Schema, table => table.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')"));
         inbox.HasKey(value => value.MessageId);
         inbox.Property(value => value.MessageId).HasColumnName("message_id").ValueGeneratedNever();
         inbox.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -620,6 +620,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(value => value.NextAttemptAt).HasColumnName("next_attempt_at");
         inbox.Property(value => value.ProcessedAt).HasColumnName("processed_at");
         inbox.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
+        inbox.Property(value => value.Kind).HasColumnName("kind").HasMaxLength(16).HasDefaultValue(Modules.Messaging.Application.AutomationInboxKinds.Engine);
         inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
     }
