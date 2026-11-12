@@ -205,7 +205,7 @@ public sealed class OrdersReportFilterValidator : AbstractValidator<OrdersReport
         RuleFor(filter => filter.Source)
             .Must(value => ReportFilterParser.TryParseSource(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
-            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos, Store.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)
@@ -276,7 +276,7 @@ public sealed class MarginReportFilterValidator : AbstractValidator<MarginReport
         RuleFor(filter => filter.Source)
             .Must(value => ReportFilterParser.TryParseSource(value, out _))
             .When(filter => !string.IsNullOrWhiteSpace(filter.Source))
-            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos.");
+            .WithMessage("source must be one of Quotation, Manual, Shopify, Pos, Store.");
         RuleFor(filter => filter.To)
             .GreaterThanOrEqualTo(filter => filter.From!.Value)
             .When(filter => filter.From is not null && filter.To is not null)
