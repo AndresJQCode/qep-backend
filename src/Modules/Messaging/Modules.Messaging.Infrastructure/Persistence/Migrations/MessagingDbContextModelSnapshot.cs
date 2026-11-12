@@ -1202,6 +1202,44 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.ConnectionBotRecord", b =>
+                {
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<Guid>("BotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bot_id");
+
+                    b.Property<short>("BotKind")
+                        .HasColumnType("smallint")
+                        .HasColumnName("bot_kind");
+
+                    b.Property<string>("BotName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("bot_name");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reserved_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("ConnectionId");
+
+                    b.HasIndex(new[] { "TenantId", "BotKind", "BotId" }, "IX_connection_bots_tenant_bot");
+
+                    b.ToTable("connection_bots", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_connection_bots_kind", "bot_kind IN (1,2)");
+                        });
+                });
+
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.ConnectionSendBudgetRecord", b =>
                 {
                     b.Property<Guid>("ConnectionId")

@@ -10,7 +10,10 @@ namespace Modules.Automations.Infrastructure.Persistence;
 /// Nombre de chatbot o de plantilla repetido y conexión ya ocupada → 409; la versión vieja y dos publicaciones que proponen el mismo
 /// número (<c>IX_chatbot_versions_chatbot_number</c>) → <c>concurrency.conflict</c> (412). Traducido acá porque Application no
 /// referencia Npgsql.</summary>
-internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IAutomationsUnitOfWork
+/// <remarks>Spec 2026-10-29 §4.3: si el guardado toca un chatbot o sus conexiones, la ocupación neutral de Mensajería
+/// (<see cref="IChatbotConnectionSlots"/>) se sincroniza en la misma transacción, abierta acá si el llamador no abrió una. Un agente que ya
+/// ocupa la conexión vuelve como 409 con el ocupante y nada queda escrito.</remarks>
+internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext, IChatbotConnectionSlots slots) : IAutomationsUnitOfWork
 {
     /// <summary>Primera clave del lock de dos claves: la fecha del plan. Cualquier constante sirve mientras ningún otro lock de dos
     /// claves la use (hoy sólo está <c>TenantChangeLock.Namespace</c> = 20261008). Internal para las pruebas que toman el lock desde otra
@@ -39,9 +42,25 @@ internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IA
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
+        var tenants = TenantsWithConnectionChanges();
+        // Sin una transacción del llamador y con ocupación que sincronizar, la abre la unidad: el chatbot y su fila en Mensajería van en
+        // el mismo commit. Sin cambios de conexiones (el motor, las corridas) no se abre nada nuevo.
+        await using var owned = tenants.Count > 0 && dbContext.Database.CurrentTransaction is null
+            ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            foreach (var tenantId in tenants)
+            {
+                var taken = await slots.SyncChatbotsAsync(tenantId, cancellationToken);
+                if (taken.Count > 0)
+                {
+                    // Sin confirmar: al disponerse, la transacción deshace el chatbot y la ocupación juntos.
+                    throw new ConnectionTakenException(taken[0]);
+                }
+            }
+
             // Con la transacción de la unidad abierta, guardar es confirmar (el handle sin confirmar deshace al disponerse).
             if (dbContext.Database.CurrentTransaction is { } transaction)
             {
@@ -76,6 +95,20 @@ internal sealed class AutomationsUnitOfWork(AutomationsDbContext dbContext) : IA
             throw Concurrency(exception);
         }
     }
+
+    /// <summary>Los tenants de los chatbots o conexiones que este guardado agrega, cambia o borra. Un chatbot renombrado también cuenta:
+    /// la fila de Mensajería guarda su nombre para el 409 y la bandeja.</summary>
+    private List<Guid> TenantsWithConnectionChanges() =>
+        [.. dbContext.ChangeTracker.Entries()
+            .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+            .Select(entry => entry.Entity switch
+            {
+                Chatbot chatbot => (Guid?)chatbot.TenantId,
+                ChatbotConnection connection => connection.TenantId,
+                _ => null,
+            })
+            .OfType<Guid>()
+            .Distinct()];
 
     private static RequestConcurrencyException Concurrency(Exception inner) =>
         new("concurrency.conflict", "The chatbot changed while the operation was being committed.", inner);

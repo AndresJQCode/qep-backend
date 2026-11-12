@@ -175,6 +175,9 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     /// <summary>Spec 2026-10-21 §4.2: la cola del motor de chatbots.</summary>
     internal DbSet<AutomationInboxRecord> AutomationInbox => Set<AutomationInboxRecord>();
 
+    /// <summary>Spec 2026-10-29 §4.3: quién atiende cada conexión, chatbot o agente.</summary>
+    internal DbSet<ConnectionBotRecord> ConnectionBots => Set<ConnectionBotRecord>();
+
     /// <summary>Spec 2026-10-29: la importación del historial por coexistencia, una por conexión.</summary>
     public DbSet<HistorySync> HistorySyncs => Set<HistorySync>();
 
@@ -199,6 +202,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         ConfigureResolutionReason(modelBuilder);
         ConfigureBusinessHours(modelBuilder);
         ConfigureAutomationInbox(modelBuilder);
+        ConfigureConnectionBots(modelBuilder);
         ConfigureMessageTemplate(modelBuilder);
         ConfigureTemplateMirrorSync(modelBuilder);
         ConfigureHistorySync(modelBuilder);
@@ -622,6 +626,22 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(value => value.Outcome).HasColumnName("outcome").HasMaxLength(24);
         inbox.HasIndex(value => value.NextAttemptAt, "IX_automation_inbox_pending").HasFilter("processed_at IS NULL");
         inbox.HasIndex(value => new { value.ConversationId, value.CreatedAt }, "IX_automation_inbox_conversation").HasFilter("processed_at IS NULL");
+    }
+
+    /// <summary>Spec 2026-10-29 §4.3: la clave primaria es la conexión, así que una conexión tiene un solo bot.</summary>
+    private static void ConfigureConnectionBots(ModelBuilder modelBuilder)
+    {
+        var slot = modelBuilder.Entity<ConnectionBotRecord>();
+        slot.ToTable("connection_bots", Schema, table =>
+            table.HasCheckConstraint("CK_connection_bots_kind", "bot_kind IN (1,2)"));
+        slot.HasKey(value => value.ConnectionId);
+        slot.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
+        slot.Property(value => value.TenantId).HasColumnName("tenant_id");
+        slot.Property(value => value.BotKind).HasColumnName("bot_kind");
+        slot.Property(value => value.BotId).HasColumnName("bot_id");
+        slot.Property(value => value.BotName).HasColumnName("bot_name").HasMaxLength(80);
+        slot.Property(value => value.ReservedAt).HasColumnName("reserved_at");
+        slot.HasIndex(value => new { value.TenantId, value.BotKind, value.BotId }, "IX_connection_bots_tenant_bot");
     }
 
     /// <summary>Spec 2026-10-21 §5.1. Los dos únicos (nombre sin distinguir mayúsculas y un predeterminado por tenant) van en la migración

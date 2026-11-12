@@ -390,8 +390,8 @@ internal static class ChatbotConnectionCheck
                 throw;
             }
 
-            throw new ResourceConflictException(
-                AutomationsErrorCodes.ChatbotConnectionTaken, $"La conexión ya la atiende el chatbot «{holder.Name}».", exception);
+            throw new ConnectionTakenException(
+                new ConnectionOccupant(holder.ConnectionId, ConnectionOccupant.Chatbot, holder.ChatbotId, holder.Name), exception);
         }
     }
 }

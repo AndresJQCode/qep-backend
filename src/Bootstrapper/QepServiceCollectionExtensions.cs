@@ -1165,6 +1165,9 @@ public static class QepServiceCollectionExtensions
         // Automations (spec 2026-10-21 §4.1): los chatbots. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones, salida del
         // bot, conexiones y la «API externa» entran por adaptadores que se registran más abajo.
         services.AddAutomationsInfrastructure(configuration);
+        // Spec 2026-10-29 §4.3: la ocupación neutral de las conexiones (messaging.connection_bots), sincronizada en la transacción del
+        // chatbot. SQL entre esquemas: va acá, no en Automations.
+        services.AddScoped<IChatbotConnectionSlots, ChatbotConnectionSlots>();
 
         // Ai (spec 2026-10-29 D-A1, plan 2026-11-12): los agentes IA. Sólo ve Tenancy; conversaciones, conexiones y datos de negocio
         // entran por adaptadores en Bootstrapper. A mano, como el resto: sin registro, 500 (CompositionRootTests).

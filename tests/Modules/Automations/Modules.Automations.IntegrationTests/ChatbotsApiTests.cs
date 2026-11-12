@@ -11,7 +11,7 @@ namespace Modules.Automations.IntegrationTests;
 
 /// <summary>Spec 2026-10-21 §4.4, D-C2, D-C3 y D-M6: lista, creación en blanco, edición y borrador del chatbot por la API, con las
 /// fronteras de tenant, permiso, capacidad y versión.</summary>
-public sealed class ChatbotsApiTests
+public sealed partial class ChatbotsApiTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
