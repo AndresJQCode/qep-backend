@@ -76,6 +76,30 @@ public sealed partial class EngineEndToEndTests
         Assert.Equal(0L, await CountAsync(f.ConnectionString, "SELECT count(*) FROM automations.chatbots WHERE id = @id", ("id", f.ChatbotId)));
     }
 
+    /// <summary>El incidente: un asesor resuelve la conversación mientras la corrida espera y el cliente no vuelve a escribir. La señal
+    /// <c>ReleaseRun</c> cierra la corrida sin un entrante, el bot no manda nada y el chatbot se puede borrar.</summary>
+    [Fact]
+    public async Task AnAdvisorResolvingReleasesTheBotWithoutTheCustomerWriting()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var f = await ArrangeAsync(database);
+        await InboundAsync(f, "w1", "Hola");
+        await DrainAutomationsAsync(f.Host);
+        Assert.Equal("Waiting", await RunAsync(f, "status"));
+        var sendsBefore = f.Meta.Sends().Count;
+
+        Assert.Equal(HttpStatusCode.OK, (await ConversationActionAsync(f, "resolve")).StatusCode);
+        await DrainAutomationsAsync(f.Host);
+
+        Assert.Equal("Interrupted", await RunAsync(f, "status"));
+        Assert.Equal("interrupted", await ScalarAsync<string>(f.ConnectionString, "SELECT outcome FROM messaging.automation_inbox WHERE kind = 'ReleaseRun'"));
+        Assert.Equal(1L, await CountAsync(f.ConnectionString,
+            "SELECT count(*) FROM automations.run_units u JOIN messaging.automation_inbox i ON i.message_id = u.inbound_message_id WHERE u.trigger = 'Closed' AND u.closed_reason = 'human_took_over' AND i.kind = 'ReleaseRun'"));
+        Assert.Equal(sendsBefore, f.Meta.Sends().Count);
+        Assert.Equal(HttpStatusCode.OK, (await ChatbotActionAsync(f, "pause")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await DeleteChatbotAsync(f)).StatusCode);
+    }
+
     /// <summary>D-6a y D-7: pausar el asistente a mano no encola nada y deja la corrida <c>Waiting</c>, pero nadie la atiende: se puede borrar.</summary>
     [Fact]
     public async Task DeletingWithAManualPauseIs204()
