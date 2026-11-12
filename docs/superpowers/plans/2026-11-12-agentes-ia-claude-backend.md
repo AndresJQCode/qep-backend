@@ -128,12 +128,11 @@ texto; los nombres de las excepciones del SDK se confirman contra el compilador 
 
 ## Decisiones pendientes del owner
 
-Las del spec siguen abiertas salvo P-6 para Anthropic, la parte de P-1 que toca a Anthropic y P-7 (resuelta con P-14, abajo). Siguen abiertas además:
+Las del spec siguen abiertas salvo P-6 para Anthropic, la parte de P-1 que toca a Anthropic y P-7 (resuelta con P-14, abajo). Del owner no queda ninguna de las nuevas:
 
 | # | Pregunta | Por qué importa |
 | --- | --- | --- |
-| P-1 (sólo OpenAI) | API de OpenAI (Responses o Chat Completions), cliente (.NET oficial o `HttpClient`), herramientas, salida estructurada, `usage`, cuota contra tasa y estado del lado del proveedor. | Bloquea la Tarea 6 (adaptador de OpenAI). No bloquea los slices de Anthropic. |
-| P-15 | ¿Se muestra un costo estimado junto a los tokens? Exigiría precios por modelo en `Ai:Providers` que alguien mantiene para los dos proveedores. | El spec dice «se muestra, no se cobra», en tokens. |
+| — | Ninguna. P-1 de OpenAI no es del owner: es técnica y se resuelve en la Tarea 6 (ver abajo). | |
 
 ### Resueltas por el owner (2026-11-12)
 
@@ -143,6 +142,14 @@ Las del spec siguen abiertas salvo P-6 para Anthropic, la parte de P-1 que toca 
   ni consentimiento propio. Ya no bloquea encender canales reales.
 - **P-16 → no.** Ningún tenant queda restringido a un proveedor: todo tenant con el módulo `ai` puede conectar los dos.
   Los proveedores de Integrations quedan con `requiresTenantEnablement: false`.
+- **P-15 → no.** No se muestra costo estimado: el consumo se muestra sólo en tokens, por proveedor. No hay tabla de
+  precios en `Ai:Providers`.
+
+### Técnica, sin decisión del owner
+
+- **P-1 (sólo OpenAI)** es cómo se habla con OpenAI por dentro: cuál de sus dos APIs de chat, si con su SDK o con HTTP
+  directo, y cómo se leen sus errores y su consumo. No cambia nada que vea el tenant. La resuelve quien construya la
+  Tarea 6, leyendo la documentación oficial de OpenAI, y deja la respuesta anotada en el spec.
 
 ## Review Focus
 
@@ -283,7 +290,7 @@ Como §4.6, §4.7 y §5 del spec, con estos cambios:
 
 ### Task 6 (AI-B5b, nuevo): Adaptador de OpenAI
 
-**Bloqueada por P-1 y P-6 para OpenAI.** No bloquea a ningún otro slice: hasta que llegue, `GET /ai/models` marca
+**Empieza resolviendo P-1 y P-6 para OpenAI (técnicas, sin el owner).** No bloquea a ningún otro slice: hasta que llegue, `GET /ai/models` marca
 `openai` con `available: false` en sus modelos y publicar un agente de OpenAI responde `ai.agent.model_unavailable`.
 
 - [ ] Resolver P-1 contra la documentación oficial de OpenAI (no de memoria) y anotar la respuesta en el spec.
