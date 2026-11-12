@@ -6,8 +6,9 @@
   `Quotations` y `Catalog` (puertos de sólo lectura y borrador de cotización sin sesión), `Automations` (deja de ser
   dueño exclusivo de la ocupación de la conexión). Frontend en `qep-frontend` (spec aparte).
 - **Estado:** borrador para aprobación del owner. **Sin código.**
-- **Proveedor reemplazado (2026-11-12):** donde este spec dice OpenAI, rige Anthropic (Claude). Las decisiones que
-  cambian (§4.5, §9, D-A22, D-A24, D-A26, tabla de §6.7) y las pendientes que se resuelven (P-1, P-6) están en
+- **Proveedor elegible (2026-11-12):** el tenant elige, por agente, entre Anthropic (Claude) y OpenAI, cada uno con su
+  conexión. Las decisiones que cambian (§4.5, §9, D-A12, D-A22, D-A24, D-A26, tabla de §6.7) y las pendientes que se
+  resuelven (P-6 y la parte de P-1 de Anthropic) están en
   [`plans/2026-11-12-agentes-ia-claude-backend.md`](../plans/2026-11-12-agentes-ia-claude-backend.md).
 - **Es la contraparte de backend de:**
   [`qep-frontend/docs/superpowers/specs/2026-10-28-agentes-ia-design.md`](../../../../qep-frontend/docs/superpowers/specs/2026-10-28-agentes-ia-design.md)
