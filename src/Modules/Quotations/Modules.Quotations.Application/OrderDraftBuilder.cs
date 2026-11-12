@@ -18,7 +18,6 @@ public sealed record OrderDraftInput(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderItemAddition> Items,
-    OrderPaymentStatus PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofInput> Proofs,
     bool AllowIncompleteCustomer,
     ShippingRequest? Shipping = null);
@@ -61,11 +60,13 @@ public sealed class OrderDraftBuilder(
         var order = Order.CreateManual(
             OrderId.New(), input.TenantId, orderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now);
         await BillingPersonTypeRequirement.EnsureForOrderAsync(
             tenantDirectory, input.TenantId, order, cancellationToken);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        // Los descuentos de grupo movieron el neto: el pago se compara contra el definitivo.
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
 
@@ -85,9 +86,10 @@ public sealed class OrderDraftBuilder(
         var order = Order.Preview(
             OrderId.New(), input.TenantId, PreviewOrderNumber, header, parties, account,
             shipping, lines,
-            input.PaymentStatus, input.Notes, input.AdvisorId, input.Proofs, now);
+            input.Notes, input.AdvisorId, input.Proofs, now);
         await OrderPricingRecalculation.ApplyAsync(
             pricingLookup, settingsStore, priceRounding, input.TenantId, order, now, cancellationToken);
+        order.RecalculateDraftPaymentStatus();
         return order;
     }
 

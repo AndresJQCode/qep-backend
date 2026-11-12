@@ -119,7 +119,7 @@ public sealed class BillingPersonTypeRequirementTests
             },
             new ShippingDetails(null, null, null, 0m, 0, false),
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"))],
-            OrderPaymentStatus.PaymentPending, null, advisor, [], DateTimeOffset.UtcNow);
+            null, advisor, [], DateTimeOffset.UtcNow);
         order.SetBilling(
             new QuotationPartyDetails
             {

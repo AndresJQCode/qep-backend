@@ -125,7 +125,7 @@ public sealed class QuotationWithholdingsApiTests
         Assert.True(sent.CanBeConvertedToOrder);
         var conversion = await setup.Client.PostAsJsonAsync(
             $"{QuotationsUrl(setup.TenantId)}/{withoutSelector.Id}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         Assert.True(
             conversion.StatusCode == HttpStatusCode.Created,

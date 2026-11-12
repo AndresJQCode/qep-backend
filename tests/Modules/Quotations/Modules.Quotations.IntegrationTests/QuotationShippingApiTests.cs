@@ -146,7 +146,7 @@ public sealed class QuotationShippingApiTests
 
         using var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.True(converted.IsSuccessStatusCode, await converted.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));

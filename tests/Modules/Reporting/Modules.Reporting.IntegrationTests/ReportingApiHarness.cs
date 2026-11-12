@@ -696,14 +696,13 @@ internal static class ReportingApiHarness
         HttpClient client,
         QepApiFactory factory,
         Guid tenantId,
-        QuotationResponse quotation,
-        string paymentStatus = "FullPaymentReceived")
+        QuotationResponse quotation)
     {
+        // Spec 2026-11-10 §3.2: el pago sale calculado de los comprobantes; con uno por el total queda «Por verificar».
         var proofFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/quotations/{quotation.Id}/order",
             new ConvertQuotationToOrderRequest(
-                paymentStatus,
                 "Pago verificado",
                 [new OrderPaymentProofRequest(proofFileId, quotation.Total)]),
             TestContext.Current.CancellationToken);
@@ -727,7 +726,7 @@ internal static class ReportingApiHarness
             new CreateOrderRequest(
                 customer.Id, null, null, false, null, null,
                 new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
-                [new OrderEditItemRequest(productId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(productId, 1m)], []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(

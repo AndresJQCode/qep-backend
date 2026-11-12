@@ -52,9 +52,11 @@ public sealed record ExternalShippingParty(
 /// <summary>
 /// Spec 2026-10-26 D-C12: lo que el recorrido de la historia previa necesita de un pedido para decidir si le falta la parte de
 /// envío: su estado, si es de recoger en tienda, su parte de envío (<c>null</c> si no tiene) y sus notas tal cual están
-/// guardadas (<c>null</c> si no tiene). Sólo lee.
+/// guardadas (<c>null</c> si no tiene). Sólo lee. <see cref="IsEditable"/> es <c>Order.IsEditable</c> (spec 2026-11-10 §3.6:
+/// abierto, sin preparar y sin facturar): el estado solo ya no dice si el pedido admite la parte de envío.
 /// </summary>
-public sealed record ExternalShippingState(OrderStatus Status, bool IsStorePickup, ExternalShippingParty? Shipping, string? Notes);
+public sealed record ExternalShippingState(
+    OrderStatus Status, bool IsStorePickup, ExternalShippingParty? Shipping, string? Notes, bool IsEditable);
 
 /// <summary>Qué pasó con una parte de envío: <see cref="Applied"/> y <see cref="AlreadyApplied"/> son éxito (la segunda es
 /// un reintento); el resto son las razones por las que el pedido ya no admite el cambio.</summary>
@@ -76,7 +78,7 @@ public enum ExternalShippingOutcomeKind
 
 /// <summary><see cref="Party"/> es la parte como quedó guardada (normalizada): la huella de Shopify sale de acá, nunca del
 /// borrador. <see cref="Status"/> viaja con <see cref="ExternalShippingOutcomeKind.NotPending"/>, para que el consumidor
-/// distinga un pedido aprobado de uno cancelado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
+/// distinga un pedido abierto pero congelado de uno cancelado o archivado. Con <see cref="ExternalShippingOutcomeKind.NotFound"/> viajan nulos.</summary>
 public sealed record ExternalShippingOutcome(ExternalShippingOutcomeKind Kind, ExternalShippingParty? Party, OrderStatus? Status);
 
 /// <summary>
@@ -91,7 +93,9 @@ public interface IExternalOrderWriter
     Task<ExternalOrderResult> CreateAsync(ExternalOrderDraft draft, CancellationToken cancellationToken);
 
     /// <summary>El estado de pago que avisa la plataforma. Sólo cambia si el pedido no tiene
-    /// comprobantes propios; con ellos, lanza <c>order.order.payment_has_proofs</c>.</summary>
+    /// comprobantes propios; con ellos, lanza <c>order.order.payment_has_proofs</c>. Un pedido anulado o
+    /// facturado lo rechaza con <c>order.order.not_editable</c>; uno preparado o archivado lo recibe, y con el
+    /// archivado automático del tenant puede quedar archivado (spec 2026-11-10 §3.2, §3.5).</summary>
     Task SyncPaymentStatusAsync(Guid tenantId, Guid orderId, OrderPaymentStatus status, CancellationToken cancellationToken);
 
     Task CancelAsync(
@@ -132,7 +136,8 @@ public sealed class ExternalOrderService(
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     ITenantClock tenantClock,
-    IQuotationWithholdingLookup withholdingLookup)
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationSettingsStore settingsStore)
     : IExternalOrderWriter
 {
     public async Task<ExternalOrderResult> CreateAsync(ExternalOrderDraft draft, CancellationToken cancellationToken)
@@ -270,7 +275,9 @@ public sealed class ExternalOrderService(
         Guid tenantId, Guid orderId, CancellationToken cancellationToken)
     {
         var order = await orderRepository.FindByIdAsync(tenantId, new OrderId(orderId), cancellationToken);
-        return order is null ? null : new ExternalShippingState(order.Status, order.IsStorePickup, ToExternal(order.Shipping), order.Notes);
+        return order is null
+            ? null
+            : new ExternalShippingState(order.Status, order.IsStorePickup, ToExternal(order.Shipping), order.Notes, order.IsEditable);
     }
 
     // Sin auditoría ni historial acá (desvío S9): la entrada la escribe el consumidor, que sabe el sinónimo y el operador.
@@ -306,7 +313,7 @@ public sealed class ExternalOrderService(
 
     private static ExternalShippingOutcomeKind? RefusalKind(string code) => code switch
     {
-        ExternalOrderErrors.NotPending => ExternalShippingOutcomeKind.NotPending,
+        ExternalOrderErrors.NotEditable => ExternalShippingOutcomeKind.NotPending,
         ExternalOrderErrors.SourceInvalid => ExternalShippingOutcomeKind.NotExternal,
         ExternalOrderErrors.StorePickup => ExternalShippingOutcomeKind.StorePickup,
         ExternalOrderErrors.ShippingPartyPresent => ExternalShippingOutcomeKind.ShippingPresent,
@@ -326,12 +333,30 @@ public sealed class ExternalOrderService(
             return;
         }
 
-        order.SyncExternalPaymentStatus(status, now);
+        // Spec 2026-11-10 §3.2 y §3.5: el pago de la plataforma también llega a un pedido preparado, y con el ajuste del
+        // tenant, quedar pagado y preparado lo archiva. Lo archiva la integración, no una persona: historial sin autor y
+        // auditoría firmada por la integración.
+        var settings = await settingsStore.GetOrderSettingsAsync(tenantId, cancellationToken);
+        var archived = order.SyncExternalPaymentStatus(status, settings.AutoArchive, now);
         auditPublisher.PublishByIntegration(
             tenantId, "quotation.order.payment_status_synced", order.Id.ToString(), "success", now);
+        if (archived)
+        {
+            orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Archived, memberId: null,
+                OrderChangeSummary.ArchivedAutomatically(), now));
+            auditPublisher.PublishByIntegration(
+                tenantId, OrderAutoArchive.AuditAction, order.Id.ToString(), "success", now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// La anulación que llega de la plataforma (spec 2026-11-10 §3.1): gana sobre preparado y archivado
+    /// (<see cref="Order.CancelFromPlatform"/>). Con el pedido preparado, el historial avisa que hay un paquete
+    /// despachado que recuperar. Facturado sigue lanzando <c>order.order.already_invoiced</c>.
+    /// </summary>
     public async Task CancelAsync(
         Guid tenantId, Guid orderId, Guid cancelledByMembershipId, string reason, CancellationToken cancellationToken)
     {
@@ -339,10 +364,13 @@ public sealed class ExternalOrderService(
             ?? throw OrderNotFound.ById(orderId);
         var now = (await tenantClock.GetAsync(tenantId, cancellationToken)).UtcNow;
         var by = new MemberId(cancelledByMembershipId);
-        order.Cancel(by, reason, now);
+        order.CancelFromPlatform(by, reason, now);
         orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
             OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.Cancelled, by,
-            OrderChangeSummary.Cancelled(order.CancellationReason!), now));
+            order.IsPrepared
+                ? OrderChangeSummary.CancelledWhilePrepared(order.CancellationReason!)
+                : OrderChangeSummary.Cancelled(order.CancellationReason!),
+            now));
         auditPublisher.PublishByIntegration(tenantId, "quotation.order.cancelled", order.Id.ToString(), "success", now);
         lifecycleEvents.PublishOrderCancelled(order, now);
         await unitOfWork.SaveChangesAsync(cancellationToken);

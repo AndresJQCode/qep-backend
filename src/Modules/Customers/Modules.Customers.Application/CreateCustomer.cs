@@ -35,6 +35,7 @@ public sealed class CreateCustomerHandler(
     ICustomerTagRepository tagRepository,
     ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -160,6 +161,6 @@ public sealed class CreateCustomerHandler(
         }
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, taxRateLookup, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }

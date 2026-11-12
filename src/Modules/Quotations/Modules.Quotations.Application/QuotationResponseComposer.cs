@@ -55,6 +55,8 @@ public sealed class QuotationResponseComposer(
         // is async with DI — the static mapper called by ~25 handlers is neither (plan decision A13).
         var settings = await settingsStore.GetAsync(tenantId, cancellationToken);
 
+        var clientContacts = await ClientContactsAsync(customerLookup, tenantId, customer, cancellationToken);
+
         return new QuotationResponse(
             quotation.Id,
             quotation.QuotationNumber,
@@ -106,7 +108,22 @@ public sealed class QuotationResponseComposer(
             quotation.FreightTaxAmount,
             [.. quotation.Withholdings.Select(ToWithholdingResponse)],
             [.. quotation.CustomerWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
-            [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)]);
+            [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
+            clientContacts);
+    }
+
+    /// <summary>Los contactos de la empresa del cliente (spec 2026-11-10 §4.6), en una consulta por documento. Un cliente que no
+    /// resuelve no tiene contactos que mostrar. Lo usa también el compositor del pedido: se escribe una vez.</summary>
+    internal static async Task<IReadOnlyList<ClientContactDto>> ClientContactsAsync(
+        IQuotationCustomerLookup customerLookup, Guid tenantId, QuotationCustomerRef? customer, CancellationToken cancellationToken)
+    {
+        if (customer is null)
+        {
+            return [];
+        }
+
+        var contacts = await customerLookup.ListContactsAsync(tenantId, customer.Id, cancellationToken);
+        return [.. contacts.Select(contact => new ClientContactDto(contact.Id, contact.Name, contact.Phone))];
     }
 
     // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los pinta igual (OrderResponses).

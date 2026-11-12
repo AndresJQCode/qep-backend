@@ -46,7 +46,7 @@ public sealed class OrdersExportProcessor(
     public async Task<ExportJobResult> ProcessAsync(ExportJob job, CancellationToken cancellationToken)
     {
         var filters = ExportJobFilters.Read<OrdersExportFilters>(job);
-        var (status, paymentStatus, source) = ParseFilters(filters);
+        var (status, paymentStatus, fulfillmentStatus, invoiced, source) = ParseFilters(filters);
         var advisorId = filters.AdvisorId is { } advisor ? new MemberId(advisor) : (MemberId?)null;
         var clientIds = await OrderListing.ResolveClientIdsByCucAsync(
             customerLookup, job.TenantId, filters.ClientCuc, cancellationToken);
@@ -73,6 +73,8 @@ public sealed class OrdersExportProcessor(
                 advisorId,
                 status,
                 paymentStatus,
+                fulfillmentStatus,
+                invoiced,
                 converted.From,
                 converted.Before,
                 filters.OrderNumber,
@@ -106,7 +108,12 @@ public sealed class OrdersExportProcessor(
     }
 
     // Un filtro ilegible es definitivo: el trabajo nació con él y reintentar no lo arregla.
-    private static (OrderStatus? Status, OrderPaymentStatus? PaymentStatus, OrderSource? Source) ParseFilters(
+    private static (
+        OrderStatus? Status,
+        OrderPaymentStatus? PaymentStatus,
+        OrderFulfillmentStatus? FulfillmentStatus,
+        bool? Invoiced,
+        OrderSource? Source) ParseFilters(
         OrdersExportFilters filters)
     {
         try
@@ -114,6 +121,8 @@ public sealed class OrdersExportProcessor(
             return (
                 OrderListing.ParseStatus(filters.Status),
                 OrderListing.ParsePaymentStatus(filters.PaymentStatus),
+                OrderListing.ParseFulfillmentStatus(filters.FulfillmentStatus),
+                OrderListing.ParseInvoiced(filters.Invoiced),
                 OrderListing.ParseSource(filters.Source));
         }
         catch (QuotationsDomainException exception)

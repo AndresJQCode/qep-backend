@@ -251,6 +251,33 @@ internal sealed class StubQuotationCustomerLookup(QuotationCustomerRef customer)
 
     public int FindManyCalls { get; private set; }
 
+    /// <summary>Los contactos (sin fusionar) del cliente base, tal como los entrega el puerto. Un id que no está acá es
+    /// "no es contacto de este cliente": de otra empresa, de otro tenant, fusionado o el propio cliente. El doble no
+    /// reimplementa esa exclusión (es del puerto de Customers), sólo responde lo que el puerto respondería.</summary>
+    public List<QuotationClientContact> Contacts { get; } = [];
+
+    public int FindContactCalls { get; private set; }
+
+    public int ListContactsCalls { get; private set; }
+
+    public Task<QuotationClientContact?> FindContactAsync(
+        Guid tenantId, Guid clientId, Guid contactId, CancellationToken cancellationToken)
+    {
+        FindContactCalls++;
+        return Task.FromResult(
+            clientId == customer.Id
+                ? Contacts.FirstOrDefault(contact => contact.Id == contactId)
+                : null);
+    }
+
+    public Task<IReadOnlyList<QuotationClientContact>> ListContactsAsync(
+        Guid tenantId, Guid clientId, CancellationToken cancellationToken)
+    {
+        ListContactsCalls++;
+        return Task.FromResult<IReadOnlyList<QuotationClientContact>>(
+            clientId == customer.Id ? [.. Contacts] : []);
+    }
+
     public Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
         Guid tenantId, IReadOnlyCollection<Guid> clientIds, CancellationToken cancellationToken)
     {
@@ -809,6 +836,7 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             quotation.FreightTaxAmount,
             [],
             [],
+            [],
             []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
@@ -881,6 +909,18 @@ public sealed class FixedQuotationSettingsStore(QuotationSettings? settings = nu
         DefaultFreightChargeMode = settings.Default;
         return Task.CompletedTask;
     }
+
+    /// <summary>Los del owner, como un tenant que nunca los tocó (spec 2026-11-10 §6).</summary>
+    public OrderSettings OrderSettings { get; set; } = OrderSettings.Default;
+
+    public Task<OrderSettings> GetOrderSettingsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        Task.FromResult(OrderSettings);
+
+    public Task SetOrderSettingsAsync(Guid tenantId, OrderSettings settings, CancellationToken cancellationToken)
+    {
+        OrderSettings = settings;
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>Los filtros con que se preguntó por pedidos o se leyó para exportarlos.</summary>
@@ -893,7 +933,9 @@ internal sealed record RecordedOrderExportSearch(
     DateTimeOffset? ConvertedFrom,
     DateTimeOffset? ConvertedBefore,
     string? OrderNumber,
-    OrderSource? Source = null);
+    OrderSource? Source = null,
+    OrderFulfillmentStatus? FulfillmentStatus = null,
+    bool? Invoiced = null);
 
 /// <summary>Devuelve los pedidos sembrados y anota con que filtro se la llamo — lo que las pruebas
 /// del listado de pedidos necesitan comprobar es el camino del handler, no la consulta SQL. Desde el
@@ -906,6 +948,10 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     public (DateTimeOffset? From, DateTimeOffset? Before) LastSearchRange { get; private set; }
 
     public OrderSource? LastSource { get; private set; }
+
+    public OrderFulfillmentStatus? LastFulfillmentStatus { get; private set; }
+
+    public bool? LastInvoiced { get; private set; }
 
     public int AnyCalls { get; private set; }
 
@@ -962,6 +1008,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -973,6 +1021,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         LastClientIds = clientIds;
         LastSearchRange = (convertedFrom, convertedBefore);
         LastSource = source;
+        LastFulfillmentStatus = fulfillmentStatus;
+        LastInvoiced = invoiced;
         return Task.FromResult<(IReadOnlyList<Order>, int)>((rows, rows.Length));
     }
 
@@ -1032,6 +1082,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -1040,7 +1092,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
     {
         AnyCalls++;
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            fulfillmentStatus, invoiced);
         return Task.FromResult(Matching(clientIds).Any());
     }
 
@@ -1051,6 +1104,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -1062,7 +1117,8 @@ internal sealed class StubOrderListRepository(params Order[] rows) : IOrderRepos
         ExportCalls++;
         ExportCursors.Add(after);
         LastExportSearch = new RecordedOrderExportSearch(
-            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source);
+            clientId, clientIds, advisorId, status, paymentStatus, convertedFrom, convertedBefore, orderNumber, source,
+            fulfillmentStatus, invoiced);
         // Reproduce la forma del keyset en memoria, con comparación ordinal: alcanza para estas
         // pruebas unitarias, aunque el SQL real compara con la collation de la columna. El
         // keyset real contra Postgres lo prueba
@@ -1260,10 +1316,19 @@ internal sealed class StubQuotationGeographyLookup(
 
     public IReadOnlyCollection<Guid> LastCoordinadoraRequestedIds { get; private set; } = [];
 
+    /// <summary>Cuántas veces se pidieron nombres de ciudad: uno por lote es la aserción.</summary>
+    public int FindCityNamesCalls { get; private set; }
+
+    public IReadOnlyCollection<Guid> LastCityRequestedIds { get; private set; } = [];
+
     public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
-        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<Guid, string>>(
+        IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
+    {
+        FindCityNamesCalls++;
+        LastCityRequestedIds = cityIds;
+        return Task.FromResult<IReadOnlyDictionary<Guid, string>>(
             cityIds.Where(cityNames.ContainsKey).Distinct().ToDictionary(id => id, id => cityNames[id]));
+    }
 
     public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
         IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken)
@@ -1315,7 +1380,6 @@ internal static class OrderBuilders
         MemberId advisorId,
         DateTimeOffset now,
         Guid? clientId = null,
-        OrderPaymentStatus paymentStatus = OrderPaymentStatus.PaymentPending,
         IReadOnlyCollection<OrderPaymentProofInput>? proofs = null,
         string orderNumber = "PED-2026-0001",
         QuotationParties? parties = null,
@@ -1329,7 +1393,6 @@ internal static class OrderBuilders
             BillingAccount,
             shipping ?? ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
-            paymentStatus,
             notes: null,
             advisorId,
             proofs ?? [],

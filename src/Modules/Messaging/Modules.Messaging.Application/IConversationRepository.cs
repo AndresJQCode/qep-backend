@@ -100,4 +100,14 @@ public interface IMessagingUnitOfWork
     /// <summary>Descarta lo que el tracker acumuló sin guardar (spec 2026-10-26 §3.2): si Meta falla después de mutar el agregado,
     /// nada de eso debe llegar a la base con el siguiente guardado.</summary>
     void DiscardPendingChanges();
+
+    /// <summary>Borrar clientes (A-12 y P4): una transacción explícita para lo que necesita sostener un candado hasta el commit, como el
+    /// candado compartido del cliente de <see cref="IMessagingCustomerReferenceLock"/>.</summary>
+    Task<IMessagingTransaction> BeginTransactionAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>Disponer sin <see cref="CommitAsync"/> hace rollback.</summary>
+public interface IMessagingTransaction : IAsyncDisposable
+{
+    Task CommitAsync(CancellationToken cancellationToken);
 }

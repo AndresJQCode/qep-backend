@@ -85,14 +85,14 @@ public sealed class ShopifyCityCorrectionProcessorTests
         Assert.DoesNotContain(world.Shop.Database.CityCorrectionJobs, other => other.Kind == ShopifyCityCorrectionJobKind.Recorrect);
     }
 
-    // Review Focus 3: el pedido dejó Pending entre la vista previa y la corrección. El trabajo termina con order_not_pending, y
-    // Shopify no deja huella ni auditoría de algo que no pasó.
+    // Review Focus 3: el pedido dejó de ser editable entre la vista previa y la corrección. El trabajo termina con
+    // order_not_pending, y Shopify no deja huella ni auditoría de algo que no pasó.
     [Fact]
-    public async Task AnOrderApprovedAfterThePreviewIsSkippedNotTouched()
+    public async Task AnOrderFrozenAfterThePreviewIsSkippedNotTouched()
     {
         var world = new CorrectionWorld();
         world.Synonyms.Point(SynonymId, ValleId, CaliId);
-        world.Writer.OnAttach = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.NotPending, null, null, "Approved");
+        world.Writer.OnAttach = _ => new ShopifyCityWriteResult(ShopifyCityWriteKind.NotPending, null, null, "Open");
         var job = world.Seed(world.ResolveOrder());
 
         await world.ProcessAsync(job);

@@ -10,6 +10,8 @@ public sealed class BuyerOrderGatewayTests
 {
     private static readonly Guid TenantId = Guid.CreateVersion7();
     private static readonly Guid Buyer = Guid.CreateVersion7();
+    private static readonly Guid Department = Guid.CreateVersion7();
+    private static readonly Guid City = Guid.CreateVersion7();
     private static readonly MemberId Advisor = new(Guid.CreateVersion7());
     private static readonly DateTimeOffset Now = new(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
 
@@ -30,22 +32,30 @@ public sealed class BuyerOrderGatewayTests
     private static OrderLineInput Line(string name) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", name));
 
-    private static QuotationParties Parties()
+    private static readonly ShippingDetails Charged =
+        new(null, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, false);
+
+    private static QuotationPartyDetails ColombianParty() => new()
     {
-        var billing = new QuotationPartyDetails
-        {
-            Name = "Ana Pérez",
-            IdentificationNumber = "1020304050",
-            IdentificationType = PartyIdentificationType.Cc,
-            PersonType = PartyPersonType.Natural,
-            Phone = "+573001112233",
-            Email = "ana@example.com",
-            Address = "Calle 1 # 2-3",
-            DepartmentId = Guid.CreateVersion7(),
-            CityId = Guid.CreateVersion7(),
-        };
-        var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
-        return new QuotationParties(billing, shipping, BillingVatSurplus: false);
+        Name = "Ana Pérez",
+        IdentificationNumber = "1020304050",
+        IdentificationType = PartyIdentificationType.Cc,
+        PersonType = PartyPersonType.Natural,
+        Phone = "+573001112233",
+        Email = "ana@example.com",
+        Address = "Calle 1 # 2-3",
+        DepartmentId = Department,
+        CityId = City,
+    };
+
+    private static QuotationPartyDetails ShippingOf(QuotationPartyDetails billing) =>
+        billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
+
+    private static QuotationParties Parties(bool vatSurplus = false, QuotationPartyDetails? billing = null)
+    {
+        billing ??= ColombianParty();
+        return new QuotationParties(
+            billing, ShippingOf(billing), BillingVatSurplus: vatSurplus);
     }
 
     private static Order StoreOrder(
@@ -54,29 +64,38 @@ public sealed class BuyerOrderGatewayTests
         DateTimeOffset? createdAt = null,
         Guid? tenantId = null,
         OrderId? id = null,
-        OrderStatus status = OrderStatus.Pending,
-        OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending)
+        bool paidMarked = false,
+        OrderPaymentStatus payment = OrderPaymentStatus.PaymentPending,
+        string? notes = null,
+        QuotationParties? parties = null)
     {
         var at = createdAt ?? Now.AddDays(-1);
         var order = Order.CreateFromStore(
-            id ?? OrderId.New(), tenantId ?? TenantId, number, Header(), Parties(), Account,
-            [Line("Aceite"), Line("Banano")], null, Advisor, at, $"store-checkout:{number}",
+            id ?? OrderId.New(), tenantId ?? TenantId, number, Header(), parties ?? Parties(), Account,
+            [Line("Aceite"), Line("Banano")], notes, Advisor, at, $"store-checkout:{number}",
             buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
-            order.SyncExternalPaymentStatus(payment, at);
+            order.SyncExternalPaymentStatus(payment, autoArchive: false, at);
         }
 
-        if (status == OrderStatus.Approved)
+        if (paidMarked)
         {
-            order.Approve(Advisor, at);
+            order.MarkPaid(Advisor, requirePaymentProof: false, at);
         }
 
         return order;
     }
 
-    private BuyerOrderGateway Gateway(StubOrderListRepository orders, IQuotationsUnitOfWork? unitOfWork = null) =>
-        new(orders, unitOfWork ?? new NoOpQuotationsUnitOfWork(), _audit, _lifecycle, new FixedClock(Now));
+    private BuyerOrderGateway Gateway(
+        StubOrderListRepository orders,
+        IQuotationsUnitOfWork? unitOfWork = null,
+        IQuotationGeographyLookup? geography = null) =>
+        new(
+            orders, unitOfWork ?? new NoOpQuotationsUnitOfWork(), _audit, _lifecycle, new FixedClock(Now),
+            geography ?? new StubQuotationGeographyLookup(
+                new Dictionary<Guid, string> { [City] = "Cali" },
+                departmentNames: new Dictionary<Guid, string> { [Department] = "Valle del Cauca" }));
 
     /// <summary>Lo que hace el ChangeTracker real al descartar: el historial, la auditoría y el evento viven en el
     /// mismo DbContext que el pedido y se van con él.</summary>
@@ -115,21 +134,63 @@ public sealed class BuyerOrderGatewayTests
         Assert.Equal(order.Id.Value, summary.Id);
         Assert.Equal(order.CreatedAt, summary.CreatedAt);
         Assert.Equal((order.Total, "COP"), (summary.Total, summary.Currency));
-        Assert.Equal("Pending", summary.Status);
+        Assert.Equal("Open", summary.Status);
         Assert.Equal("PaymentPending", summary.PaymentStatus);
         Assert.Equal(2, summary.LineCount);
         Assert.Equal("Aceite", summary.FirstLineName);
         Assert.True(summary.CanCancel);
     }
 
-    [Theory]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PaymentPending, true)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.PartialPaymentReceived, false)]
-    [InlineData(OrderStatus.Pending, OrderPaymentStatus.FullPaymentReceived, false)]
-    [InlineData(OrderStatus.Approved, OrderPaymentStatus.PaymentPending, false)]
-    public async Task ASummaryReportsCanCancelByRuleD5(OrderStatus status, OrderPaymentStatus payment, bool expected)
+    // Owner 2026-11-11: la lista dice si el pedido se recoge en tienda, para que un pedido preparado muestre
+    // «Listo para recoger» o «Enviado» sin abrir el detalle.
+    [Fact]
+    public async Task ASummarySaysWhetherTheOrderIsPickedUpAtTheStore()
     {
-        var orders = new StubOrderListRepository(StoreOrder(Buyer, status: status, payment: payment));
+        var billing = ColombianParty();
+        var pickup = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0009", Header(),
+            new QuotationParties(
+                billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+        pickup.LinkBuyerAccount(Buyer);
+        var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
+        var orders = new StubOrderListRepository(pickup, shipped);
+
+        var items = (await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items;
+
+        Assert.Equal(
+            [("PED-2026-0009", true), ("PED-2026-0010", false)],
+            items.Select(item => (item.Number, item.IsStorePickup)));
+    }
+
+    // Spec 2026-11-10 §9: el comprador ve los cuatro ejes, sin capa de compatibilidad.
+    [Fact]
+    public async Task TheBuyerSeesTheFourAxes()
+    {
+        var order = StoreOrder(Buyer);
+        order.Prepare(Advisor, Now);
+        var orders = new StubOrderListRepository(order);
+
+        var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
+        var detail = await Gateway(orders).FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (summary.Status, summary.PaymentStatus, summary.FulfillmentStatus, summary.Invoiced, summary.CanCancel));
+        Assert.NotNull(detail);
+        Assert.Equal(
+            ("Open", "PaymentPending", "Prepared", false, false),
+            (detail.Status, detail.PaymentStatus, detail.FulfillmentStatus, detail.Invoiced, detail.CanCancel));
+    }
+
+    [Theory]
+    [InlineData(false, OrderPaymentStatus.PaymentPending, true)]
+    [InlineData(false, OrderPaymentStatus.PartialPaymentReceived, false)]
+    [InlineData(false, OrderPaymentStatus.FullPaymentReceived, false)]
+    [InlineData(true, OrderPaymentStatus.PaymentPending, false)]
+    public async Task ASummaryReportsCanCancelByRuleD5(bool paidMarked, OrderPaymentStatus payment, bool expected)
+    {
+        var orders = new StubOrderListRepository(StoreOrder(Buyer, paidMarked: paidMarked, payment: payment));
 
         var summary = Assert.Single((await Gateway(orders).ListAsync(TenantId, Buyer, 1, 20, CancellationToken.None)).Items);
 
@@ -167,11 +228,11 @@ public sealed class BuyerOrderGatewayTests
 
     private static Order StoreOrderWithProofStillPaymentPending()
     {
+        // AttachPaymentProofs no recalcula el pago (el guardado lo hace después): deja el comprobante con el pago aún
+        // en PaymentPending, el caso que D5 cubre.
         var order = StoreOrder(Buyer);
-        order.AddPaymentProofs(
+        order.AttachPaymentProofs(
             [new OrderPaymentProofInput(Guid.CreateVersion7(), 5_000m)],
-            OrderPaymentStatus.PaymentPending,
-            null,
             Advisor,
             Now.AddHours(-1));
         return order;
@@ -235,16 +296,16 @@ public sealed class BuyerOrderGatewayTests
     }
 
     [Fact]
-    public async Task CancelOfAnApprovedOrderIsAConflictAndWritesNothing()
+    public async Task CancelOfAPaidMarkedOrderIsAConflictAndWritesNothing()
     {
-        var order = StoreOrder(Buyer, status: OrderStatus.Approved);
+        var order = StoreOrder(Buyer, paidMarked: true);
         var orders = new StubOrderListRepository(order);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
             Gateway(orders).CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
 
         Assert.Equal("order.order.not_cancellable_by_buyer", error.Code);
-        Assert.Equal(OrderStatus.Approved, order.Status);
+        Assert.Equal(OrderStatus.Open, order.Status);
         Assert.Empty(orders.History);
         Assert.Empty(_audit.Actions);
         Assert.Empty(_lifecycle.Published);
@@ -268,9 +329,9 @@ public sealed class BuyerOrderGatewayTests
     {
         var id = OrderId.New();
         var loaded = StoreOrder(Buyer, id: id);
-        var approvedMeanwhile = StoreOrder(Buyer, id: id, status: OrderStatus.Approved);
+        var paidMeanwhile = StoreOrder(Buyer, id: id, paidMarked: true);
         var orders = new StubOrderListRepository(loaded);
-        orders.QueueBuyerReads(loaded, approvedMeanwhile);
+        orders.QueueBuyerReads(loaded, paidMeanwhile);
         var unitOfWork = FailingUnitOfWork(orders, failures: 1);
 
         var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
@@ -399,6 +460,327 @@ public sealed class BuyerOrderGatewayTests
             Gateway(orders, unitOfWork).LinkAsync(TenantId, id.Value, Buyer, CancellationToken.None));
 
         Assert.Equal(2, unitOfWork.SaveCalls);
+    }
+
+    private static async Task<BuyerOrderDetail> DetailOf(BuyerOrderGateway gateway, Order order)
+    {
+        var detail = await gateway.FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+        Assert.NotNull(detail);
+        return detail;
+    }
+
+    [Fact]
+    public async Task AFreshStoreOrderCarriesItsTotalsWithoutFreightOrCarrier()
+    {
+        var order = StoreOrder(Buyer);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal((order.Subtotal, order.TaxAmount), (detail.Subtotal, detail.TaxAmount));
+        Assert.Equal(0m, detail.FreightTotal);
+        Assert.Equal(detail.Total, detail.Subtotal + detail.TaxAmount + detail.FreightTotal);
+        Assert.False(detail.IsStorePickup);
+        Assert.Null(detail.CarrierName);
+        Assert.Equal("BillingParty", detail.BilledTo);
+    }
+
+    [Fact]
+    public async Task AChargedFreightAddsToTheIdentityAndNamesTheCarrier()
+    {
+        var order = StoreOrder(Buyer);
+        order.SetShipping(Charged, Advisor, Now);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal(order.FreightSubtotal + order.FreightTaxAmount, detail.FreightTotal);
+        Assert.True(detail.FreightTotal > 0m);
+        Assert.Equal(detail.Total, detail.Subtotal + detail.TaxAmount + detail.FreightTotal);
+        Assert.Equal("Coordinadora", detail.CarrierName);
+    }
+
+    [Fact]
+    public async Task WithVatSurplusTheLinesGoWithoutTaxAndAddUpToTheTotal()
+    {
+        var order = StoreOrder(Buyer, parties: Parties(vatSurplus: true));
+        order.SetShipping(Charged, Advisor, Now);
+        Assert.True(order.AppliesVatSurplus);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal(0m, detail.TaxAmount);
+        var items = order.Items.OrderBy(item => item.Position).ToArray();
+        for (var i = 0; i < items.Length; i++)
+        {
+            Assert.Equal(items[i].UnitPriceWithoutTax, detail.Lines[i].UnitPrice);
+            Assert.Equal(items[i].Subtotal, detail.Lines[i].LineTotal);
+        }
+
+        Assert.Equal(
+            detail.Total,
+            Math.Round(detail.Lines.Sum(line => line.LineTotal), 2, MidpointRounding.AwayFromZero) + detail.FreightTotal);
+        Assert.Equal(detail.Total, detail.Subtotal + detail.TaxAmount + detail.FreightTotal);
+    }
+
+    [Fact]
+    public async Task CancelReturnsTheSameExtendedDetail()
+    {
+        var order = StoreOrder(Buyer, notes: "Entregar en portería", parties: Parties(vatSurplus: true));
+        order.UpdateNotes("Texto del asesor", Now);
+        var orders = new StubOrderListRepository(order);
+
+        var detail = await Gateway(orders).CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None);
+
+        Assert.NotNull(detail);
+        Assert.Equal("Cancelled", detail.Status);
+        Assert.Equal("Entregar en portería", detail.BuyerNotes);
+        Assert.NotNull(detail.Billing);
+        Assert.Equal(order.Items.OrderBy(item => item.Position).First().Subtotal, detail.Lines[0].LineTotal);
+    }
+
+    [Theory]
+    [InlineData(PartyIdentificationType.Cc, null, "CC", "CO")]
+    [InlineData(PartyIdentificationType.Nit, null, "NIT", "CO")]
+    [InlineData(PartyIdentificationType.TaxId, "US", "TAX_ID", "US")]
+    public async Task TheBillingCarriesTheWireDocumentTypeAndCountry(
+        PartyIdentificationType type, string? country, string expectedType, string expectedCountry)
+    {
+        var party = country is null
+            ? ColombianParty() with { IdentificationType = type }
+            : ColombianParty() with
+            {
+                IdentificationType = type, Country = country, DepartmentId = null, CityId = null, CityName = "Miami"
+            };
+        var order = StoreOrder(Buyer, parties: Parties(billing: party));
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        var billing = detail.Billing;
+        Assert.NotNull(billing);
+        Assert.Equal(
+            ("Ana Pérez", expectedType, "1020304050", "ana@example.com", "+573001112233", "Calle 1 # 2-3", expectedCountry),
+            (billing.Name, billing.IdentificationType, billing.IdentificationNumber, billing.Email, billing.Phone,
+                billing.Address, billing.Country));
+        if (country is not null)
+        {
+            Assert.Equal((null, "Miami"), (billing.DepartmentName, billing.CityName));
+        }
+    }
+
+    [Fact]
+    public async Task ColombianPlacesComeFromTheLookupOneCallPerDictionary()
+    {
+        var order = StoreOrder(Buyer);
+        var geography = new StubQuotationGeographyLookup(
+            new Dictionary<Guid, string> { [City] = "Cali" },
+            departmentNames: new Dictionary<Guid, string> { [Department] = "Valle del Cauca" });
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order), geography: geography), order);
+
+        Assert.NotNull(detail.Billing);
+        Assert.NotNull(detail.Shipping);
+        Assert.Equal(("Valle del Cauca", "Cali"), (detail.Billing.DepartmentName, detail.Billing.CityName));
+        Assert.Equal(("Valle del Cauca", "Cali"), (detail.Shipping.DepartmentName, detail.Shipping.CityName));
+        Assert.Equal(
+            ("Ana Pérez", "+573001112233", "Calle 1 # 2-3", "CO"),
+            (detail.Shipping.Name, detail.Shipping.Phone, detail.Shipping.Address, detail.Shipping.Country));
+        Assert.Equal((1, 1), (geography.FindDepartmentNamesCalls, geography.FindCityNamesCalls));
+        Assert.Equal([Department], geography.LastDepartmentRequestedIds);
+        Assert.Equal([City], geography.LastCityRequestedIds);
+    }
+
+    [Fact]
+    public async Task AnIdTheLookupDoesNotKnowIsNull()
+    {
+        var order = StoreOrder(Buyer);
+        var geography = new StubQuotationGeographyLookup(new Dictionary<Guid, string>());
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order), geography: geography), order);
+
+        Assert.NotNull(detail.Billing);
+        Assert.Equal((null, null, "CO"), (detail.Billing.DepartmentName, detail.Billing.CityName, detail.Billing.Country));
+    }
+
+    [Fact]
+    public async Task AForeignPartyTakesItsCityAsTextAndSkipsTheLookup()
+    {
+        var foreign = ColombianParty() with
+        {
+            Country = "ES", IdentificationType = PartyIdentificationType.Nif, DepartmentId = null, CityId = null,
+            CityName = "Madrid"
+        };
+        var order = StoreOrder(Buyer, parties: Parties(billing: foreign));
+        var geography = new StubQuotationGeographyLookup(new Dictionary<Guid, string>());
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order), geography: geography), order);
+
+        Assert.NotNull(detail.Billing);
+        Assert.NotNull(detail.Shipping);
+        Assert.Equal(("ES", null, "Madrid"), (detail.Billing.Country, detail.Billing.DepartmentName, detail.Billing.CityName));
+        Assert.Equal(("ES", null, "Madrid"), (detail.Shipping.Country, detail.Shipping.DepartmentName, detail.Shipping.CityName));
+        Assert.Equal((0, 0), (geography.FindDepartmentNamesCalls, geography.FindCityNamesCalls));
+    }
+
+    [Fact]
+    public async Task BillingToTheFinalConsumerHidesTheBillingParty()
+    {
+        var order = StoreOrder(Buyer);
+        order.SetBilling(null, true, false, null, Advisor, Now);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal("FinalConsumer", detail.BilledTo);
+        Assert.Null(detail.Billing);
+        Assert.NotNull(detail.Shipping);
+    }
+
+    [Fact]
+    public async Task BillingToTheCustomerHidesTheBillingParty()
+    {
+        var order = StoreOrder(Buyer);
+        order.SetBilling(null, false, false, null, Advisor, Now);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal("Customer", detail.BilledTo);
+        Assert.Null(detail.Billing);
+    }
+
+    [Fact]
+    public async Task AStorePickupHasNoShipping()
+    {
+        var billing = ColombianParty();
+        var order = Order.CreateManual(
+            OrderId.New(), TenantId, "PED-2026-0009", Header(),
+            new QuotationParties(
+                billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
+            Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
+        order.LinkBuyerAccount(Buyer);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.True(detail.IsStorePickup);
+        Assert.Null(detail.Shipping);
+        Assert.NotNull(detail.Billing);
+    }
+
+    [Fact]
+    public async Task BuyerNotesComeFromTheCheckoutNotFromTheAdvisor()
+    {
+        var order = StoreOrder(Buyer, notes: "Entregar en portería");
+        order.UpdateNotes("Texto del asesor", Now);
+
+        var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
+
+        Assert.Equal("Entregar en portería", detail.BuyerNotes);
+    }
+
+    [Fact]
+    public async Task AGeographyFailureIsNotDisguisedAsAMissingName()
+    {
+        var order = StoreOrder(Buyer);
+        var gateway = Gateway(new StubOrderListRepository(order), geography: new ThrowingGeographyLookup());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.FindAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal("geography down", error.Message);
+    }
+
+    [Fact]
+    public async Task ALookupFailureLeavesTheOrderUncancelled()
+    {
+        var order = StoreOrder(Buyer);
+        var orders = new StubOrderListRepository(order);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 0);
+        var gateway = Gateway(orders, unitOfWork, new ThrowingGeographyLookup());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal("geography down", error.Message);
+        Assert.Equal(OrderStatus.Open, order.Status);
+        Assert.Equal(0, unitOfWork.SaveCalls);
+        Assert.Empty(orders.History);
+        Assert.Empty(_audit.Actions);
+        Assert.Empty(_lifecycle.Published);
+    }
+
+    [Fact]
+    public async Task ALookupFailureOnTheRetryLeavesTheRereadOrderUncancelled()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(Buyer, id: id);
+        var editedMeanwhile = StoreOrder(Buyer, id: id);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueBuyerReads(loaded, editedMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+        // allowedCalls: 2 = una consulta de departamento y una de ciudad por intento; el primer intento pasa y el
+        // reintento falla.
+        var gateway = Gateway(orders, unitOfWork, new ThrowingGeographyLookup(allowedCalls: 2));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
+
+        Assert.Equal("geography down", error.Message);
+        Assert.Equal(OrderStatus.Open, editedMeanwhile.Status);
+        Assert.Equal(1, unitOfWork.SaveCalls);
+        Assert.Empty(orders.History);
+        Assert.Empty(_audit.Actions);
+        Assert.Empty(_lifecycle.Published);
+    }
+
+    [Fact]
+    public async Task ANonCancellableOrderWithAFailingLookupStillGetsTheConflictAndMakesNoLookups()
+    {
+        var order = StoreOrder(Buyer, paidMarked: true);
+        var geography = new ThrowingGeographyLookup();
+        var gateway = Gateway(new StubOrderListRepository(order), geography: geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, order.Id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(0, geography.Calls);
+    }
+
+    [Fact]
+    public async Task ARereadOrderThatIsNoLongerCancellableGetsTheConflictWithoutLookups()
+    {
+        var id = OrderId.New();
+        var loaded = StoreOrder(Buyer, id: id);
+        var markedPaidMeanwhile = StoreOrder(Buyer, id: id, paidMarked: true);
+        var orders = new StubOrderListRepository(loaded);
+        orders.QueueBuyerReads(loaded, markedPaidMeanwhile);
+        var unitOfWork = FailingUnitOfWork(orders, failures: 1);
+        var geography = new ThrowingGeographyLookup(allowedCalls: 2);
+        var gateway = Gateway(orders, unitOfWork, geography);
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(() =>
+            gateway.CancelAsync(TenantId, Buyer, id.Value, CancellationToken.None));
+
+        Assert.Equal(BuyerOrderErrors.NotCancellableByBuyer, error.Code);
+        Assert.Equal(2, geography.Calls);
+    }
+
+    private sealed class ThrowingGeographyLookup(int allowedCalls = 0) : IQuotationGeographyLookup
+    {
+        private int _calls;
+
+        public int Calls => _calls;
+
+        public Task<IReadOnlyDictionary<Guid, string>> FindCityNamesAsync(
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => Call();
+
+        public Task<IReadOnlyDictionary<Guid, string>> FindCoordinadoraCityNamesAsync(
+            IReadOnlyCollection<Guid> cityIds, CancellationToken cancellationToken) => Call();
+
+        public Task<IReadOnlyDictionary<Guid, string>> FindDepartmentNamesAsync(
+            IReadOnlyCollection<Guid> departmentIds, CancellationToken cancellationToken) => Call();
+
+        private Task<IReadOnlyDictionary<Guid, string>> Call() =>
+            ++_calls > allowedCalls
+                ? throw new InvalidOperationException("geography down")
+                : Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
     }
 
     /// <summary>Lanza la excepción de concurrencia en los primeros <paramref name="failures"/> guardados y avisa cada

@@ -1,16 +1,18 @@
 namespace Modules.Reporting.Domain;
 
 /// <summary>
-/// El estado de pago por el que se puede filtrar el reporte de pedidos. Son exactamente los tres
+/// El estado de pago por el que se puede filtrar el reporte de pedidos. Son exactamente los cuatro
 /// valores de <c>OrderPaymentStatus</c> en Quotations, redeclarados acá y no referenciados: el
 /// dominio de un módulo de negocio no referencia el dominio de otro — mismo criterio que
 /// <c>Quotations.MemberId</c> frente al <c>MembershipId</c> de Tenancy.
+/// <see cref="PendingVerification"/> («Por verificar», spec 2026-11-10 §3.2) va al final.
 /// </summary>
 public enum OrderPaymentStatusFilter
 {
     FullPaymentReceived,
     PartialPaymentReceived,
-    PaymentPending
+    PaymentPending,
+    PendingVerification
 }
 
 /// <summary>

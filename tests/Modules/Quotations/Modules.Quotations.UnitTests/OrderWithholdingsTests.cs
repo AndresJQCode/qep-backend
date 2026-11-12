@@ -62,13 +62,13 @@ public sealed class OrderWithholdingsTests
         QuotationBillingAccount? account = null) =>
         Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001", header ?? Header(Retefuente), parties ?? QuotationParties.Empty,
-            account ?? ColombianAccount, ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null,
+            account ?? ColombianAccount, ShippingDetails.None, [Line()], null,
             AdvisorId, [], Now);
 
     private static Order PreviewWithoutAccount(params WithholdingRate[] withholdings) =>
         Order.Preview(
             OrderId.New(), TenantId, "PED-2026-0001", Header(withholdings), QuotationParties.Empty, null,
-            ShippingDetails.None, [Line()], OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            ShippingDetails.None, [Line()], null, AdvisorId, [], Now);
 
     private static (string Name, decimal Base, decimal Amount)[] Applied(Order order) =>
         [.. order.AppliedWithholdings.Select(withholding => (withholding.Name, withholding.BaseAmount, withholding.Amount))];
@@ -88,7 +88,7 @@ public sealed class OrderWithholdingsTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
 
         // Con parte propia la fuente vigente son los selectores; la foto del cliente no viaja.
         var withholding = Assert.Single(order.Withholdings);
@@ -109,7 +109,7 @@ public sealed class OrderWithholdingsTests
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19, AdvisorId, Now);
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null, AdvisorId, [], Now);
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null, AdvisorId, [], Now);
 
         Assert.Equal([Retefuente, ReteIca], order.Withholdings.OrderBy(row => row.Position).Select(row => row.Rate));
         Assert.Equal([("Retefuente 2,5 %", 100_000m, 2_500m), ("ReteICA Bogotá 0,966 %", 100_000m, 966m)], Applied(order));
@@ -127,7 +127,7 @@ public sealed class OrderWithholdingsTests
     }
 
     [Fact]
-    public void PendingAcceptsSelectorsAndNotPendingRejectsThem()
+    public void AnEditableOrderAcceptsSelectors()
     {
         var order = NewOrder(Header(Retefuente));
         var version = order.Version;
@@ -138,12 +138,46 @@ public sealed class OrderWithholdingsTests
         Assert.Equal(version + 1, order.Version);
         Assert.Equal([("Retefuente servicios 4 %", 100_000m, 4_000m), ("ReteICA Bogotá 0,966 %", 100_000m, 966m)], Applied(order));
         Assert.Equal(4_966m, order.RetentionAmount);
+    }
 
-        order.Approve(AdvisorId, Now);
-        var error = Assert.Throws<QuotationsDomainException>(() => order.SetWithholdings([Retefuente], AdvisorId, Now));
+    // Los selectores siguen la misma regla que el resto de la edición del pedido (spec 2026-11-10 §3.6, Order.IsEditable):
+    // abierto, sin preparar y sin facturar. Preparado o facturado sigue abierto, y aun así no se edita.
+    public static TheoryData<string> NonEditableStates => ["prepared", "invoiced", "archived", "cancelled"];
 
-        Assert.Equal("order.order.not_pending", error.Code);
-        Assert.Equal(4_966m, order.RetentionAmount);
+    private static Order InState(string state)
+    {
+        var order = NewOrder(Header(Retefuente));
+        switch (state)
+        {
+            case "prepared":
+                order.Prepare(AdvisorId, Now);
+                break;
+            case "invoiced":
+                order.Invoice(AdvisorId, requireFullPayment: false, Now);
+                break;
+            case "archived":
+                order.Archive(AdvisorId, Now);
+                break;
+            case "cancelled":
+                order.Cancel(AdvisorId, "Cliente desistió", Now);
+                break;
+        }
+
+        Assert.False(order.IsEditable);
+        return order;
+    }
+
+    [Theory]
+    [MemberData(nameof(NonEditableStates))]
+    public void ANonEditableOrderRejectsSelectors(string state)
+    {
+        var order = InState(state);
+        var (version, retention) = (order.Version, order.RetentionAmount);
+
+        var error = Assert.Throws<QuotationsDomainException>(() => order.SetWithholdings([ReteIca], AdvisorId, Now));
+
+        Assert.Equal("order.order.not_editable", error.Code);
+        Assert.Equal((version, retention), (order.Version, order.RetentionAmount));
     }
 
     [Fact]
@@ -269,16 +303,30 @@ public sealed class OrderWithholdingsTests
         Assert.Equal(("COP", ColombianAccount, version), (order.Currency, order.BillingAccount, order.Version));
     }
 
-    [Fact]
-    public void ANonPendingOrderCannotChangeItsBillingAccount()
+    [Theory]
+    [MemberData(nameof(NonEditableStates))]
+    public void ANonEditableOrderCannotChangeItsBillingAccount(string state)
     {
-        var order = NewOrder();
-        order.Approve(AdvisorId, Now);
+        var order = InState(state);
+        var (version, account) = (order.Version, order.BillingAccount);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             order.SetBillingAccount(ColombianAccount with { CompanyId = Guid.CreateVersion7() }, AdvisorId, Now));
 
-        Assert.Equal("order.order.not_pending", error.Code);
+        Assert.Equal("order.order.not_editable", error.Code);
+        Assert.Equal((version, account), (order.Version, order.BillingAccount));
+    }
+
+    [Fact]
+    public void AnEditableOrderChangesItsBillingAccount()
+    {
+        var order = NewOrder();
+        var version = order.Version;
+        var other = ColombianAccount with { CompanyId = Guid.CreateVersion7() };
+
+        Assert.True(order.SetBillingAccount(other, AdvisorId, Now));
+
+        Assert.Equal((other, version + 1), (order.BillingAccount, order.Version));
     }
 
     [Fact]

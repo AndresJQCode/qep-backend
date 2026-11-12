@@ -133,7 +133,7 @@ public sealed class QuotationEditsApiTests
         var (quotation, productId) = await CreateEditableQuotationAsync(client, factory, tenantId);
         var converted = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, quotation.Id)}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         converted.EnsureSuccessStatusCode();
         var reloaded = await GetQuotationAsync(client, tenantId, quotation.Id);

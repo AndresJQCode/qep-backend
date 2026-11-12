@@ -138,6 +138,13 @@ public sealed class CustomerDataConsent
 
     public string? Note { get; private set; }
 
+    /// <summary>Foto del nombre del cliente al borrarlo: la fila sobrevive a la ficha (prueba legal) y sin esto quedaría
+    /// anónima. Sólo la escribe el borrado; desde el dominio es de lectura.</summary>
+    public string? CustomerName { get; private set; }
+
+    /// <summary>Foto del teléfono (E.164) del cliente al borrarlo. Nulo si no tenía o si el cliente sigue vivo.</summary>
+    public string? CustomerPhoneE164 { get; private set; }
+
     /// <summary>La respuesta del titular a los botones del bloque. El bot nunca revoca: eso lo registra un miembro.</summary>
     public static CustomerDataConsent FromChatbot(
         Guid tenantId,

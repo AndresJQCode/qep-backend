@@ -382,7 +382,7 @@ public static class ExportLoadSeeder
     private const string OrdersSql = """
         INSERT INTO quotations.orders (
             id, tenant_id, order_number, quotation_id, status, payment_status, notes, converted_at, converted_by,
-            approved_at, approved_by, ritual_collection_sync_id, created_at, updated_at, version,
+            ritual_collection_sync_id, created_at, updated_at, version,
             source, external_reference, client_id, advisor_id, currency,
             billing_company_id, billing_bank_name, billing_account_number, billing_account_currency,
             payment_method, is_retail, global_scale_floor, billing_uses_business_name, is_store_pickup,
@@ -391,8 +391,8 @@ public static class ExportLoadSeeder
             retention_amount, net_total)
         SELECT gen_random_uuid(), @tenant,
                'PED-' || numbered.year || '-' || lpad(numbered.sequence::text, greatest(4, length(numbered.sequence::text)), '0'),
-               numbered.quotation_id, 'Pending', 'PaymentPending', NULL, numbered.converted_at, @advisor,
-               NULL, NULL, NULL, numbered.converted_at, numbered.converted_at, 1,
+               numbered.quotation_id, 'Open', 'PaymentPending', NULL, numbered.converted_at, @advisor,
+               NULL, numbered.converted_at, numbered.converted_at, 1,
                'Quotation', NULL, q.client_id, q.advisor_id, q.currency,
                q.billing_company_id, q.billing_bank_name, q.billing_account_number, q.billing_account_currency,
                q.payment_method, q.is_retail, q.global_scale_floor, q.billing_uses_business_name, q.is_store_pickup,

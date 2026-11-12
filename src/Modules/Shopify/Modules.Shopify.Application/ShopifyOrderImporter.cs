@@ -206,7 +206,7 @@ public sealed class ShopifyOrderImporter(
         if ((result.AlreadyExisted || draft.CashOnDelivery) && snapshot.FinancialStatus.Length > 0)
         {
             var synced = await orders.SyncPaymentStatusAsync(tenantId, result.OrderId, snapshot.FinancialStatus, cancellationToken);
-            // §6.3: payment_has_proofs o not_pending se auditan en la fila y no frenan: después de aprobar, el pago lo lleva QEP.
+            // §6.3: payment_has_proofs o not_editable (anulado o facturado) se auditan en la fila y no frenan: ahí el pago lo lleva QEP.
             syncError = synced.Kind == ShopifyOrderOutcomeKind.Ignored ? synced.Code : null;
         }
 

@@ -91,4 +91,56 @@ public sealed class MessageMappingContactsTests
     [Fact]
     public void AMessageThatIsNotContactsHasNoContacts() =>
         Assert.Null(MessageMapping.ToDto(Row(MessageKind.Text, MetaContacts, "hola"), TenantId, Names, NoTargets).Contacts);
+
+    private static readonly CustomerRefDto Laura = new(Guid.CreateVersion7(), "Laura Gómez", false);
+
+    private const string OneCard = """[{ "phones": [{ "phone": "+57 300 123 4567", "wa_id": "573001234567", "type": "CELL" }] }]""";
+
+    private static IReadOnlyList<SharedContactPhoneDto> PhonesOf(string details, Dictionary<string, MessagingSharedPhone>? shared) =>
+        MessageMapping.ToDto(Row(MessageKind.Contacts, details), TenantId, Names, NoTargets, sharedPhones: shared).Contacts![0].Phones;
+
+    [Fact]
+    public void APhoneThatMatchesCarriesTheCustomerAndItsParts()
+    {
+        var shared = new Dictionary<string, MessagingSharedPhone> { ["573001234567"] = new(Laura, "CO", "3001234567") };
+        var phones = MessageMapping.ToDto(Row(MessageKind.Contacts, MetaContacts), TenantId, Names, NoTargets, sharedPhones: shared).Contacts![0].Phones;
+
+        Assert.Equal(new SharedContactPhoneDto("+57 300 123 4567", "573001234567", "CELL", Laura, "CO", "3001234567"), phones[0]);
+        Assert.Equal(new SharedContactPhoneDto("+57 604 444 5566", null, "WORK"), phones[1]); // sin waId: los tres null
+    }
+
+    [Fact]
+    public void APhoneWithoutMatchCarriesOnlyItsParts()
+    {
+        var shared = new Dictionary<string, MessagingSharedPhone> { ["573001234567"] = new(null, "CO", "3001234567") };
+
+        Assert.Equal(new SharedContactPhoneDto("+57 300 123 4567", "573001234567", "CELL", null, "CO", "3001234567"), PhonesOf(OneCard, shared)[0]);
+    }
+
+    [Fact]
+    public void ACardPhoneWithAnInvalidWaIdHasNoParts()
+    {
+        const string details = """[{ "phones": [{ "phone": "300 123 4567", "wa_id": "3001234567", "type": "CELL" }] }]""";
+        var shared = new Dictionary<string, MessagingSharedPhone> { ["3001234567"] = new(null, null, null) };
+
+        Assert.Equal(new SharedContactPhoneDto("300 123 4567", "3001234567", "CELL"), PhonesOf(details, shared)[0]);
+    }
+
+    [Fact]
+    public void WithoutTheDictionaryTheNewFieldsAreNull() =>
+        Assert.Equal(new SharedContactPhoneDto("+57 300 123 4567", "573001234567", "CELL"), PhonesOf(OneCard, null)[0]);
+
+    [Fact]
+    public void SharedContactWaIdsOfCollectsEveryCardOfThePageOnce()
+    {
+        var rows = new[]
+        {
+            Row(MessageKind.Contacts, MetaContacts),
+            Row(MessageKind.Contacts, """[{ "phones": [{ "wa_id": "573001234567" }, { "wa_id": "14155552671" }] }]"""),
+            Row(MessageKind.Text, MetaContacts), // no es Contacts: no cuenta
+            Row(MessageKind.Contacts, "{not json"),
+        };
+
+        Assert.Equal(["573001234567", "14155552671"], MessageMapping.SharedContactWaIdsOf(rows));
+    }
 }

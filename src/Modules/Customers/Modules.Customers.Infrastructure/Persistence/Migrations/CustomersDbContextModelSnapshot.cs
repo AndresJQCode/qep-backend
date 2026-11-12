@@ -109,6 +109,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("classification_id");
 
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
                     b.Property<string>("Completeness")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -234,11 +238,19 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BusinessName")
+                        .HasDatabaseName("IX_customers_business_name_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("BusinessName"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("BusinessName"), new[] { "gin_trgm_ops" });
+
                     b.HasIndex("CityId")
                         .HasDatabaseName("IX_customers_city");
 
                     b.HasIndex("ClassificationId")
                         .HasDatabaseName("IX_customers_classification");
+
+                    b.HasIndex("CompanyId");
 
                     b.HasIndex("Name")
                         .HasDatabaseName("IX_customers_name_trgm");
@@ -247,6 +259,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("Name"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex("TenantId", "ClassificationId");
+
+                    b.HasIndex("TenantId", "CompanyId")
+                        .HasDatabaseName("IX_customers_tenant_company")
+                        .HasFilter("company_id IS NOT NULL");
 
                     b.HasIndex("TenantId", "Cuc")
                         .IsUnique()
@@ -413,6 +429,16 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CustomerId")
                         .HasColumnType("uuid")
                         .HasColumnName("customer_id");
+
+                    b.Property<string>("CustomerName")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("customer_name");
+
+                    b.Property<string>("CustomerPhoneE164")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("customer_phone_e164");
 
                     b.Property<string>("Event")
                         .IsRequired()
@@ -697,6 +723,12 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Modules.Customers.Domain.Customer", b =>
                 {
+                    b.HasOne("Modules.Customers.Domain.Customer", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("FK_customers_customers_company_id");
+
                     b.HasOne("Modules.Customers.Domain.ClientClassification", null)
                         .WithMany()
                         .HasForeignKey("TenantId", "ClassificationId")

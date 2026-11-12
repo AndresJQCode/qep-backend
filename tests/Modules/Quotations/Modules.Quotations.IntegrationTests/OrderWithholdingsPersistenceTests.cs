@@ -144,7 +144,6 @@ public sealed class OrderWithholdingsPersistenceTests
             ColombianAccount,
             ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 119_000m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             null,
             Advisor,
             [],

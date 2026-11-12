@@ -15,6 +15,8 @@ internal static class OrderMapping
         order.AdvisorId.Value,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.Currency,
         order.IsRetail,
@@ -43,8 +45,8 @@ internal static class OrderMapping
         order.Items.OrderBy(item => item.Position).Select(item => ToDto(item, order.PriceRounding)).ToArray(),
         order.ConvertedAt,
         order.ConvertedBy.Value,
-        order.ApprovedAt,
-        order.ApprovedBy?.Value,
+        order.PaidMarkedAt,
+        order.PaidMarkedBy?.Value,
         order.CancelledAt,
         order.CancelledBy?.Value,
         order.CancellationReason,
@@ -61,7 +63,12 @@ internal static class OrderMapping
         order.ExternalShippingTitle,
         [.. order.AppliedWithholdings.Select(QuotationMapping.ToDto)],
         [],
-        [.. order.Withholdings.OrderBy(withholding => withholding.Position).Select(QuotationMapping.ToRateDto)]);
+        [.. order.Withholdings.OrderBy(withholding => withholding.Position).Select(QuotationMapping.ToRateDto)],
+        order.PreparedAt,
+        order.PreparedBy?.Value,
+        order.ArchivedAt,
+        order.ArchivedBy?.Value,
+        order.Balance);
 
     /// <summary>La entrega por envío con forma fija, también en recogida: gemelo de
     /// <see cref="QuotationMapping.ShippingDtoOf"/>.</summary>
@@ -89,6 +96,8 @@ internal static class OrderMapping
         advisorName,
         order.Status.ToString(),
         order.PaymentStatus.ToString(),
+        order.FulfillmentStatus.ToString(),
+        order.IsInvoiced,
         order.PaymentMethod,
         order.ConvertedAt,
         order.Currency,

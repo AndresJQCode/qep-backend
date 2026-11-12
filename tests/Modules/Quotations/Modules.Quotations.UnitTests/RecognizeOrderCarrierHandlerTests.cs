@@ -56,13 +56,13 @@ public sealed class RecognizeOrderCarrierHandlerTests
     }
 
     [Fact]
-    public async Task RecognizeOrderNotPendingThrows()
+    public async Task RecognizeOrderNotEditableThrows()
     {
         var order = NewExternal(ChargedShipping);
-        order.Approve(Advisor, Now);
+        order.Prepare(Advisor, Now);
         var carrier = NewCarrier();
 
-        await AssertCodeAsync("order.order.not_pending", NewHandler(order, carrier), Command(order, carrier));
+        await AssertCodeAsync("order.order.not_editable", NewHandler(order, carrier), Command(order, carrier));
     }
 
     [Fact]

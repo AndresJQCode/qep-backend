@@ -1052,7 +1052,114 @@ public sealed class CustomerStatusAndImportApiTests
             .Select(column => headerRow.Cell(column).GetString())
             .ToArray();
 
-        Assert.Equal(CustomerImportColumns.Ordered, headers);
+        // Las trece de siempre y, al final, «Empresa» (spec 2026-11-10 §4.8).
+        Assert.Equal([.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional], headers);
+    }
+
+    private static readonly string[] HeadersWithCompany = [.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional];
+
+    // G5: el importador lee por cabecera y exige las trece; «Empresa» es opcional. Un archivo de antes de la columna sigue siendo
+    // válido y se lee como «sin empresa».
+    [Fact]
+    public async Task AFileWithoutTheCompanyColumnIsStillValid()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Sin Empresa",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ]);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("completed", body.GetProperty("status").GetString());
+        Assert.Equal(1, body.GetProperty("importedCount").GetInt32());
+    }
+
+    // Spec 2026-11-10 §4.8: la empresa puede venir en el mismo archivo y se nombra por su número de documento; la fila que la
+    // nombra queda vinculada.
+    [Fact]
+    public async Task ImportingLinksContactsToTheirCompany()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var manager = CreateManager(factory);
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "900.111.111-1"),
+                new ExcelRowInput(
+                    Name: "Verde Empresa S.A.S.",
+                    IdentificationNumber: "900.111.111-1",
+                    Department: city.DepartmentName,
+                    City: city.CityName)
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ImportCustomersResponse>(TestContext.Current.CancellationToken);
+        Assert.NotNull(result);
+        Assert.Equal("completed", result.Status);
+        var page = await ListAsync(manager, "?contacts=include&pageSize=50");
+        var company = Assert.Single(page.Items, item => item.Name == "Verde Empresa S.A.S.");
+        var contact = await GetAsync(manager, Assert.Single(page.Items, item => item.Name == "Ana Contacto").Id);
+        Assert.NotNull(contact.Company);
+        Assert.Equal(company.Id, contact.Company.Id);
+    }
+
+    // G6 + A22: el error de la columna trae el campo `companyIdentificationNumber` y la fila tal como vino, para que el modal la
+    // reenvíe; la fila no se escribe.
+    [Fact]
+    public async Task ACompanyErrorComesBackWithFieldAndRowData()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+
+        using var upload = BuildExcelUpload(
+            "clientes.xlsx",
+            [
+                new ExcelRowInput(
+                    Name: "Ana Contacto",
+                    IdentificationType: "CC",
+                    IdentificationNumber: "1020304050",
+                    Department: city.DepartmentName,
+                    City: city.CityName,
+                    Company: "999999999")
+            ],
+            HeadersWithCompany);
+
+        var response = await PostImportAsync(client, upload);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("failed", body.GetProperty("status").GetString());
+        var error = Assert.Single(body.GetProperty("errors").EnumerateArray());
+        Assert.Equal("customers.import.row.company_not_found", error.GetProperty("code").GetString());
+        Assert.Equal("companyIdentificationNumber", error.GetProperty("field").GetString());
+        Assert.Equal("999999999", error.GetProperty("rowData").GetProperty("companyIdentificationNumber").GetString());
     }
 
     // Mismo permiso que /import: descargar la plantilla es parte del mismo flujo de carga masiva.

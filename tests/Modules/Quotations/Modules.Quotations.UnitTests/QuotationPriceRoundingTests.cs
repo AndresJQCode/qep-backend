@@ -86,7 +86,7 @@ public sealed class QuotationPriceRoundingTests
         });
 
         var order = Order.FromQuotation(
-            OrderId.New(), TenantId, "PED-2026-0001", quotation, OrderPaymentStatus.PaymentPending, null,
+            OrderId.New(), TenantId, "PED-2026-0001", quotation, null,
             AdvisorId, [], Now);
 
         Assert.Equal(UsdUp, order.PriceRounding);

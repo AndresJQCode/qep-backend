@@ -260,7 +260,8 @@ public sealed record TenantSettingsResponse(
     long Version,
     TenantLogoResponse? Logo,
     /// <summary>`Never` | `OnCustomerSave` | `OnOrderApproval`: lo guardado, no lo efectivo
-    /// (`/auth/me` publica el efectivo). Spec 2026-10-26.</summary>
+    /// (`/auth/me` publica el efectivo). Spec 2026-10-26. `OnOrderApproval` significa, desde spec
+    /// 2026-11-10, «al marcar pagado y al facturar»; el nombre no cambia.</summary>
     string PersonTypeRequirement,
     CustomerFieldPolicyResponse CustomerFieldPolicy);
 

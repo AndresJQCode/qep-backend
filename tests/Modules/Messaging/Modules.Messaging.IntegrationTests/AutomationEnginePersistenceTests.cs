@@ -103,8 +103,11 @@ public sealed class AutomationEnginePersistenceTests
         await using var database = await StartDatabaseAsync();
         var (connectionString, conversationId, tenantId, _) = await SeedAsync(database);
         using var factory = new QepApiFactory(connectionString);
-        var first = Guid.CreateVersion7();
-        var second = Guid.CreateVersion7();
+        // Clientes reales: colgar una conversación toma el candado del cliente y exige que exista (final review I-2a).
+        var otherTenant = Guid.CreateVersion7();
+        var first = await InsertCustomerAsync(connectionString, tenantId);
+        var second = await InsertCustomerAsync(connectionString, tenantId);
+        var foreign = await InsertCustomerAsync(connectionString, otherTenant);
 
         async Task<Guid?> LinkAsync(Guid tenant, Guid customer)
         {
@@ -122,6 +125,19 @@ public sealed class AutomationEnginePersistenceTests
         Assert.Equal(first, await ScalarAsync<Guid>(connectionString, "SELECT customer_id FROM messaging.conversations WHERE id = @id", ("id", conversationId)));
         Assert.Equal(1L, await CountAsync(connectionString, "SELECT count(*) FROM messaging.messages WHERE direction = 3"));
 
-        Assert.Null(await LinkAsync(Guid.CreateVersion7(), second));
+        // Otro tenant (con su propio cliente) no ve la conversación.
+        Assert.Null(await LinkAsync(otherTenant, foreign));
+    }
+
+    private static async Task<Guid> InsertCustomerAsync(string connectionString, Guid tenantId)
+    {
+        var id = Guid.CreateVersion7();
+        await ExecuteAsync(connectionString,
+            """
+            INSERT INTO customers.customers (id, tenant_id, name, is_active, with_retention, vat_surplus, version, created_at, updated_at, completeness)
+            VALUES (@id, @tenant, 'Cliente de prueba', true, false, false, 1, now(), now(), 'Incomplete')
+            """,
+            ("id", id), ("tenant", tenantId));
+        return id;
     }
 }

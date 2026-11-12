@@ -59,7 +59,8 @@ public sealed class QuotationCustomerWithRetentionTests
         var lookup = new QuotationCustomerLookup(
             new FakeCustomerRepository(customer),
             new EmptyGeography(),
-            new CatalogRates(RetefuenteSpain, ReteIca));
+            new CatalogRates(RetefuenteSpain, ReteIca),
+            companies: null!);
 
         var found = await lookup.FindAsync(TenantId, customer.Id.Value, TestContext.Current.CancellationToken);
 

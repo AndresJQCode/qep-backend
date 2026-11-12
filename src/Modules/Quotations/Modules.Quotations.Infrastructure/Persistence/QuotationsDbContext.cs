@@ -669,20 +669,43 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("payment_status")
             .HasConversion<string>()
             .HasMaxLength(30);
+        // Spec 2026-11-10 §3.3: el eje del envío, por nombre como los otros dos.
+        order.Property(value => value.FulfillmentStatus)
+            .HasColumnName("fulfillment_status")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(OrderFulfillmentStatus.NotPrepared)
+            .HasSentinel((OrderFulfillmentStatus)(-1));
+        // Spec 2026-11-10: quién y cuándo marcó pagado, preparado y archivado. Nullables, porque un pedido sin esa
+        // marca no tiene nada que guardar acá; misma conversión nullable que invoiced_by.
+        order.Property(value => value.PaidMarkedAt).HasColumnName("paid_marked_at");
+        order.Property(value => value.PaidMarkedBy)
+            .HasColumnName("paid_marked_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.PreparedAt).HasColumnName("prepared_at");
+        order.Property(value => value.PreparedBy)
+            .HasColumnName("prepared_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
+        order.Property(value => value.ArchivedAt).HasColumnName("archived_at");
+        order.Property(value => value.ArchivedBy)
+            .HasColumnName("archived_by")
+            .HasConversion(
+                id => id.HasValue ? id.Value.Value : (Guid?)null,
+                value => value.HasValue ? new MemberId(value.Value) : null);
         // Plan 2026-10-15 P2: hereda las notas de la cotización, que no tienen tope.
         order.Property(value => value.Notes).HasColumnName("notes").HasColumnType("text");
+        // D9 (spec 2026-11-10): la nota que escribió el comprador en el checkout; Notes es la del asesor.
+        order.Property(value => value.BuyerNotes).HasColumnName("buyer_notes").HasColumnType("text");
         order.Property(value => value.ConvertedAt).HasColumnName("converted_at");
         order.Property(value => value.ConvertedBy)
             .HasColumnName("converted_by")
             .HasConversion(id => id.Value, value => new MemberId(value));
-        order.Property(value => value.ApprovedAt).HasColumnName("approved_at");
-        order.Property(value => value.ApprovedBy)
-            .HasColumnName("approved_by")
-            .HasConversion(
-                id => id.HasValue ? id.Value.Value : (Guid?)null,
-                value => value.HasValue ? new MemberId(value.Value) : null);
         // Spec 2026-09-16: quién, cuándo y por qué se anuló. Nullables, porque un pedido vivo no
-        // tiene nada que guardar acá; misma conversión nullable que approved_by.
+        // tiene nada que guardar acá; misma conversión nullable que invoiced_by.
         order.Property(value => value.CancelledAt).HasColumnName("cancelled_at");
         order.Property(value => value.CancelledBy)
             .HasColumnName("cancelled_by")
@@ -693,8 +716,7 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasColumnName("cancellation_reason")
             .HasMaxLength(Order.CancellationReasonMaxLength);
         // Spec 2026-10-05: quién y cuándo se marcó como facturado. Nullables, porque un pedido sin
-        // facturar no tiene nada que guardar acá y revertir las vuelve a null; misma conversión
-        // nullable que approved_by.
+        // facturar no tiene nada que guardar acá y revertir las vuelve a null.
         order.Property(value => value.InvoicedAt).HasColumnName("invoiced_at");
         order.Property(value => value.InvoicedBy)
             .HasColumnName("invoiced_by")
@@ -1081,6 +1103,13 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         settings.Property(value => value.DefaultFreightChargeMode)
             .HasColumnName("default_freight_charge_mode")
             .HasMaxLength(16);
+        // Spec 2026-11-10 §6. Los defaults del owner (false, true, false) los pone sólo la migración OrderStatusAxes
+        // en la columna, para las filas viejas y la que crea LockRowAsync con SQL crudo. No van en el modelo: un
+        // bool con HasDefaultValue(true) se omite del INSERT cuando vale false (el sentinel), y la base lo dejaría
+        // en true. EF siempre manda el valor del row.
+        settings.Property(value => value.RequirePaymentProofToMarkPaid).HasColumnName("require_payment_proof_to_mark_paid");
+        settings.Property(value => value.RequireFullPaymentToInvoice).HasColumnName("require_full_payment_to_invoice");
+        settings.Property(value => value.AutoArchiveOrders).HasColumnName("auto_archive_orders");
 
         var totals = modelBuilder.Entity<TenantMinimumTotalRow>();
         totals.ToTable("tenant_minimum_totals", "quotations", table =>

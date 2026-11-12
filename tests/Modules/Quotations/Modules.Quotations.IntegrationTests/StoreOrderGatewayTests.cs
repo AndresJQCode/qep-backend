@@ -542,7 +542,7 @@ public sealed class StoreOrderGatewayTests
             new CreateOrderRequest(
                 customerId, null, null, false, null, null,
                 new QuotationBillingAccountRequest(account.CompanyId, account.BankName, account.AccountNumber, account.Currency),
-                [new OrderEditItemRequest(variantId, 1m)], "PaymentPending", []),
+                [new OrderEditItemRequest(variantId, 1m)], []),
             TestContext.Current.CancellationToken);
         manual.EnsureSuccessStatusCode();
         var now = DateTimeOffset.UtcNow;

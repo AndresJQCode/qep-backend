@@ -36,6 +36,7 @@ public sealed class UpdateCustomerHandler(
     ICustomerTagRepository tagRepository,
     ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
     ICustomersAuditPublisher auditPublisher,
     ICucGenerator cucGenerator,
@@ -146,7 +147,7 @@ public sealed class UpdateCustomerHandler(
             await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, tagRepository, taxRateLookup, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -192,7 +193,7 @@ public sealed class UpdateCustomerHandler(
         await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, taxRateLookup, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 
     // Sin el campo (frontend viejo) las tasas se quedan como están: el PUT reemplaza el recurso entero, pero este campo no

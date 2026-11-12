@@ -183,7 +183,8 @@ public sealed class ServiceContractsPersistenceTests
         await using var _ = database;
         using var __ = factory;
 
-        var customerId = Guid.CreateVersion7();
+        // Un cliente real: guardar un perfil nuevo toma el candado del cliente y exige que exista (R7 revocado).
+        var customerId = await SeedCustomerAsync(factory, Tenant, "Panaderia La Esquina", "+573001234567", "pan@example.com");
         await using var first = factory.Services.CreateAsyncScope();
         await using var second = factory.Services.CreateAsyncScope();
         // Los dos pasaron el «no hay perfil» antes de que cualquiera guardara: es la carrera del primer PUT.

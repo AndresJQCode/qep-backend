@@ -108,7 +108,6 @@ public sealed class QuotationPreviewStatementCountApiTests
                     clientId, "Transferencia", null, false, null, null,
                     new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency),
                     products.Take(lines).Select(product => new OrderEditItemRequest(product, 2m)).ToArray(),
-                    "PaymentPending",
                     []),
                 TestContext.Current.CancellationToken);
             response.EnsureSuccessStatusCode();
@@ -251,7 +250,6 @@ public sealed class QuotationPreviewStatementCountApiTests
         Guid clientId, QuotationBillingAccountRequest billing, IEnumerable<Guid> products) => new(
             clientId, "Transferencia", null, false, null, null, billing,
             products.Select(product => new OrderEditItemRequest(product, 2m)).ToArray(),
-            "PaymentPending",
             []);
 
     // Una línea base más que ManyLines: las rutas que agregan parten de un documento con una línea.

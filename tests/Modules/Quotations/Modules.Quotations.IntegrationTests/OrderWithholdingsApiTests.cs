@@ -235,7 +235,9 @@ public sealed class OrderWithholdingsApiTests
     }
 
     [Fact]
-    public async Task NonPendingEditIs422()
+    // Un pedido preparado sigue abierto, pero ya no es editable (Order.IsEditable, spec 2026-11-10 §3.6): los selectores y
+    // la empresa siguen la misma regla que el resto de la edición.
+    public async Task APreparedOrderRejectsWithholdingAndAccountEdits()
     {
         await using var database = await StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
@@ -243,16 +245,17 @@ public sealed class OrderWithholdingsApiTests
         var retefuente = await InsertWithholdingRateAsync(factory, setup.TenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
         var clientId = await CreateActiveCustomerAsync(setup.Client, setup.TenantId);
         var created = await CreateManualAsync(setup, clientId, setup.Account);
-        var approve = await setup.Client.PostAsync(
-            $"{OrdersUrl(setup.TenantId)}/{created.Id}/approve", null, TestContext.Current.CancellationToken);
-        approve.EnsureSuccessStatusCode();
-        var approved = await approve.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        var prepare = await setup.Client.PostAsync(
+            $"{OrdersUrl(setup.TenantId)}/{created.Id}/prepare", null, TestContext.Current.CancellationToken);
+        prepare.EnsureSuccessStatusCode();
+        var prepared = await prepare.Content.ReadFromJsonAsync<OrderResponse>(TestContext.Current.CancellationToken);
+        Assert.Equal("Open", prepared!.Status);
 
         var response = await PutEditsAsync(
-            setup, approved!, Edits(setup, withholdingTaxRateIds: [retefuente], billingAccount: setup.Account));
+            setup, prepared, Edits(setup, withholdingTaxRateIds: [retefuente], billingAccount: setup.Account));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("order.order.not_pending", await CodeOfAsync(response));
+        Assert.Equal("order.order.not_editable", await CodeOfAsync(response));
         Assert.Empty((await GetDetailAsync(setup, created.Id)).Order.BillingWithholdingTaxRates);
     }
 
@@ -304,7 +307,7 @@ public sealed class OrderWithholdingsApiTests
     {
         var response = await setup.Client.PostAsJsonAsync(
             $"{QuotationsUrl(setup.TenantId)}/{quotationId}/order",
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var converted = await response.Content.ReadConvertedOrderAsync(TestContext.Current.CancellationToken);
@@ -319,7 +322,7 @@ public sealed class OrderWithholdingsApiTests
             OrdersUrl(setup.TenantId),
             new CreateOrderRequest(
                 clientId, "Transferencia", null, false, null, null, account,
-                [new OrderEditItemRequest(setup.ProductId, quantity)], "PaymentPending", []),
+                [new OrderEditItemRequest(setup.ProductId, quantity)], []),
             TestContext.Current.CancellationToken);
         Assert.True(
             response.StatusCode == HttpStatusCode.Created,

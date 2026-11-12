@@ -600,7 +600,7 @@ public sealed class ShopifyImportFlowTests
 
             var proofs = await client.PostAsJsonAsync(
                 $"/api/v1/tenants/{World.TenantId}/orders/{orderId}/proofs",
-                new AddOrderPaymentProofsRequest("PartialPaymentReceived", [new OrderPaymentProofRequest(fileId, 50_000m)]),
+                new AddOrderPaymentProofsRequest([new OrderPaymentProofRequest(fileId, 50_000m)]),
                 Ct);
             Assert.True(proofs.IsSuccessStatusCode, await proofs.Content.ReadAsStringAsync(Ct));
         }

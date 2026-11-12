@@ -321,7 +321,8 @@ internal sealed class SettingsRig
         string? name = null,
         string? dataPolicyUrl = "https://acme.test/politica",
         string? instagramUrl = null,
-        Guid? advisorMembershipId = null) =>
+        Guid? advisorMembershipId = null,
+        bool? showPrices = null) =>
         new(
             slug,
             name,
@@ -342,7 +343,8 @@ internal sealed class SettingsRig
             primaryCurrency,
             salesCountries ?? ["co", "es"],
             featured ?? [],
-            advisorMembershipId);
+            advisorMembershipId,
+            showPrices);
 
     public static StoreCurrencyRequest Entry(string currency, string account, string? accountCurrency = null) =>
         new(currency, new StoreBillingAccountRequest(CompanyId, "Bancolombia", account, accountCurrency ?? currency));

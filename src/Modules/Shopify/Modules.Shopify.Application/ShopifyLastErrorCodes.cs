@@ -8,7 +8,7 @@ namespace Modules.Shopify.Application;
 /// lo parte él y no la pantalla. Los cuatro orígenes (las únicas llamadas a <c>RecordLastError</c>) escriben:
 /// <list type="bullet">
 /// <item><see cref="ShopifyOrderChanges"/>: los códigos que rechazó el adaptador de pedidos en la anulación y el pago del mismo
-/// aviso, unidos por <c>"; "</c> (<c>order.order.not_pending</c>, <c>order.order.payment_has_proofs</c>,
+/// aviso, unidos por <c>"; "</c> (<c>order.order.not_editable</c>, <c>order.order.payment_has_proofs</c>,
 /// <c>order.order.not_found</c>, <c>tenancy.tenant.not_found</c>), o el nombre del enum (<c>Ignored</c>, <c>Unchanged</c>) si el
 /// puerto no dio código.</item>
 /// <item><see cref="ShopifyOrderImporter"/>: el código del pago rechazado justo después del alta (el mismo conjunto del pago).</item>

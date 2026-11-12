@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Modules.Quotations.Application;
@@ -79,11 +80,33 @@ internal sealed class QuotationsUnitOfWork(QuotationsDbContext dbContext) : IQuo
 
     public void DiscardPendingChanges() => dbContext.ChangeTracker.Clear();
 
+    // Borrar clientes (spec 2026-11-10, P1/P2): guardar una cotización o un pedido con cliente es escribir una
+    // referencia a customers.customers, que no tiene FK. CustomerReferenceWrites toma el candado compartido de cada
+    // cliente y, ya con él, comprueba que la fila exista, todo dentro de la transacción que guarda (con transacción
+    // abierta, la del handler que trajo el contador de numeración). Si el borrado ganó la carrera, el candado espera a
+    // su commit y la comprobación ve el cliente ya borrado. Pasan por aquí todos los caminos de escritura, incluido el
+    // IExternalOrderWriter (Shopify y tienda pública), porque comparten esta unidad de trabajo. Un pedido manual sin
+    // cliente (Guid.Empty) no referencia a nadie. Si el mismo cliente aparece en una cotización y en un pedido, gana el
+    // código de la cotización (prioridad más alta).
+    private static readonly CustomerReferenceSource[] CustomerReferenceSources =
+    [
+        new(typeof(Quotation), nameof(Quotation.ClientId), "quotation.quotation.client_not_found", Priority: 1),
+        new(typeof(Order), nameof(Order.ClientId), "order.order.client_not_found"),
+    ];
+
+    private Task<int> SaveHoldingCustomerReferencesAsync(CancellationToken cancellationToken) =>
+        CustomerReferenceWrites.SaveHoldingAsync(
+            dbContext,
+            CustomerReferenceWrites.Collect(dbContext.ChangeTracker, CustomerReferenceSources),
+            reference => new QuotationsDomainException(
+                reference.NotFoundCode, $"Client '{reference.CustomerId}' was not found in this tenant."),
+            cancellationToken);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await dbContext.SaveChangesAsync(cancellationToken);
+            return await SaveHoldingCustomerReferencesAsync(cancellationToken);
         }
         // Antes que DbUpdateException porque DbUpdateConcurrencyException hereda de ella: al
         // reves, el filtro de indice unico la dejaria pasar sin traducir y saldria como 500.

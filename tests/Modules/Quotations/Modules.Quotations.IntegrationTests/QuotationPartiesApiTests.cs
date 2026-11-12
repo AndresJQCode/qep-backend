@@ -185,7 +185,7 @@ public sealed class QuotationPartiesApiTests
 
         var response = await client.PostAsJsonAsync(
             ConvertUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);

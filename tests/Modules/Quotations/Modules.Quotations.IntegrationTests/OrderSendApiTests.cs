@@ -275,14 +275,14 @@ public sealed class OrderSendApiTests
     }
 
     private static async Task<OrderResponse> CreateOrderAsync(
-        HttpClient client, QepApiFactory factory, Guid tenantId)
+        HttpClient client, QepApiFactory factory, Guid tenantId, Guid? existingClientId = null)
     {
-        var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        var clientId = existingClientId ?? await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(
             ConvertUrl(tenantId, quotation.Id),
-            new ConvertQuotationToOrderRequest("PaymentPending", null, []),
+            new ConvertQuotationToOrderRequest(null, []),
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
         var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(
@@ -303,5 +303,98 @@ public sealed class OrderSendApiTests
     {
         using var payload = JsonDocument.Parse(message.PayloadJson);
         return payload.RootElement.GetProperty("action").GetString()!;
+    }
+
+    // Spec 2026-11-10 §4.6: el destinatario Contact llega al contacto de la empresa del pedido, con su ficha.
+    [Fact]
+    public async Task SendingToAContactDeliversToThatContact()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id),
+            new SendOrderRequest("Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var message = factory.WhatsAppSender.Messages[^1];
+        Assert.Equal(("311 555 0101", "Laura Gómez", (Guid?)contactId), (message.ToPhone, message.FullName, message.CustomerId));
+        var detail = await response.Content.ReadFromJsonAsync<OrderDetailResponse>(TestContext.Current.CancellationToken);
+        Assert.Contains(detail!.History, entry => entry.Details == "Enviado por WhatsApp a Laura Gómez.");
+    }
+
+    [Fact]
+    public async Task AContactOfAnotherClientIs422AndNothingIsSent()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
+        var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
+        await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+        var sentBefore = factory.WhatsAppSender.Messages.Count;
+
+        foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
+        {
+            var response = await client.PostAsJsonAsync(
+                SendUrl(tenantId, order.Id),
+                new SendOrderRequest("Contact", ContactId: contactId),
+                TestContext.Current.CancellationToken);
+
+            await AssertDomainRejectionAsync(response, "order.order.contact_not_of_client");
+        }
+
+        Assert.Equal(sentBefore, factory.WhatsAppSender.Messages.Count);
+    }
+
+    [Fact]
+    public async Task AContactWithoutPhoneIs422RecipientMissing()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
+        await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var response = await client.PostAsJsonAsync(
+            SendUrl(tenantId, order.Id),
+            new SendOrderRequest("Contact", ContactId: contactId),
+            TestContext.Current.CancellationToken);
+
+        await AssertDomainRejectionAsync(response, "order.whatsapp.recipient_missing");
+    }
+
+    [Fact]
+    public async Task TheOrderDetailListsTheClientsContacts()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
+        using var _ = client;
+        var companyId = await CreateActiveCustomerAsync(client, tenantId);
+        var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
+        await LinkContactAsync(client, tenantId, contactId, companyId);
+        var order = await CreateOrderAsync(client, factory, tenantId, companyId);
+
+        var detail = await client.GetFromJsonAsync<OrderDetailResponse>(
+            $"/api/v1/tenants/{tenantId}/orders/{order.Id}", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(detail);
+        var contact = Assert.Single(detail.ClientContacts);
+        Assert.Equal((contactId, "Laura Gómez", "311 555 0101"), (contact.Id, contact.Name, contact.Phone));
     }
 }

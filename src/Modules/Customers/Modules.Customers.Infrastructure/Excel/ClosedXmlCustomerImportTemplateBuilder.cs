@@ -4,8 +4,8 @@ using Modules.Customers.Application;
 namespace Modules.Customers.Infrastructure.Excel;
 
 /// <summary>
-/// Arma la plantilla de importacion con ClosedXML: la primera hoja con las once columnas de
-/// <see cref="CustomerImportColumns"/> en la cabecera, una segunda hoja de referencia con los
+/// Arma la plantilla de importacion con ClosedXML: la primera hoja con las columnas de
+/// <see cref="CustomerImportColumns"/> (y «Empresa», la última) en la cabecera, una segunda hoja de referencia con los
 /// nombres de departamento, de clasificacion y los tipos de identificacion validos, y desplegables
 /// en las cuatro columnas que tienen un catalogo cerrado — para que quien llena el Excel no tenga
 /// que adivinarlos ni pedirlos por otro canal, y no pueda tipear un valor que la importacion vaya a
@@ -35,8 +35,12 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
 
     // Se derivan de CustomerImportColumns.Ordered y no se escriben a mano: agregar una columna
     // al medio movia estos cuatro numeros, y nada avisaba si alguno quedaba atras.
-    private static int ColumnOf(string name) =>
-        CustomerImportColumns.Ordered.ToList().IndexOf(name) + 1;
+    // Las opcionales (Empresa) van después de las trece y siempre al final: el archivo se lee por cabecera, pero quien lo
+    // llena a mano no debe ver correr las columnas de siempre.
+    private static readonly IReadOnlyList<string> AllColumns =
+        [.. CustomerImportColumns.Ordered, .. CustomerImportColumns.Optional];
+
+    private static int ColumnOf(string name) => AllColumns.ToList().IndexOf(name) + 1;
 
     private static readonly int IdentificationTypeColumn =
         ColumnOf(CustomerImportColumns.IdentificationType);
@@ -71,9 +75,9 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
         using var workbook = new XLWorkbook();
 
         var dataSheet = workbook.Worksheets.Add(DataSheetName);
-        for (var column = 0; column < CustomerImportColumns.Ordered.Count; column++)
+        for (var column = 0; column < AllColumns.Count; column++)
         {
-            dataSheet.Cell(1, column + 1).Value = CustomerImportColumns.Ordered[column];
+            dataSheet.Cell(1, column + 1).Value = AllColumns[column];
         }
 
         for (var index = 0; index < rows.Count; index++)
@@ -83,7 +87,7 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
 
         dataSheet.SheetView.FreezeRows(1);
         dataSheet.Row(1).Style.Font.Bold = true;
-        var dataColumns = dataSheet.Columns(1, CustomerImportColumns.Ordered.Count);
+        var dataColumns = dataSheet.Columns(1, AllColumns.Count);
         dataColumns.AdjustToContents();
         ApplyMinimumWidth(dataColumns);
 
@@ -134,6 +138,7 @@ internal sealed class ClosedXmlCustomerImportTemplateBuilder : ICustomerImportTe
         Write(CustomerImportColumns.Retefuente, row.Retefuente);
         Write(CustomerImportColumns.ReteIca, row.ReteIca);
         Write(CustomerImportColumns.VatSurplus, row.VatSurplus);
+        Write(CustomerImportColumns.Company, row.CompanyIdentificationNumber);
     }
 
     private static void BuildReferenceSheet(

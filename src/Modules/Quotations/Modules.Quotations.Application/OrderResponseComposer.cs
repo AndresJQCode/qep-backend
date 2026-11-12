@@ -37,6 +37,8 @@ public sealed class OrderResponseComposer(
             : null;
         var products = await productLookup.FindManyAsync(
             tenantId, order.Items.Select(item => item.VariantId).Distinct().ToArray(), cancellationToken);
+        var clientContacts = await QuotationResponseComposer.ClientContactsAsync(
+            customerLookup, tenantId, customer, cancellationToken);
 
         return new OrderDetailResponse(
             OrderResponses.ToResponse(order),
@@ -59,7 +61,8 @@ public sealed class OrderResponseComposer(
                     entry.MemberId is { } member ? members.GetValueOrDefault(member)?.Label : null,
                     entry.Details))
                 .ToArray(),
-            QuotationResponseComposer.AvailableFloors(order.Items, products));
+            QuotationResponseComposer.AvailableFloors(order.Items, products),
+            clientContacts);
     }
 }
 
@@ -80,6 +83,8 @@ public static class OrderResponses
             order.AdvisorId,
             order.Status,
             order.PaymentStatus,
+            order.FulfillmentStatus,
+            order.Invoiced,
             order.PaymentMethod,
             order.Currency,
             order.IsRetail,
@@ -107,8 +112,8 @@ public static class OrderResponses
                 .ToArray(),
             order.ConvertedAt,
             order.ConvertedBy,
-            order.ApprovedAt,
-            order.ApprovedBy,
+            order.PaidMarkedAt,
+            order.PaidMarkedBy,
             order.CancelledAt,
             order.CancelledBy,
             order.CancellationReason,
@@ -127,6 +132,11 @@ public static class OrderResponses
             order.FreightTaxAmount,
             [.. order.Withholdings.Select(QuotationResponseComposer.ToWithholdingResponse)],
             [.. order.CustomerWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)],
-            [.. order.BillingWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)]);
+            [.. order.BillingWithholdingTaxRates.Select(QuotationResponseComposer.ToWithholdingTaxRateResponse)],
+            order.PreparedAt,
+            order.PreparedBy,
+            order.ArchivedAt,
+            order.ArchivedBy,
+            order.Balance);
     }
 }

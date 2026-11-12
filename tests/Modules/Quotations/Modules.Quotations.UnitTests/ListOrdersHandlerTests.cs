@@ -30,7 +30,7 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal("Ferretería El Tornillo", row.ClientName);
         Assert.Equal("Asesora Uno", row.AdvisorName);
         // Nace pendiente de revisión: quien convierte y quien aprueba son roles distintos.
-        Assert.Equal("Pending", row.Status);
+        Assert.Equal("Open", row.Status);
         Assert.Equal("COP", row.Currency);
     }
 
@@ -249,6 +249,65 @@ public sealed class ListOrdersHandlerTests
         Assert.Equal(OrderSource.Manual, repository.LastSource);
     }
 
+    // Spec 2026-11-10 §5: el envío y la marca de facturado filtran como el pago, sin distinguir mayúsculas.
+    [Fact]
+    public async Task ListPassesTheParsedFulfillmentAndInvoicedToTheRepository()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        await handler.HandleAsync(
+            NewQuery() with { FulfillmentStatus = "prepared", Invoiced = "TRUE" }, TestContext.Current.CancellationToken);
+
+        Assert.Equal((OrderFulfillmentStatus.Prepared, true), (repository.LastFulfillmentStatus, repository.LastInvoiced));
+    }
+
+    [Fact]
+    public async Task ListWithoutTheNewFiltersPassesNull()
+    {
+        var repository = new StubOrderListRepository(NewRow("PED-2026-0001", ClientId));
+        var handler = NewHandler(NewCustomerLookup(), repository);
+
+        await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Equal(((OrderFulfillmentStatus?)null, (bool?)null), (repository.LastFulfillmentStatus, repository.LastInvoiced));
+    }
+
+    [Fact]
+    public async Task ListRejectsAnUnknownFulfillmentStatus()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewQuery() with { FulfillmentStatus = "Shipped" }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.fulfillment_status_invalid", error.Code);
+    }
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("1")]
+    public async Task ListRejectsAnInvoicedThatIsNotTrueOrFalse(string invoiced)
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
+            handler.HandleAsync(NewQuery() with { Invoiced = invoiced }, TestContext.Current.CancellationToken));
+
+        Assert.Equal("order.order.invoiced_invalid", error.Code);
+    }
+
+    [Fact]
+    public async Task TheRowCarriesFulfillmentAndInvoiced()
+    {
+        var handler = NewHandler(NewCustomerLookup(), NewRow("PED-2026-0001", ClientId));
+
+        var page = await handler.HandleAsync(NewQuery(), TestContext.Current.CancellationToken);
+
+        var row = Assert.Single(page.Items);
+        Assert.Equal(("NotPrepared", false), (row.FulfillmentStatus, row.Invoiced));
+    }
+
     private static ListOrdersQuery NewQuery() =>
         new(TenantId, null, null, null, null, null, null, null, null, Source: null, Page: 1, PageSize: 10);
 
@@ -304,7 +363,6 @@ public sealed class ListOrdersHandlerTests
             },
             ShippingDetails.None,
             [new OrderLineInput(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, total / 2m, 0m, 19)],
-            OrderPaymentStatus.PaymentPending,
             notes: null,
             AdvisorId,
             [],

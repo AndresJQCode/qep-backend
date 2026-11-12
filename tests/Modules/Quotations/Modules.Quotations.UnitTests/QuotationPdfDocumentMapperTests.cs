@@ -584,5 +584,7 @@ public sealed class QuotationPdfDocumentMapperTests
         // Sin retenciones: la fila por retención del PDF es la Tarea 16.
         [],
         [],
+        [],
+        // El PDF no imprime los contactos: son del diálogo de envío.
         []);
 }

@@ -8,8 +8,8 @@ public sealed record RevertOrderInvoicingCommand(Guid TenantId, Guid OrderId)
     : ICommand<OrderDto>;
 
 /// <summary>
-/// Revierte la facturación de un pedido (spec 2026-10-05, decisión 4): vuelve a <c>Approved</c>
-/// sin <c>InvoicedAt</c>/<c>InvoicedBy</c>. Es para corregir una marca equivocada; no anula nada
+/// Revierte la facturación de un pedido (spec 2026-10-05, decisión 4): limpia la marca
+/// (<c>InvoicedAt</c>/<c>InvoicedBy</c>) sin cambiar el estado del pedido. Es para corregir una marca equivocada; no anula nada
 /// fuera de QEP. Calcado de <see cref="InvoiceOrderHandler"/>, con el mismo permiso
 /// (<see cref="OrdersPermissions.OrderInvoice"/>): con uno aparte, facturación dependería de un
 /// admin para corregir su propio error (decisión 5).

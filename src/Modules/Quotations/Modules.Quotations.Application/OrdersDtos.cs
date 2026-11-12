@@ -8,8 +8,10 @@ public sealed record OrderHistoryEntryDto(
 
 /// <summary>
 /// El pedido con sus datos propios (spec 2026-10-15 §4). Ningún campo es un enum del dominio:
-/// <c>Source</c>, <c>Status</c> y <c>PaymentStatus</c> viajan con el nombre del enum, mismo criterio
-/// que <c>QuotationDto.Status</c>. <c>CustomerVatSurplus</c> es el valor **efectivo**
+/// <c>Source</c>, <c>Status</c> (<c>Open</c>, <c>Archived</c>, <c>Cancelled</c>), <c>PaymentStatus</c> y
+/// <c>FulfillmentStatus</c> viajan con el nombre del enum, mismo criterio que <c>QuotationDto.Status</c>. Los cuatro
+/// ejes del spec 2026-11-10 viajan separados, con quién y cuándo de cada marca, para que la pantalla no los deduzca
+/// del historial: <c>Invoiced</c> sigue en true en un pedido archivado. <c>CustomerVatSurplus</c> es el valor **efectivo**
 /// (<c>Order.AppliesVatSurplus</c>): facturando a consumidor final el IVA se cobra aunque el cliente
 /// tenga excedente, y la pantalla imprime «exento» con sólo ver esto en true. <c>BillingAccount</c> es null
 /// sólo en el cálculo previo sin cuenta (la pantalla precia la línea antes de elegir la empresa que
@@ -25,6 +27,8 @@ public sealed record OrderDto(
     Guid AdvisorId,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     string? PaymentMethod,
     string Currency,
     bool IsRetail,
@@ -48,8 +52,8 @@ public sealed record OrderDto(
     IReadOnlyCollection<QuotationItemDto> Items,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
-    DateTimeOffset? ApprovedAt,
-    Guid? ApprovedBy,
+    DateTimeOffset? PaidMarkedAt,
+    Guid? PaidMarkedBy,
     DateTimeOffset? CancelledAt,
     Guid? CancelledBy,
     string? CancellationReason,
@@ -76,7 +80,15 @@ public sealed record OrderDto(
     /// <see cref="BillingWithholdingTaxRates"/>. Está para que la forma sea la de la cotización.</summary>
     IReadOnlyList<WithholdingTaxRateDto> CustomerWithholdingTaxRates,
     /// <summary>Las tasas vigentes del pedido, apliquen o no: lo que prellena los selectores de la edición (D21).</summary>
-    IReadOnlyList<WithholdingTaxRateDto> BillingWithholdingTaxRates);
+    IReadOnlyList<WithholdingTaxRateDto> BillingWithholdingTaxRates,
+    DateTimeOffset? PreparedAt,
+    Guid? PreparedBy,
+    DateTimeOffset? ArchivedAt,
+    Guid? ArchivedBy,
+    /// <summary>Lo que falta por pagar: neto − consignado, con el redondeo de la moneda (pesos enteros en COP). Negativo
+    /// es sobrante. Un total que no cierra se explica con un campo: la pantalla no resta comprobantes, que con la
+    /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
+    decimal Balance);
 
 /// <summary>El detalle: el pedido, el número de la cotización de origen (si la hay) y su historial.
 /// Ya no viaja la cotización entera (spec 2026-10-15 §6.2).</summary>
@@ -92,10 +104,12 @@ public sealed record OrderPaymentProofUpdateRequest(
 
 /// <summary>
 /// El cuerpo de un pedido manual (spec 2026-10-15 §5.2) y de su cálculo previo: el mismo que la
-/// pantalla arma para una cotización, más el estado de pago y los comprobantes, porque un pedido nace
-/// vendido. <c>Items</c> lleva producto y cantidad: el precio, el descuento por escala y la tasa los
-/// resuelve el backend, igual que al convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en
-/// el cálculo previo, que sin ella precia en la moneda por defecto del tenant.
+/// pantalla arma para una cotización, más los comprobantes, porque un pedido nace vendido. El estado de
+/// pago no viaja: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2), y un cliente viejo
+/// que todavía lo mande no falla, porque System.Text.Json ignora la propiedad. <c>Items</c> lleva
+/// producto y cantidad: el precio, el descuento por escala y la tasa los resuelve el backend, igual que al
+/// convertir. <c>BillingAccount</c> es obligatoria al crear y opcional en el cálculo previo, que sin ella
+/// precia en la moneda por defecto del tenant.
 /// </summary>
 public sealed record CreateOrderRequest(
     Guid ClientId,
@@ -106,19 +120,18 @@ public sealed record CreateOrderRequest(
     QuotationPartiesRequest? Parties,
     QuotationBillingAccountRequest? BillingAccount,
     IReadOnlyList<OrderEditItemRequest> Items,
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     /// <summary>La entrega por envío; null es "sin envío". Ver <see cref="ShippingRequest"/>. Con
-    /// <c>CashOnDelivery</c>, el <c>PaymentStatus</c> tiene que ser <c>PaymentPending</c> (spec 2026-10-17 §6).</summary>
+    /// <c>CashOnDelivery</c> no puede llevar comprobantes (spec 2026-10-17 §6).</summary>
     ShippingRequest? Shipping = null);
 
+/// <summary>Sin estado de pago: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2).</summary>
 public sealed record ConvertQuotationToOrderRequest(
-    string PaymentStatus,
     string? Notes,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs);
 
+/// <summary>Sin estado de pago: lo calcula el backend con los comprobantes (spec 2026-11-10 §3.2).</summary>
 public sealed record AddOrderPaymentProofsRequest(
-    string PaymentStatus,
     IReadOnlyCollection<OrderPaymentProofRequest> PaymentProofs,
     string? Notes = null,
     IReadOnlyCollection<OrderPaymentProofUpdateRequest>? UpdatedProofs = null);
@@ -136,9 +149,11 @@ public sealed record CancelOrderRequest(string? Reason);
 /// que el backend resuelve contra lo que el pedido ya guarda, nunca un teléfono suelto. <b>El cuerpo
 /// entero es opcional</b>: un cuerpo requerido rompió el envío de la cotización con 500
 /// (<c>SendWorksWithoutABody</c>). <paramref name="ConnectionId"/> (spec 2026-11-09 D8): la conexión
-/// elegida cuando hay varias disponibles para pedidos, como en la cotización.
+/// elegida cuando hay varias disponibles para pedidos, como en la cotización. <paramref name="ContactId"/> y
+/// <paramref name="ThreadConnectionId"/> (spec 2026-11-10 §4.6): ver <see cref="SendQuotationRequest"/>.
 /// </summary>
-public sealed record SendOrderRequest(string? Recipient = null, Guid? ConnectionId = null);
+public sealed record SendOrderRequest(
+    string? Recipient = null, Guid? ConnectionId = null, Guid? ContactId = null, Guid? ThreadConnectionId = null);
 
 /// <summary>«Reconocer este nombre» (spec de Shopify D-S25). Sólo la transportadora y si se recuerda el título:
 /// el título lo pone el pedido (<c>shipping.externalShippingTitle</c>), no la pantalla, así que no se puede
@@ -236,6 +251,8 @@ public sealed record OrderResponse(
     Guid AdvisorId,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     string? PaymentMethod,
     string Currency,
     bool IsRetail,
@@ -258,8 +275,8 @@ public sealed record OrderResponse(
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     DateTimeOffset ConvertedAt,
     Guid ConvertedBy,
-    DateTimeOffset? ApprovedAt,
-    Guid? ApprovedBy,
+    DateTimeOffset? PaidMarkedAt,
+    Guid? PaidMarkedBy,
     DateTimeOffset? CancelledAt,
     Guid? CancelledBy,
     string? CancellationReason,
@@ -283,12 +300,21 @@ public sealed record OrderResponse(
     /// <summary>Siempre vacía en el pedido; ver <see cref="OrderDto.CustomerWithholdingTaxRates"/>.</summary>
     IReadOnlyList<WithholdingTaxRateResponse> CustomerWithholdingTaxRates,
     /// <summary>Las tasas vigentes del pedido; ver <see cref="OrderDto.BillingWithholdingTaxRates"/>.</summary>
-    IReadOnlyList<WithholdingTaxRateResponse> BillingWithholdingTaxRates);
+    IReadOnlyList<WithholdingTaxRateResponse> BillingWithholdingTaxRates,
+    DateTimeOffset? PreparedAt,
+    Guid? PreparedBy,
+    DateTimeOffset? ArchivedAt,
+    Guid? ArchivedBy,
+    /// <summary>Lo que falta por pagar: neto − consignado, con el redondeo de la moneda (pesos enteros en COP). Negativo
+    /// es sobrante. Un total que no cierra se explica con un campo: la pantalla no resta comprobantes, que con la
+    /// fracción de la retención le daría un saldo de centavos que no se ve (spec 2026-11-10 §3.2).</summary>
+    decimal Balance);
 
 /// <summary>Fila de la lista de pedidos. <c>QuotationId</c> y <c>QuotationNumber</c> son opcionales
 /// desde el spec 2026-10-15: un pedido manual o externo no tiene cotización. <c>Source</c> y
 /// <c>ExternalReference</c> van al final para que la tabla dibuje la insignia de origen y el
-/// <c>#1001</c> debajo del número sin pedir el detalle.</summary>
+/// <c>#1001</c> debajo del número sin pedir el detalle. <c>FulfillmentStatus</c> e <c>Invoiced</c>, por lo mismo,
+/// pintan las columnas de envío y facturado (spec 2026-11-10 §5).</summary>
 public sealed record OrderListItemResponse(
     Guid Id,
     string OrderNumber,
@@ -300,6 +326,8 @@ public sealed record OrderListItemResponse(
     string? AdvisorName,
     string Status,
     string PaymentStatus,
+    string FulfillmentStatus,
+    bool Invoiced,
     string? PaymentMethod,
     DateTimeOffset ConvertedAt,
     string Currency,
@@ -329,7 +357,9 @@ public sealed record OrderDetailResponse(
     IReadOnlyCollection<QuotationItemResponse> Items,
     SourceQuotationResponse? SourceQuotation,
     IReadOnlyCollection<OrderHistoryEntryResponse> History,
-    int[] AvailableFloors);
+    int[] AvailableFloors,
+    // Spec 2026-11-10 §4.6: como en QuotationResponse. Sólo en la respuesta HTTP: el DTO interno no los trae.
+    IReadOnlyList<ClientContactDto> ClientContacts);
 
 public sealed record OrdersPageResponse(
     IReadOnlyCollection<OrderListItemResponse> Items,

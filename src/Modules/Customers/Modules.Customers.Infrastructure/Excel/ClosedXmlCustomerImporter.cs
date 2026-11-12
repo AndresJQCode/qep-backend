@@ -43,7 +43,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             {
                 indexes[expected] = index;
             }
-            else if (!CustomerImportColumns.Optional.Contains(expected))
+            else if (!CustomerImportColumns.WithholdingTypes.Contains(expected))
             {
                 return new ExcelCustomerImportFile(false, []);
             }
@@ -51,8 +51,16 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
 
         // Un archivo anterior a las columnas por tipo no las trae, o trae sólo una: no es lo mismo que traerla vacía (que quita
         // la tasa de ese tipo). Se cuenta por columna.
-        string[] withholdingColumns = [.. CustomerImportColumns.Optional.Where(indexes.ContainsKey)];
+        string[] withholdingColumns = [.. CustomerImportColumns.WithholdingTypes.Where(indexes.ContainsKey)];
 
+        // Las opcionales no hacen inválido el archivo si faltan: un Excel anterior a la columna «Empresa» se lee como «sin empresa».
+        foreach (var optional in CustomerImportColumns.Optional)
+        {
+            if (columnByName.TryGetValue(optional, out var index))
+            {
+                indexes[optional] = index;
+            }
+        }
         var rows = new List<ExcelCustomerRow>();
         var lastRow = worksheet.LastRowUsed()?.RowNumber() ?? 1;
         for (var rowNumber = 2; rowNumber <= lastRow; rowNumber++)
@@ -74,6 +82,9 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
             var retefuente = Cell(row, indexes, CustomerImportColumns.Retefuente);
             var reteIca = Cell(row, indexes, CustomerImportColumns.ReteIca);
             var vatSurplus = Cell(row, indexes, CustomerImportColumns.VatSurplus);
+            var company = indexes.ContainsKey(CustomerImportColumns.Company)
+                ? Cell(row, indexes, CustomerImportColumns.Company)
+                : null;
 
             // Una fila completamente vacia es ruido de formato (una fila en blanco que Excel deja
             // entre los datos y el final de la hoja), no una fila de datos que haya que reportar
@@ -82,7 +93,7 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 identificationType is null &&
                 identificationNumber is null && phone is null && email is null &&
                 address is null && department is null && city is null &&
-                classification is null && retefuente is null && reteIca is null && vatSurplus is null)
+                classification is null && retefuente is null && reteIca is null && vatSurplus is null && company is null)
             {
                 continue;
             }
@@ -102,7 +113,8 @@ internal sealed class ClosedXmlCustomerImporter : IExcelCustomerImporter
                 classification,
                 retefuente,
                 reteIca,
-                vatSurplus));
+                vatSurplus,
+                company));
         }
 
         return new ExcelCustomerImportFile(true, rows, withholdingColumns);

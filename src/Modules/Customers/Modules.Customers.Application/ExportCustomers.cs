@@ -18,7 +18,8 @@ public sealed record ExportCustomersCommand(
     string? Name,
     string? IdentificationNumber,
     string? Cuc,
-    string? Phone = null) : ICommand<ExportCustomersResult>;
+    string? Phone = null,
+    string? Contacts = null) : ICommand<ExportCustomersResult>;
 
 /// <summary>
 /// Lo que el request devuelve. **No lleva el enlace**: el contrato de esta operacion es que el
@@ -35,6 +36,7 @@ public sealed class ExportCustomersHandler(
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
     ICustomerTaxRateLookup taxRateLookup,
+    ICustomerCompanyDirectory companyDirectory,
     ICustomerExportBuilder exportBuilder,
     ICustomerExportStorage exportStorage,
     ICustomerExportEventPublisher exportEventPublisher,
@@ -65,7 +67,12 @@ public sealed class ExportCustomersHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerRead);
 
-        var customers = await ReadAllAsync(command, cancellationToken);
+        // Sin validador propio: el mismo 422 con la clave `contacts` que el listado, antes de leer nada.
+        var contactsFilter = CustomerContactsRule.ParseOrThrow(command.Contacts);
+        var includeContacts = CustomerContactsRule.IncludeContacts(
+            contactsFilter, command.Search, command.Name, command.IdentificationNumber, command.Cuc, command.Phone);
+
+        var customers = await ReadAllAsync(command, includeContacts, cancellationToken);
         if (customers.Count == 0)
         {
             // Mismo criterio que el export de filas fallidas: un archivo con solo la cabecera, o un
@@ -84,7 +91,8 @@ public sealed class ExportCustomersHandler(
             new TenantId(command.TenantId), cancellationToken);
         var dateTimePattern = RegionalDateFormat.WithTime(settings?.DateFormat);
         var items = await ToDtosAsync(command.TenantId, customers, cancellationToken);
-        var file = exportBuilder.Build(items, calendar, dateTimePattern, cancellationToken);
+        var companyNumbers = await CompanyNumbersAsync(command.TenantId, customers, cancellationToken);
+        var file = exportBuilder.Build(items, companyNumbers, calendar, dateTimePattern, cancellationToken);
 
         // Antes de commitear: si la subida falla, la excepcion sube y no queda ni el evento ni la
         // entrada de auditoria. No hay exportacion a medias ni correo con un enlace que no resuelve.
@@ -117,6 +125,7 @@ public sealed class ExportCustomersHandler(
     // existe para proteger la respuesta HTTP, y este camino no devuelve las filas por HTTP.
     private async Task<IReadOnlyList<Customer>> ReadAllAsync(
         ExportCustomersCommand command,
+        bool includeContacts,
         CancellationToken cancellationToken)
     {
         var all = new List<Customer>();
@@ -131,6 +140,7 @@ public sealed class ExportCustomersHandler(
                 command.Phone,
                 all.Count,
                 BatchSize,
+                includeContacts,
                 cancellationToken);
 
             all.AddRange(batch);
@@ -147,6 +157,29 @@ public sealed class ExportCustomersHandler(
                 return all;
             }
         }
+    }
+
+    // El documento de la empresa de cada contacto, en una sola consulta para todo el archivo (la que ya trae la empresa del
+    // contacto con su número, ruling P5) y no una por fila. Los contactos que salen son los mismos que la lista, porque
+    // `customers` ya viene filtrado por CustomerContactsRule. Una empresa sin documento no aporta valor.
+    private async Task<IReadOnlyDictionary<Guid, string>> CompanyNumbersAsync(
+        Guid tenantId,
+        IReadOnlyList<Customer> customers,
+        CancellationToken cancellationToken)
+    {
+        var contactIds = customers
+            .Where(customer => customer.CompanyId is not null)
+            .Select(customer => customer.Id.Value)
+            .ToArray();
+        if (contactIds.Length == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        var companies = await companyDirectory.FindCompaniesAsync(tenantId, contactIds, cancellationToken);
+        return companies
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value.IdentificationNumber))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.IdentificationNumber!);
     }
 
     // La misma resolucion en lote que ListCustomersHandler, y aca importa mas: a escala de tenant

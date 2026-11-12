@@ -23,7 +23,7 @@ public sealed class QuotationLifecycleEventsApiTests
         var proof = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
+            new ConvertQuotationToOrderRequest(null,[new OrderPaymentProofRequest(proof, quotation.Total)]),
             Ct);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var order = await response.Content.ReadConvertedOrderAsync(Ct);
@@ -118,7 +118,7 @@ public sealed class QuotationLifecycleEventsApiTests
         var proof = await CreateAvailablePaymentProofFileAsync(client, factory, tenantId);
         var again = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
+            new ConvertQuotationToOrderRequest(null,[new OrderPaymentProofRequest(proof, quotation.Total)]),
             Ct);
 
         Assert.NotEqual(HttpStatusCode.Created, again.StatusCode);
@@ -208,7 +208,7 @@ public sealed class QuotationLifecycleEventsApiTests
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/order",
-            new ConvertQuotationToOrderRequest("FullPaymentReceived", null, [new OrderPaymentProofRequest(proof, quotation.Total)]),
+            new ConvertQuotationToOrderRequest(null,[new OrderPaymentProofRequest(proof, quotation.Total)]),
             Ct);
 
         factory.SaveFailure.FailWhenSaving = null;

@@ -51,6 +51,12 @@ public interface IOrderRepository
     Task<int> CountBySourceSinceAsync(
         Guid tenantId, OrderSource source, DateTimeOffset since, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// La página del listado. Sin <paramref name="status"/> no trae los archivados (spec 2026-11-10 §5, como Shopify): para
+    /// verlos se filtra <c>Archived</c>. La exportación (<see cref="AnyForExportAsync"/>, <see cref="ListForExportAsync"/>)
+    /// sigue la misma regla, porque el archivo es «lo que estoy viendo». <paramref name="invoiced"/> mira la marca de
+    /// facturado (<c>InvoicedAt</c>), que un pedido archivado conserva.
+    /// </summary>
     Task<(IReadOnlyList<Order> Items, int Total)> SearchAsync(
         Guid tenantId,
         Guid? clientId,
@@ -58,6 +64,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -81,6 +89,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,
@@ -94,6 +104,8 @@ public interface IOrderRepository
         MemberId? advisorId,
         OrderStatus? status,
         OrderPaymentStatus? paymentStatus,
+        OrderFulfillmentStatus? fulfillmentStatus,
+        bool? invoiced,
         DateTimeOffset? convertedFrom,
         DateTimeOffset? convertedBefore,
         string? orderNumber,

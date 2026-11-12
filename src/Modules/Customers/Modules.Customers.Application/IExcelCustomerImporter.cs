@@ -64,6 +64,17 @@ public static class CustomerImportColumns
     /// </summary>
     public const string VatSurplus = "Excedente Iva";
 
+    /// <summary>
+    /// Spec 2026-11-10 §4.8: el número de documento de la empresa del cliente. Opcional y **fuera de <see cref="Ordered"/>** a
+    /// propósito: el importador rechaza el archivo entero si falta alguna cabecera de <see cref="Ordered"/>, y un Excel anterior a
+    /// esta columna tiene que seguir siendo válido (se lee como «sin empresa»). Va siempre al final en lo que se escribe.
+    /// </summary>
+    public const string Company = "Empresa";
+
+    /// <summary>Las columnas que el importador lee si la cabecera las trae y que la plantilla, las filas a corregir y la
+    /// exportación escriben después de <see cref="Ordered"/>.</summary>
+    public static readonly IReadOnlyList<string> Optional = [Company];
+
     public static readonly IReadOnlyList<string> Ordered =
     [
         Cuc,
@@ -84,9 +95,10 @@ public static class CustomerImportColumns
 
     /// <summary>
     /// Las columnas por tipo de retencion son opcionales en la cabecera de un archivo a importar: uno armado antes de que
-    /// existieran no las trae y tiene que seguir entrando (en una actualizacion conserva las tasas del cliente).
+    /// existieran no las trae y tiene que seguir entrando (en una actualizacion conserva las tasas del cliente). Son parte de
+    /// <see cref="Ordered"/> (se escriben en su lugar); <see cref="Optional"/> son las que van después.
     /// </summary>
-    public static readonly IReadOnlyList<string> Optional = [Retefuente, ReteIca];
+    public static readonly IReadOnlyList<string> WithholdingTypes = [Retefuente, ReteIca];
 }
 
 /// <summary>
@@ -114,7 +126,9 @@ public sealed record ExcelCustomerRow(
     string? Classification,
     string? Retefuente,
     string? ReteIca,
-    string? VatSurplus);
+    string? VatSurplus,
+    // Último y con valor por defecto: null cuando el archivo no trae la cabecera o la celda está vacía.
+    string? CompanyIdentificationNumber = null);
 
 /// <summary>
 /// El resultado de parsear un Excel: si la cabecera trae las columnas esperadas y, si las
@@ -123,7 +137,7 @@ public sealed record ExcelCustomerRow(
 /// ubicar, y el llamador trata eso como un archivo estructuralmente invalido, no como un reporte
 /// por fila.
 /// </summary>
-/// <param name="WithholdingColumns">Las columnas por tipo de retención (<see cref="CustomerImportColumns.Optional"/>) que
+/// <param name="WithholdingColumns">Las columnas por tipo de retención (<see cref="CustomerImportColumns.WithholdingTypes"/>) que
 /// trae la cabecera; null = todas. Es por tipo y del archivo, no de la fila: una columna ausente no es lo mismo que una
 /// celda vacía, y en una actualización conserva las tasas de ese tipo que el cliente ya tiene.</param>
 public sealed record ExcelCustomerImportFile(
