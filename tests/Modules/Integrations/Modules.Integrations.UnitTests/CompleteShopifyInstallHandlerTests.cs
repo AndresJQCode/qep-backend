@@ -54,6 +54,7 @@ public sealed class CompleteShopifyInstallHandlerTests
                 Integrations.Protector,
                 Routes,
                 Tenants,
+                Integrations.UnitOfWork,
                 Integrations.Clock,
                 new CompleteShopifyInstallValidator());
 
@@ -391,6 +392,41 @@ public sealed class CompleteShopifyInstallHandlerTests
         var response = await bed.Handler().HandleAsync(bed.Command(), Ct);
 
         Assert.Equal(new LinkedTenantResponse(otherTenant, "Distribuidora Andina"), response.LinkedTenant);
+    }
+
+    // Spec 2026-11-12 §5, «Concurrencia»: adquirir y refrescar a la vez se retiran el resultado entre sí. Un reenlace sin
+    // desinstalar canjea con el candado de la conexión que ya existe tomado, así el worker no la refresca mientras tanto.
+    [Fact]
+    public async Task ExchangeForAShopWithAConnectionHoldsThatConnectionLockBeforeCallingShopify()
+    {
+        var bed = new Bed();
+        bed.Seed();
+        var connectionId = Guid.NewGuid();
+        bed.Routes.Routes[(IntegrationProviders.Shopify.Key, Shop)] =
+            new ConnectionRoute(bed.Integrations.TenantId, connectionId, ConnectionStatus.Active);
+        List<Guid>? locksAtExchange = null;
+        bed.Gateway.OnExchange = () => locksAtExchange = [.. bed.Integrations.UnitOfWork.Locks];
+
+        await bed.Handler().HandleAsync(bed.Command(), Ct);
+
+        Assert.Equal([connectionId], locksAtExchange);
+        Assert.Equal([connectionId], bed.Integrations.UnitOfWork.Locks);
+        Assert.Equal(1, bed.Integrations.UnitOfWork.Transactions);
+        Assert.Equal(1, bed.Integrations.UnitOfWork.Saves);
+        Assert.Single(bed.Installs.Exchanged.Values);
+    }
+
+    [Fact]
+    public async Task ExchangeForANewShopTakesNoLock()
+    {
+        var bed = new Bed();
+        bed.Seed();
+
+        await bed.Handler().HandleAsync(bed.Command(), Ct);
+
+        Assert.Empty(bed.Integrations.UnitOfWork.Locks);
+        Assert.Equal(0, bed.Integrations.UnitOfWork.Transactions);
+        Assert.Single(bed.Installs.Exchanged.Values);
     }
 }
 

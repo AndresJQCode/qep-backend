@@ -77,7 +77,8 @@ public sealed class CompleteShopifyInstallValidator : AbstractValidator<Complete
 /// el mismo <c>redirect_uri</c> (si no, <c>install_not_found</c>: no se revela que el <c>state</c> existe para otra) → ya
 /// canjeada = <c>install_not_found</c>, vencida = <c>install_expired</c> → llave de cifrado disponible (503 antes de
 /// gastar el <c>code</c>) → reclamo de la fila con un <c>UPDATE</c> condicionado que consume el <c>state</c> antes de
-/// llamar a Shopify (el perdedor, <c>install_not_found</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD
+/// llamar a Shopify (el perdedor, <c>install_not_found</c>) → candado del token de la conexión si la tienda ya tiene una
+/// (spec 2026-11-12 §5) → canje → scopes → lectura de la tienda → token cifrado con AAD
 /// <c>installId</c> + <c>accessToken</c>, y el refresh token con <c>installId</c> + <c>refreshToken</c> (spec 2026-11-12)
 /// → canje guardado sobre la fila reclamada → ruta existente.
 /// </summary>
@@ -88,6 +89,7 @@ public sealed class CompleteShopifyInstallHandler(
     ISecretProtector protector,
     IConnectionRoutes routes,
     ITenantDirectory tenantDirectory,
+    IIntegrationsUnitOfWork unitOfWork,
     IClock clock,
     IValidator<CompleteShopifyInstallCommand> validator)
     : ICommandHandler<CompleteShopifyInstallCommand, ShopifyInstallCompletedResponse>
@@ -138,6 +140,12 @@ public sealed class CompleteShopifyInstallHandler(
             throw ShopifyInstallErrors.InstallNotFound();
         }
 
+        // Spec 2026-11-12 §5, «Concurrencia»: adquirir y refrescar a la vez para la misma tienda se retiran el resultado
+        // entre sí. Si la tienda ya tiene conexión (un reenlace sin desinstalar), el canje va con el candado del token de esa
+        // conexión, así el worker no la refresca mientras tanto. Se toma después del reclamo, que ya confirmó por su cuenta,
+        // y es el único candado que este request tiene: no hay ciclo con el de la instalación ni con el del reenlace.
+        await using var exchangeLock = await LockExistingConnectionAsync(shopDomain, cancellationToken);
+
         var grant = await CallAsync(() => gateway.ExchangeCodeAsync(shopDomain, command.Code!, cancellationToken));
         EnsureScopes(grant.Scopes);
         var shop = await CallAsync(() => gateway.GetShopAsync(shopDomain, grant.AccessToken, cancellationToken));
@@ -151,6 +159,12 @@ public sealed class CompleteShopifyInstallHandler(
             throw ShopifyInstallErrors.InstallNotFound();
         }
 
+        if (exchangeLock is not NoLock)
+        {
+            // Guardar es confirmar: el canje queda escrito y el candado se suelta.
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
         return new ShopifyInstallCompletedResponse(
             install.Id,
             install.ShopDomain,
@@ -158,6 +172,36 @@ public sealed class CompleteShopifyInstallHandler(
             install.ExpiresAt,
             install.InitiatedTenantId,
             await LinkedTenantAsync(shopDomain, cancellationToken));
+    }
+
+    /// <summary>La transacción con el candado del token de la conexión que ya tiene la tienda, o <see cref="NoLock"/> si no
+    /// hay ruta. Disponerla sin guardar la deshace y suelta el candado.</summary>
+    private async Task<IAsyncDisposable> LockExistingConnectionAsync(string shopDomain, CancellationToken cancellationToken)
+    {
+        var route = await routes.FindAsync(IntegrationProviders.Shopify.Key, shopDomain, cancellationToken);
+        if (route is null)
+        {
+            return NoLock.Instance;
+        }
+
+        var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await unitOfWork.LockShopifyTokenAsync(route.ConnectionId, cancellationToken);
+            return transaction;
+        }
+        catch
+        {
+            await transaction.DisposeAsync();
+            throw;
+        }
+    }
+
+    private sealed class NoLock : IAsyncDisposable
+    {
+        public static readonly NoLock Instance = new();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     /// <summary>Lo que Shopify firmó en el callback: <c>code</c>, <c>shop</c>, <c>state</c>, <c>timestamp</c> y <c>host</c>
