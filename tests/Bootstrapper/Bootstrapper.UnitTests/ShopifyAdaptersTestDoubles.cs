@@ -577,6 +577,14 @@ internal sealed class RecordingHealthReporter : IConnectionHealthReporter
         Reports.Add((tenantId, connectionId, failureCode));
         return Task.CompletedTask;
     }
+
+    public List<(Guid TenantId, Guid ConnectionId)> TokenExpired { get; } = [];
+
+    public Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        TokenExpired.Add((tenantId, connectionId));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class NamedDepartments(params Department[] departments) : IDepartmentRepository

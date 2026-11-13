@@ -152,6 +152,58 @@ public sealed class ConsumerPortsTests
         Assert.Empty(bed.Audit.Entries);
     }
 
+    // Spec 2026-11-12 §6.3 (D9): un refresh token muerto saca a la conexión de cualquier estado recuperable, también de
+    // Paused; si no, el worker la reintentaría cada 5 minutos para siempre. Sólo publica si estaba Active.
+    [Fact]
+    public async Task ReportTokenExpiredMovesPausedAndOtherAttentionToTokenExpired()
+    {
+        var bed = new IntegrationsTestBed();
+        var paused = bed.Seed("Pausada");
+        paused.Pause(IntegrationsTestBed.Now);
+        var attention = bed.Seed("Atención");
+        attention.MarkNeedsAttention(ConnectionFailureCodes.WebhooksNotRegistered, IntegrationsTestBed.Now);
+        var reporter = bed.HealthReporter();
+
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, paused.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, attention.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, Guid.CreateVersion7(), Ct);
+
+        Assert.All([paused, attention], connection =>
+        {
+            Assert.Equal(ConnectionStatus.NeedsAttention, connection.Status);
+            Assert.Equal(ConnectionFailureCodes.TokenExpired, connection.LastFailureCode);
+        });
+        Assert.Equal(2, bed.Audit.Entries.Count);
+        Assert.All(bed.Audit.Entries, entry =>
+        {
+            Assert.Equal("integrations.connection.needs_attention", entry.Action);
+            Assert.Equal(AuditActorType.Integration, entry.ActorType);
+        });
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(2, bed.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ReportTokenExpiredFromActivePublishesOnce()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        var uninstalled = bed.Seed("Desinstalada");
+        uninstalled.MarkNeedsAttention(ConnectionFailureCodes.AppUninstalled, IntegrationsTestBed.Now);
+        var reporter = bed.HealthReporter();
+
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, connection.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, connection.Id, Ct);
+        await reporter.ReportTokenExpiredAsync(bed.TenantId, uninstalled.Id, Ct);
+
+        Assert.Equal(ConnectionStatus.NeedsAttention, connection.Status);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, connection.LastFailureCode);
+        Assert.Equal(ConnectionFailureCodes.AppUninstalled, uninstalled.LastFailureCode);
+        Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection-needs-attention.v1", Assert.Single(bed.Events.Published).EventName);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

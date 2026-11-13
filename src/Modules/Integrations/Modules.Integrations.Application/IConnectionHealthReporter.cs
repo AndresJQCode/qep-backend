@@ -11,6 +11,14 @@ namespace Modules.Integrations.Application;
 public interface IConnectionHealthReporter
 {
     Task ReportCredentialsRejectedAsync(Guid tenantId, Guid connectionId, string failureCode, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-12 §6.3 (D9): el proveedor ya no deja renovar el token. Pasa a <c>NeedsAttention</c> con
+    /// <c>token_expired</c> desde <c>Active</c>, <c>Paused</c> o <c>NeedsAttention</c> con otro código, porque nada fuera de
+    /// una nueva autorización la recupera. Audita como <see cref="ReportCredentialsRejectedAsync"/>; publica el evento sólo
+    /// si estaba <c>Active</c>. Ya en <c>token_expired</c> o <c>app_uninstalled</c> no hace nada.
+    /// </summary>
+    Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -41,10 +49,29 @@ public sealed class ConnectionHealthReporter(
             return;
         }
 
+        await MarkAsync(connection, failureCode, publish: true, cancellationToken);
+    }
+
+    public async Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        var connection = await repository.FindAsync(tenantId, connectionId, cancellationToken);
+        if (connection is null || ShopifyTokenRefresh.IsUnrecoverable(connection.Status, connection.LastFailureCode))
+        {
+            return;
+        }
+
+        // Publicar sólo desde Active repite la regla del enlace: una pausada o ya en atención no «entra» en atención.
+        var wasActive = connection.Status == ConnectionStatus.Active;
+        await MarkAsync(connection, ConnectionFailureCodes.TokenExpired, wasActive, cancellationToken);
+    }
+
+    private async Task MarkAsync(
+        IntegrationConnection connection, string failureCode, bool publish, CancellationToken cancellationToken)
+    {
         var now = clock.UtcNow;
         connection.MarkNeedsAttention(failureCode, now);
         auditRecorder.Record(
-            tenantId,
+            connection.TenantId,
             connection.Id,
             AuditActorType.Integration,
             ConnectionAuditActions.NeedsAttention,
@@ -52,7 +79,11 @@ public sealed class ConnectionHealthReporter(
             ConnectionAuditActions.Success,
             [],
             now);
-        eventPublisher.Publish(ConnectionEvents.NeedsAttention, connection, now);
+        if (publish)
+        {
+            eventPublisher.Publish(ConnectionEvents.NeedsAttention, connection, now);
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
