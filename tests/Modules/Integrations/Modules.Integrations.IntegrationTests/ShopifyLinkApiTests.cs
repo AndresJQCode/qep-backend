@@ -310,6 +310,104 @@ public sealed class ShopifyLinkApiTests
             ("id", linked.Id)));
     }
 
+    // Spec 2026-11-12 §6.1: la instalación vive 7 días y su token, 1 hora. Enlazar una cuyo token está por vencer lo
+    // refresca primero, antes de registrar webhooks, y la conexión guarda el par refrescado con sus vencimientos.
+    [Fact]
+    public async Task LinkAnInstallWhoseTokenIsAboutToExpireRefreshesItFirst()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptRefresh(factory.ShopifyHandler, HttpStatusCode.OK);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.shopify_installs SET access_token_expires_at = now() + interval '5 minutes' WHERE id = @id",
+            ("id", installId));
+        var afterExchange = factory.ShopifyHandler.Requests.Count;
+
+        var response = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.DoesNotContain("SENTINEL", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        var connection = await response.Content.ReadFromJsonAsync<ConnectionResponse>(Ct);
+        var linkRequests = factory.ShopifyHandler.Requests.Skip(afterExchange).ToArray();
+        var refresh = Array.FindIndex(linkRequests, request => request.Body?.Contains("grant_type=refresh_token", StringComparison.Ordinal) == true);
+        var firstCreate = Array.FindIndex(
+            linkRequests, request => request.Body?.Contains("webhookSubscriptionCreate", StringComparison.Ordinal) == true);
+        Assert.Equal(0, refresh);
+        Assert.True(firstCreate > refresh);
+        Assert.Contains($"refresh_token={ShopifyFlow.SentinelRefreshToken}", linkRequests[refresh].Body, StringComparison.Ordinal);
+        Assert.All(
+            linkRequests.Where(request => request.Body?.Contains("webhookSubscription", StringComparison.Ordinal) == true),
+            request => Assert.Equal(RefreshedAccessToken, request.AccessToken));
+        Assert.Equal(RefreshedAccessToken, await StoredSecretAsync(factory, tenant.TenantId, connection!.Id, ShopifyFieldKeys.AccessToken));
+        Assert.Equal(RefreshedRefreshToken, await StoredSecretAsync(factory, tenant.TenantId, connection.Id, ShopifyFieldKeys.RefreshToken));
+        Assert.NotNull(await ScalarAsync<string>(
+            connectionString,
+            "SELECT fields->>'tokenExpiresAt' FROM integrations.connections WHERE id = @id AND fields ? 'refreshTokenExpiresAt'",
+            ("id", connection.Id)));
+        Assert.Equal(0, await CountInstallsAsync(connectionString));
+    }
+
+    // Si el refresh token de la instalación ya no sirve, el enlace falla sin crear una conexión que se caería en una hora.
+    [Fact]
+    public async Task LinkWhenTheInstallRefreshAnswers401FailsWithoutAConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        ScriptRefresh(factory.ShopifyHandler, HttpStatusCode.Unauthorized);
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(factory);
+        using var owner = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var installId = await ShopifyFlow.InstallAsync(factory, owner, tenant.TenantId);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.shopify_installs SET access_token_expires_at = now() + interval '5 minutes' WHERE id = @id",
+            ("id", installId));
+
+        var response = await SendAsync(owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId), new { installId });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("integrations.shopify.install_expired", (await ProblemAsync(response)).Code);
+        Assert.DoesNotContain("SENTINEL", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        Assert.DoesNotContain("SENTINEL", await RequestFailuresTextAsync(connectionString), StringComparison.Ordinal);
+        Assert.Equal(0, await CountConnectionsAsync(connectionString, tenant.TenantId));
+        Assert.Equal(1, await CountInstallsAsync(connectionString));
+        Assert.DoesNotContain(
+            factory.ShopifyHandler.Requests, request => request.Body?.Contains("webhookSubscription", StringComparison.Ordinal) == true);
+    }
+
+    private const string RefreshedAccessToken = "shpat_refreshed-link-SENTINEL";
+
+    private const string RefreshedRefreshToken = "shprt_refreshed-link-SENTINEL";
+
+    /// <summary>El refresco de la tienda, antes de <see cref="ShopifyFlow.ScriptHappyShop"/>: el canje y el refresco van a la
+    /// misma URL y sólo el cuerpo los distingue. Un 401 repite el refresh token en el cuerpo, para probar que no se filtra.</summary>
+    private static void ScriptRefresh(FakeShopifyHandler shopify, HttpStatusCode status) =>
+        shopify.RespondWhen(
+            $"^{System.Text.RegularExpressions.Regex.Escape(ShopifyFlow.Shop)}/admin/oauth/access_token$",
+            "grant_type=refresh_token",
+            _ => FakeShopifyHandler.Json(
+                status,
+                status == HttpStatusCode.OK
+                    ? $$"""{"access_token":"{{RefreshedAccessToken}}","scope":"read_orders,read_customers","expires_in":3600,"refresh_token":"{{RefreshedRefreshToken}}","refresh_token_expires_in":7776000}"""
+                    : $$"""{"error":"invalid_request","echo":"{{ShopifyFlow.SentinelRefreshToken}}"}"""));
+
+    private static async Task<string> StoredSecretAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, string fieldKey)
+    {
+        using var scope = factory.Services.CreateScope();
+        var connection = await scope.ServiceProvider.GetRequiredService<IIntegrationConnectionRepository>().FindAsync(tenantId, connectionId, Ct);
+        var secret = Assert.Single(connection!.Secrets, stored => stored.FieldKey == fieldKey);
+        Assert.True(scope.ServiceProvider.GetRequiredService<ISecretProtector>()
+            .TryUnprotect(connectionId, fieldKey, secret.Protected, out var plaintext));
+        return plaintext;
+    }
+
     // Dos enlaces de la misma tienda que pasan la lectura de la ruta a la vez. Si el ganador es del mismo
     // tenant (doble clic), el perdedor no puede leer «otro tenant»: es concurrency.conflict, choque por la ruta o por el
     // nombre. Si es de otro tenant, shop_already_linked.
