@@ -111,27 +111,59 @@ public sealed partial class ChatbotsApiTests
         using var _ = setup.Client;
         var (id, version) = await PublishableAsync(setup);
         await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+
+        var response = await DeleteTheConnectionAsync(setup);
+
+        await AssertInUseByChatbotAsync(response, id);
+        Assert.Equal(new Slot(1, id, "Servicio técnico"), await SlotAsync(connectionString, setup.WhatsAppId));
+    }
+
+    // Plan 2026-11-12, Task 6, twin of AgentsApiTests.DeletingAConnectionAPausedAgentServesIsRejected: D-C13, a paused chatbot keeps its
+    // connections active (Chatbot.Pause does not touch them), so it keeps its slot and deleting the connection stays blocked.
+    [Fact]
+    public async Task DeletingAConnectionAPausedChatbotServesIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "pause", published.Chatbot.Version));
+
+        var response = await DeleteTheConnectionAsync(setup);
+
+        await AssertInUseByChatbotAsync(response, id);
+        Assert.Equal(new Slot(1, id, "Servicio técnico"), await SlotAsync(connectionString, setup.WhatsAppId));
+    }
+
+    /// <summary><c>DELETE</c> of Integrations with the connection's current <c>If-Match</c>, from a client with the Integrations
+    /// permissions.</summary>
+    private static async Task<HttpResponseMessage> DeleteTheConnectionAsync(Setup setup)
+    {
         var url = $"/api/v1/tenants/{setup.Tenant.TenantId}/integrations/connections/{setup.WhatsAppId}";
         using var integrations = CreateClient(
-            factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId,
+            setup.Factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId,
             Modules.Integrations.Application.IntegrationsPermissions.ConnectionRead,
             Modules.Integrations.Application.IntegrationsPermissions.ConnectionManage);
         var read = await integrations.GetAsync(url, Ct);
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         using var connection = JsonDocument.Parse(await read.Content.ReadAsStringAsync(Ct));
-        var request = new HttpRequestMessage(HttpMethod.Delete, url);
+        using var request = new HttpRequestMessage(HttpMethod.Delete, url);
         request.Headers.TryAddWithoutValidation("If-Match", $"\"{connection.RootElement.GetProperty("version").GetInt64()}\"");
+        return await integrations.SendAsync(request, Ct);
+    }
 
-        var response = await integrations.SendAsync(request, Ct);
-
+    private static async Task AssertInUseByChatbotAsync(HttpResponseMessage response, Guid chatbotId)
+    {
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
         Assert.Equal("integrations.connection.in_use_by_bot", problem.RootElement.GetProperty("code").GetString());
         var occupant = problem.RootElement.GetProperty("occupant");
         Assert.Equal(
-            ("chatbot", id, "Servicio técnico"),
+            ("chatbot", chatbotId, "Servicio técnico"),
             (occupant.GetProperty("kind").GetString(), occupant.GetProperty("id").GetGuid(), occupant.GetProperty("name").GetString()));
-        Assert.Equal(new Slot(1, id, "Servicio técnico"), await SlotAsync(connectionString, setup.WhatsAppId));
     }
 
     [Fact]
