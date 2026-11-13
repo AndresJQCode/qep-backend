@@ -6,11 +6,21 @@ public static class ExternalMediaLink
 {
     public const int MaxLinkLength = 2048;
 
-    /// <summary>https absoluto con host, de 1 a <see cref="MaxLinkLength"/> caracteres, sin espacios ni caracteres de control.</summary>
+    public const int MaxFileNameLength = 240;
+
+    /// <summary>https absoluto con host, de 1 a <see cref="MaxLinkLength"/> caracteres, sin espacios, caracteres de control ni credenciales
+    /// (<c>https://usuario:clave@host</c>): una clave en la URL acabaría en el hilo y en el registro.</summary>
     public static bool IsValidLink(string? link) =>
         link is { Length: > 0 and <= MaxLinkLength }
         && !link.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
         && Uri.TryCreate(link, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps
-        && uri.Host.Length > 0;
+        && uri.Host.Length > 0
+        && uri.UserInfo.Length == 0;
+
+    /// <summary>Nombre que verá quien reciba el documento: de 1 a <see cref="MaxFileNameLength"/> caracteres, sin <c>/</c>, <c>\</c> ni
+    /// caracteres de control.</summary>
+    public static bool IsValidFileName(string? fileName) =>
+        fileName is { Length: > 0 and <= MaxFileNameLength }
+        && !fileName.Any(character => character is '/' or '\\' || char.IsControl(character));
 }

@@ -180,6 +180,9 @@ public sealed record TemplateHeader(string Type, string? Link, string? MediaId, 
 {
     public static TemplateHeader ByLink(string type, string link, string? fileName) => new(type, link, null, fileName);
 
+    /// <summary>Spec 2026-11-13: el enlace lo manda un integrador y puede traer un token; nunca sale en un registro.</summary>
+    public override string ToString() => $"TemplateHeader {{ Type = {Type}, Link = *** }}";
+
     public static TemplateHeader DocumentById(string mediaId, string fileName) => new("document", null, mediaId, fileName);
 }
 

@@ -9,8 +9,16 @@ namespace Modules.Messaging.Application;
 /// <summary><c>POST /api/v1/external/whatsapp/messages</c>. Todo viaja como texto: un <c>idempotencyKey</c> mal formado tiene que ser un 422 con
 /// su campo, no un cuerpo que no enlaza.</summary>
 public sealed record SendExternalTemplateCommand(
-    string? IdempotencyKey, string? ConnectionId, string? To, string? TemplateName, string? TemplateLanguage, IReadOnlyDictionary<string, string?>? Parameters)
+    string? IdempotencyKey, string? ConnectionId, string? To, string? TemplateName, string? TemplateLanguage, IReadOnlyDictionary<string, string?>? Parameters,
+    ExternalTemplateHeader? Header = null)
     : ICommand<ExternalMessageResult>;
+
+/// <summary>Spec 2026-11-13: encabezado multimedia por enlace. Todo es texto, el validador responde campo por campo; <c>ToString</c> no imprime
+/// el enlace.</summary>
+public sealed record ExternalTemplateHeader(string? Type, string? Link, string? Filename)
+{
+    public override string ToString() => $"ExternalTemplateHeader {{ Type = {Type}, Link = *** }}";
+}
 
 /// <summary><c>Replayed</c>: el mensaje ya existía con ese <c>idempotencyKey</c> y no se llamó a Meta (200 en vez de 201).</summary>
 public sealed record ExternalMessageResult(Guid MessageId, Guid ConversationId, string Status, bool Replayed);
@@ -36,6 +44,7 @@ public sealed class SendExternalTemplateValidator : AbstractValidator<SendExtern
             .NotEmpty().MaximumLength(SendTemplateMessageValidator.NameMaxLength).OverridePropertyName(TemplatePrefix + "name");
         RuleFor(command => command.TemplateLanguage)
             .NotEmpty().MaximumLength(SendTemplateMessageValidator.LanguageMaxLength).OverridePropertyName(TemplatePrefix + "language");
+        RuleFor(command => command.Header).Custom(CheckHeader);
         RuleFor(command => command.Parameters).Custom((parameters, context) =>
         {
             foreach (var failure in TemplateParameterRules.Check(parameters ?? NoParameters))
@@ -43,6 +52,43 @@ public sealed class SendExternalTemplateValidator : AbstractValidator<SendExtern
                 context.AddFailure(new ValidationFailure(TemplatePrefix + failure.PropertyName, failure.ErrorMessage));
             }
         });
+    }
+
+    /// <summary>Spec 2026-11-13 §4.1. Los mensajes nunca interpolan el valor recibido: es un enlace que puede traer un token.</summary>
+    private static void CheckHeader(ExternalTemplateHeader? header, ValidationContext<SendExternalTemplateCommand> context)
+    {
+        if (header is null)
+        {
+            return;
+        }
+
+        const string prefix = TemplatePrefix + "header.";
+        var media = TemplateHeaderMedia.FromMetaType(header.Type);
+        if (media is null)
+        {
+            context.AddFailure(new ValidationFailure(prefix + "type", "Envía image, video o document."));
+        }
+
+        if (!ExternalMediaLink.IsValidLink(header.Link))
+        {
+            context.AddFailure(new ValidationFailure(
+                prefix + "link", $"Envía una URL https completa, de hasta {ExternalMediaLink.MaxLinkLength} caracteres y sin espacios."));
+        }
+
+        if (header.Filename is null)
+        {
+            return;
+        }
+
+        if (media is TemplateHeaderMedia.Image or TemplateHeaderMedia.Video)
+        {
+            context.AddFailure(new ValidationFailure(prefix + "filename", "Envía filename sólo con document."));
+        }
+        else if (!ExternalMediaLink.IsValidFileName(header.Filename))
+        {
+            context.AddFailure(new ValidationFailure(
+                prefix + "filename", $"Envía un nombre de hasta {ExternalMediaLink.MaxFileNameLength} caracteres, sin / ni \\."));
+        }
     }
 
     private static bool IsUuid(string? value) => Guid.TryParse(value, out var id) && id != Guid.Empty;

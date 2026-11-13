@@ -26,7 +26,14 @@ public sealed class ExternalSendApiTests
           {"id":"2","name":"aviso_general","language":"es_CO","status":"APPROVED","category":"UTILITY",
            "components":[{"type":"BODY","text":"Tenemos novedades para ti."}]},
           {"id":"3","name":"aviso_cierre","language":"es_CO","status":"APPROVED","category":"UTILITY",
-           "components":[{"type":"BODY","text":"Hola {{1}}, cerramos a las {{2}}."}]}
+           "components":[{"type":"BODY","text":"Hola {{1}}, cerramos a las {{2}}."}]},
+          {"id":"4","name":"aviso_logo","language":"es_CO","status":"APPROVED","category":"UTILITY",
+           "components":[{"type":"HEADER","format":"IMAGE"},{"type":"BODY","text":"Tu guía 1014853 está Pendiente."}]},
+          {"id":"5","name":"factura_pdf","language":"es_CO","status":"APPROVED","category":"UTILITY",
+           "components":[{"type":"HEADER","format":"DOCUMENT"},{"type":"BODY","text":"Tu factura está lista."}]},
+          {"id":"6","name":"qep_cotizacion","language":"es","status":"APPROVED","category":"UTILITY","parameter_format":"NAMED",
+           "components":[{"type":"HEADER","format":"DOCUMENT"},
+                         {"type":"BODY","text":"Hola {{nombre_contacto}}, tu cotización {{numero_cotizacion}} por {{valor_total}} vence el {{vigencia}}."}]}
         ]}
         """;
 
@@ -62,6 +69,14 @@ public sealed class ExternalSendApiTests
     private static object Body(
         Guid idempotencyKey, Guid connectionId, string to = Phone, string name = TemplateName, string language = Language, Dictionary<string, string>? parameters = null) =>
         new { idempotencyKey, connectionId, to, template = new { name, language, parameters = parameters ?? DefaultParameters() } };
+
+    private static object HeaderBody(
+        Guid idempotencyKey, Guid connectionId, string name, object? header, string language = Language, Dictionary<string, string>? parameters = null) =>
+        new { idempotencyKey, connectionId, to = Phone, template = new { name, language, header, parameters = parameters ?? [] } };
+
+    /// <summary>El cuerpo a mano, con el JSON del encabezado tal cual, para los casos que un objeto anónimo no puede armar.</summary>
+    private static string RawHeaderBody(Guid connectionId, string name, string headerJson) =>
+        $$$"""{"idempotencyKey":"{{{Guid.CreateVersion7()}}}","connectionId":"{{{connectionId}}}","to":"{{{Phone}}}","template":{"name":"{{{name}}}","language":"{{{Language}}}","parameters":{},"header":{{{headerJson}}}}}""";
 
     private static Task<HttpResponseMessage> PostAsync(HttpClient client, object body) => client.PostAsJsonAsync(ExternalMessagesUrl, body, Ct);
 
@@ -703,5 +718,42 @@ public sealed class ExternalSendApiTests
 
         await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "external.recipient_opted_out");
         Assert.True(await ScalarAsync<bool>(f.ConnectionString, "SELECT marketing_opt_out FROM customers.customers WHERE id = @id", ("id", customer)));
+    }
+
+    public static TheoryData<string, string> BadHeaders => new()
+    {
+        { """{"type":"gif","link":"https://cdn.example.com/a.gif"}""", "template.header.type" },
+        { """{"type":"image","link":"http://cdn.example.com/logo.png"}""", "template.header.link" },
+        { """{"type":"image","link":"/logo.png"}""", "template.header.link" },
+        { """{"type":"image","link":"https://user:pass@cdn.example.com/logo.png"}""", "template.header.link" },
+        { $$"""{"type":"image","link":"https://cdn.example.com/{{new string('a', 2025)}}"}""", "template.header.link" },
+        { """{"type":"image","link":"https://cdn.example.com/logo.png","filename":"logo.png"}""", "template.header.filename" },
+        { """{"type":"document","link":"https://cdn.example.com/f.pdf","filename":"a/b.pdf"}""", "template.header.filename" },
+        { $$"""{"type":"document","link":"https://cdn.example.com/f.pdf","filename":"{{new string('a', 241)}}"}""", "template.header.filename" },
+    };
+
+    [Theory]
+    [MemberData(nameof(BadHeaders))]
+    public async Task ABadHeaderIs422WithItsKey(string header, string key)
+    {
+        using (var parsed = JsonDocument.Parse(header))
+        {
+            // El límite es explícito: 24 del prefijo https://cdn.example.com/ más 2025.
+            if (parsed.RootElement.GetProperty("link").GetString() is { Length: > 2000 } link)
+            {
+                Assert.Equal(2049, link.Length);
+            }
+        }
+
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var response = await PostRawAsync(f.Client, RawHeaderBody(f.ConnectionId, "aviso_logo", header));
+
+        await AssertValidationAsync(response, key);
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await ConversationsAsync(f));
     }
 }
