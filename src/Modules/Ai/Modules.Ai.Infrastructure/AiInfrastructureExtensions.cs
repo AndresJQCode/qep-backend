@@ -3,6 +3,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Modules.Ai.Application;
+using Modules.Ai.Domain;
+using Modules.Ai.Infrastructure.Model;
 using Modules.Ai.Infrastructure.Options;
 using Modules.Ai.Infrastructure.Persistence;
 
@@ -27,6 +29,13 @@ public static class AiInfrastructureExtensions
         // La membresía de quien llama, una vez por request: autor del borrador y de la publicación.
         services.AddScoped<AiCaller>();
         services.AddScoped<AgentEditorBuilder>();
+
+        // Plan 2026-11-12, 5.2: un adaptador del modelo por proveedor, por clave; un proveedor sin el suyo no deja arrancar.
+        services.AddScoped<IAiModelClientResolver, AiModelClientResolver>();
+        services.AddKeyedScoped<IAiModelClient, PendingProviderModelClient>(AiProviders.Anthropic.Value);
+        services.AddKeyedScoped<IAiModelClient, PendingProviderModelClient>(AiProviders.OpenAi.Value);
+        services.AddSingleton<IValidateOptions<AiModelClientRegistrationOptions>, AiModelClientRegistrationValidator>();
+        services.AddOptions<AiModelClientRegistrationOptions>().ValidateOnStart();
         return services;
     }
 }
