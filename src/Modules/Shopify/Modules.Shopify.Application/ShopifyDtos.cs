@@ -49,6 +49,18 @@ public sealed record ShopifyStoreDto(
     long Version);
 
 /// <summary>
+/// <c>GET /stores/{connectionId}/document-sources</c>: las opciones del select «Atributo del documento», en el orden en que se
+/// dibujan. BFF: el select no puede saber qué atributos manda el checkout de la tienda (eso sólo lo ve el espejo de pedidos) ni
+/// cómo los resuelve el importador, así que cada valor ya es una clave que el <c>PUT</c> de la tienda acepta y
+/// <see cref="ShopifyDocumentSources.Read"/> resuelve, tal cual va en <c>documentAttributeKey</c>: primero la ruta
+/// <c>shipping_address.company</c> (siempre, aunque la tienda no tenga pedidos) y después los nombres de atributo, sin repetir y
+/// ordenados. El texto de cada opción lo pone el frontend: la ruta tiene su etiqueta en el diccionario y un atributo se muestra por
+/// su nombre. Va envuelto en un objeto y no como arreglo suelto para poder sumar campos sin romper el contrato. La clave guardada
+/// en la tienda no se agrega si ya no aparece en los pedidos: la trae <c>GET /stores/{connectionId}</c>.
+/// </summary>
+public sealed record ShopifyDocumentSourcesDto(IReadOnlyList<string> Sources);
+
+/// <summary>
 /// Spec 2026-10-15 §5.4 y §7: una fila de la bandeja, igual en la lista, en el reintento y en «Marcar como revisado» (las dos
 /// acciones devuelven la fila para que la pantalla la repinte sin volver a pedir la página). Formas que el frontend tiene que
 /// leer tal cual:
