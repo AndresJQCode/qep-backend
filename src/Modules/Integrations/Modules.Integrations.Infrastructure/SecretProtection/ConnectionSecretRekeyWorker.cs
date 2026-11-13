@@ -192,7 +192,7 @@ internal sealed partial class ConnectionSecretRekeyWorker(
                 var stored = new ProtectedSecret(install.KeyId!, install.ProtectedToken!);
                 if (protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext))
                 {
-                    install.Reprotect(protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext));
+                    install.Reprotect(protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext), null);
                     done++;
                 }
                 else

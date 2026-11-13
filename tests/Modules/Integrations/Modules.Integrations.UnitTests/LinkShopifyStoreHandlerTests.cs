@@ -21,6 +21,8 @@ public sealed class LinkShopifyStoreHandlerTests
 
     private const string AccessToken = "shpat_link-token-SENTINEL-9f8e";
 
+    private const string RefreshToken = "shprt_link-refresh-SENTINEL-9f8e";
+
     private const string RedirectUri = "https://qep.qcode.co/shopify/callback";
 
     private static readonly Uri Callback = new("https://qep-api.qcode.co/api/webhooks/shopify");
@@ -70,7 +72,11 @@ public sealed class LinkShopifyStoreHandlerTests
             install.Claim(ShopifyInstall.ClaimedStatePrefix + "Y2xhaW1lZC1zdGF0ZS0wMTIzNDU2Nzg5YWJjZGVm", now);
             install.MarkExchanged(
                 "12345678", "Mi Tienda", "read_orders,read_customers",
-                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, token), now);
+                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, token),
+                Integrations.Protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, RefreshToken),
+                now.AddHours(1),
+                now.AddDays(90),
+                now);
             Installs.Add(install);
             return install;
         }

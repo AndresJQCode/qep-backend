@@ -142,7 +142,7 @@ public sealed class CompleteShopifyInstallHandler(
         var shop = await CallAsync(() => gateway.GetShopAsync(shopDomain, grant.AccessToken, cancellationToken));
 
         var token = protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, grant.AccessToken);
-        install.MarkExchanged(shop.Id, shop.Name, grant.Scopes, token, now);
+        install.MarkExchanged(shop.Id, shop.Name, grant.Scopes, token, token, now + TimeSpan.FromHours(1), now + TimeSpan.FromDays(90), now);
         if (!await installs.TryCompleteExchangeAsync(install, cancellationToken))
         {
             throw ShopifyInstallErrors.InstallNotFound();
