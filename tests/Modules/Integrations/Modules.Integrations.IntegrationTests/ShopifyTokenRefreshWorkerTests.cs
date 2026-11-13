@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Modules.Integrations.Application;
@@ -121,6 +122,33 @@ public sealed class ShopifyTokenRefreshWorkerTests
         Assert.Equal("Active:", await StateAsync(linked));
         Assert.Equal(verifiedBefore, await ScalarAsync<string>(
             connectionString, "SELECT last_verified_at::text FROM integrations.connections WHERE id = @id", ("id", linked.ConnectionId)));
+    }
+
+    // Sin la app, el refresco mandaría client_id vacío, Shopify respondería un 4xx y todas las tiendas quedarían en
+    // token_expired, que sólo se recupera reautorizando. La vuelta se salta entera, como ConnectInstagram y el signup.
+    [Fact]
+    public async Task WithoutTheShopifyAppTheRunTouchesNoConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var linked = await LinkAsync(factory, connectionString);
+        using var _ = linked.Owner;
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccess, RefreshedRefresh, HttpStatusCode.BadRequest);
+        await ExpireInAsync(linked, TimeSpan.FromMinutes(5));
+
+        using var withoutApp = factory.WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Shopify:App:ClientId", string.Empty);
+            builder.UseSetting("Shopify:App:ClientSecret", string.Empty);
+        });
+        var worker = withoutApp.Services.GetServices<IHostedService>().OfType<ShopifyTokenRefreshWorker>().Single();
+        await worker.FirstRunCompletion;
+
+        Assert.Equal((0, 0, 0, 0), Counts(await worker.RunOnceAsync(Ct)));
+        Assert.Empty(factory.ShopifyHandler.RefreshRequests);
+        Assert.Equal("Active:", await StateAsync(linked));
+        Assert.Equal(ShopifyFlow.SentinelRefreshToken, await SecretAsync(linked, ShopifyFieldKeys.RefreshToken));
     }
 
     // Anti-objetivo 1: el refresh token rota, así que dos refrescos de la misma tienda dejarían guardado un par retirado.

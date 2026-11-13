@@ -17,6 +17,8 @@ internal sealed record ShopifyTokenRefreshRunResult(int Refreshed, int Rejected,
 /// <see cref="ShopifyTokenRefresh.Interval"/>, con el molde de <c>InstagramTokenRefreshWorker</c>: un scope por conexión y
 /// nunca tumba el host.
 /// <list type="bullet">
+/// <item>Sin la app de Shopify configurada (<see cref="IShopifyAppSettings.IsConfigured"/>) la vuelta se salta entera: el
+/// refresco iría con <c>client_id</c> vacío y el 4xx dejaría todas las tiendas en <c>token_expired</c>.</item>
 /// <item>Entran todos los estados salvo <c>NeedsAttention</c> con <c>token_expired</c> o <c>app_uninstalled</c>: una pausada
 /// tiene que poder reanudarse sin reautorizar, y una en atención por otra causa se perdería si su token venciera.</item>
 /// <item>Un solo escritor por tienda (anti-objetivo 1): el refresh token rota, así que el refresco va bajo
@@ -61,6 +63,9 @@ internal sealed partial class ShopifyTokenRefreshWorker(
     [LoggerMessage(Level = LogLevel.Information, Message = "shopify token refresh finished: {Refreshed} refreshed, {Rejected} rejected, {Deferred} deferred, {Skipped} skipped")]
     private static partial void LogFinished(ILogger logger, int refreshed, int rejected, int deferred, int skipped);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "shopify token refresh skipped: the Shopify app is not configured")]
+    private static partial void LogAppNotConfigured(ILogger logger);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Shopify token refresh failed; it runs again on the next interval.")]
     private static partial void LogFailed(ILogger logger, Exception exception);
 
@@ -95,6 +100,14 @@ internal sealed partial class ShopifyTokenRefreshWorker(
         List<(Guid Id, DateTimeOffset? RefreshTokenSavedAt)> due;
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
+            if (!scope.ServiceProvider.GetRequiredService<IShopifyAppSettings>().IsConfigured)
+            {
+                // Sin la app el refresco iría con client_id vacío, Shopify respondería un 4xx y cada tienda quedaría en
+                // token_expired, que sólo se recupera reautorizando. Se salta la vuelta entera, sin tocar ninguna conexión.
+                LogAppNotConfigured(logger);
+                return new ShopifyTokenRefreshRunResult(0, 0, 0, 0);
+            }
+
             var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
             var providerKey = IntegrationProviders.Shopify.Key;
             var connections = await scope.ServiceProvider.GetRequiredService<IntegrationsDbContext>().Connections
