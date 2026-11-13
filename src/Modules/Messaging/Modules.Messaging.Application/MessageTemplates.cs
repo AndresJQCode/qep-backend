@@ -140,15 +140,22 @@ public sealed record TemplateUrlButton(int Index, string Value);
 /// Spec 2026-10-11 §5.1: lo que viaja a Meta para enviar una plantilla. <c>Parameters</c> van en el orden de la plantilla;
 /// con <c>Named</c> cada uno lleva su <c>parameter_name</c> y con posicionales sólo el orden. Sin parámetros no viaja
 /// <c>components</c>. Lo reutiliza el worker de campañas. <c>UrlButtons</c> son los sufijos de los enlaces variables, que viajan
-/// en un componente <c>button</c> por botón. <c>HeaderDocument</c> es el PDF del encabezado de una plantilla con encabezado de
-/// documento (la de cotización): viaja como el primer componente.
+/// en un componente <c>button</c> por botón. <c>Header</c> es el encabezado multimedia de una plantilla con encabezado de imagen,
+/// video o documento (la de cotización lleva el PDF): viaja como el primer componente.
 /// </summary>
 public sealed record TemplateSend(
     string Name, string Language, bool Named, IReadOnlyList<TemplateParameter> Parameters, IReadOnlyList<TemplateUrlButton>? UrlButtons = null,
-    TemplateHeaderDocument? HeaderDocument = null);
+    TemplateHeader? Header = null);
 
-/// <summary>El documento del encabezado de una plantilla: el id de la media ya subida a Meta y el nombre con que lo ve el cliente.</summary>
-public sealed record TemplateHeaderDocument(string MediaId, string FileName);
+/// <summary>Spec 2026-11-13: el encabezado multimedia de una plantilla. <c>Type</c> es el de Meta en minúscula (<c>image</c>,
+/// <c>video</c>, <c>document</c>); viaja exactamente uno de <c>Link</c> (la URL pública que Meta descarga) o <c>MediaId</c> (media ya
+/// subida a Meta). <c>FileName</c> sólo aplica a un documento.</summary>
+public sealed record TemplateHeader(string Type, string? Link, string? MediaId, string? FileName)
+{
+    public static TemplateHeader ByLink(string type, string link, string? fileName) => new(type, link, null, fileName);
+
+    public static TemplateHeader DocumentById(string mediaId, string fileName) => new("document", null, mediaId, fileName);
+}
 
 /// <summary>R10: lo que sale de armar una plantilla con sus valores, igual para el envío humano y para el worker.</summary>
 public sealed record BuiltTemplate(TemplateSend Send, string Text, string DetailsJson);
