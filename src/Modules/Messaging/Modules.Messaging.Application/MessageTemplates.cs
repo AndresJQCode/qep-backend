@@ -14,7 +14,9 @@ public sealed record TemplateButtonDto(string Type, string Text, string? Url, st
 /// Spec 2026-10-11 §5.1. BFF: <c>parameters</c> son las claves en orden de aparición (<c>"1"</c>, <c>"first_name"</c>) y
 /// <c>sendable</c> con <c>unsupportedReason</c> viajan resueltos, para que la pantalla pinte las plantillas que v1 no sabe
 /// enviar en gris y diga por qué, sin conocer el formato de componentes de Meta. <c>parameterFormat</c> es <c>Named</c> o
-/// <c>Positional</c>.
+/// <c>Positional</c>. Spec 2026-11-13: <c>HeaderMedia</c> es el formato del encabezado multimedia (<see cref="TemplateHeaderMedia"/>) y
+/// <c>SendableWithHeaderMedia</c> dice si la plantilla se podría enviar con ese encabezado (sólo la API externa lo manda). No cambian
+/// <c>Sendable</c> ni <c>UnsupportedReason</c>.
 /// </summary>
 public sealed record MessageTemplateDto(
     string Name,
@@ -27,7 +29,9 @@ public sealed record MessageTemplateDto(
     IReadOnlyList<TemplateButtonDto> Buttons,
     IReadOnlyList<string> Parameters,
     bool Sendable,
-    string? UnsupportedReason);
+    string? UnsupportedReason,
+    string? HeaderMedia = null,
+    bool SendableWithHeaderMedia = false);
 
 /// <summary>Lo que <see cref="TemplateDetailsJson.Serialize"/> guardó de un envío de plantilla: nombre, idioma y valores. Spec 2026-10-30 §6.3:
 /// un reintento con el mismo <c>clientId</c> compara contra esto.</summary>
@@ -177,6 +181,34 @@ public static class TemplateUnsupportedReasons
     public const string Other = "other";
 }
 
+/// <summary>Spec 2026-11-13: el formato del encabezado multimedia de una plantilla. <c>FromComponentFormat</c> lee el <c>format</c> del
+/// componente <c>HEADER</c> de Meta (<c>IMAGE</c>); <c>FromMetaType</c> y <c>ToMetaType</c> van y vuelven del tipo del parámetro de
+/// envío (<c>image</c>).</summary>
+public static class TemplateHeaderMedia
+{
+    public const string Image = "Image";
+    public const string Video = "Video";
+    public const string Document = "Document";
+
+    public static string? FromComponentFormat(string? format) => FromName(format);
+
+    public static string? FromMetaType(string? type) => FromName(type);
+
+    public static string ToMetaType(string headerMedia)
+    {
+        ArgumentNullException.ThrowIfNull(headerMedia);
+        return headerMedia.ToLowerInvariant();
+    }
+
+    private static string? FromName(string? value) => value?.ToUpperInvariant() switch
+    {
+        "IMAGE" => Image,
+        "VIDEO" => Video,
+        "DOCUMENT" => Document,
+        _ => null,
+    };
+}
+
 /// <summary>
 /// Spec 2026-10-11 §5.1: el normalizador puro de lo que devuelve <c>GET /{waba}/message_templates</c>. Sólo se queda con las
 /// <c>APPROVED</c>; el resto de los estados (pausada, rechazada, en revisión) no se puede enviar y no tiene sentido mostrarlo.
@@ -317,6 +349,16 @@ public static partial class TemplateCatalog
         var buttons = new List<TemplateButtonDto>();
         string? reason = string.Equals(category, "AUTHENTICATION", StringComparison.OrdinalIgnoreCase) ? TemplateUnsupportedReasons.Authentication : null;
 
+        // Spec 2026-11-13: lo que impediría el envío aun con un encabezado multimedia; el motivo del propio encabezado no cuenta.
+        var otherReason = reason;
+        string? headerMedia = null;
+
+        void Note(string? candidate)
+        {
+            reason = Worst(reason, candidate);
+            otherReason = Worst(otherReason, candidate);
+        }
+
         if (raw.TryGetProperty("components", out var components) && components.ValueKind == JsonValueKind.Array)
         {
             foreach (var component in components.EnumerateArray().Where(component => component.ValueKind == JsonValueKind.Object))
@@ -328,11 +370,16 @@ public static partial class TemplateCatalog
                         {
                             header = Text(component, "text");
                             // Decisión 7: el encabezado de texto es sin variables.
-                            reason = Worst(reason, header is not null && header.Contains("{{", StringComparison.Ordinal) ? TemplateUnsupportedReasons.Other : null);
+                            Note(header is not null && header.Contains("{{", StringComparison.Ordinal) ? TemplateUnsupportedReasons.Other : null);
                         }
                         else
                         {
                             reason = Worst(reason, TemplateUnsupportedReasons.MediaHeader);
+                            headerMedia = TemplateHeaderMedia.FromComponentFormat(Text(component, "format"));
+                            if (headerMedia is null)
+                            {
+                                otherReason = Worst(otherReason, TemplateUnsupportedReasons.Other);
+                            }
                         }
 
                         break;
@@ -346,15 +393,15 @@ public static partial class TemplateCatalog
                         foreach (var (dto, buttonReason) in ButtonsOf(component))
                         {
                             buttons.Add(dto);
-                            reason = Worst(reason, buttonReason);
+                            Note(buttonReason);
                         }
 
                         break;
                     case "CAROUSEL":
-                        reason = Worst(reason, TemplateUnsupportedReasons.Carousel);
+                        Note(TemplateUnsupportedReasons.Carousel);
                         break;
                     default:
-                        reason = Worst(reason, TemplateUnsupportedReasons.Other);
+                        Note(TemplateUnsupportedReasons.Other);
                         break;
                 }
             }
@@ -365,7 +412,7 @@ public static partial class TemplateCatalog
             .Concat(buttons.Select(button => button.Parameter).OfType<string>())
             .ToArray();
         var format = string.Equals(Text(raw, "parameter_format"), "NAMED", StringComparison.OrdinalIgnoreCase) ? Named : Positional;
-        return new MessageTemplateDto(name, language, category, format, header, body, footer, buttons, parameters, reason is null, reason);
+        return new MessageTemplateDto(name, language, category, format, header, body, footer, buttons, parameters, reason is null, reason, headerMedia, otherReason is null);
     }
 
     private static IEnumerable<(TemplateButtonDto Dto, string? Reason)> ButtonsOf(JsonElement component)
