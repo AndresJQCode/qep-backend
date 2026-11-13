@@ -32,13 +32,15 @@ internal sealed class ChatbotConnectionSlots(AutomationsDbContext automations) :
             """, cancellationToken);
 
         // Toma las nuevas y renueva el nombre de las propias. Una conexión que ocupa otro bot (un agente) no se pisa: queda en la
-        // consulta de abajo y el guardado se deshace con 409.
+        // consulta de abajo y el guardado se deshace con 409. El ORDER BY hace que dos guardados tomen las filas en el mismo orden: uno
+        // espera al otro en vez de cruzarse en un deadlock.
         await automations.Database.ExecuteSqlAsync($"""
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             SELECT cc.connection_id, cc.tenant_id, 1, c.id, c.name, now()
             FROM automations.chatbot_connections cc
             JOIN automations.chatbots c ON c.id = cc.chatbot_id
             WHERE cc.tenant_id = {tenantId} AND cc.active
+            ORDER BY cc.connection_id
             ON CONFLICT (connection_id) DO UPDATE SET bot_name = EXCLUDED.bot_name
             WHERE messaging.connection_bots.bot_kind = 1 AND messaging.connection_bots.bot_id = EXCLUDED.bot_id
             """, cancellationToken);

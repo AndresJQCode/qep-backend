@@ -73,6 +73,10 @@ public sealed class AgentsApiTests
         return await reader.ReadAsync(Ct) ? (reader.GetInt16(0), reader.GetGuid(1), reader.GetString(2)) : null;
     }
 
+    /// <summary>El <c>xmin</c> de la fila de ocupación: cambia con cada escritura, aunque el valor quede igual.</summary>
+    private static Task<string?> SlotXminAsync(string connectionString, Guid connectionId) =>
+        ScalarAsync<string>(connectionString, "SELECT xmin::text FROM messaging.connection_bots WHERE connection_id = @id", ("id", connectionId));
+
     private static async Task<(string? Code, JsonElement Root)> ProblemAsync(HttpResponseMessage response)
     {
         var root = await JsonAsync(response);
@@ -338,6 +342,27 @@ public sealed class AgentsApiTests
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
         Assert.Null(await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
         Assert.Equal(HttpStatusCode.NotFound, (await setup.Client.GetAsync($"{Agents}/{id}", Ct)).StatusCode);
+    }
+
+    // D-A7 y §4.3: el editor guarda el borrador mientras se escribe. Ese guardado no mueve la ocupación, así que no reescribe la fila.
+    [Fact]
+    public async Task SavingTheDraftOfAPublishedAgentDoesNotRewriteItsSlot()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var (id, version) = await PublishableAsync(setup);
+        var published = await JsonAsync(await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: version));
+        var before = await SlotXminAsync(setup.ConnectionString, setup.WhatsAppId);
+
+        var saved = await SendAsync(
+            setup.Client, HttpMethod.Put, $"{Agents}/{id}/draft", ValidConfig(), ifMatch: published.GetProperty("version").GetInt64());
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.NotNull(before);
+        Assert.Equal(before, await SlotXminAsync(setup.ConnectionString, setup.WhatsAppId));
     }
 
     // §5: una conexión de otro tenant es 404 sin decir de quién es; una sin salida de bot (Instagram, por ahora) es 422.

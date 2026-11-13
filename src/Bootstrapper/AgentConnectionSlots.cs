@@ -32,13 +32,15 @@ internal sealed class AgentConnectionSlots(AiDbContext ai) : IAgentConnectionSlo
             """, cancellationToken);
 
         // Toma las nuevas y renueva el nombre de las propias. Una conexión que ocupa otro bot no se pisa: queda en la consulta de abajo
-        // y el guardado se deshace con 409.
+        // y el guardado se deshace con 409. El ORDER BY hace que dos guardados tomen las filas en el mismo orden: uno espera al otro en
+        // vez de cruzarse en un deadlock.
         await ai.Database.ExecuteSqlAsync($"""
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             SELECT ac.connection_id, ac.tenant_id, 2, a.id, a.name, now()
             FROM ai.agent_connections ac
             JOIN ai.agents a ON a.id = ac.agent_id
             WHERE ac.tenant_id = {tenantId} AND a.status <> 'Draft'
+            ORDER BY ac.connection_id
             ON CONFLICT (connection_id) DO UPDATE SET bot_name = EXCLUDED.bot_name
             WHERE messaging.connection_bots.bot_kind = 2 AND messaging.connection_bots.bot_id = EXCLUDED.bot_id
             """, cancellationToken);

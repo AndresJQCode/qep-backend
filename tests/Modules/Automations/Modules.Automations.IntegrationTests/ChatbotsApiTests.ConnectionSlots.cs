@@ -29,6 +29,37 @@ public sealed partial class ChatbotsApiTests
         return await reader.ReadAsync(Ct) ? new Slot(reader.GetInt16(0), reader.GetGuid(1), reader.GetString(2)) : null;
     }
 
+    /// <summary>El <c>xmin</c> de la fila de ocupación: cambia con cada escritura, aunque el valor quede igual.</summary>
+    private static async Task<string?> SlotXminAsync(string connectionString, Guid connectionId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(connectionString);
+        await connection.OpenAsync(Ct);
+        await using var command = new Npgsql.NpgsqlCommand(
+            "SELECT xmin::text FROM messaging.connection_bots WHERE connection_id = @id", connection);
+        command.Parameters.AddWithValue("id", connectionId);
+        return (string?)await command.ExecuteScalarAsync(Ct);
+    }
+
+    // §4.3: el editor guarda el borrador mientras se escribe. Ese guardado no mueve la ocupación, así que no reescribe la fila.
+    [Fact]
+    public async Task SavingTheDraftOfAPublishedChatbotDoesNotRewriteItsSlot()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+        var before = await SlotXminAsync(connectionString, setup.WhatsAppId);
+
+        var saved = await SaveDraftAsync(setup, published, AnnexA.Json);
+
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        Assert.NotNull(before);
+        Assert.Equal(before, await SlotXminAsync(connectionString, setup.WhatsAppId));
+    }
+
     [Fact]
     public async Task ADraftDoesNotTakeTheSlotAndPublishingDoes()
     {

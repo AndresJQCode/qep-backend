@@ -6,12 +6,19 @@ using Npgsql;
 
 namespace Modules.Ai.Infrastructure.Persistence;
 
-/// <summary>Copia de <c>AutomationsUnitOfWork</c>: cada 23505 se traduce por el nombre del índice, nunca sólo por SqlState (CLAUDE.md).
-/// Nombre repetido → 409; la versión vieja y dos publicaciones con el mismo número → 412. Si el guardado toca un agente o sus conexiones,
-/// la ocupación neutral de Mensajería (<see cref="IAgentConnectionSlots"/>) se sincroniza en la misma transacción, abierta acá: un bot que
-/// ya ocupa la conexión vuelve como 409 con el ocupante y nada queda escrito.</summary>
+/// <summary>Cada 23505 se traduce por el nombre del índice, nunca sólo por SqlState (CLAUDE.md). Nombre repetido → 409; la versión vieja,
+/// dos publicaciones con el mismo número y una carrera al sincronizar la ocupación → 412. Si el guardado toca un agente o sus conexiones,
+/// la ocupación neutral de Mensajería (<see cref="IAgentConnectionSlots"/>) se sincroniza en la misma transacción: un bot que ya ocupa la
+/// conexión vuelve como 409 con el ocupante y nada queda escrito.
+/// <para>A diferencia de <c>AutomationsUnitOfWork</c>, sólo confirma la transacción que abrió él: Ai no expone
+/// <c>BeginTransactionAsync</c>, así que no hay una del llamador que confirmar. Si algún día la expone, tiene que decidir si guardar
+/// confirma la del llamador, como hace Automations.</para></summary>
 internal sealed class AiUnitOfWork(AiDbContext dbContext, IAgentConnectionSlots slots) : IAiUnitOfWork
 {
+    /// <summary>Las propiedades de <see cref="Agent"/> que mueven la ocupación: el nombre que guarda la fila de Mensajería, el estado y la
+    /// versión publicada que deciden si ocupa (D-A10).</summary>
+    private static readonly HashSet<string> SlotProperties = [nameof(Agent.Name), nameof(Agent.Status), nameof(Agent.PublishedVersionId)];
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
         var tenants = TenantsWithConnectionChanges();
@@ -49,13 +56,37 @@ internal sealed class AiUnitOfWork(AiDbContext dbContext, IAgentConnectionSlots 
         {
             throw Concurrency(exception);
         }
+        // Después de las ramas de DbUpdateException: el ExecuteSqlAsync de la sincronización lanza la PostgresException sin envolver. Dos
+        // guardados que igual se cruzan en connection_bots son una carrera, no un error del servidor. Precedente: CustomersWriteRaces.
+        catch (Exception exception) when (IsWriteRace(exception))
+        {
+            throw Concurrency(exception);
+        }
     }
 
-    /// <summary>Los tenants de los agentes o conexiones que este guardado agrega, cambia o borra. Renombrar también cuenta: la fila de
-    /// Mensajería guarda el nombre para el 409 y la bandeja.</summary>
+    /// <summary>Un deadlock (<c>40P01</c>) o una falla de serialización (<c>40001</c>) en cualquier punto de la cadena de excepciones.
+    /// Réplica de <c>CustomersWriteRaces.IsRace</c>: los módulos no se ven entre sí.</summary>
+    internal static bool IsWriteRace(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.DeadlockDetected or PostgresErrorCodes.SerializationFailure })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Los tenants de los agentes o conexiones que este guardado agrega, borra o cambia en algo que mueve la ocupación. Renombrar
+    /// cuenta: la fila de Mensajería guarda el nombre para el 409 y la bandeja. Guardar el borrador no cuenta: el editor guarda mientras se
+    /// escribe, y reescribir todas las filas del tenant en cada tecla sólo abre la puerta a que dos guardados se crucen.</summary>
     private List<Guid> TenantsWithConnectionChanges() =>
         [.. dbContext.ChangeTracker.Entries()
-            .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+            .Where(entry => entry.State is EntityState.Added or EntityState.Deleted
+                || (entry.State is EntityState.Modified && (entry.Entity is not Agent
+                    || entry.Properties.Any(property => property.IsModified && SlotProperties.Contains(property.Metadata.Name)))))
             .Select(entry => entry.Entity switch
             {
                 Agent agent => (Guid?)agent.TenantId,
