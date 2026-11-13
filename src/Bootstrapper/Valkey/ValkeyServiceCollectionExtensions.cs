@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Bootstrapper.Valkey.Presence;
 using Modules.Messaging.Application;
 
 namespace Bootstrapper.Valkey;
@@ -34,19 +35,35 @@ public static class ValkeyServiceCollectionExtensions
             return provider.GetRequiredService<ValkeyConnection>();
         });
 
-        AddPresence(services);
+        var valkey = configuration.GetSection(ValkeyOptions.SectionName).Get<ValkeyOptions>() ?? new ValkeyOptions();
+        AddPresence(services, IsOn(valkey, ValkeyArea.Presence));
         return services;
     }
 
+    // Lo que se registra se decide con la configuración al arrancar (V3 del plan): un área cuenta prendida sólo con el
+    // interruptor general también prendido, igual que en ValkeyGateway.IsEnabled.
+    private static bool IsOn(ValkeyOptions valkey, ValkeyArea area) => valkey.Enabled && ValkeyAreas.IsOn(valkey.Areas, area);
+
     /// <summary>
-    /// La presencia de la bandeja (D-2): el registro local de <c>MessagingHub</c> y el lector del reporte de uso. Una sola
-    /// instancia de <see cref="MessagingPresence"/> detrás de <see cref="IMessagingPresence"/>, para que el hub escriba en el
-    /// mismo registro que lee el lector.
+    /// La presencia de la bandeja (D-2). Siempre hay una sola instancia de <see cref="MessagingPresence"/>, el registro local
+    /// del pod. Apagada, es el <see cref="IMessagingPresence"/> de <c>MessagingHub</c> y el lector la lee directo, como antes:
+    /// el reporte ve sólo a los conectados a este pod. Prendida (<c>Valkey:Areas:Presence</c>), el hub escribe además en
+    /// <c>qep:presence:{tenantId}</c>, un latido lo mantiene cada 30 s y el lector ve los de todos los pods, con el registro
+    /// local de respaldo si Valkey falla.
     /// </summary>
-    private static void AddPresence(IServiceCollection services)
+    private static void AddPresence(IServiceCollection services, bool shared)
     {
         services.AddSingleton<MessagingPresence>();
-        services.AddSingleton<IMessagingPresence>(provider => provider.GetRequiredService<MessagingPresence>());
-        services.AddSingleton<IMessagingPresenceReader, LocalMessagingPresenceReader>();
+        if (!shared)
+        {
+            services.AddSingleton<IMessagingPresence>(provider => provider.GetRequiredService<MessagingPresence>());
+            services.AddSingleton<IMessagingPresenceReader, LocalMessagingPresenceReader>();
+            return;
+        }
+
+        services.AddSingleton<IMessagingPresence, ValkeyMessagingPresence>();
+        services.AddSingleton(provider => new LocalMessagingPresenceReader(provider.GetRequiredService<MessagingPresence>()));
+        services.AddSingleton<IMessagingPresenceReader, ValkeyMessagingPresenceReader>();
+        services.AddHostedService<PresenceHeartbeatWorker>();
     }
 }

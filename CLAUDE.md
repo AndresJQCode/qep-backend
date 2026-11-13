@@ -782,9 +782,13 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `NOT imported`) desde el corte, y el canal sale de `conversations.channel`, no de la conexión. Renombrar una de esas columnas compila y deja
   `GET …/operator/usage` en 500 (`42703`); lo amarra `PlatformUsageApiTests`, que corre contra el esquema migrado. Si agregas un tipo de mensaje
   que no deba contar como actividad del cliente, tiene que quedar fuera de `direction = 1` o llevar `imported`, o infla el reporte sin error.
-- **La presencia de la bandeja es por proceso, y es condición para subir `replicas`.** `IMessagingPresence` (singleton, alimentado por
-  `MessagingHub`) vive en memoria: con más de una réplica cada una vería sólo a sus conectados y el reporte de uso mostraría a medias, sin error.
-  Antes de subir `replicas` hay que moverla a algo compartido (Redis o una tabla con latido), o retirar «Conectados» de la pantalla.
+- **La presencia de la bandeja es compartida sólo con `Valkey:Areas:Presence`, y es condición para subir `replicas`** (spec 2026-11-13, D-2).
+  `MessagingHub` escribe en `IMessagingPresence` y el reporte de uso lee por `IMessagingPresenceReader`; los registra `AddQepValkey`. Prendida,
+  cada pod escribe a sus conectados en `qep:presence:{tenantId}` (sorted set, latido de 30 s en `PresenceHeartbeatWorker`, ventana de lectura de
+  90 s, `EXPIRE 120`). Apagada, o con Valkey caído, vuelve a ser por pod: el registro local `MessagingPresence`, y con más de una réplica cada una
+  ve sólo a sus conectados, a medias y sin error (con Valkey caído queda un `Warning` por lectura y `qep_valkey_fallbacks_total{area="presence"}`).
+  Desconectar quita al miembro sólo si el pod no le tiene otra pestaña (`MessagingPresence.HasConnection`); si sigue conectado en otro pod, el
+  latido de ese pod lo vuelve a poner en ≤ 30 s. Un camino nuevo que lea la presencia pasa por el lector, no por `Snapshot()`, que es sólo local.
 - **Las reglas del perfil y de la contraseña del comprador duplican las de Store e Identity, y las amarra `BuyerParityTests`** (`tests/Bootstrapper/Bootstrapper.UnitTests`).
   Buyers no ve a Store ni a Identity, así que `BuyerPasswordRules` y `BuyerProfileValidator` son copias de `PublicOrderRequestBodyValidator`, `StoreRequestBilling`/`StoreRequestShipping`
   y de los límites de contraseña de Identity. Cambiar una sin la otra pone la prueba en rojo; el error es de paridad, no del código que acabas de tocar.
