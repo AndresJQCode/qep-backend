@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
+using Modules.Integrations.Infrastructure.Anthropic;
 using Modules.Integrations.Infrastructure.ExternalApi;
 using Modules.Integrations.Infrastructure.Meta;
 using Modules.Integrations.Infrastructure.Persistence;
@@ -90,6 +91,12 @@ public static class IntegrationsInfrastructureExtensions
             .ConfigurePrimaryHttpMessageHandler(() => ExternalApiUrlPolicy.CreateHandler())
             .RemoveAllLoggers();
         services.AddSingleton<IProviderConnectionTester, ExternalApiConnectionTester>();
+        // Plan 2026-11-12, C-2: el probador de la clave de Anthropic, con el patrón de Zenvia (sin redirecciones, 10 s, sin los loggers
+        // que pueden registrar el header x-api-key).
+        services.AddHttpClient(AnthropicConnectionTester.HttpClientName, AnthropicConnectionTester.ConfigureClient)
+            .ConfigurePrimaryHttpMessageHandler(() => AnthropicConnectionTester.CreatePrimaryHandler())
+            .RemoveAllLoggers();
+        services.AddSingleton<IProviderConnectionTester, AnthropicConnectionTester>();
         services.AddSingleton<IConnectionTester, ConnectionTesterRegistry>();
 
         // Spec 2026-10-09 §9 (decisión 2): la app de Meta de toda la plataforma. En Production

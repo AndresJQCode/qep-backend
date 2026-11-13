@@ -18,6 +18,10 @@
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Authorization\Modules.Authorization.Application\Modules.Authorization.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Api\Modules.Ai.Api.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Application\Modules.Ai.Application.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Domain\Modules.Ai.Domain.csproj" />
+    <ProjectReference Include="..\..\..\src\Modules\Ai\Modules.Ai.Infrastructure\Modules.Ai.Infrastructure.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Api\Modules.Automations.Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Application\Modules.Automations.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Automations\Modules.Automations.Domain\Modules.Automations.Domain.csproj" />

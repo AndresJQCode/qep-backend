@@ -48,6 +48,33 @@ public sealed class ConnectionsApiTests
         Assert.All(items, item => Assert.Null(item.BusinessHoursName));
     }
 
+    // Spec 2026-10-29 §4.3: quien ocupa la conexión sale de la tabla neutral, así que también se ve un agente IA. `chatbotId` se
+    // conserva con el id del bot para el frontend que todavía no lee `kind`.
+    [Fact]
+    public async Task AConnectionHeldByAnAgentShowsTheAgent()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var tenant = await RegisterTenantAsync(factory);
+        await EnableAutomationsAsync(connectionString, tenant.TenantId);
+        var whatsApp = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Servicio", Digits(), Digits());
+        var chatbotConnection = await SeedWhatsAppConnectionAsync(factory, tenant.TenantId, "Ventas", Digits(), Digits());
+        var client = CreateClient(factory, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var chatbotId = await PublishAsync(client, tenant.TenantId, chatbotConnection);
+        var agentId = Guid.CreateVersion7();
+        await ExecuteAsync(
+            connectionString,
+            "INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at) VALUES (@c, @t, 2, @b, 'Asesor virtual', now())",
+            ("c", whatsApp), ("t", tenant.TenantId), ("b", agentId));
+
+        var items = await client.GetFromJsonAsync<List<SelectableConnectionDto>>(ConnectionsUrl(tenant.TenantId), Ct);
+
+        Assert.NotNull(items);
+        Assert.Equal(new ServedByDto(agentId, "Asesor virtual", "agent", agentId), items.Single(item => item.Id == whatsApp).ServedBy);
+        Assert.Equal(new ServedByDto(chatbotId, "Servicio técnico", "chatbot", chatbotId), items.Single(item => item.Id == chatbotConnection).ServedBy);
+    }
+
     [Fact]
     public async Task TheEditorListsTheSameConnections()
     {
@@ -142,7 +169,7 @@ public sealed class ConnectionsApiTests
         Assert.DoesNotContain("SENTINEL", await created.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
     }
 
-    private static async Task PublishAsync(HttpClient client, Guid tenantId, Guid connectionId)
+    private static async Task<Guid> PublishAsync(HttpClient client, Guid tenantId, Guid connectionId)
     {
         var created = await client.PostAsJsonAsync(
             $"{AutomationsUrl(tenantId)}/chatbots",
@@ -163,5 +190,6 @@ public sealed class ConnectionsApiTests
         var publish = new HttpRequestMessage(HttpMethod.Post, $"{url}/publish");
         publish.Headers.TryAddWithoutValidation("If-Match", $"\"{version}\"");
         Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(publish, Ct)).StatusCode);
+        return editor.Chatbot.Id;
     }
 }

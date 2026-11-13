@@ -8,11 +8,13 @@ namespace Modules.Integrations.Application;
 public interface IIntegrationsUnitOfWork
 {
     /// <summary>Guarda. Con una transacción abierta por <see cref="BeginTransactionAsync"/>, además la confirma: guardar es
-    /// confirmar, y el candado del token se suelta ahí.</summary>
+    /// confirmar, y los candados tomados dentro de ella se sueltan ahí.</summary>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken);
 
-    /// <summary>Spec 2026-11-12 §6.2: una transacción explícita, para tomar el candado del token de Shopify. Disponerla sin
-    /// guardar la deshace y suelta el candado.</summary>
+    /// <summary>Una transacción explícita, para lo que tiene que sostenerse hasta que la escritura confirme: el candado del
+    /// token de Shopify (spec 2026-11-12 §6.2) y el chequeo de ocupación por un bot de <see cref="DeleteConnectionHandler"/>
+    /// (plan 2026-11-12, Task 6), que toma el candado del cupo del tenant dentro de ella. Disponerla sin guardar la deshace y
+    /// suelta sus candados.</summary>
     Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken);
 
     /// <summary>El candado del token de Shopify de <paramref name="ownerId"/> (una conexión o una instalación), esperando a

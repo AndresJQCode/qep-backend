@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using BuildingBlocks.Application;
@@ -158,6 +158,12 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
     /// <summary>Lo que responde <see cref="TryLockShopifyTokenAsync"/>.</summary>
     public bool LockTaken { get; set; } = true;
 
+    /// <summary>Si hay una transacción de <see cref="BeginTransactionAsync"/> abierta y sin disponer ni confirmar.</summary>
+    public bool InTransaction => _open > 0;
+
+    /// <summary>Si el último guardado corrió dentro de la transacción abierta (guardar la confirma, como el real).</summary>
+    public bool SavedInsideTransaction { get; private set; }
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         if (FailWith is { } failure)
@@ -166,6 +172,7 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
         }
 
         Saves++;
+        SavedInsideTransaction = InTransaction;
         _open = 0;
         return Task.FromResult(1);
     }
@@ -257,6 +264,25 @@ internal sealed class FakeAuthorNames : IConnectionAuthorNames
             Names.Where(entry => memberIds.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value));
 }
 
+/// <summary>Who serves each connection (plan 2026-11-12, review corrections, Tasks 3 and 6). Keyed by tenant and connection, like
+/// <c>messaging.connection_bots</c>: an occupant of another connection, or of the same id under another tenant, does not count.</summary>
+internal sealed class FakeConnectionBotOccupancy : IConnectionBotOccupancy
+{
+    private readonly Dictionary<(Guid TenantId, Guid ConnectionId), ConnectionBotOccupant> occupants = [];
+
+    public void Occupy(Guid tenantId, Guid connectionId, ConnectionBotOccupant occupant) =>
+        occupants[(tenantId, connectionId)] = occupant;
+
+    /// <summary>Runs on every lookup, before answering: lets a test observe the state of the unit of work at check time.</summary>
+    public Action? OnFind { get; set; }
+
+    public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        OnFind?.Invoke();
+        return Task.FromResult(occupants.GetValueOrDefault((tenantId, connectionId)));
+    }
+}
+
 /// <summary>
 /// Todo lo que un handler necesita, con valores por defecto: un tenant, un sujeto con membresía activa
 /// y los dos permisos. Clase partial: las Tasks 7, 8 y 9 suman su parte en archivos propios.
@@ -334,6 +360,22 @@ internal sealed partial class IntegrationsTestBed
 
     public ListConnectionsHandler ListHandler(IExecutionContext? context = null) =>
         new(Catalog, Repository, Modules, Providers, MetaApp, InstagramApp, ShopifyApp, Protector, AuthorNames, context ?? Context());
+
+    /// <summary>La clave de Anthropic del tenant (plan 2026-11-12, C-1).</summary>
+    public IntegrationConnection SeedAnthropic(string apiKey, string name = "Cuenta de Anthropic")
+    {
+        var connection = IntegrationConnection.Create(
+            IntegrationProviders.Anthropic,
+            TenantId,
+            name,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string> { ["apiKey"] = apiKey },
+            Protector.Protect,
+            MemberId,
+            Now);
+        Repository.Connections.Add(connection);
+        return connection;
+    }
 
     /// <summary>Una conexión de Meta ya creada por Embedded Signup: los campos los escribió el backend.</summary>
     public IntegrationConnection SeedWhatsAppCloud(string name = "Ventas")

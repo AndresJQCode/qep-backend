@@ -68,6 +68,12 @@ public static class ExternalApiFieldKeys
     public const string TestPath = "testPath";
 }
 
+/// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant, el único campo.</summary>
+public static class AnthropicFieldKeys
+{
+    public const string ApiKey = "apiKey";
+}
+
 /// <summary>
 /// La lista cerrada de proveedores, como <see cref="TenantModuleKeys.All"/> (spec 2026-10-08,
 /// «Catálogo»). Cada proveedor entra con el spec de su consumidor, porque sin módulo consumidor nunca
@@ -296,7 +302,27 @@ public static class IntegrationProviders
         onboarding: ProviderOnboarding.Form,
         requiresTenantEnablement: false);
 
-    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi];
+    /// <summary>Plan 2026-11-12, C-1: la clave de la cuenta de Anthropic del tenant (BYOK, owner 2026-11-12), que consumen los agentes
+    /// IA. Una por tenant y sin habilitación por tenant: todo tenant con <c>ai</c> puede conectarla (P-16). El patrón sólo exige texto
+    /// imprimible sin espacios: el formato de las claves es de Anthropic y lo juzga el probador, no el catálogo. La pantalla ve los
+    /// últimos 4 caracteres (D-A23).</summary>
+    public static readonly IntegrationProvider Anthropic = new(
+        "anthropic",
+        "Anthropic (Claude)",
+        IntegrationCategory.Ai,
+        [TenantModuleKeys.Ai],
+        [
+            new FieldDefinition(
+                AnthropicFieldKeys.ApiKey, "Clave de API", FieldKind.Secret,
+                required: true, maxLength: 256, pattern: @"^[\x21-\x7E]{1,256}\z",
+                invalidMessage: "La clave sólo puede tener letras, números y símbolos, sin espacios: vuelve a copiarla.",
+                revealSuffix: 4),
+        ],
+        maxConnections: 1,
+        onboarding: ProviderOnboarding.Form,
+        requiresTenantEnablement: false);
+
+    public static readonly IReadOnlyList<IntegrationProvider> All = [Zenvia, WhatsAppCloud, Instagram, Shopify, ExternalApi, Anthropic];
 
     /// <summary>Ordinal, como el <c>CHECK</c>: <c>"Zenvia"</c> no es <c>"zenvia"</c>.</summary>
     public static IntegrationProvider? Find(string? key) =>
