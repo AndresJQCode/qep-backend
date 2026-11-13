@@ -21,7 +21,8 @@ public static class ConnectionEvents
 /// <summary>
 /// Escribe el evento en <c>platform.outbox_messages</c> en la misma transacción que el cambio. Puerto
 /// propio y no el <c>IOutboxWriter</c> de Tenancy, que está ligado a <c>TenancyDbContext</c> (P2).
-/// Payload: <c>{ tenantId, connectionId, providerKey, occurredAt }</c>; nunca un valor de campo.
+/// Payload: <c>{ tenantId, connectionId, providerKey, occurredAt, failureCode }</c>; nunca un valor de campo.
+/// <c>failureCode</c> es el código de la conexión al publicar, <c>null</c> si no está en atención.
 /// </summary>
 public interface IConnectionEventPublisher
 {

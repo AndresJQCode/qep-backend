@@ -29,8 +29,47 @@ public sealed class ShopifyConnectionTesterTests
 
     private static Dictionary<string, string> Secrets() => new(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = Token };
 
+    private static readonly DateTimeOffset Now = new(2026, 11, 12, 15, 0, 0, TimeSpan.Zero);
+
     private static ShopifyConnectionTester Tester(FakeShopifyAdminGateway gateway, FakeShopifyAppSettings? app = null) =>
-        new(gateway, app ?? new FakeShopifyAppSettings());
+        new(gateway, app ?? new FakeShopifyAppSettings(), new FixedTime(Now));
+
+    // Review Focus 4 (D11): con el worker atrasado, el token guardado ya venció. Llamar a Shopify daría 401 y marcaría
+    // credentials_rejected una tienda sana; se responde «no pude verificar» sin llamar.
+    [Fact]
+    public async Task AnExpiredTokenIsUnreachableWithoutCallingShopify()
+    {
+        var gateway = new FakeShopifyAdminGateway();
+        var fields = Fields();
+        fields[ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(Now.AddSeconds(-1));
+
+        var result = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Unreachable, result.Outcome);
+        Assert.Equal("token_refresh_pending", result.Reason);
+        Assert.Empty(gateway.Calls);
+    }
+
+    // D14: una conexión anterior a los tokens que expiran no trae la fecha; se prueba como siempre.
+    [Fact]
+    public async Task ATokenWithoutExpiryIsStillTested()
+    {
+        var gateway = new FakeShopifyAdminGateway { ShopName = "Mi Tienda" };
+        var fields = Fields();
+        fields[ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(Now.AddMinutes(10));
+
+        var withoutExpiry = await Tester(gateway).TestAsync(Fields(), Secrets(), Ct);
+        var notYetExpired = await Tester(gateway).TestAsync(fields, Secrets(), Ct);
+
+        Assert.Equal(ConnectionTestOutcome.Ok, withoutExpiry.Outcome);
+        Assert.Equal(ConnectionTestOutcome.Ok, notYetExpired.Outcome);
+        Assert.Equal("shop", gateway.Calls[0]);
+    }
+
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 
     [Fact]
     public async Task Test200RefreshesShopNameAndRecreatesMissingTopics()

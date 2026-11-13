@@ -4369,6 +4369,28 @@ existían **no** lo reciben (sin backfill, D-S20): se prende desde la consola de
    reintenta. Los tres webhooks de cumplimiento (`customers/data_request`, `customers/redact`, `shop/redact`) no se
    registran por API: van en la configuración de la app.
 
+**Tokens que expiran** (spec `2026-11-12-shopify-tokens-que-expiran-design.md`). Desde el 2027-01-01 Shopify exige tokens
+offline que expiran, así que el canje pide `expiring=1` y rechaza la respuesta sin `refresh_token` ni `expires_in`
+(`integrations.shopify.code_exchange_failed`). El token dura 1 hora y el refresh token 90 días; la conexión guarda los dos
+cifrados (`accessToken`, `refreshToken`) y sus vencimientos en `fields` (`tokenExpiresAt`, `refreshTokenExpiresAt`).
+
+- `ShopifyTokenRefreshWorker` corre al arrancar y cada **5 minutos**, y refresca las conexiones a las que les quedan
+  **20 minutos** o menos. Entran todos los estados salvo `NeedsAttention` con `token_expired` o `app_uninstalled`: una
+  pausada se reanuda sin reautorizar. El refresco no cambia el estado ni la verificación de la conexión.
+- Un **4xx salvo 429** al refrescar (el `401` con `invalid_request` de un refresh token vencido o reemplazado) deja la
+  conexión `NeedsAttention` con `token_expired`, desde cualquier estado, y el worker deja de intentarlo. Lo mismo una
+  conexión que no tiene `refreshToken` (enlazada antes de este cambio). En pantalla se ve como una conexión que pide
+  atención; se arregla **volviendo a abrir la app desde el admin de Shopify** de la tienda y enlazándola otra vez. Un 3xx,
+  429, 5xx, timeout o una respuesta ilegible no cambian nada: el worker lo intenta en la siguiente vuelta, y con tokens de
+  1 hora eso deja tres vueltas de margen.
+- Si el worker va tarde y el token venció, la conexión sigue operativa: los webhooks se procesan e importan y el
+  `shop/redact` no la da por desinstalada. Sólo la conciliación se salta: «Sincronizar ahora» responde 503
+  `shopify.store.sync_unavailable` («reintenta») y el cron la omite hasta el siguiente refresco. «Probar» responde
+  `provider_unreachable` sin llamar a Shopify, para no confundir un token vencido con credenciales rechazadas.
+- Una instalación vive 7 días y su token 1 hora: si al enlazar le quedan 20 minutos o menos, el enlace la refresca antes
+  de registrar los webhooks. Si Shopify rechaza ese refresco, el enlace responde 422
+  `integrations.shopify.install_expired` sin crear la conexión, y la persona vuelve a abrir la app desde su Shopify.
+
 **Flujo de un pedido.** `POST /api/webhooks/shopify` (anónimo, limitador `webhook`, cuerpo hasta
 `Shopify:Webhook:MaxBodyBytes`) verifica `X-Shopify-Hmac-Sha256` —HMAC-SHA256 del cuerpo crudo con el client secret, en
 base64— y responde 401 sin firma válida. Con firma válida encola en `shopify.webhook_deliveries` y responde 200 antes de
@@ -4470,7 +4492,7 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 1. Variables `SHOPIFY_APP_CLIENT_ID` (normal) y `SHOPIFY_APP_CLIENT_SECRET` (**secreta**) en `Backend-prod`. El pipeline
    no las nombra: la plantilla reemplaza cada `#{…}#` de `k8s/` con la variable del grupo que se llame igual.
 2. Backend, con sus migraciones (`AddShopifyModuleKey` en Tenancy, `AddOrderExternalKey` en Quotations,
-   `AddCustomerEmailIndex` en Customers, `AddShopifyProvider` y `AddShopifyInstalls` en Integrations, `InitialShopify` y
+   `AddCustomerEmailIndex` en Customers, `AddShopifyProvider`, `AddShopifyInstalls` y `AddShopifyInstallRefreshToken` en Integrations, `InitialShopify` y
    `AddStoreShopDomain` en Shopify), y el frontend de Shopify en la misma ventana (el porqué va abajo). **Rollback del
    backend:** el SPA muestra rutas que responden 404; nada se corrompe.
 

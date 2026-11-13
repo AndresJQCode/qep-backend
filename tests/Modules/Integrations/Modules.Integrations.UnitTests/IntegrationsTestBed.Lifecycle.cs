@@ -22,12 +22,13 @@ internal sealed partial class IntegrationsTestBed
 }
 
 internal sealed record PublishedEvent(
-    string EventName, Guid TenantId, Guid ConnectionId, string ProviderKey, DateTimeOffset OccurredAt);
+    string EventName, Guid TenantId, Guid ConnectionId, string ProviderKey, DateTimeOffset OccurredAt, string? FailureCode);
 
 internal sealed class RecordingEventPublisher : IConnectionEventPublisher
 {
     public List<PublishedEvent> Published { get; } = [];
 
     public void Publish(string eventName, IntegrationConnection connection, DateTimeOffset occurredAt) =>
-        Published.Add(new PublishedEvent(eventName, connection.TenantId, connection.Id, connection.ProviderKey, occurredAt));
+        Published.Add(new PublishedEvent(
+            eventName, connection.TenantId, connection.Id, connection.ProviderKey, occurredAt, connection.LastFailureCode));
 }

@@ -42,7 +42,9 @@ public static class InstagramFieldKeys
 /// (los escribe el enlace y el probador refresca el nombre); <see cref="ShopId"/>, <see cref="Scopes"/>,
 /// <see cref="WebhookSubscriptionIds"/> y <see cref="AccessToken"/> son internos. <see cref="Scopes"/> y
 /// <see cref="WebhookSubscriptionIds"/> viajan separados por coma; los ids de las suscripciones los escribe y los repone
-/// Integrations (enlace y probador, D-S19).</summary>
+/// Integrations (enlace y probador, D-S19). Spec 2026-11-12: el token offline expira; <see cref="RefreshToken"/> es el
+/// secreto con el que el worker lo renueva, y <see cref="TokenExpiresAt"/> y <see cref="RefreshTokenExpiresAt"/> viajan en
+/// ISO 8601 (<c>O</c>, UTC), con el formato de <see cref="ShopifyTokenRefresh.Format"/>. Los tres son internos.</summary>
 public static class ShopifyFieldKeys
 {
     public const string ShopDomain = "shopDomain";
@@ -50,7 +52,10 @@ public static class ShopifyFieldKeys
     public const string ShopId = "shopId";
     public const string Scopes = "scopes";
     public const string WebhookSubscriptionIds = "webhookSubscriptionIds";
+    public const string TokenExpiresAt = "tokenExpiresAt";
+    public const string RefreshTokenExpiresAt = "refreshTokenExpiresAt";
     public const string AccessToken = "accessToken";
+    public const string RefreshToken = "refreshToken";
 }
 
 /// <summary>Spec 2026-10-21 D-H1. Todos son campos que escribe una persona; <see cref="ApiKey"/> es el único secreto.
@@ -238,9 +243,21 @@ public static class IntegrationProviders
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "Las suscripciones que devolvió Shopify no tienen una forma válida.", isInternal: true),
             new FieldDefinition(
+                ShopifyFieldKeys.TokenExpiresAt, "Vencimiento del token", FieldKind.Text,
+                required: false, maxLength: 40, pattern: null,
+                invalidMessage: "El vencimiento del token no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.RefreshTokenExpiresAt, "Vencimiento del token de refresco", FieldKind.Text,
+                required: false, maxLength: 40, pattern: null,
+                invalidMessage: "El vencimiento del token de refresco no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
                 ShopifyFieldKeys.AccessToken, "Token de acceso", FieldKind.Secret,
                 required: false, maxLength: 2048, pattern: null,
                 invalidMessage: "El token que devolvió Shopify no tiene una forma válida.", isInternal: true),
+            new FieldDefinition(
+                ShopifyFieldKeys.RefreshToken, "Token de refresco", FieldKind.Secret,
+                required: false, maxLength: 2048, pattern: null,
+                invalidMessage: "El token de refresco que devolvió Shopify no tiene una forma válida.", isInternal: true),
         ],
         DefaultMaxConnections,
         onboarding: ProviderOnboarding.ShopifyOAuth);

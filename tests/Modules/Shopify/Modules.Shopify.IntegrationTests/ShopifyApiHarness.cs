@@ -317,7 +317,9 @@ internal static class ShopifyApiHarness
 
     /// <summary>
     /// La conexión y la ruta de una tienda, creadas por los servicios de Integrations (repositorio, rutas, cifrado y unidad de
-    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela.
+    /// trabajo) como las deja <c>LinkShopifyStore</c>, sin pasar por el OAuth: el token es un sentinela. Lleva refresh token y
+    /// un vencimiento a un día (spec 2026-11-12): sin ellos, <c>ShopifyTokenRefreshWorker</c> del host marcaría la tienda
+    /// <c>token_expired</c>.
     /// </summary>
     public static async Task<Guid> LinkStoreAsync(
         WebApplicationFactory<Program> factory, Guid tenantId, Guid createdBy, string shop = Shop, string accessToken = "shpat_sentinel_token")
@@ -325,6 +327,7 @@ internal static class ShopifyApiHarness
         await using var scope = factory.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
         var protector = services.GetRequiredService<ISecretProtector>();
+        var now = services.GetRequiredService<IClock>().UtcNow;
         var connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             tenantId,
@@ -334,11 +337,17 @@ internal static class ShopifyApiHarness
                 [ShopifyFieldKeys.ShopDomain] = shop,
                 [ShopifyFieldKeys.ShopId] = "954889",
                 [ShopifyFieldKeys.Scopes] = "read_orders,read_customers",
+                [ShopifyFieldKeys.TokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
+                [ShopifyFieldKeys.RefreshTokenExpiresAt] = ShopifyTokenRefresh.Format(now.AddDays(1)),
             },
-            new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = accessToken },
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [ShopifyFieldKeys.AccessToken] = accessToken,
+                [ShopifyFieldKeys.RefreshToken] = "shprt_sentinel_refresh",
+            },
             protector.Protect,
             createdBy,
-            services.GetRequiredService<IClock>().UtcNow);
+            now);
         services.GetRequiredService<IIntegrationConnectionRepository>().Add(connection);
         services.GetRequiredService<IConnectionRouteRepository>().Add(
             IntegrationConnectionRoute.Create(IntegrationProviders.Shopify.Key, shop, accountId: null, tenantId, connection.Id));

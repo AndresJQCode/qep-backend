@@ -357,6 +357,35 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **El token de Shopify de una conexión lo refresca sólo `ShopifyTokenRefreshWorker`; el canje y el enlace adquieren y guardan
+  uno nuevo, y los tres van bajo el candado `ShopifyTokenLock.Namespace`** (spec 2026-11-12). El canje
+  (`CompleteShopifyInstall`) guarda el token en la instalación y, si la tienda ya tiene conexión, canjea con el candado de esa
+  conexión; el enlace (`LinkShopifyStore`) refresca el de la instalación con el candado de la instalación y lo pasa a la
+  conexión con el de la conexión. El refresh token rota: dos refrescos de la misma tienda, o un refresco y un canje o un
+  reenlace a la vez, dejan guardado un par que Shopify ya retiró, y la tienda se cae una hora después sin error. El candado es
+  un advisory lock de transacción de dos claves `(20261112, hashtext(id))` sobre el id de la conexión o de la instalación
+  (`IIntegrationsUnitOfWork`): el worker usa la variante que no espera y salta la conexión; el canje y el reenlace, la que
+  espera, **antes** de llamar a Shopify o de cargar la conexión. Ningún request tiene dos candados a la vez, y así no hay
+  ciclo. El `Version` optimista no alcanza: el perdedor ya gastó el refresh token. Un camino nuevo que pida o refresque un
+  token de Shopify —o que reemplace los secretos de una conexión que ya existe— toma el mismo candado; los consumidores sólo
+  leen el guardado.
+- **Rotar el client secret de la app de Shopify en el Partner Dashboard sin actualizar `Backend-prod` deja todas las tiendas en
+  `token_expired` en el siguiente refresco** (spec 2026-11-12). El refresco se firma con ese secreto, Shopify responde un 4xx y
+  el worker lo toma como definitivo; la única salida es que cada comercio vuelva a abrir la app. El secreto se rota en los dos
+  lados en el mismo despliegue.
+- **Una conexión puede publicar `integrations.connection-needs-attention.v1` dos veces seguidas, y el payload trae
+  `failureCode`** (owner, 2026-11-12: el evento identifica el error). `ReportTokenExpiredAsync` publica también desde
+  `NeedsAttention` con otro código (por ejemplo `webhooks_not_registered` → `token_expired`); desde `Paused` no publica, y ya en
+  `token_expired` no hace nada. Hoy nadie consume ese evento: el primero que lo haga (un correo, un aviso) decide por
+  `failureCode`, o le llegan dos avisos por la misma conexión.
+- **Con el token de Shopify vencido, `ShopifyConnectionRef` sale `IsOperational = true` y `AccessToken = null`** (spec
+  2026-11-12 §6.4, D7). No lo «arregles» a no operativa: `RedactShopAsync` daría la tienda por desinstalada y borraría su espejo,
+  y la ingesta dejaría de importar, todo porque el worker iba tarde. Quien llame a la Admin API mira `AccessToken`, no
+  `IsOperational` (`ReconcileStore` salta con 503 `sync_unavailable`; `ListOperationalAsync` la deja fuera). Lo amarran
+  `ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection` y `OrdersTopicWithAnExpiredTokenStillImports`.
+- **`token_expired` sale sólo de un 4xx salvo 429 en el refresco.** El gateway clasifica todo no-2xx que no sea 429 ni 5xx como
+  `Rejected` (un 3xx incluido), y eso sirve al canje y al probador; el worker filtra por status (`IsDefinitiveRejection`) porque
+  `token_expired` sólo se sale reautorizando. Un consumidor nuevo del refresco hace lo mismo.
 - **Instagram es un canal de la misma bandeja de Messaging, no un módulo** (spec 2026-10-14). La conversación lleva
   `channel` (`WhatsApp` | `Instagram`) y en Instagram `user_id` es el IGSID numérico y `wa_id` es siempre `null`: todo
   código nuevo que empareje por teléfono tiene que tratar ese `null`. Las plantillas, las campañas y `POST /conversations`
