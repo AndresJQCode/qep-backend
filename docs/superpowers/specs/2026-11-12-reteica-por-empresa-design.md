@@ -147,7 +147,7 @@ tenant factura con varias empresas en municipios distintos.
 | R8 | La Retefuente se queda en el cliente, sin cambios. |
 | R9 | ~~Migración de datos de ReteICA~~ **Sin efecto** (2026-11-12): el owner verificó que no existe ningún dato ReteICA fuera de `develop` local (§11). |
 | R10 | Despliegue: backend primero, describiendo la compatibilidad del frontend viejo con el backend nuevo, como el baseline. |
-| R11 | (2026-11-12, segunda ronda) En un pedido editable y en una cotización con facturación propia, el asesor puede aplicar **a mano** la tasa municipal de la empresa para el municipio de la operación aunque el cliente no esté registrado como agente retenedor ahí. Queda en el historial. Un cambio posterior de empresa o de municipio re-resuelve con la regla del cliente y la quita, y eso también queda en el historial. Resuelve los pendientes A4 y A5 de la primera versión. |
+| R11 | (2026-11-12, segunda ronda) En un pedido editable y en una cotización con facturación propia, el asesor puede aplicar **a mano** la tasa municipal de la empresa para el municipio de la operación aunque el cliente no esté registrado como agente retenedor ahí. Queda en el historial. Un cambio posterior de empresa o de municipio re-resuelve (§7.6): en el pedido, con la regla del cliente, que la quita y lo anota en el historial; en la cotización con facturación propia, la selección pasa a la tasa de la empresa para el municipio nuevo, o queda vacía si la empresa no tiene (owner, 2026-11-13). Resuelve los pendientes A4 y A5 de la primera versión. |
 | R12 | (2026-11-12, confirmado) «Impuestos por tipo» y este trabajo se despliegan **juntos**. El frontend de impuestos por tipo (`8a1368c9`) **ya está** en `origin/develop` (no en `main`); el backend (`8052ee2f`) **no** está publicado. Hasta mergear este trabajo: no se lleva `develop` a `main` en ninguno de los dos repos y no se publica (push) `develop` del backend. Así nunca existe en producción una ReteICA con el modelo del baseline (§11.2, §12). |
 | R13 | (2026-11-12) El PDF de cotización y de pedido muestra el **porcentaje** de cada retención, para que el cliente compruebe el monto (§7.9). [agente] En **todas** las filas de retención, no sólo en las editadas, y siempre el porcentaje **efectivo**: «ReteICA Bogotá 0,966 %». |
 | R14 | (2026-11-12) Acepta A3: el Excel de clientes pierde la columna «ReteICA» y no gana una de municipios agente (§7.4). |
@@ -661,7 +661,9 @@ Integración (Testcontainers, un proyecto a la vez):
   `withholding_tax_rate_invalid`.
 - Aplicación a mano (R11): en la edición de un pedido, elegir la ReteICA de la empresa para un municipio donde el cliente no es
   agente → 200, fila `Resolved` con `customerIsAgent = false` e historial; cambiar después el municipio la quita con la regla del
-  cliente y lo anota. Lo mismo en la cotización con facturación propia (`customerIsAgent = null`).
+  cliente y lo anota. En la cotización con facturación propia (`customerIsAgent = null`) la aplicación es igual, pero cambiar
+  después el municipio pasa la selección a la tasa de la empresa para el municipio nuevo (o la deja vacía si no hay), §7.6
+  (owner, 2026-11-13).
 - Selecciones viejas (A11): un `PUT` de cotización que cambia la empresa y trae un selector ReteICA y un porcentaje ReteICA → el
   selector y el porcentaje se ignoran, la fila sale de la re-resolución y el historial anota la tarifa editada perdida; la
   Retefuente del mismo cuerpo sí se aplica. Igual en la edición del pedido y en las dos vistas previas.
