@@ -27,6 +27,16 @@ public sealed class AgentEditorBuilder(
     /// <summary>Los problemas del borrador con el contexto del agente. <paramref name="publishing"/> endurece el modelo (C-16).</summary>
     public async Task<IReadOnlyList<AgentIssue>> ValidateAsync(Agent agent, bool publishing, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(agent);
+        return await ValidateAsync(agent, publishing, await connections.ListAsync(agent.TenantId, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>Sólo cuentan las conexiones que siguen existiendo en Integrations: Integrations borra la conexión sin avisar (nadie
+    /// consume <c>integrations.connection.deleted</c>) y la referencia de <c>ai.agent_connections</c> es blanda. Sin el filtro, un agente
+    /// cuya única conexión se borró pasaría la validación y se publicaría sin atender nada.</summary>
+    private async Task<IReadOnlyList<AgentIssue>> ValidateAsync(
+        Agent agent, bool publishing, IReadOnlyList<AiConnectionRef> live, CancellationToken cancellationToken)
+    {
         var config = agent.DraftConfig;
         bool? memberCanReply = null;
         if (config.Handoff.Destination == AgentHandoff.ToMember && config.Handoff.MemberId is { } memberId)
@@ -35,13 +45,22 @@ public sealed class AgentEditorBuilder(
         }
 
         return AgentConfigValidator.Validate(
-            config, new AgentValidationContext(agent.Connections.Count, AvailabilityOf(config.Model), memberCanReply, publishing));
+            config, new AgentValidationContext(LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing));
+    }
+
+    private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlyList<AiConnectionRef> live)
+    {
+        var ids = live.Select(connection => connection.Id).ToHashSet();
+        return [.. agent.Connections.Select(connection => connection.ConnectionId).Where(ids.Contains)];
     }
 
     public async Task<AgentEditorDto> BuildAsync(Agent agent, CancellationToken cancellationToken)
     {
-        var issues = await ValidateAsync(agent, publishing: false, cancellationToken);
-        var selectable = await ListSelectableAsync(agent.TenantId, cancellationToken);
+        ArgumentNullException.ThrowIfNull(agent);
+        // Una sola lectura de las conexiones del tenant para la validación, las elegidas y las elegibles.
+        var live = await connections.ListAsync(agent.TenantId, cancellationToken);
+        var issues = await ValidateAsync(agent, publishing: false, live, cancellationToken);
+        var selectable = await ListSelectableAsync(agent.TenantId, live, cancellationToken);
         var assignable = await members.ListAsync(agent.TenantId, cancellationToken);
         var published = agent.PublishedVersion;
         return new AgentEditorDto(
@@ -54,7 +73,7 @@ public sealed class AgentEditorBuilder(
             agent.HasDraftChanges,
             AvailabilityOf(agent.DraftConfig.Model) != AgentModelAvailability.Available,
             [.. issues.Select(ToDto)],
-            [.. agent.Connections.Select(connection => connection.ConnectionId)],
+            LiveConnectionIds(agent, live),
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
             ModelCatalog.ToDto(catalog));
@@ -88,9 +107,12 @@ public sealed class AgentEditorBuilder(
         ]);
     }
 
-    public async Task<IReadOnlyList<AiConnectionDto>> ListSelectableAsync(Guid tenantId, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AiConnectionDto>> ListSelectableAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        await ListSelectableAsync(tenantId, await connections.ListAsync(tenantId, cancellationToken), cancellationToken);
+
+    private async Task<IReadOnlyList<AiConnectionDto>> ListSelectableAsync(
+        Guid tenantId, IReadOnlyList<AiConnectionRef> tenantConnections, CancellationToken cancellationToken)
     {
-        var tenantConnections = await connections.ListAsync(tenantId, cancellationToken);
         var occupants = (await slots.ListAsync(tenantId, cancellationToken)).ToDictionary(occupant => occupant.ConnectionId);
         return
         [
