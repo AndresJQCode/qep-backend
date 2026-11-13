@@ -326,12 +326,56 @@ public static partial class TemplateCatalog
             throw new MessagingDomainException(MessagingErrorCodes.TemplateNotAvailable, "The template is not an approved, sendable template of this connection.");
         }
 
+        RequireParameters(template, parameterKeys);
+        return template;
+    }
+
+    /// <summary>Spec 2026-11-13 §4.2: enviable por la API externa si lo es del todo, o si sólo le falta un encabezado de imagen, video o
+    /// documento (el integrador lo manda por enlace).</summary>
+    public static bool IsExternallySendable(MessageTemplateDto template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return template.Sendable || (template.SendableWithHeaderMedia && template.HeaderMedia is not null);
+    }
+
+    /// <summary>
+    /// Spec 2026-11-13 §4.2: como <see cref="RequireSendable"/> pero para la API externa, que además manda el encabezado multimedia.
+    /// <paramref name="headerMedia"/> es una constante de <see cref="TemplateHeaderMedia"/>, o <c>null</c> si no mandó encabezado. Orden:
+    /// <c>not_available</c>, <c>header_mismatch</c>, <c>parameters_mismatch</c>.
+    /// </summary>
+    public static MessageTemplateDto RequireExternallySendable(
+        IReadOnlyList<MessageTemplateDto> catalog, string name, string language, string? headerMedia, IEnumerable<string> parameterKeys)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        ArgumentNullException.ThrowIfNull(parameterKeys);
+        var template = catalog.FirstOrDefault(
+            candidate => string.Equals(candidate.Name, name, StringComparison.Ordinal) && string.Equals(candidate.Language, language, StringComparison.Ordinal));
+        if (template is null || !IsExternallySendable(template))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateNotAvailable, "The template is not an approved, sendable template of this connection.");
+        }
+
+        if (!string.Equals(template.HeaderMedia, headerMedia, StringComparison.Ordinal))
+        {
+            throw new MessagingDomainException(MessagingErrorCodes.TemplateHeaderMismatch, template.HeaderMedia switch
+            {
+                TemplateHeaderMedia.Image => "La plantilla requiere un encabezado de imagen.",
+                TemplateHeaderMedia.Video => "La plantilla requiere un encabezado de video.",
+                TemplateHeaderMedia.Document => "La plantilla requiere un encabezado de documento.",
+                _ => "La plantilla no tiene encabezado multimedia.",
+            });
+        }
+
+        RequireParameters(template, parameterKeys);
+        return template;
+    }
+
+    private static void RequireParameters(MessageTemplateDto template, IEnumerable<string> parameterKeys)
+    {
         if (!template.Parameters.ToHashSet(StringComparer.Ordinal).SetEquals(parameterKeys))
         {
             throw new MessagingDomainException(MessagingErrorCodes.TemplateParametersMismatch, "The parameters do not match the template's variables.");
         }
-
-        return template;
     }
 
     /// <summary>
