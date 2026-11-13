@@ -15,8 +15,10 @@ public interface IConnectionHealthReporter
     /// <summary>
     /// Spec 2026-11-12 §6.3 (D9): el proveedor ya no deja renovar el token. Pasa a <c>NeedsAttention</c> con
     /// <c>token_expired</c> desde <c>Active</c>, <c>Paused</c> o <c>NeedsAttention</c> con otro código, porque nada fuera de
-    /// una nueva autorización la recupera. Audita como <see cref="ReportCredentialsRejectedAsync"/>; publica el evento sólo
-    /// si estaba <c>Active</c>. Ya en <c>token_expired</c> o <c>app_uninstalled</c> no hace nada.
+    /// una nueva autorización la recupera. Audita como <see cref="ReportCredentialsRejectedAsync"/>; publica el evento, con
+    /// <c>token_expired</c> en el payload, si estaba <c>Active</c> o en <c>NeedsAttention</c> con otro código (owner,
+    /// 2026-11-12: el evento identifica el error), y no desde <c>Paused</c>. Ya en <c>token_expired</c> o
+    /// <c>app_uninstalled</c> no hace nada.
     /// </summary>
     Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken);
 }
@@ -60,9 +62,10 @@ public sealed class ConnectionHealthReporter(
             return;
         }
 
-        // Publicar sólo desde Active repite la regla del enlace: una pausada o ya en atención no «entra» en atención.
-        var wasActive = connection.Status == ConnectionStatus.Active;
-        await MarkAsync(connection, ConnectionFailureCodes.TokenExpired, wasActive, cancellationToken);
+        // Owner, 2026-11-12: el evento identifica el error, así que una en atención por otra causa publica otra vez, con
+        // token_expired. Una pausada no: la pausa fue del usuario. La que ya está en token_expired salió arriba.
+        var publish = connection.Status is ConnectionStatus.Active or ConnectionStatus.NeedsAttention;
+        await MarkAsync(connection, ConnectionFailureCodes.TokenExpired, publish, cancellationToken);
     }
 
     private async Task MarkAsync(

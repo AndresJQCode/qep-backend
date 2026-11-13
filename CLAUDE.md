@@ -373,6 +373,11 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `token_expired` en el siguiente refresco** (spec 2026-11-12). El refresco se firma con ese secreto, Shopify responde un 4xx y
   el worker lo toma como definitivo; la única salida es que cada comercio vuelva a abrir la app. El secreto se rota en los dos
   lados en el mismo despliegue.
+- **Una conexión puede publicar `integrations.connection-needs-attention.v1` dos veces seguidas, y el payload trae
+  `failureCode`** (owner, 2026-11-12: el evento identifica el error). `ReportTokenExpiredAsync` publica también desde
+  `NeedsAttention` con otro código (por ejemplo `webhooks_not_registered` → `token_expired`); desde `Paused` no publica, y ya en
+  `token_expired` no hace nada. Hoy nadie consume ese evento: el primero que lo haga (un correo, un aviso) decide por
+  `failureCode`, o le llegan dos avisos por la misma conexión.
 - **Con el token de Shopify vencido, `ShopifyConnectionRef` sale `IsOperational = true` y `AccessToken = null`** (spec
   2026-11-12 §6.4, D7). No lo «arregles» a no operativa: `RedactShopAsync` daría la tienda por desinstalada y borraría su espejo,
   y la ingesta dejaría de importar, todo porque el worker iba tarde. Quien llame a la Admin API mira `AccessToken`, no

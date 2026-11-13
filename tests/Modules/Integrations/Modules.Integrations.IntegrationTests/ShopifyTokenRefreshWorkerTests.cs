@@ -289,6 +289,29 @@ public sealed class ShopifyTokenRefreshWorkerTests
         Assert.Single(factory.ShopifyHandler.RefreshRequests);
     }
 
+    // Owner, 2026-11-12: el evento identifica el error. En atención por webhooks y con el refresh token muerto, sale otro
+    // NeedsAttention, con token_expired en el payload.
+    [Fact]
+    public async Task AWebhooksNotRegisteredConnectionRejectedPublishesTokenExpired()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var linked = await LinkAsync(factory, connectionString);
+        using var _ = linked.Owner;
+        await SetStateAsync(linked, "NeedsAttention", ConnectionFailureCodes.WebhooksNotRegistered);
+        await ExpireInAsync(linked, TimeSpan.FromMinutes(5));
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccess, RefreshedRefresh, HttpStatusCode.Unauthorized);
+
+        Assert.Equal((0, 1, 0, 0), Counts(await linked.Worker.RunOnceAsync(Ct)));
+
+        Assert.Equal("NeedsAttention:token_expired", await StateAsync(linked));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.connection-needs-attention.v1' AND payload->>'connectionId' = @id::text AND payload->>'failureCode' = 'token_expired'",
+            ("id", linked.ConnectionId)));
+    }
+
     // Review Focus 2: refrescar no saca de NeedsAttention; eso lo hace una verificación.
     [Fact]
     public async Task AWebhooksNotRegisteredConnectionIsRefreshedAndKeepsItsState()

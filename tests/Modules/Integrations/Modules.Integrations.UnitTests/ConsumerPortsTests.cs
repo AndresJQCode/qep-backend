@@ -153,34 +153,60 @@ public sealed class ConsumerPortsTests
     }
 
     // Spec 2026-11-12 §6.3 (D9): un refresh token muerto saca a la conexión de cualquier estado recuperable, también de
-    // Paused; si no, el worker la reintentaría cada 5 minutos para siempre. Sólo publica si estaba Active.
+    // Paused; si no, el worker la reintentaría cada 5 minutos para siempre. Desde Paused no publica: la pausa fue del usuario.
     [Fact]
-    public async Task ReportTokenExpiredMovesPausedAndOtherAttentionToTokenExpired()
+    public async Task ReportTokenExpiredFromPausedMovesItWithoutPublishing()
     {
         var bed = new IntegrationsTestBed();
         var paused = bed.Seed("Pausada");
         paused.Pause(IntegrationsTestBed.Now);
-        var attention = bed.Seed("Atención");
-        attention.MarkNeedsAttention(ConnectionFailureCodes.WebhooksNotRegistered, IntegrationsTestBed.Now);
         var reporter = bed.HealthReporter();
 
         await reporter.ReportTokenExpiredAsync(bed.TenantId, paused.Id, Ct);
-        await reporter.ReportTokenExpiredAsync(bed.TenantId, attention.Id, Ct);
         await reporter.ReportTokenExpiredAsync(bed.TenantId, Guid.CreateVersion7(), Ct);
 
-        Assert.All([paused, attention], connection =>
-        {
-            Assert.Equal(ConnectionStatus.NeedsAttention, connection.Status);
-            Assert.Equal(ConnectionFailureCodes.TokenExpired, connection.LastFailureCode);
-        });
-        Assert.Equal(2, bed.Audit.Entries.Count);
-        Assert.All(bed.Audit.Entries, entry =>
-        {
-            Assert.Equal("integrations.connection.needs_attention", entry.Action);
-            Assert.Equal(AuditActorType.Integration, entry.ActorType);
-        });
+        Assert.Equal(ConnectionStatus.NeedsAttention, paused.Status);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, paused.LastFailureCode);
+        var audit = Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection.needs_attention", audit.Action);
+        Assert.Equal(AuditActorType.Integration, audit.ActorType);
         Assert.Empty(bed.Events.Published);
-        Assert.Equal(2, bed.UnitOfWork.Saves);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
+    // Owner, 2026-11-12: el evento identifica el error. Una conexión en atención por otra causa que pasa a token_expired
+    // publica otra vez, con el código nuevo.
+    [Fact]
+    public async Task ReportTokenExpiredFromAnotherAttentionCodePublishesTheNewCode()
+    {
+        var bed = new IntegrationsTestBed();
+        var attention = bed.Seed("Atención");
+        attention.MarkNeedsAttention(ConnectionFailureCodes.WebhooksNotRegistered, IntegrationsTestBed.Now);
+
+        await bed.HealthReporter().ReportTokenExpiredAsync(bed.TenantId, attention.Id, Ct);
+
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, attention.LastFailureCode);
+        var audit = Assert.Single(bed.Audit.Entries);
+        Assert.Equal("integrations.connection.needs_attention", audit.Action);
+        var published = Assert.Single(bed.Events.Published);
+        Assert.Equal("integrations.connection-needs-attention.v1", published.EventName);
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, published.FailureCode);
+        Assert.Equal(1, bed.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ReportTokenExpiredOnTokenExpiredNeitherPublishesNorAudits()
+    {
+        var bed = new IntegrationsTestBed();
+        var expired = bed.Seed("Vencida");
+        expired.MarkNeedsAttention(ConnectionFailureCodes.TokenExpired, IntegrationsTestBed.Now);
+
+        await bed.HealthReporter().ReportTokenExpiredAsync(bed.TenantId, expired.Id, Ct);
+
+        Assert.Equal(ConnectionFailureCodes.TokenExpired, expired.LastFailureCode);
+        Assert.Empty(bed.Audit.Entries);
+        Assert.Empty(bed.Events.Published);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
     }
 
     [Fact]

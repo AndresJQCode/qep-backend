@@ -13,12 +13,13 @@ internal sealed class IntegrationsEventPublisher(IntegrationsDbContext dbContext
             Id = Guid.CreateVersion7(),
             EventName = eventName,
             PayloadJson = JsonSerializer.Serialize(new ConnectionEventPayload(
-                connection.TenantId, connection.Id, connection.ProviderKey, occurredAt)),
+                connection.TenantId, connection.Id, connection.ProviderKey, occurredAt, connection.LastFailureCode)),
             CorrelationId = Guid.NewGuid().ToString(),
             OccurredAt = occurredAt,
         });
 
-    // Nombres en minúscula como el resto de los payloads del outbox; nunca un valor de campo.
+    // Nombres en minúscula como el resto de los payloads del outbox; nunca un valor de campo. failureCode es el código de la
+    // conexión al publicar (owner, 2026-11-12: el evento identifica el error); null si no está en atención.
     private sealed record ConnectionEventPayload(
-        Guid tenantId, Guid connectionId, string providerKey, DateTimeOffset occurredAt);
+        Guid tenantId, Guid connectionId, string providerKey, DateTimeOffset occurredAt, string? failureCode);
 }

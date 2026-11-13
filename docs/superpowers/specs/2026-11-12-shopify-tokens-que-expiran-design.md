@@ -129,6 +129,7 @@ tienda real (§9) lo confirma.
 | `401` / `invalid_request`, o cualquier 4xx salvo 429 | `NeedsAttention` con `token_expired` por `IConnectionHealthReporter`; se deja de refrescar. Vale para cualquier estado, también `Paused` (owner, 2026-11-12): `ReportCredentialsRejectedAsync` ignora lo que no está `Active`, así que hace falta un reporte propio |
 | 429, 5xx, timeout, red | no cambia el estado; se reintenta en la siguiente vuelta. Se loguea sin cuerpo ni tokens |
 | La conexión no tiene `refreshToken` (conexión de prueba anterior a este cambio) | `NeedsAttention` con `token_expired` en la primera vuelta. La persona reconecta. Decisión del diseño: no hay tiendas reales que lo sufran |
+| El evento `connection-needs-attention` al pasar a `token_expired` | Se publica desde `Active` y desde `NeedsAttention` con otro código, con `failureCode = token_expired` en el payload; desde `Paused` no (la pausa fue del usuario), y ya en `token_expired` ni publica ni audita (owner, 2026-11-12: el evento identifica el error) |
 
 ### 6.4 Consumidores
 
