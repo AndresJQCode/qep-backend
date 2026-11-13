@@ -252,3 +252,34 @@ git commit -m "feat(integrations): block deleting a connection a bot serves"
 
 - **Filas huérfanas de conexiones borradas antes de la Tarea 3.** Las que ya existan en `ai.agent_connections`, `automations.chatbot_connections` y `messaging.connection_bots` no se limpian. Son inofensivas tras la Tarea 2.
 - **Pruebas de concurrencia real**, por ejemplo chatbot y agente publicando la misma conexión a la vez. Son no deterministas con Testcontainers; quedan como prueba manual si el owner la quiere.
+
+---
+
+## Tareas 4 y 5 (revisión final, 2026-11-12)
+
+La revisión final de la rama encontró dos hallazgos medios. Van en un solo bloque, con un commit por tarea.
+
+### Task 4: La sincronización de la ocupación se serializa por tenant
+
+**Por qué.** El `ORDER BY` de la Tarea 1 no alcanza. El `DELETE` previo toma las filas en cualquier orden, y `ON CONFLICT DO UPDATE ... WHERE` bloquea la fila aunque el `WHERE` dé falso. Dos sincronizaciones del mismo tenant (renombrar un agente mientras otro quita su conexión, o un chatbot y un agente a la vez) todavía pueden cruzarse en un deadlock.
+
+**Files:**
+- Create: `src/Bootstrapper/ConnectionSlotsLock.cs`
+- Modify: `src/Bootstrapper/AgentConnectionSlots.cs`, `src/Bootstrapper/ChatbotConnectionSlots.cs`
+- Test: `tests/Modules/Ai/Modules.Ai.IntegrationTests/AgentsApiTests.cs`, `tests/Modules/Automations/Modules.Automations.IntegrationTests/ChatbotsApiTests.ConnectionSlots.cs`
+
+- [ ] **RED.** `TheSlotSyncWaitsForTheTenantLock` en los dos gemelos. Toma `pg_advisory_xact_lock(20261112, hashtext('<tenantId>'))` desde otra conexión, lanza el renombre de un bot publicado y comprueba que no termina en 1,5 s. Al soltar el candado, responde 200. Esperado en RED: el renombre termina antes del plazo.
+- [ ] **GREEN.** `ConnectionSlotsLock` con `Namespace = 20261112`, en la forma de dos claves. Es la primera sentencia de `SyncAgentsAsync` y de `SyncChatbotsAsync`, con la misma clave en los dos, así que un chatbot y un agente del mismo tenant también hacen fila. Se suelta con el commit o el rollback del unit of work. Se corrigen los comentarios que decían que el `ORDER BY` bastaba.
+- [ ] **Commit:** `fix(ai): serialize connection slot sync per tenant`.
+
+### Task 5: Validar el borrador sólo contra los ids de las conexiones
+
+**Por qué.** Desde la Tarea 2, `ValidateAsync` llama a `IAiConnections.ListAsync`, y su adaptador corre `ListAllAsync` y `ListActiveAsync`. El segundo resuelve cada conexión activa, con su secreto. Eso pasa en cada autoguardado del borrador.
+
+**Files:**
+- Modify: `src/Modules/Ai/Modules.Ai.Application/AgentPorts.cs`, `src/Modules/Ai/Modules.Ai.Application/AgentEditorBuilder.cs`, `src/Bootstrapper/AiConnections.cs`
+- Test: `tests/Modules/Ai/Modules.Ai.UnitTests/AgentEditorBuilderTests.cs`
+
+- [ ] **RED.** `ValidatingReadsOnlyConnectionIds`: el doble cuenta las llamadas. Tras `ValidateAsync`, `ListAsync` va en 0 y `ListIdsAsync` en 1. Esperado en RED: `CS0535`/`CS1061`, porque el método no existe.
+- [ ] **GREEN.** `IAiConnections.ListIdsAsync` devuelve un `IReadOnlySet<Guid>`, y el adaptador lo arma sólo con `ListAllAsync`. El `ValidateAsync` público lo usa. `BuildAsync` conserva su única lectura completa y saca los ids de ahí.
+- [ ] **Commit:** `perf(ai): validate agent connections against ids only`.
