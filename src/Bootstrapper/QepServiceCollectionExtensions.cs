@@ -237,6 +237,9 @@ public static class QepServiceCollectionExtensions
             IQueryHandler<GetTaxRateQuery, TaxRateDto>,
             GetTaxRateHandler>();
         services.AddScoped<
+            IQueryHandler<GetTaxRateOptionsQuery, TaxRateOptionsDto>,
+            GetTaxRateOptionsHandler>();
+        services.AddScoped<
             ICommandHandler<CreateTaxRateCommand, TaxRateDto>,
             CreateTaxRateHandler>();
         services.AddScoped<
@@ -255,6 +258,9 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<DeleteTaxRateCommand, TaxRateDeletedResult>,
             DeleteTaxRateHandler>();
+        // La consola de la unidad tributaria del operador: también a mano, y sin el registro el síntoma es 500.
+        services.AddScoped<IQueryHandler<ListTaxUnitsQuery, TaxUnitsDto>, ListTaxUnitsHandler>();
+        services.AddScoped<ICommandHandler<SetTaxUnitValueCommand, TaxUnitValueDto>, SetTaxUnitValueHandler>();
         // La biblioteca de opciones de Catalog. Mismo registro a mano que las tasas.
         services.AddScoped<IQueryHandler<ListOptionsQuery, OptionsResponse>, ListOptionsHandler>();
         services.AddScoped<ICommandHandler<CreateOptionCommand, OptionResponse>, CreateOptionHandler>();
@@ -1550,6 +1556,15 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IQuotationProductPricingLookup, QuotationProductPricingLookup>();
         // La tasa del IVA del envío (spec 2026-10-17 §4.2), sobre el repositorio de tasas de Catalog.
         services.AddScoped<IQuotationTaxRateLookup, QuotationTaxRateLookup>();
+        // Impuestos por tipo (spec 2026-11-10 §7.5): las retenciones que congela un documento, con las tasas y la UVT de
+        // Catalog y las tasas asignadas al cliente de Customers.
+        services.AddScoped<IQuotationWithholdingLookup, QuotationWithholdingLookup>();
+        // Impuestos por tipo (spec 2026-11-10 §7.2): Catalog verifica el país de una tasa contra las empresas del tenant.
+        services.AddScoped<ITaxRateCountrySource, TaxRateCountrySource>();
+        // Impuestos por tipo (spec 2026-11-10 §7.4): Customers valida y pinta las retenciones de un cliente contra el
+        // catálogo, y Catalog sabe si una tasa está asignada a algún cliente. Dos puertos, un adaptador por lado.
+        services.AddScoped<ICustomerTaxRateLookup, CustomerTaxRateLookup>();
+        services.AddScoped<ITaxRateCustomerUsage, TaxRateCustomerUsage>();
         // Lo que el dominio no puede saber del envío (transportadora activa, recaudo, tasa del tenant):
         // lo usan crear, guardar y previsualizar la cotización y el pedido.
         services.AddScoped<ShippingResolver>();
@@ -1728,6 +1743,9 @@ public static class QepServiceCollectionExtensions
                 // Spec 2026-10-26 §6: la consola de ciudades del operador, con el mismo criterio que las tres de arriba.
                 GeographyOperatorPermissions.CitiesRead,
                 GeographyOperatorPermissions.CitiesManage,
+                // Spec 2026-11-10 (Impuestos por tipo): la consola de la unidad tributaria, con el mismo criterio.
+                CatalogOperatorPermissions.TaxUnitsRead,
+                CatalogOperatorPermissions.TaxUnitsManage,
                 // Reporte de uso de la plataforma: misma categoría y mismo criterio que los de arriba.
                 OperatorPermissions.UsageRead,
                 // Spec 2026-10-08 (Integraciones), decisión 3: de fábrica en admin. El rol vive en
@@ -2294,6 +2312,21 @@ public static class QepServiceCollectionExtensions
             "Operator",
             "high",
             RequiredModules: []));
+        // Spec 2026-11-10: la unidad tributaria. Cargar un valor mueve el umbral de las retenciones de todos los tenants: "high".
+        services.AddSingleton(new PermissionDefinition(
+            CatalogOperatorPermissions.TaxUnitsRead,
+            "Ver la unidad tributaria",
+            "Permite ver el valor de la unidad tributaria (UVT) cargado por país y año.",
+            "Operator",
+            "medium",
+            RequiredModules: []));
+        services.AddSingleton(new PermissionDefinition(
+            CatalogOperatorPermissions.TaxUnitsManage,
+            "Gestionar la unidad tributaria",
+            "Permite cargar y corregir el valor de la unidad tributaria de un año, que fija desde qué base se retiene en todos los tenants.",
+            "Operator",
+            "high",
+            RequiredModules: []));
         // Reporte de uso: sólo lectura, por eso "medium". Núcleo, como los demás operator.*.
         services.AddSingleton(new PermissionDefinition(
             OperatorPermissions.UsageRead,
@@ -2813,6 +2846,13 @@ public static class QepServiceCollectionExtensions
             .AddPolicy(
                 GeographyOperatorPermissions.CitiesManage,
                 policy => AddPermissionRequirement(policy, GeographyOperatorPermissions.CitiesManage))
+            // Sin estas dos, RequireAuthorization de la consola de la unidad tributaria no resuelve y el síntoma es 500, no 403.
+            .AddPolicy(
+                CatalogOperatorPermissions.TaxUnitsRead,
+                policy => AddPermissionRequirement(policy, CatalogOperatorPermissions.TaxUnitsRead))
+            .AddPolicy(
+                CatalogOperatorPermissions.TaxUnitsManage,
+                policy => AddPermissionRequirement(policy, CatalogOperatorPermissions.TaxUnitsManage))
             // Sin esta, RequireAuthorization del reporte de uso no resuelve y el síntoma es 500, no 403.
             .AddPolicy(
                 OperatorPermissions.UsageRead,

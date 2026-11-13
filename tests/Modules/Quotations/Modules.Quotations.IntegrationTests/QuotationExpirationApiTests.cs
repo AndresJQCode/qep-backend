@@ -27,7 +27,7 @@ public sealed class QuotationExpirationApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var yesterday = TodayInBogota().AddDays(-1);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId, validUntil: yesterday);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId, validUntil: yesterday);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -52,7 +52,7 @@ public sealed class QuotationExpirationApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var tomorrow = TodayInBogota().AddDays(1);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId, validUntil: tomorrow);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId, validUntil: tomorrow);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",

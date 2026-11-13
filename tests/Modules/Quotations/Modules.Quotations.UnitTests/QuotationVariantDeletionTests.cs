@@ -32,7 +32,7 @@ public sealed class QuotationVariantDeletionTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
-            "COP", customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+            "COP", customerVatSurplus: false, customerWithholdings: [], AdvisorId, Now);
 
         foreach (var line in lines)
         {

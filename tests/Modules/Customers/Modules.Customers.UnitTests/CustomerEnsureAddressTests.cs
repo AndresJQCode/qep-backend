@@ -48,7 +48,6 @@ public sealed class CustomerEnsureAddressTests
             new CustomerCommercialInfo
             {
                 ClassificationId = new ClientClassificationId(Guid.Parse("01900000-0000-7000-8000-000000000020")),
-                WithRetention = false,
                 VatSurplus = false
             },
             Now);
@@ -72,7 +71,7 @@ public sealed class CustomerEnsureAddressTests
                 Country = "ES",
                 CityName = "Madrid"
             },
-            new CustomerCommercialInfo { ClassificationId = null, WithRetention = false, VatSurplus = false },
+            new CustomerCommercialInfo { ClassificationId = null, VatSurplus = false },
             Now);
 
     private static CustomerAddressDetails Details(

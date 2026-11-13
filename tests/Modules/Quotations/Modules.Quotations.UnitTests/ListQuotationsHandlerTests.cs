@@ -223,8 +223,8 @@ public sealed class ListQuotationsHandlerTests
             QuotationParties.Empty,
             billingAccount: complete ? BillingAccount : null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 

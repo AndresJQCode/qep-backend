@@ -156,6 +156,46 @@ public sealed class CustomerMergeApiTests
         + "|| (SELECT coalesce(string_agg(customer_id || ':' || tag_id, ',' ORDER BY customer_id, tag_id), '') FROM customers.customer_tags) || '|' "
         + "|| (SELECT count(*) FROM platform.outbox_messages WHERE payload->>'action' = '" + MergedAction + "')";
 
+    // Spec impuestos por tipo §7.4: la fusión conserva las tasas del que queda; las del absorbido no se suman (dos tasas del
+    // mismo tipo y país son justo lo que la pantalla no deja asignar).
+    [Fact]
+    public async Task MergeSurvivorKeepsItsRates()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var arranged = await ArrangeAsync(factory, database.GetConnectionString());
+        using var client = arranged.Client;
+        var survivorRate = Guid.CreateVersion7();
+        var mergedRate = Guid.CreateVersion7();
+        foreach (var (id, name, type) in new[] { (survivorRate, "Retefuente servicios", "Retefuente"), (mergedRate, "ReteICA Bogota", "ReteICA") })
+        {
+            await ExecuteAsync(
+                arranged.ConnectionString,
+                "INSERT INTO catalog.tax_rates (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at) "
+                + $"VALUES ('{id}', '{TenantId}', '{name}', 4, '{type}', 'CO', NULL, true, 1, now(), now())");
+        }
+
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "INSERT INTO customers.customer_tax_rates (customer_id, tenant_id, tax_rate_id) "
+            + $"VALUES ('{arranged.Survivor}', '{TenantId}', '{survivorRate}')");
+        await ExecuteAsync(
+            arranged.ConnectionString,
+            "INSERT INTO customers.customer_tax_rates (customer_id, tenant_id, tax_rate_id) "
+            + $"VALUES ('{arranged.Merged}', '{TenantId}', '{mergedRate}')");
+
+        var body = await MergeAsync(client, arranged.Survivor, arranged.Merged);
+
+        var rates = body.GetProperty("withholdingTaxRates").EnumerateArray().Select(rate => rate.GetProperty("id").GetGuid()).ToArray();
+        Assert.Equal([survivorRate], rates);
+        Assert.True(body.GetProperty("withRetention").GetBoolean());
+        Assert.Equal(
+            1L,
+            await ScalarAsync(
+                arranged.ConnectionString,
+                $"SELECT count(*) FROM customers.customer_tax_rates WHERE customer_id = '{arranged.Survivor}'"));
+    }
+
     // Review Focus 3 (spec 2026-10-26 D-7): la fusión sólo cambia de dueño las filas; el vigente sigue siendo la más nueva por
     // (occurred_at, sequence), venga de donde venga.
     [Theory]

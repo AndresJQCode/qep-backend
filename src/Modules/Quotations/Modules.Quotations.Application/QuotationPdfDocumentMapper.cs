@@ -53,6 +53,7 @@ public static class QuotationPdfDocumentMapper
             quotation.TaxAmount,
             quotation.Total,
             quotation.RetentionAmount,
+            WithholdingsFor(quotation.Withholdings),
             quotation.NetTotal,
             quotation.CustomerVatSurplus,
             logo,
@@ -108,6 +109,7 @@ public static class QuotationPdfDocumentMapper
             header.TaxAmount,
             header.Total,
             header.RetentionAmount,
+            WithholdingsFor(order.Order.Withholdings),
             header.NetTotal,
             header.CustomerVatSurplus,
             logo,
@@ -124,6 +126,11 @@ public static class QuotationPdfDocumentMapper
             thousands,
             decimals);
     }
+
+    /// <summary>Las respuestas ya traen sólo las que aplicaron (<c>AppliedWithholdings</c>), en su orden: una fila
+    /// del documento por cada una, rotulada con el nombre de la tasa. Sin ninguna, sin filas.</summary>
+    private static QuotationPdfWithholding[] WithholdingsFor(IReadOnlyList<WithholdingResponse> withholdings) =>
+        [.. withholdings.Select(withholding => new QuotationPdfWithholding(withholding.Name, withholding.Amount))];
 
     /// <summary>
     /// Los importes que el cliente comprueba con la calculadora.

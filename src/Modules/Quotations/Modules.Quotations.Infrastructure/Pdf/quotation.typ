@@ -368,12 +368,12 @@
 // cifra que importa, que no siempre es el total: con retención, lo que el cliente gira es el
 // neto.
 //
-// La retención va entre el IVA y el total, como en la referencia, y se imprime siempre —incluso
-// en cero— porque ahí es donde el comprador espera verla. Lo que sigue siendo cierto es que no
-// resta del total: `Total inversión` es lo facturado, y sólo cuando hay retención de verdad
-// aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención distinta
-// de cero se leería como si ya estuviera descontada del total de arriba, que es falso.
-#let hay-retencion = data.retentionAmount > 0
+// Cada retención que aplicó va en su propio renglón, rotulado con el nombre de la tasa, entre el IVA y el
+// total (spec impuestos por tipo §9.3). Sin retenciones no hay renglón: no se imprime una fila en cero. Lo
+// que sigue siendo cierto es que no restan del total: `Total inversión` es lo facturado, y sólo cuando hay
+// retención de verdad aparece además `Neto a pagar`, que es lo que el cliente gira. Sin eso, una retención
+// se leería como si ya estuviera descontada del total de arriba, que es falso.
+#let hay-retencion = data.withholdings.len() > 0
 
 // Envío: el IVA del envío va en su propio renglón y el IVA de productos sigue siendo `taxAmount`.
 // `Charged` suma (base + IVA); `Free` y `OnDelivery` no suman nada al total: el renglón sólo
@@ -419,11 +419,11 @@
       0,
     ),
     ..filas-envio,
-    (
-      "Retención en la fuente:",
-      (if hay-retencion { "-" + moneda } else { moneda }) + importe(data.retentionAmount),
+    ..data.withholdings.map(retencion => (
+      retencion.name + ":",
+      "-" + moneda + importe(retencion.amount),
       0,
-    ),
+    )),
     (
       "Total inversión (" + data.currency + "):",
       moneda + importe(data.total),

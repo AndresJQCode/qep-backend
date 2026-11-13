@@ -185,7 +185,8 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
                        automation_pause_reason = CASE WHEN automation_status = 'Active' THEN 'AdvisorReplied' ELSE automation_pause_reason END
                  WHERE id = {conversationId} AND tenant_id = {tenantId} AND assigned_member_id IS NULL
                 RETURNING connection_id AS "ConnectionId",
-                          COALESCE(automation_pause_reason = 'AdvisorReplied' AND automation_paused_at = {at}, false) AS "PausedNow"
+                          COALESCE(automation_pause_reason = 'AdvisorReplied' AND automation_paused_at = {at}, false) AS "PausedNow",
+                          automation_status <> 'None' AS "HadAssistant"
                 """).ToListAsync(cancellationToken);
             if (taken.Count == 1)
             {
@@ -201,6 +202,13 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
                     await Webhook.ConversationEventRows.InsertAsync(dbContext, tenantId, taken[0].ConnectionId, conversationId,
                         new ConversationEvent(ConversationEventType.AutomationPaused, Actor: memberId, PauseReason: AutomationPauseReason.AdvisorReplied), at.AddTicks(10), at, cancellationToken);
                     audit.Record(tenantId, actorUserId, MessagingAuditActions.AutomationPaused, conversationId, at);
+                }
+
+                if (taken[0].HadAssistant)
+                {
+                    // Spec 2026-11-03 D-6 y Review Focus 4: responder sobre un asistente, también el pausado a mano, suelta su corrida viva.
+                    // El UPDATE sólo cambia Active por Paused, así que el valor nuevo de automation_status dice lo mismo que el viejo.
+                    dbContext.AutomationInbox.Add(AutomationInbox.NewReleaseRun(tenantId, taken[0].ConnectionId, conversationId, at));
                 }
 
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -227,7 +235,7 @@ internal sealed class ConversationRepository(MessagingDbContext dbContext, IMess
         return AutoAssignOutcome.AssignedToOther;
     }
 
-    private sealed record AutoAssignRow(Guid ConnectionId, bool PausedNow);
+    private sealed record AutoAssignRow(Guid ConnectionId, bool PausedNow, bool HadAssistant);
 
     private sealed record RepliedRow(Guid ConnectionId, string? LastInboundWamid, DateTimeOffset? LastInboundAt, string Channel, string? UserId, int UnreadCount);
 

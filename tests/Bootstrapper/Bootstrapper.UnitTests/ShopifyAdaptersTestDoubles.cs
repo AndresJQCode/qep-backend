@@ -64,8 +64,13 @@ internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRe
     public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
         Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
 
-    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public int ListCalls { get; private set; }
+
+    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<TaxRate>>([.. rates.Where(rate => rate.TenantId == tenantId)]);
+    }
 
     public Task<TaxRate?> FindByNameAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -255,6 +260,9 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public Task<bool> AnyWithClassificationAsync(
         Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 
     public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -659,6 +667,9 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public void Add(Company company) => throw new NotSupportedException();

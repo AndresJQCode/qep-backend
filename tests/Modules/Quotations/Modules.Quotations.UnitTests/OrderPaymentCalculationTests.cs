@@ -20,10 +20,12 @@ public sealed class OrderPaymentCalculationTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        // La retención aplica sólo con el país de la empresa facturadora (spec impuestos por tipo §7.5).
+        Country = "CO",
     };
 
     private static OrderHeader Header(bool withRetention = false) =>
-        new(ClientId, Advisor, "COP", "Transferencia", false, null, withRetention, false);
+        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, TestWithholdings.Customer(withRetention));
 
     private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -49,7 +51,7 @@ public sealed class OrderPaymentCalculationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 12, 1), "Transferencia",
-            null, QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            null, QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {

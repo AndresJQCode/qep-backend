@@ -191,8 +191,8 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             QuotationParties.Empty,
             OrderBuilders.BillingAccount,
             defaultCurrency: "COP",
-            customerWithRetention,
             customerVatSurplus: false,
+            customerWithholdings: TestWithholdings.Customer(customerWithRetention),
             AdvisorId,
             Now);
         quotation.AddItem(

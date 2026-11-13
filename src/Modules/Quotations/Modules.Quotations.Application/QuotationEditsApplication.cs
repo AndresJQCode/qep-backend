@@ -27,24 +27,16 @@ internal static class QuotationEditsApplication
         Quotation quotation,
         IQuotationEdits edits,
         Guid tenantId,
-        IQuotationCustomerLookup customerLookup,
         IQuotationCompanyLookup companyLookup,
         IQuotationProductPricingLookup pricingLookup,
         IQuotationSettingsStore settingsStore,
         ITenantPriceRounding priceRounding,
         ShippingResolver shippingResolver,
+        QuotationWithholdingContext withholdings,
         MemberId updatedBy,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
-        // — ver Quotation.RefreshCustomerTaxProfile. Una sola vez para todo el guardado.
-        var customer = await customerLookup.FindAsync(tenantId, quotation.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
-
         var billingAccount = await QuotationBillingAccountResolver.ResolveAsync(
             companyLookup, tenantId, edits.BillingAccount, cancellationToken);
 
@@ -82,6 +74,9 @@ internal static class QuotationEditsApplication
             edits.GlobalScaleFloor,
             updatedBy,
             now);
+        // Los selectores después del encabezado: se validan contra el país de la cuenta que acaba de quedar (spec
+        // impuestos por tipo §7.5), y antes de la foto de después, para que el historial cuente el cambio.
+        await ApplyBillingWithholdingsAsync(quotation, edits.Parties, tenantId, withholdings, updatedBy, now, cancellationToken);
         // El envío después del encabezado: valida contra la recogida y la moneda que acaban de quedar, y
         // antes de la foto de después, para que el historial cuente el cambio de transportadora o de valor.
         //
@@ -113,4 +108,58 @@ internal static class QuotationEditsApplication
 
         return new QuotationEditsOutcome(before, after, itemEdits);
     }
+
+    // Con facturación propia y la lista presente, la lista reemplaza los selectores; null los conserva (el frontend
+    // viejo no la manda y no puede borrarlos). Con los datos del cliente o a consumidor final no hay selectores que
+    // editar y la lista se ignora: los guardados se quedan para cuando se vuelva a la facturación propia (spec §7.5).
+    private static async Task ApplyBillingWithholdingsAsync(
+        Quotation quotation,
+        QuotationPartiesRequest? parties,
+        Guid tenantId,
+        QuotationWithholdingContext withholdings,
+        MemberId updatedBy,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (quotation.Billing is null || parties?.BillingWithholdingTaxRateIds is not { } ids)
+        {
+            return;
+        }
+
+        // Los mismos de antes: la foto se queda como se congeló, sin volver al catálogo.
+        if (WithholdingSelection.IsUnchanged(
+                ids, quotation.BillingWithholdings.Select(withholding => withholding.Rate), quotation.BillingAccount?.Country))
+        {
+            return;
+        }
+
+        // La fecha sólo hace falta para resolver ids: vaciar no consulta ni el catálogo ni el calendario.
+        IReadOnlyList<WithholdingRate> rates = ids.Count == 0
+            ? []
+            : await WithholdingSelection.ResolveAsync(
+                withholdings.Lookup,
+                tenantId,
+                ids,
+                quotation.BillingAccount?.Country,
+                await withholdings.DocumentDate(cancellationToken),
+                "quotation",
+                cancellationToken);
+        quotation.SetBillingWithholdings(rates, updatedBy, now);
+    }
+}
+
+/// <summary>
+/// Con qué resuelve <see cref="QuotationEditsApplication"/> los selectores de retención: el puerto al catálogo y la
+/// fecha del documento para la UVT. La fecha es perezosa porque leerla cuesta el calendario del tenant, y sólo hace
+/// falta cuando llegan ids; al crear ya se conoce (el hoy del tenant).
+/// </summary>
+internal sealed record QuotationWithholdingContext(
+    IQuotationWithholdingLookup Lookup,
+    Func<CancellationToken, Task<DateOnly>> DocumentDate)
+{
+    /// <summary>La de una cotización ya guardada: su <c>CreatedAt</c> en la zona del tenant.</summary>
+    public static QuotationWithholdingContext For(
+        IQuotationWithholdingLookup lookup, ITenantClock tenantClock, Guid tenantId, Quotation quotation) =>
+        new(lookup, async cancellationToken => DocumentDates.LocalDate(
+            await tenantClock.GetAsync(tenantId, cancellationToken), quotation.CreatedAt));
 }

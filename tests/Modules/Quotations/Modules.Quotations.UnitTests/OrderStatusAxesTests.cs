@@ -20,7 +20,7 @@ public sealed class OrderStatusAxesTests
     };
 
     private static OrderHeader Header() =>
-        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, false);
+        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, []);
 
     private static OrderLineInput Line() =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));

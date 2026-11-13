@@ -106,6 +106,9 @@ public sealed class QuotationResponseComposer(
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
             quotation.FreightTaxAmount,
+            [.. quotation.Withholdings.Select(ToWithholdingResponse)],
+            [.. quotation.CustomerWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
+            [.. quotation.BillingWithholdingTaxRates.Select(ToWithholdingTaxRateResponse)],
             clientContacts);
     }
 
@@ -122,6 +125,22 @@ public sealed class QuotationResponseComposer(
         var contacts = await customerLookup.ListContactsAsync(tenantId, customer.Id, cancellationToken);
         return [.. contacts.Select(contact => new ClientContactDto(contact.Id, contact.Name, contact.Phone))];
     }
+
+    // Internos por el mismo motivo que ToClientResponse: el detalle del pedido los pinta igual (OrderResponses).
+    internal static WithholdingResponse ToWithholdingResponse(WithholdingDto withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.MinimumBase,
+        withholding.MinimumBaseUnit,
+        withholding.TaxUnitValue,
+        withholding.Base,
+        withholding.Amount);
+
+    internal static WithholdingTaxRateResponse ToWithholdingTaxRateResponse(WithholdingTaxRateDto rate) =>
+        new(rate.Id, rate.Name, rate.Type, rate.Country, rate.Percentage);
 
     // Un cliente que no resuelve deja la cotización sin bloque de cliente en vez de tirar la
     // respuesta abajo: `ClientId` es una referencia blanda entre módulos, y una cotización

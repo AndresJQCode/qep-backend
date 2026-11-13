@@ -469,7 +469,7 @@ internal static class ShopifyApiHarness
         return await ReadIdAsync(response);
     }
 
-    private static async Task<Guid> AnyCityIdAsync(HttpClient client)
+    public static async Task<Guid> AnyCityIdAsync(HttpClient client)
     {
         var departments = await client.GetFromJsonAsync<List<IdDto>>("/api/v1/departments", TestContext.Current.CancellationToken);
         Assert.NotNull(departments);

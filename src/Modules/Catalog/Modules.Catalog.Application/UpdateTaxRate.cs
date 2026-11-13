@@ -1,5 +1,7 @@
+using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
+using FluentValidation.Results;
 using Modules.Catalog.Domain;
 using Modules.Tenancy.Application;
 
@@ -9,7 +11,29 @@ public sealed record UpdateTaxRateCommand(
     Guid TenantId,
     Guid TaxRateId,
     string Name,
-    int Percentage) : ICommand<TaxRateDto>;
+    decimal Percentage,
+    bool KeepMinimumBase,
+    decimal? MinimumBase) : ICommand<TaxRateDto>;
+
+public static class UpdateTaxRateRequestMapping
+{
+    /// <summary>
+    /// Ausente conserva la base, null la quita y un número la reemplaza. Cualquier otra cosa es un 422
+    /// <c>validation.failed</c> con el campo marcado: no se adivina qué quiso decir el cliente.
+    /// </summary>
+    public static UpdateTaxRateCommand ToCommand(this UpdateTaxRateRequest request, Guid tenantId, Guid taxRateId) =>
+        request.MinimumBase.ValueKind switch
+        {
+            JsonValueKind.Undefined => new(tenantId, taxRateId, request.Name, request.Percentage, true, null),
+            JsonValueKind.Null => new(tenantId, taxRateId, request.Name, request.Percentage, false, null),
+            JsonValueKind.Number when request.MinimumBase.TryGetDecimal(out var value) =>
+                new(tenantId, taxRateId, request.Name, request.Percentage, false, value),
+            _ => throw new ValidationException(
+            [
+                new ValidationFailure(nameof(UpdateTaxRateRequest.MinimumBase), "'Minimum Base' must be a number or null."),
+            ]),
+        };
+}
 
 public sealed class UpdateTaxRateValidator : AbstractValidator<UpdateTaxRateCommand>
 {
@@ -19,7 +43,7 @@ public sealed class UpdateTaxRateValidator : AbstractValidator<UpdateTaxRateComm
             .NotEmpty()
             .MaximumLength(TaxRate.NameMaxLength);
         RuleFor(command => command.Percentage)
-            .InclusiveBetween(TaxRate.MinPercentage, TaxRate.MaxPercentage);
+            .InclusiveBetween(TaxRate.MinPercentage, (decimal)TaxRate.MaxPercentage);
     }
 }
 
@@ -46,7 +70,11 @@ public sealed class UpdateTaxRateHandler(
             ?? throw TaxRateNotFound.For(command.TaxRateId);
 
         var now = clock.UtcNow;
-        taxRate.Update(command.Name, command.Percentage, now);
+        taxRate.Update(
+            command.Name,
+            command.Percentage,
+            command.KeepMinimumBase ? taxRate.MinimumBase : command.MinimumBase,
+            now);
         auditPublisher.Publish(
             command.TenantId,
             executionContext.SubjectId,

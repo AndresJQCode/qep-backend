@@ -320,13 +320,16 @@ public sealed class QuotationEditsApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
+        // Retención del cliente: una Retefuente asignada (spec impuestos por tipo §7.4); sólo retiene con empresa
+        // facturadora colombiana, así que la cotización nace con cuenta de cobro.
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
         var clientId = await CreateActiveCustomerAsync(
-            client, tenantId, withRetention: true, vatSurplus: true);
+            client, tenantId, vatSurplus: true, withholdingTaxRateIds: [retefuente]);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         // 119_000 con el IVA del 19% ya adentro: base 100_000 e IVA 19_000 redondos.
         var productId = await CreateProductWithScalesAsync(
             client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
-        var created = await CreateQuotationAsync(client, tenantId, clientId);
+        var created = await CreateSendableQuotationAsync(client, tenantId, clientId);
         var added = await client.PostAsJsonAsync(
             $"{QuotationUrl(tenantId, created.Id)}/items",
             new AddQuotationItemRequest(productId, 1m),

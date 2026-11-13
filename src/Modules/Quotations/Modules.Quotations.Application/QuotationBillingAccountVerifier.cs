@@ -3,8 +3,9 @@ using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
-/// <summary>La cuenta tal como la tiene la empresa hoy (no como la escribió quien llamó).</summary>
-public sealed record VerifiedBillingAccount(Guid CompanyId, string BankName, string AccountNumber, string Currency);
+/// <summary>La cuenta tal como la tiene la empresa hoy (no como la escribió quien llamó), con el país de la
+/// empresa, que el documento congela con ella.</summary>
+public sealed record VerifiedBillingAccount(Guid CompanyId, string BankName, string AccountNumber, string Currency, string Country);
 
 /// <summary>
 /// La ÚNICA comprobación de que una cuenta de cobro es de la empresa y del tenant: moneda del catálogo primero, empresa del
@@ -51,6 +52,6 @@ public static class QuotationBillingAccountVerifier
             throw new QuotationsDomainException(AccountNotFoundCode, "The bank account does not belong to the selected company.");
         }
 
-        return new VerifiedBillingAccount(company.Id, account.BankName, account.AccountNumber, normalizedCurrency);
+        return new VerifiedBillingAccount(company.Id, account.BankName, account.AccountNumber, normalizedCurrency, company.Country);
     }
 }

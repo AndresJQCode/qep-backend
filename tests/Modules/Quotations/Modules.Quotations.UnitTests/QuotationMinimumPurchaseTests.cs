@@ -71,7 +71,7 @@ public sealed class QuotationMinimumPurchaseTests
                 AccountNumber = "12345678",
                 Currency = "COP"
             },
-            "COP", customerWithRetention: false, customerVatSurplus: false, advisor, now);
+            "COP", customerVatSurplus: false, customerWithholdings: [], advisor, now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 150_000m, 0m, 19, advisor, now);
         quotation.SetShipping(
             new ShippingDetails(null, null, FreightChargeMode.Charged, 60_000m, 19, false), advisor, now);

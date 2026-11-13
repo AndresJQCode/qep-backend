@@ -239,6 +239,28 @@ public sealed class CarrierApiTests
     }
 
     [Fact]
+    public async Task FreightWithRetefuenteRateIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var (tenantId, _, client) = await RegisterTenantAsync(
+            factory, SettingsRead, SettingsUpdate, TaxRateRead, TaxRateManage);
+        using var _ = client;
+
+        using var created = await client.PostAsJsonAsync(
+            $"/api/v1/tenants/{tenantId}/catalog/tax-rates",
+            new { name = "Retefuente 2.5", percentage = 2.5m, type = "Retefuente" },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var retefuente = (await created.Content.ReadFromJsonAsync<TaxRateIdPayload>(
+            TestContext.Current.CancellationToken))!.Id;
+
+        using var response = await PutFreightTaxRateAsync(client, tenantId, retefuente);
+        await AssertCodeAsync(response, HttpStatusCode.UnprocessableEntity, "quotations.freight_tax_rate.not_vat");
+        Assert.Null((await GetSettingsAsync(client, tenantId)).FreightTaxRate);
+    }
+
+    [Fact]
     public async Task ShippingOptionsReturnOnlyActiveCarriersInOrder()
     {
         await using var database = await StartDatabaseAsync();
@@ -593,6 +615,8 @@ public sealed class CarrierApiTests
 
     private sealed record CarrierPayload(
         Guid Id, string Name, string[] ExternalNames, bool SupportsCashOnDelivery, int SortOrder, bool IsActive, long Version);
+
+    private sealed record TaxRateIdPayload(Guid Id);
 
     private sealed record FreightTaxRatePayload(Guid Id, string Name, int Percentage, bool IsActive);
 

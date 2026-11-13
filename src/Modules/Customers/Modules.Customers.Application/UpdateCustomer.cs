@@ -19,9 +19,10 @@ public sealed record UpdateCustomerCommand(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
-    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    string? PersonType = null,
+    // Spec impuestos por tipo §9.2: null no toca las tasas guardadas; una lista vacía las quita.
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Mismas reglas que el POST, por inclusion y no por copia. Ver CustomerWriteRules.
 public sealed class UpdateCustomerValidator : AbstractValidator<UpdateCustomerCommand>
@@ -33,6 +34,7 @@ public sealed class UpdateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
     ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
@@ -53,6 +55,12 @@ public sealed class UpdateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            await CustomerWithholdingRules.ValidateAsync(
+                taxRateLookup, command.TenantId, taxRateIds, cancellationToken);
+        }
+
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
 
@@ -124,9 +132,10 @@ public sealed class UpdateCustomerHandler(
                     CityName = command.CityName
                 },
                 CustomerMapping.ToCommercialInfo(
-                    command.ClassificationId, command.WithRetention, command.VatSurplus),
+                    command.ClassificationId, command.VatSurplus),
                 now,
                 phoneNormalizer);
+            ApplyWithholdingTaxRates(customer, command, now);
             // D-A9: completar se audita aparte de una edicion.
             auditPublisher.Publish(
                 command.TenantId,
@@ -138,7 +147,7 @@ public sealed class UpdateCustomerHandler(
             await SaveAsync(customer, command.TenantId, cancellationToken);
 
             return await customer.ToDtoAsync(
-                geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
+                geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
         }
 
         // Los opcionales se mandan siempre, incluidos los null: el PUT reemplaza el recurso
@@ -168,10 +177,11 @@ public sealed class UpdateCustomerHandler(
                 CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             classification?.Prefix,
             now,
             phoneNormalizer);
+        ApplyWithholdingTaxRates(customer, command, now);
 
         auditPublisher.Publish(
             command.TenantId,
@@ -183,7 +193,17 @@ public sealed class UpdateCustomerHandler(
         await SaveAsync(customer, command.TenantId, cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
+    }
+
+    // Sin el campo (frontend viejo) las tasas se quedan como están: el PUT reemplaza el recurso entero, pero este campo no
+    // existía y borrarlo en silencio le quitaría la retención a un cliente que el formulario viejo ni muestra.
+    private static void ApplyWithholdingTaxRates(Customer customer, UpdateCustomerCommand command, DateTimeOffset now)
+    {
+        if (command.WithholdingTaxRateIds is { } taxRateIds)
+        {
+            customer.SetWithholdingTaxRates(taxRateIds, now);
+        }
     }
 
     // Completar y editar guardan por separado y los dos pueden chocar con el indice de la identificacion: en ambos el

@@ -60,7 +60,7 @@ public sealed class SetCustomerCompanyHandlerTests
         public RecordingAudit Audit { get; } = new();
 
         public SetCustomerCompanyHandler Handler(IExecutionContext? context = null) =>
-            new(Customers, new Classifications([]), new EngagementTestBed.FakeTags(), new BatchGeography(), Directory,
+            new(Customers, new Classifications([]), new EngagementTestBed.FakeTags(), new CustomerWriteDoubles.TaxRates(), new BatchGeography(), Directory,
                 new UnitOfWork(), Audit, context ?? Manager, new FixedClock());
     }
 

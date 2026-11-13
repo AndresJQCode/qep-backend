@@ -33,12 +33,10 @@ public sealed class CustomerTests
 
     private static CustomerCommercialInfo Commercial(
         ClientClassificationId? classificationId = null,
-        bool withRetention = false,
         bool vatSurplus = false) =>
         new()
         {
             ClassificationId = classificationId ?? ClassificationId,
-            WithRetention = withRetention,
             VatSurplus = vatSurplus
         };
 
@@ -721,14 +719,10 @@ public sealed class CustomerTests
         Assert.Equal(1, customer.Version);
     }
 
-    // withRetention es obligatorio en el formulario y no tiene "sin definir": un cliente o retiene
-    // o no. Por eso es bool y no bool?, y por eso Empty lo deja en false.
     [Fact]
-    public void CommercialInfoDefaultsToNoRetention()
+    public void ANewCustomerHasNoWithholdingTaxRates()
     {
-        var customer = Create();
-
-        Assert.False(customer.WithRetention);
+        Assert.Empty(Create().WithholdingTaxRateIds);
     }
 
     [Fact]
@@ -737,11 +731,9 @@ public sealed class CustomerTests
         var classificationId = new ClientClassificationId(Guid.CreateVersion7());
 
         var customer = Create(commercial: Commercial(
-            classificationId: classificationId,
-            withRetention: true));
+            classificationId: classificationId));
 
         Assert.Equal(classificationId, customer.ClassificationId);
-        Assert.True(customer.WithRetention);
     }
 
     // Mismo criterio que withRetention: bool y no bool?, sin "sin definir".
@@ -1375,5 +1367,62 @@ public sealed class CustomerTests
 
         Assert.Null(customer.CityId);
         Assert.Equal(1, customer.Version);
+    }
+
+    private static readonly Guid RateA = Guid.Parse("01900000-0000-7000-8000-0000000000a1");
+    private static readonly Guid RateB = Guid.Parse("01900000-0000-7000-8000-0000000000a2");
+
+    [Fact]
+    public void SettingTheSameRatesIsNotAChange()
+    {
+        var customer = Create();
+        Assert.True(customer.SetWithholdingTaxRates([RateA, RateB], Later));
+
+        var changed = customer.SetWithholdingTaxRates([RateB, RateA], Later.AddHours(1));
+
+        Assert.False(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+    }
+
+    [Fact]
+    public void DuplicatedIdsAreStoredOnce()
+    {
+        var customer = Create();
+
+        customer.SetWithholdingTaxRates([RateA, RateA, RateB, RateA], Later);
+
+        Assert.Equal(2, customer.WithholdingTaxRateIds.Count);
+        Assert.Contains(RateA, customer.WithholdingTaxRateIds);
+        Assert.Contains(RateB, customer.WithholdingTaxRateIds);
+    }
+
+    [Fact]
+    public void EmptyGuidIsRejected()
+    {
+        var customer = Create();
+
+        var error = Assert.Throws<CustomersDomainException>(
+            () => customer.SetWithholdingTaxRates([RateA, Guid.Empty], Later));
+
+        Assert.Equal("customers.customer.withholding_tax_rate_invalid", error.Code);
+        Assert.Empty(customer.WithholdingTaxRateIds);
+        Assert.Equal(1, customer.Version);
+    }
+
+    [Fact]
+    public void SettingRatesBumpsVersion()
+    {
+        var customer = Create();
+
+        var changed = customer.SetWithholdingTaxRates([RateA], Later);
+
+        Assert.True(changed);
+        Assert.Equal(2, customer.Version);
+        Assert.Equal(Later, customer.UpdatedAt);
+
+        Assert.True(customer.SetWithholdingTaxRates([], Later.AddHours(1)));
+        Assert.Empty(customer.WithholdingTaxRateIds);
+        Assert.Equal(3, customer.Version);
     }
 }

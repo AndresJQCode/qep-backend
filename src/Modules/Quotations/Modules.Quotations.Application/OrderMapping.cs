@@ -24,7 +24,10 @@ internal static class OrderMapping
         order.BillingUsesBusinessName,
         order.IsStorePickup,
         order.BillsToFinalConsumer,
-        order.PartyWithRetention,
+        // Derivado para el frontend viejo (spec impuestos por tipo §9.3): con parte propia, billingWithholdingTaxRates no
+        // vacía (las tasas vigentes, apliquen o no); sin ella, null. Nunca null con parte propia: el frontend viejo
+        // bloquea con null (qep-frontend/src/features/quotes/utils/quote-actions.ts:104-106).
+        order.Billing is null ? null : order.Withholdings.Count > 0,
         order.PartyVatSurplus,
         order.AppliesVatSurplus,
         order.Subtotal,
@@ -58,6 +61,9 @@ internal static class OrderMapping
         order.FreightSubtotal,
         order.FreightTaxAmount,
         order.ExternalShippingTitle,
+        [.. order.AppliedWithholdings.Select(QuotationMapping.ToDto)],
+        [],
+        [.. order.Withholdings.OrderBy(withholding => withholding.Position).Select(QuotationMapping.ToRateDto)],
         order.PreparedAt,
         order.PreparedBy?.Value,
         order.ArchivedAt,

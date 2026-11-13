@@ -42,7 +42,7 @@ public sealed class OrderDraftBuilderPersonTypeTests
             new StubQuotationCompanyLookup(new Dictionary<Guid, QuotationCompanyRef>
             {
                 [CompanyId] = new(
-                    CompanyId, "Mi empresa", "800111222", "NIT", true, null, null,
+                    CompanyId, "Mi empresa", "800111222", "NIT", "CO", true, null, null,
                     [new QuotationCompanyAccountRef("Bancolombia", "7542", "COP")])
             }),
             new StubQuotationProductPricingLookup(new QuotationVariantPricingRef(
@@ -57,7 +57,9 @@ public sealed class OrderDraftBuilderPersonTypeTests
             {
                 Regional = new(
                     "America/Bogota", "dd/MM/yyyy", "COP", TenantNumberFormats.CommaDecimal, "CO", requirement)
-            });
+            },
+            new StubQuotationWithholdingLookup(),
+            new FixedTenantClock(Now));
     }
 
     [Fact]
@@ -78,5 +80,16 @@ public sealed class OrderDraftBuilderPersonTypeTests
             NewInput("Juridica"), "PED-2026-0001", Now, TestContext.Current.CancellationToken);
 
         Assert.Equal(PartyPersonType.Juridica, order.Billing?.PersonType);
+    }
+
+    // Spec impuestos por tipo §7.5: el país de la empresa decide qué retenciones aplican, así que el pedido manual
+    // nuevo lo congela con la cuenta (la migración sólo rellena los pedidos que ya existían).
+    [Fact]
+    public async Task ACreatedOrderFreezesTheBillingCompanyCountry()
+    {
+        var order = await NewBuilder(PersonTypeRequirement.Never).BuildAsync(
+            NewInput("Juridica"), "PED-2026-0001", Now, TestContext.Current.CancellationToken);
+
+        Assert.Equal("CO", order.BillingAccount?.Country);
     }
 }

@@ -172,3 +172,59 @@ internal sealed class CustomerWriteRules : AbstractValidator<ICustomerWriteComma
     private static string Join(IReadOnlyCollection<string> values) =>
         string.Join(", ", values.Order(StringComparer.Ordinal));
 }
+
+/// <summary>
+/// Las reglas de las retenciones de un cliente que no caben en una regla de forma: hay que preguntarle al catálogo (spec
+/// impuestos por tipo §7.4). Se llama después de autorizar y de validar la forma, y antes de escribir.
+///
+/// Cada id tiene que ser una tasa del tenant, activa y que retiene (un IVA, una tasa inactiva, una inexistente y una de otro
+/// tenant son el mismo error: <c>withholding_tax_rate_invalid</c>), y no puede haber dos del mismo tipo y país
+/// (<c>withholding_type_repeated</c>): dos Retefuente colombianas no se suman, se escoge una.
+/// </summary>
+internal static class CustomerWithholdingRules
+{
+    public static async Task ValidateAsync(
+        ICustomerTaxRateLookup lookup,
+        Guid tenantId,
+        IReadOnlyCollection<Guid> taxRateIds,
+        CancellationToken cancellationToken)
+    {
+        if (taxRateIds.Count == 0)
+        {
+            return;
+        }
+
+        var ids = taxRateIds.Distinct().ToArray();
+        var found = await lookup.FindManyAsync(tenantId, ids, cancellationToken);
+        Validate(found, ids);
+    }
+
+    /// <summary>
+    /// Las mismas reglas sobre tasas ya leidas del catalogo. El Excel carga las del tenant una sola vez por archivo y valida
+    /// cada fila contra ellas, sin una consulta por fila (spec impuestos por tipo §7.4).
+    /// </summary>
+    public static void Validate(
+        IReadOnlyDictionary<Guid, CustomerTaxRateRef> found, IReadOnlyCollection<Guid> taxRateIds)
+    {
+        var ids = taxRateIds.Distinct().ToArray();
+        var rates = new List<CustomerTaxRateRef>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (!found.TryGetValue(id, out var rate) || !rate.IsActive || !rate.Withholds)
+            {
+                throw new CustomersDomainException(
+                    "customers.customer.withholding_tax_rate_invalid",
+                    "The withholding tax rate does not exist, is inactive, or does not withhold.");
+            }
+
+            rates.Add(rate);
+        }
+
+        if (rates.GroupBy(rate => (rate.Country, rate.Type)).Any(group => group.Count() > 1))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_type_repeated",
+                "A customer can have only one withholding tax rate per country and type.");
+        }
+    }
+}

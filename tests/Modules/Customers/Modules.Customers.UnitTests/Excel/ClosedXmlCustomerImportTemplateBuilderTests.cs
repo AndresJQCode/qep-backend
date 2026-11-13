@@ -90,6 +90,17 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
     }
 
     [Fact]
+    public void TemplateHasBothColumnsAndNoConRetencion()
+    {
+        using var workbook = BuildWorkbook();
+        var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
+
+        Assert.Contains("Retefuente", headers);
+        Assert.Contains("ReteICA", headers);
+        Assert.DoesNotContain("Con Retencion", headers);
+    }
+
+    [Fact]
     public void ClassificationColumnHeaderIsTamano()
     {
         Assert.Equal("Tamano", CustomerImportColumns.Classification);
@@ -171,7 +182,7 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
     public void TheFailedRowsFileCarriesTheCompanyColumn()
     {
         var failed = new CustomerImportRowData(
-            null, "Ana", null, "CC", "1010", "3001112233", null, "Calle 2", "Antioquia", "Medellin", "", "No", "No", "900111222");
+            null, "Ana", null, "CC", "1010", "3001112233", null, "Calle 2", "Antioquia", "Medellin", "", Retefuente: null, ReteIca: null, VatSurplus: "No", "900111222");
         var withoutCompany = failed with { Name = "Beto", CompanyIdentificationNumber = null };
         using var workbook = new XLWorkbook(new MemoryStream(
             builder.BuildWithRows(Departments, Classifications, IdentificationTypes, [failed, withoutCompany], CancellationToken.None)));

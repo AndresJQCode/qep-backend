@@ -708,15 +708,16 @@ public sealed class OrderEditsApiTests
         HttpClient client,
         string name = "Otra S.A.S.",
         string personType = "Juridica",
-        string identificationType = "NIT",
-        bool withRetention = true)
+        string identificationType = "NIT")
     {
         var home = (await EnsureCityIdsInTwoDepartmentsAsync(client)).First;
         return new OrderBillingEditRequest(
             new QuotationPartyRequest(
                 name, "900123456", "3001234567", "otra@correo.co", "Calle 1 # 2-3", home.DepartmentId, home.CityId,
                 PersonType: personType, IdentificationType: identificationType),
-            BillingWithRetention: withRetention,
+            // Lo manda el frontend viejo y se ignora (spec impuestos por tipo §9.3): las retenciones son
+            // SaveOrderEditsRequest.WithholdingTaxRateIds.
+            BillingWithRetention: true,
             BillingVatSurplus: false);
     }
 
@@ -729,11 +730,14 @@ public sealed class OrderEditsApiTests
         using var _ = client;
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         Assert.Equal(0m, order.RetentionAmount);
+        // Con la parte propia llegan sus selectores (spec impuestos por tipo D21): la retención es una tasa elegida.
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
 
         var response = await PutEditsAsync(
             client, tenantId, order.Id, order.Version,
             new SaveOrderEditsRequest(
-                [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client)));
+                [new OrderEditItemRequest(productId, 1m)], null, null, Billing: await BillingEditAsync(client),
+                WithholdingTaxRateIds: [retefuente]));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var saved = await ReadDetailAsync(response);
@@ -911,15 +915,14 @@ public sealed class OrderEditsApiTests
         var (_, order, productId) = await CreatePendingOrderAsync(client, factory, tenantId);
         var items = new[] { new OrderEditItemRequest(productId, 1m) };
         var billing = await BillingEditAsync(client);
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var body = new SaveOrderEditsRequest(items, null, null, Billing: billing, WithholdingTaxRateIds: [retefuente]);
 
         var preview = await client.PostAsJsonAsync(
-            $"{OrderByIdUrl(tenantId, order.Id)}/preview",
-            new SaveOrderEditsRequest(items, null, null, Billing: billing),
-            TestContext.Current.CancellationToken);
+            $"{OrderByIdUrl(tenantId, order.Id)}/preview", body, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
         var previewed = await ReadDetailAsync(preview);
-        var saved = await PutEditsAsync(
-            client, tenantId, order.Id, order.Version, new SaveOrderEditsRequest(items, null, null, Billing: billing));
+        var saved = await PutEditsAsync(client, tenantId, order.Id, order.Version, body);
 
         Assert.True(previewed.Order.RetentionAmount > 0m);
         Assert.Equal(order.Version, previewed.Order.Version);
@@ -973,12 +976,16 @@ public sealed class OrderEditsApiTests
 
     /// <summary>Una cotización enviada con un producto de 100.000 COP sin impuesto, convertida con el
     /// pago pendiente y sin comprobantes: el total es 100.000 y el estado de pago lo decide cada
-    /// prueba. Con <paramref name="withRetention"/> el cliente practica retención en la fuente y el
-    /// neto a cobrar queda por debajo del total.</summary>
+    /// prueba. Con <paramref name="withRetention"/> el cliente tiene asignada una Retefuente del 2,5 % (spec
+    /// impuestos por tipo §7.4), la cotización la congela y el pedido la hereda: el neto a cobrar queda por
+    /// debajo del total.</summary>
     private static async Task<(QuotationResponse Quotation, OrderResponse Order, Guid ProductId)> CreatePendingOrderAsync(
         HttpClient client, QepApiFactory factory, Guid tenantId, bool withRetention = false)
     {
-        var clientId = await CreateActiveCustomerAsync(client, tenantId, withRetention: withRetention);
+        IReadOnlyList<Guid>? rates = withRetention
+            ? [await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m)]
+            : null;
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: rates);
         var productId = await CreateProductWithScalesAsync(client, tenantId, baseCop: 100_000m);
         var quotation = await CreateSentQuotationAsync(client, factory, tenantId, clientId, productId);
         var response = await client.PostAsJsonAsync(

@@ -25,11 +25,12 @@ public sealed class ExcelCustomerRowRulesTests
         string? department = "Antioquia",
         string? city = "Medellin",
         string? classification = "Mayorista",
-        string? withRetention = "No",
+        string? retefuente = null,
+        string? reteIca = null,
         string? vatSurplus = "No") =>
         new(2, cuc, name, null, identificationType, identificationNumber, phone,
             email, address,
-            department, city, classification, withRetention, vatSurplus);
+            department, city, classification, retefuente, reteIca, vatSurplus);
 
     private static readonly CustomerFieldPolicy Relaxed =
         new(new FieldRequirement(false, true), new FieldRequirement(false, true));
@@ -318,29 +319,14 @@ public sealed class ExcelCustomerRowRulesTests
             error.ErrorCode == "customers.import.row.classification_required");
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("Si")]
-    [InlineData("si")]
-    [InlineData("SI")]
-    [InlineData("No")]
-    [InlineData("no")]
-    public void WithRetentionAcceptsSiNoOrEmpty(string? value)
+    // Las columnas de retencion llevan el nombre de una tasa: el validador de campos no las juzga, las resuelve el handler
+    // contra el catalogo del tenant (spec impuestos por tipo §7.4).
+    [Fact]
+    public void RateColumnsAreNotJudgedByTheFieldRules()
     {
-        var result = validator.Validate(ValidRow(withRetention: value));
+        var result = validator.Validate(ValidRow(retefuente: "IVA 19", reteIca: "cualquier nombre"));
 
         Assert.True(result.IsValid);
-    }
-
-    [Fact]
-    public void WithRetentionRejectsAnyOtherValue()
-    {
-        var result = validator.Validate(ValidRow(withRetention: "Tal vez"));
-
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error =>
-            error.ErrorCode == "customers.import.row.with_retention_invalid");
     }
 
     // Una fila puede fallar por mas de un motivo a la vez, y el reporte tiene que decir los dos —

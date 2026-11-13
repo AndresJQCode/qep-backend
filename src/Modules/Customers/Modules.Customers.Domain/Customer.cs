@@ -13,6 +13,7 @@ namespace Modules.Customers.Domain;
 public sealed class Customer
 {
     private readonly List<CustomerAddress> _addresses = [];
+    private readonly List<CustomerTaxRate> _withholdingTaxRates = [];
 
     // Espejan los anchos de columna de customers.customers. Guardar aca significa que un valor
     // demasiado largo falla como 422 con codigo de dominio en vez de llegar a PostgreSQL y volver
@@ -283,7 +284,9 @@ public sealed class Customer
     /// <summary>Decisión 10: el <c>@usuario</c> de Instagram, informativo; puede cambiar y viajar en <c>null</c> (V-7).</summary>
     public string? InstagramUsername { get; private set; }
 
-    public bool WithRetention { get; private set; }
+    /// <summary>Las tasas de retención que se le aplican a este cliente (ids del catálogo de impuestos).</summary>
+    public IReadOnlyCollection<Guid> WithholdingTaxRateIds =>
+        _withholdingTaxRates.Select(rate => rate.TaxRateId).ToArray();
 
     public bool VatSurplus { get; private set; }
 
@@ -844,6 +847,38 @@ public sealed class Customer
         }
     }
 
+    /// <summary>
+    /// Reemplaza las tasas de retención del cliente. Deduplica; <see cref="Guid.Empty"/> se rechaza. Sube la versión y
+    /// devuelve <c>true</c> sólo si el conjunto cambió: guardar lo mismo no es un cambio.
+    /// </summary>
+    public bool SetWithholdingTaxRates(IReadOnlyCollection<Guid> taxRateIds, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(taxRateIds);
+        EnsureNotMerged();
+        if (taxRateIds.Any(id => id == Guid.Empty))
+        {
+            throw new CustomersDomainException(
+                "customers.customer.withholding_tax_rate_invalid",
+                "A withholding tax rate id cannot be empty.");
+        }
+
+        var wanted = taxRateIds.ToHashSet();
+        if (wanted.SetEquals(_withholdingTaxRates.Select(rate => rate.TaxRateId)))
+        {
+            return false;
+        }
+
+        _withholdingTaxRates.RemoveAll(rate => !wanted.Contains(rate.TaxRateId));
+        var kept = _withholdingTaxRates.Select(rate => rate.TaxRateId).ToHashSet();
+        foreach (var id in wanted.Where(id => !kept.Contains(id)))
+        {
+            _withholdingTaxRates.Add(new CustomerTaxRate(TenantId, id));
+        }
+
+        Touch(occurredAt);
+        return true;
+    }
+
     // Una direccion nueva o cambiada es un cambio del cliente: mueve su version optimista igual
     // que editar su nombre, asi que dos pestañas que lo editan a la vez chocan como corresponde.
     private void Touch(DateTimeOffset occurredAt)
@@ -969,7 +1004,6 @@ public sealed class Customer
     private void Assign(CustomerCommercialInfo commercial)
     {
         ClassificationId = EnsureValidClassificationId(commercial.ClassificationId);
-        WithRetention = commercial.WithRetention;
         VatSurplus = commercial.VatSurplus;
     }
 

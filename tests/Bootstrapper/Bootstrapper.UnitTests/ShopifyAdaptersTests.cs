@@ -58,7 +58,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShippingLookupInactiveRateReturnsNull()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var taxRates = new FakeTaxRateRepository(rate);
         var lookup = ShippingLookup(new FakeCarrierRepository(), new FakeQuotationSettingsStore(rate.Id.Value), taxRates);
         Assert.Equal(19, await lookup.GetFreightTaxPercentageAsync(TenantId, Ct));
@@ -76,7 +76,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ProductLookupReadsTaxPercentageByRateId()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var taxed = NewProduct("SH-400", rate.Id);
         var untaxed = NewProduct("SH-200", null);
         untaxed.Deactivate(Now);
@@ -94,7 +94,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShopifyLookupMatchesVariantCodeExactly()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
         var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
 

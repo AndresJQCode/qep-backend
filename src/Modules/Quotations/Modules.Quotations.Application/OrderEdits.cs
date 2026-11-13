@@ -1,5 +1,6 @@
 using FluentValidation;
 using Modules.Quotations.Domain;
+using Modules.Tenancy.Application;
 
 namespace Modules.Quotations.Application;
 
@@ -53,6 +54,15 @@ public interface IOrderEdits
     /// un frontend viejo no borra la facturación del pedido.
     /// </summary>
     OrderBillingEditRequest? Billing { get; }
+
+    /// <summary>
+    /// Los selectores de retención del pedido (spec impuestos por tipo D21). <b>Null es «no los toques»</b>; vacía los
+    /// quita. Se resuelven contra el país de la empresa que queda después de <see cref="BillingAccount"/>.
+    /// </summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds { get; }
+
+    /// <summary>La empresa y la cuenta de cobro (D22). <b>Null es «no la toques»</b>.</summary>
+    QuotationBillingAccountRequest? BillingAccount { get; }
 }
 
 /// <summary>Aplica el bloque <c>billing</c> de la edición al pedido. Lo comparten el guardado y el cálculo
@@ -83,10 +93,84 @@ internal static class OrderBillingEdits
 
         var before = OrderChangeSummary.BillingLabel(order);
         var changed = order.SetBilling(
-            party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName, billing.BillingWithRetention,
+            party, billing.BillsToFinalConsumer, billing.BillingUsesBusinessName,
             billing.BillingVatSurplus, updatedBy, now,
             enforceCompleteness: strict);
         return changed ? OrderChangeSummary.BillingChanged(before, OrderChangeSummary.BillingLabel(order)) : null;
+    }
+}
+
+/// <summary>Lo que cambió la empresa y las retenciones de la edición: el texto del historial de cada una, o
+/// <c>null</c> si no cambió.</summary>
+internal sealed record OrderWithholdingEditsOutcome(string? BillingAccountSummary, string? WithholdingsSummary);
+
+/// <summary>Con qué resuelve <see cref="OrderWithholdingEdits"/> la cuenta y los selectores: la empresa, el catálogo y el
+/// calendario del tenant (la fecha del pedido para la UVT).</summary>
+internal sealed record OrderWithholdingEditsContext(
+    IQuotationCompanyLookup CompanyLookup,
+    IQuotationWithholdingLookup WithholdingLookup,
+    ITenantClock TenantClock,
+    Guid TenantId);
+
+/// <summary>
+/// Aplica la empresa (D22) y los selectores de retención (D21) de la edición a un pedido <c>Pending</c> (spec impuestos
+/// por tipo §7.5, §7.7). Lo comparten el guardado y el cálculo previo, para que las retenciones de la vista previa sean
+/// las que el guardado dejaría. Primero la cuenta, después los selectores contra el país de la empresa que quedó (D23):
+/// una tasa de otro país es 422 aunque llegue en la misma edición que cambia la empresa. Nunca escribe en el cliente.
+/// </summary>
+internal static class OrderWithholdingEdits
+{
+    public static async Task<OrderWithholdingEditsOutcome> ApplyAsync(
+        Order order,
+        IOrderEdits edits,
+        OrderWithholdingEditsContext context,
+        MemberId updatedBy,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        string? accountSummary = null;
+        // Con cuerpo, el resolver siempre devuelve la cuenta validada contra la empresa (o lanza).
+        if (await QuotationBillingAccountResolver.ResolveAsync(
+                context.CompanyLookup, context.TenantId, edits.BillingAccount, cancellationToken) is { } account)
+        {
+            var before = OrderChangeSummary.BillingAccountLabel(order.BillingAccount);
+            if (order.SetBillingAccount(account, updatedBy, now))
+            {
+                accountSummary = OrderChangeSummary.BillingAccountChanged(
+                    before, OrderChangeSummary.BillingAccountLabel(order.BillingAccount)!);
+            }
+        }
+
+        string? withholdingsSummary = null;
+        // Los mismos de antes (también los heredados de la cotización): la foto se queda como se congeló, sin volver al
+        // catálogo ni recalcular la UVT con la fecha del pedido.
+        if (edits.WithholdingTaxRateIds is { } ids
+            && !WithholdingSelection.IsUnchanged(
+                ids,
+                order.Withholdings.OrderBy(withholding => withholding.Position).Select(withholding => withholding.Rate),
+                order.BillingAccount?.Country))
+        {
+            // Vaciar no consulta ni el catálogo ni el calendario. La UVT es la del año del pedido (spec §7.3): la misma
+            // fecha con la que nació.
+            IReadOnlyList<WithholdingRate> rates = ids.Count == 0
+                ? []
+                : await WithholdingSelection.ResolveAsync(
+                    context.WithholdingLookup,
+                    context.TenantId,
+                    ids,
+                    order.BillingAccount?.Country,
+                    DocumentDates.LocalDate(
+                        await context.TenantClock.GetAsync(context.TenantId, cancellationToken), order.CreatedAt),
+                    "order",
+                    cancellationToken);
+            var before = OrderChangeSummary.WithholdingsLabel(order);
+            if (order.SetWithholdings(rates, updatedBy, now))
+            {
+                withholdingsSummary = OrderChangeSummary.WithholdingsChanged(before, OrderChangeSummary.WithholdingsLabel(order));
+            }
+        }
+
+        return new OrderWithholdingEditsOutcome(accountSummary, withholdingsSummary);
     }
 }
 

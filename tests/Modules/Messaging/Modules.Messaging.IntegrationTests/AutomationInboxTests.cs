@@ -292,6 +292,81 @@ public sealed class AutomationInboxTests
         Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
     }
 
+    /// <summary>Spec 2026-11-03: el reclamo devuelve el tipo de cada fila, para que el motor distinga el entrante, el arranque manual y la señal de soltar.</summary>
+    [Fact]
+    public async Task ClaimCarriesTheKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        await PostTextAsync(f, "w1");
+        var connectionId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT connection_id FROM messaging.conversations");
+        var start = DateTimeOffset.UtcNow.AddMinutes(1);
+        await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), start);
+        await EnqueueReleaseRunAsync(f, connectionId, Guid.CreateVersion7(), start.AddSeconds(1));
+
+        var claimed = await WithInboxAsync(f, inbox => inbox.ClaimAsync(start.AddMinutes(5), 10, Ct));
+
+        Assert.Equal(["Engine", "Engine", "ReleaseRun"], claimed.OrderBy(item => item.CreatedAt).Select(item => item.Kind));
+    }
+
+    [Fact]
+    public async Task PendingManualStartIgnoresReleaseRows()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var conversationId = Guid.CreateVersion7();
+        await EnqueueReleaseRunAsync(f, Guid.CreateVersion7(), conversationId, DateTimeOffset.UtcNow);
+
+        Assert.False(await WithInboxAsync(f, inbox => inbox.HasPendingManualStartAsync(f.Tenant.TenantId, conversationId, Ct)));
+    }
+
+    [Fact]
+    public async Task AReleaseRowHoldsBackALaterInboundOfItsConversation()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var conversationId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow.AddMinutes(1);
+        await EnqueueReleaseRunAsync(f, connectionId, conversationId, now);
+        // Un entrante posterior de la misma conversación: una fila Engine más nueva.
+        await EnqueueManualStartAsync(f, connectionId, conversationId, now.AddSeconds(1));
+
+        var first = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        Assert.Equal(AutomationInboxKinds.ReleaseRun, first.Kind);
+        Assert.True(await WithInboxAsync(f, inbox => inbox.CompleteAsync(f.Tenant.TenantId, first.MessageId, first.Attempts, "skipped", Ct)));
+
+        var second = Assert.Single(await WithInboxAsync(f, inbox => inbox.ClaimAsync(now.AddMinutes(5), 10, Ct)));
+        Assert.Equal(AutomationInboxKinds.Engine, second.Kind);
+    }
+
+    [Fact]
+    public async Task OldRowsAreEngineAndTheCheckRejectsAnUnknownKind()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var _ = f.Factory;
+        var connectionId = Guid.CreateVersion7();
+        await EnqueueManualStartAsync(f, connectionId, Guid.CreateVersion7(), DateTimeOffset.UtcNow);
+        var manualId = await ScalarAsync<Guid>(f.ConnectionString,
+            "SELECT message_id FROM messaging.automation_inbox WHERE message_id NOT IN (SELECT id FROM messaging.messages)");
+
+        Assert.Equal("Engine", await ScalarAsync<string>(f.ConnectionString, "SELECT kind FROM messaging.automation_inbox WHERE message_id = @id", ("id", manualId)));
+        var error = await Assert.ThrowsAsync<Npgsql.PostgresException>(() => ExecuteAsync(f.ConnectionString,
+            "UPDATE messaging.automation_inbox SET kind = 'Other' WHERE message_id = @id", ("id", manualId)));
+        Assert.Equal("23514", error.SqlState);
+    }
+
+    private static async Task EnqueueReleaseRunAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
+    {
+        using var scope = f.Host.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<IAutomationInbox>().EnqueueReleaseRun(f.Tenant.TenantId, connectionId, conversationId, now);
+        await scope.ServiceProvider.GetRequiredService<IMessagingUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
     private static async Task EnqueueManualStartAsync(Fixture f, Guid connectionId, Guid conversationId, DateTimeOffset now)
     {
         using var scope = f.Host.Services.CreateScope();

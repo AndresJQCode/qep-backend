@@ -25,7 +25,7 @@ public sealed class OrderLineCostTests
     };
 
     private static OrderHeader Header() =>
-        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, false);
+        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, []);
 
     private static OrderLineInput Line(Guid variantId) =>
         new(variantId, Guid.CreateVersion7(), 2m, 10_000m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));

@@ -35,8 +35,8 @@ public sealed class QuotationGlobalScaleFloorTests
             QuotationParties.Empty,
             billingAccount,
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 
