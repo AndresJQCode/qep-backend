@@ -173,7 +173,7 @@ tenant factura con varias empresas en municipios distintos.
 
 | # | Propuesta |
 | --- | --- |
-| A11 | **Selecciones viejas en el mismo cuerpo.** Si un cuerpo cambia la empresa o el municipio de la operación, el backend **ignora** en ese cuerpo los selectores de tipos municipales (`billingWithholdingTaxRateIds` / `withholdingTaxRateIds`) y las entradas de `withholdingPercentages` de tipos municipales: gana la re-resolución, y un porcentaje editado que se pierde queda en el historial. Los selectores nacionales del mismo cuerpo se procesan como hoy (§7.6). El frontend además los quita del borrador y de cada vista previa (spec del frontend §6.5). |
+| A11 | **Selecciones en el mismo cuerpo que cambia la empresa o el municipio** (owner, 2026-11-13, opción c). Si un cuerpo cambia la empresa o el municipio de la operación, primero corre la re-resolución (§7.6). Después, un id de tipo municipal en `billingWithholdingTaxRateIds` / `withholdingTaxRateIds` se **acepta** si es la tasa de la empresa nueva para el municipio resultante (el `companyRate.taxRateId` que mostraría la vista previa) y se **ignora en silencio** si no (sin 422): uno elegido contra la empresa o el municipio anteriores nunca coincide. Una entrada municipal de `withholdingPercentages` se **aplica** si, tras la re-resolución y los selectores, hay una fila de ese tipo en la fuente vigente, y se ignora en silencio si no. Sin cambio de empresa ni de municipio, la validación es la de siempre. Los selectores nacionales se procesan como hoy. El frontend quita las selecciones municipales del borrador en el paso del cambio, así que lo que llegue se eligió después (spec del frontend §6.5). |
 | A12 | **Municipio de la empresa en el documento.** La respuesta expone `billingCompanyCity` desde `billing_company_city_id` guardado, para que «Usar el de la empresa» compare sin pedir Companies (§9.4). |
 | A13 | ~~Documentos legados (`status = Legacy`)~~ **Retirada** (2026-11-12): no existen filas ReteICA congeladas sin municipio. |
 | A14 | **`status` derivado al leer, sin columna nueva**, con los datos de hoy de la empresa y del cliente y con precedencia explícita (§9.4). En el pedido, sin fila: cliente no agente → `CustomerNotAgent`; cliente agente y empresa con tasa → `NotSelected`. |
@@ -351,10 +351,26 @@ Corre **sólo** en estos cambios, con el documento editable:
 2. Cambia `OperationCityId` (explícito o por A6), incluido de `null` a un municipio en un documento anterior a este trabajo (A8).
 3. Cambia el cliente de la cotización (`ChangeClient`, `Quotation.cs:798-817`; hoy ya recopia la fuente `Customer`).
 
-**Selecciones viejas en el mismo cuerpo (A11).** Cuando el cuerpo dispara 1 o 2, en ese mismo cuerpo se **ignoran** los ids de tipos
-municipales de `billingWithholdingTaxRateIds` (cotización) y `withholdingTaxRateIds` (pedido) y las entradas de
-`withholdingPercentages` de tipos municipales: se eligieron contra la empresa o el municipio anteriores. Los ids nacionales del mismo
-cuerpo se procesan como hoy. El asesor ajusta la ReteICA en el guardado siguiente, ya con lo que devuelve la vista previa.
+**Selecciones en el mismo cuerpo (A11, owner 2026-11-13).** Cuando el cuerpo dispara 1 o 2, la re-resolución corre primero y después,
+en ese mismo cuerpo:
+
+- Un id de tipo municipal `T` en `billingWithholdingTaxRateIds` (cotización) o `withholdingTaxRateIds` (pedido) se **acepta** si es la
+  tasa de la empresa nueva para `T` en el municipio resultante (el `companyRate.taxRateId` que mostraría la vista previa) y reemplaza
+  la fila de `T`. Si no coincide se **ignora en silencio**, sin 422, y queda la fila de la re-resolución: las tasas son por empresa y
+  municipio, así que un id elegido contra la empresa o el municipio anteriores nunca coincide, e ignorarlo evita que falle una pestaña
+  vieja. En el pedido (fuente `Document`) la aceptación es la misma y la aplicación a mano (R11) no cambia: se acepta aunque el
+  cliente no sea agente ahí.
+- Una entrada de `withholdingPercentages` de tipo municipal se **aplica** si, tras la re-resolución y los selectores, hay una fila de
+  ese tipo en la fuente vigente; si no, se ignora en silencio (no `withholding_percentage_not_editable`). Se acepta porque la SPA
+  borra los porcentajes municipales del borrador en el momento del cambio: el que llegue se tecleó después. Riesgo residual
+  conocido: otro cliente de la API que mande un porcentaje viejo junto con el cambio de empresa lo verá aplicado; hoy la SPA es el
+  único cliente.
+- Un cuerpo que cambia la empresa o el municipio no puede quitar en ese mismo cuerpo la fila municipal que deja la re-resolución:
+  sin id coincidente, gana la re-resolución. Se quita en el guardado siguiente.
+- Los ids nacionales se procesan como hoy.
+
+Sin cambio de empresa ni de municipio, la validación es la de siempre: un id municipal que no es `companyRate` es
+`{quotation|order}.billing.withholding_tax_rate_invalid` y un porcentaje sin fila es `…withholding_percentage_not_editable`.
 
 Para cada tipo municipal `T` del país de la empresa:
 
@@ -380,7 +396,10 @@ como hoy con D23).
   `order.billing.withholding_percentage_invalid`. Cotización con `EnsureEditable`; pedido con `Order.IsEditable`.
 - Totales: `Touch` → `RecalculateTotals` (`Quotation.cs:1205-1240`), y lo equivalente en `Order` (`Order.cs:1692-1716`).
 - Orden dentro de un guardado: cuenta → municipio → re-resolución → selectores → porcentajes. Si el cuerpo cambió empresa o
-  municipio, los selectores y porcentajes de tipos municipales de ese cuerpo se ignoran (A11, §7.6).
+  municipio, un selector municipal se acepta sólo si es la tasa de la empresa nueva para el municipio resultante y un porcentaje
+  municipal se aplica sólo si queda una fila de ese tipo; lo demás se ignora en silencio (A11, §7.6).
+- Historial: si la re-resolución descarta un porcentaje editado, se anota igual; si el mismo cuerpo fija después un porcentaje, se
+  anotan los dos eventos, en ese orden.
 - Al convertir, el pedido hereda la fila con su porcentaje efectivo y el del catálogo.
 
 ### 7.8 Historial
@@ -553,8 +572,9 @@ En `QuotationDto`/`QuotationResponse` (`QuotationsDtos.cs`) y el detalle del ped
   - `operationCityId: string | null` — ausente = conservar (o el de la empresa si cambia, A6); `null` = el de la empresa.
   - `withholdingPercentages: [{ "type": "ReteICA", "percentage": 0.8 | null }]` — ausente = conservar todos; `null` en una
     entrada = volver al del catálogo.
-  - Si el cuerpo cambia la empresa o el municipio, los ids municipales de los selectores y las entradas municipales de
-    `withholdingPercentages` se ignoran (A11).
+  - Si el cuerpo cambia la empresa o el municipio, un id municipal de los selectores se acepta sólo si es la tasa de la empresa
+    nueva para el municipio resultante, y una entrada municipal de `withholdingPercentages` se aplica sólo si queda una fila de ese
+    tipo; lo demás se ignora en silencio, sin 422 (A11, §7.6).
 - `CreateOrderRequest` (pedido manual) no cambia (A10).
 - `billingWithholdingTaxRateIds` (cotización) y `withholdingTaxRateIds` (pedido) no cambian de forma: para un tipo municipal sólo
   aceptan la tasa de `municipalWithholdings[].companyRate` (A4).
@@ -664,9 +684,12 @@ Integración (Testcontainers, un proyecto a la vez):
   cliente y lo anota. En la cotización con facturación propia (`customerIsAgent = null`) la aplicación es igual, pero cambiar
   después el municipio pasa la selección a la tasa de la empresa para el municipio nuevo (o la deja vacía si no hay), §7.6
   (owner, 2026-11-13).
-- Selecciones viejas (A11): un `PUT` de cotización que cambia la empresa y trae un selector ReteICA y un porcentaje ReteICA → el
-  selector y el porcentaje se ignoran, la fila sale de la re-resolución y el historial anota la tarifa editada perdida; la
-  Retefuente del mismo cuerpo sí se aplica. Igual en la edición del pedido y en las dos vistas previas.
+- Selecciones en el mismo cuerpo (A11), con una ReteICA editada antes: (1) un `PUT` de cotización que cambia la empresa y trae la
+  ReteICA de la empresa nueva para el municipio nuevo y un porcentaje ReteICA → los dos se aplican, el historial anota la tarifa
+  descartada y después la editada, y la Retefuente del mismo cuerpo se aplica; (2) el mismo `PUT` con la ReteICA de la empresa
+  **anterior** y un porcentaje → el id se ignora sin 422, la fila sale de la re-resolución y el porcentaje se aplica sólo si queda
+  una fila de ese tipo (si no, se ignora sin 422). Igual en la edición del pedido y en las dos vistas previas. Sin cambio de empresa
+  ni de municipio, el id que no es `companyRate` sigue siendo `…withholding_tax_rate_invalid`.
 - `billingCompanyCity` (A12): presente con empresa CO; `null` en un documento anterior hasta reenviar la cuenta; reenviar la misma
   empresa lo completa sin re-resolver.
 - Documento anterior (A8): sin `operation_city_id` da `NoOperationCity`; fijarlo en uno editable resuelve la ReteICA con la regla.
