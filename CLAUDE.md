@@ -357,6 +357,21 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **El token de Shopify lo escribe sólo `ShopifyTokenRefreshWorker`, y bajo el candado `ShopifyTokenLock.Namespace`** (spec
+  2026-11-12). El refresh token rota: dos refrescos de la misma tienda, o un refresco y un reenlace a la vez, dejan guardado un
+  par que Shopify ya retiró, y la tienda se cae una hora después sin error. El candado es `pg_try_advisory_xact_lock` de dos
+  claves `(20261112, hashtext(id))` sobre el id de la conexión o de la instalación (`IIntegrationsUnitOfWork`); el reenlace
+  toma la variante que espera **antes** de cargar la conexión. El `Version` optimista no alcanza: el perdedor ya gastó el
+  refresh token. Un camino nuevo que pida o refresque un token de Shopify —o que reemplace los secretos de una conexión que
+  ya existe— toma el mismo candado; los consumidores sólo leen el guardado.
+- **Con el token de Shopify vencido, `ShopifyConnectionRef` sale `IsOperational = true` y `AccessToken = null`** (spec
+  2026-11-12 §6.4, D7). No lo «arregles» a no operativa: `RedactShopAsync` daría la tienda por desinstalada y borraría su espejo,
+  y la ingesta dejaría de importar, todo porque el worker iba tarde. Quien llame a la Admin API mira `AccessToken`, no
+  `IsOperational` (`ReconcileStore` salta con 503 `sync_unavailable`; `ListOperationalAsync` la deja fuera). Lo amarran
+  `ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection` y `OrdersTopicWithAnExpiredTokenStillImports`.
+- **`token_expired` sale sólo de un 4xx salvo 429 en el refresco.** El gateway clasifica todo no-2xx que no sea 429 ni 5xx como
+  `Rejected` (un 3xx incluido), y eso sirve al canje y al probador; el worker filtra por status (`IsDefinitiveRejection`) porque
+  `token_expired` sólo se sale reautorizando. Un consumidor nuevo del refresco hace lo mismo.
 - **Instagram es un canal de la misma bandeja de Messaging, no un módulo** (spec 2026-10-14). La conversación lleva
   `channel` (`WhatsApp` | `Instagram`) y en Instagram `user_id` es el IGSID numérico y `wa_id` es siempre `null`: todo
   código nuevo que empareje por teléfono tiene que tratar ese `null`. Las plantillas, las campañas y `POST /conversations`
