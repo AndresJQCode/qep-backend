@@ -35,6 +35,8 @@ public sealed class ExternalMediaLinkTests
     [InlineData("a/b.pdf")]
     [InlineData("a\\b.pdf")]
     [InlineData("fac\u0001.pdf")]
+    [InlineData("   ")]
+    [InlineData("\t")]
     [InlineData("")]
     [InlineData(null)]
     public void AFilenameOutsideTheContractIsRejected(string? name) => Assert.False(ExternalMediaLink.IsValidFileName(name));

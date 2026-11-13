@@ -22,5 +22,6 @@ public static class ExternalMediaLink
     /// caracteres de control.</summary>
     public static bool IsValidFileName(string? fileName) =>
         fileName is { Length: > 0 and <= MaxFileNameLength }
+        && !string.IsNullOrWhiteSpace(fileName)
         && !fileName.Any(character => character is '/' or '\\' || char.IsControl(character));
 }

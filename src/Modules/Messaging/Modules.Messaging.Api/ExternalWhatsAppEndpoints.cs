@@ -98,7 +98,7 @@ public static class ExternalWhatsAppEndpoints
             body = null;
         }
 
-        return body ?? throw new ValidationException([new ValidationFailure("body", "El cuerpo debe ser JSON válido, con parameters como texto.")]);
+        return body ?? throw new ValidationException([new ValidationFailure("body", "El cuerpo debe ser JSON válido, con parameters como objeto de textos y header como objeto.")]);
     }
 }
 

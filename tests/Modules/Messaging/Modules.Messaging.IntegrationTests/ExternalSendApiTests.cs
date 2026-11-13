@@ -389,6 +389,21 @@ public sealed class ExternalSendApiTests
     }
 
     [Fact]
+    public async Task AHeaderThatIsNotAnObjectIs422WithABodyErrorThatMentionsIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+
+        var response = await PostRawAsync(f.Client, RawHeaderBody(f.ConnectionId, "aviso_logo", "\"https://cdn.example.com/logo.png\""));
+
+        await AssertValidationAsync(response, "body");
+        var message = (await BodyAsync(response)).GetProperty("errors").GetProperty("body")[0].GetString();
+        Assert.Equal("El cuerpo debe ser JSON válido, con parameters como objeto de textos y header como objeto.", message);
+        Assert.Equal(0, SendCalls(f));
+    }
+
+    [Fact]
     public async Task ANumericParameterIs422WithCode()
     {
         await using var database = await StartDatabaseAsync();
@@ -730,6 +745,7 @@ public sealed class ExternalSendApiTests
         { $$"""{"type":"image","link":"https://cdn.example.com/{{new string('a', 2025)}}"}""", "template.header.link" },
         { """{"type":"image","link":"https://cdn.example.com/logo.png","filename":"logo.png"}""", "template.header.filename" },
         { """{"type":"document","link":"https://cdn.example.com/f.pdf","filename":"a/b.pdf"}""", "template.header.filename" },
+        { """{"type":"document","link":"https://cdn.example.com/f.pdf","filename":"   "}""", "template.header.filename" },
         { $$"""{"type":"document","link":"https://cdn.example.com/f.pdf","filename":"{{new string('a', 241)}}"}""", "template.header.filename" },
     };
 
