@@ -4,6 +4,7 @@ using Bootstrapper.Valkey;
 using Bootstrapper.Valkey.Presence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Modules.Messaging.Application;
@@ -122,7 +123,9 @@ public sealed class ValkeyPresenceTests(ValkeyPlainServer server) : IClassFixtur
     {
         await using var container = await ValkeyTestServer.StartAsync(withProductionAcl: false, Ct);
         var clock = new PresenceClock();
-        await using var pod = await Pod.StartAsync(ValkeyTestServer.ConnectionString(container, asQep: false), clock);
+        var readerLogs = new CapturingLogger<ValkeyMessagingPresenceReader>();
+        await using var pod = await Pod.StartAsync(
+            ValkeyTestServer.ConnectionString(container, asQep: false), clock, readerLogs);
         var tenant = Guid.NewGuid();
         var other = Guid.NewGuid();
         var member = Guid.NewGuid();
@@ -138,6 +141,13 @@ public sealed class ValkeyPresenceTests(ValkeyPlainServer server) : IClassFixtur
         Assert.Equal([tenant], connected.Keys);
         Assert.Equal([member], connected[tenant]);
         Assert.Equal(before + 1, pod.Fallbacks.Count("presence"));
+
+        // D-2 pide el Warning; no lleva ids ni el host (las excepciones de StackExchange.Redis traen host:puerto).
+        var warning = Assert.Single(readerLogs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(1, warning.EventId.Id);
+        Assert.DoesNotContain(tenant.ToString("D"), warning.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(tenant.ToString("N"), warning.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(container.Hostname, warning.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -194,7 +204,8 @@ public sealed class ValkeyPresenceTests(ValkeyPlainServer server) : IClassFixtur
 
         public StackExchange.Redis.IDatabase Database => _connection.Multiplexer!.GetDatabase();
 
-        public static async Task<Pod> StartAsync(string connectionString, TimeProvider clock)
+        public static async Task<Pod> StartAsync(
+            string connectionString, TimeProvider clock, ILogger<ValkeyMessagingPresenceReader>? readerLogger = null)
         {
             var configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:Valkey"] = connectionString })
@@ -216,7 +227,10 @@ public sealed class ValkeyPresenceTests(ValkeyPlainServer server) : IClassFixtur
                 new ValkeyMessagingPresence(local, gateway, clock),
                 new PresenceHeartbeatWorker(local, gateway, clock),
                 new ValkeyMessagingPresenceReader(
-                    gateway, new LocalMessagingPresenceReader(local), clock, NullLogger<ValkeyMessagingPresenceReader>.Instance),
+                    gateway,
+                    new LocalMessagingPresenceReader(local),
+                    clock,
+                    readerLogger ?? NullLogger<ValkeyMessagingPresenceReader>.Instance),
                 fallbacks);
         }
 
@@ -271,6 +285,37 @@ public sealed class ValkeyPresenceTests(ValkeyPlainServer server) : IClassFixtur
         }
 
         public void Dispose() => _listener.Dispose();
+    }
+
+    /// <summary>Guarda nivel, id de evento y mensaje ya formateado de cada log de una sola categoría.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        private readonly List<(LogLevel Level, EventId EventId, string Message)> _entries = [];
+
+        public IReadOnlyList<(LogLevel Level, EventId EventId, string Message)> Entries
+        {
+            get
+            {
+                lock (_entries)
+                {
+                    return [.. _entries];
+                }
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+            {
+                _entries.Add((logLevel, eventId, $"{formatter(state, exception)} {exception}"));
+            }
+        }
     }
 
     /// <summary>Un reloj de pared que sólo avanza cuando la prueba lo mueve; arranca en la hora real.</summary>
