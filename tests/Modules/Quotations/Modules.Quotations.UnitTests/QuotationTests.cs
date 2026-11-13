@@ -17,13 +17,14 @@ public sealed class QuotationTests
         BankName = "Bancolombia",
         AccountNumber = "12345678",
         Currency = "COP",
+        Country = "CO",
     };
 
     private static Quotation NewQuotation(
         string? notes = null,
         QuotationParties? parties = null,
         QuotationBillingAccount? billingAccount = null,
-        bool customerWithRetention = false,
+        IReadOnlyList<WithholdingRate>? customerWithholdings = null,
         bool customerVatSurplus = false,
         DateOnly? validUntil = null,
         string defaultCurrency = "COP") =>
@@ -39,8 +40,8 @@ public sealed class QuotationTests
             parties ?? QuotationParties.Empty,
             billingAccount,
             defaultCurrency,
-            customerWithRetention,
             customerVatSurplus,
+            customerWithholdings ?? [],
             AdvisorId,
             Now);
 
@@ -153,7 +154,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "  QUO-2026-0001  ", ClientId, AdvisorId,
-            null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now);
+            null, null, null, QuotationParties.Empty, null, "COP", false, [], AdvisorId, Now);
 
         Assert.Equal("QUO-2026-0001", quotation.QuotationNumber);
     }
@@ -166,7 +167,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, number, ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, [], AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_required", error.Code);
     }
@@ -177,7 +178,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, new string('a', 21), ClientId, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, [], AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.number_too_long", error.Code);
     }
@@ -188,7 +189,7 @@ public sealed class QuotationTests
         var error = Assert.Throws<QuotationsDomainException>(() =>
             Quotation.Create(
                 QuotationId.New(), TenantId, "QUO-2026-0001", Guid.Empty, AdvisorId,
-                null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now));
+                null, null, null, QuotationParties.Empty, null, "COP", false, [], AdvisorId, Now));
 
         Assert.Equal("quotation.quotation.client_required", error.Code);
     }
@@ -280,7 +281,8 @@ public sealed class QuotationTests
     [Fact]
     public void CustomerWithRetentionComputesTwoPointFivePercentOfSubtotalAndSubtractsFromNetTotal()
     {
-        var quotation = NewQuotation(customerWithRetention: true);
+        var quotation = NewQuotation(
+            billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo]);
 
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
@@ -305,35 +307,6 @@ public sealed class QuotationTests
 
         Assert.Equal(0m, quotation.RetentionAmount);
         Assert.Equal(quotation.Total, quotation.NetTotal);
-    }
-
-    [Fact]
-    public void RefreshCustomerTaxProfileUpdatesFlagsAndRecalculatesWhileEditable()
-    {
-        var quotation = NewQuotation();
-        quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
-            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-
-        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
-
-        Assert.True(quotation.CustomerWithRetention);
-        Assert.True(quotation.CustomerVatSurplus);
-        Assert.Equal(0m, quotation.TaxAmount);
-        Assert.Equal(2_500m, quotation.RetentionAmount);
-        Assert.Equal(97_500m, quotation.NetTotal);
-    }
-
-    [Fact]
-    public void RefreshCustomerTaxProfileDoesNothingOnceVoided()
-    {
-        var quotation = NewQuotation();
-        quotation.Void(AdvisorId, Now);
-
-        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
-
-        Assert.False(quotation.CustomerWithRetention);
-        Assert.False(quotation.CustomerVatSurplus);
     }
 
     [Fact]
@@ -581,7 +554,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation(parties: QuotationParties.Empty with { IsStorePickup = true });
 
-        quotation.ChangeClient(Guid.CreateVersion7(), false, false, AdvisorId, Now);
+        quotation.ChangeClient(Guid.CreateVersion7(), false, [], AdvisorId, Now);
 
         Assert.True(quotation.IsStorePickup);
         Assert.Null(quotation.Shipping);
@@ -604,7 +577,7 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation(
             parties: QuotationParties.Empty with { BillsToFinalConsumer = true },
-            customerWithRetention: true,
+            billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo],
             customerVatSurplus: true);
 
         quotation.AddItem(
@@ -619,9 +592,9 @@ public sealed class QuotationTests
         Assert.Equal(119_000m, quotation.Total);
         Assert.Equal(0m, quotation.RetentionAmount);
         Assert.Equal(119_000m, quotation.NetTotal);
-        Assert.True(quotation.CustomerWithRetention);
+        Assert.Single(quotation.CustomerWithholdings);
         Assert.True(quotation.CustomerVatSurplus);
-        Assert.False(quotation.AppliesRetention);
+        Assert.Empty(quotation.AppliedWithholdings);
         Assert.False(quotation.AppliesVatSurplus);
     }
 
@@ -629,7 +602,7 @@ public sealed class QuotationTests
     [Fact]
     public void UpdateDetailsToTheFinalConsumerRecalculatesTheTotals()
     {
-        var quotation = NewQuotation(customerWithRetention: true, customerVatSurplus: true);
+        var quotation = NewQuotation(billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo], customerVatSurplus: true);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -638,7 +611,7 @@ public sealed class QuotationTests
         quotation.UpdateDetails(
             ValidUntil, "Efectivo", null,
             QuotationParties.Empty with { BillsToFinalConsumer = true },
-            null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+            BillingAccount, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.True(quotation.BillsToFinalConsumer);
         Assert.Equal(19_000m, quotation.TaxAmount);
@@ -654,14 +627,14 @@ public sealed class QuotationTests
     {
         var quotation = NewQuotation(
             parties: QuotationParties.Empty with { BillsToFinalConsumer = true },
-            customerWithRetention: true,
+            billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo],
             customerVatSurplus: true);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.UpdateDetails(
-            ValidUntil, "Efectivo", null, QuotationParties.Empty, null, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
+            ValidUntil, "Efectivo", null, QuotationParties.Empty, BillingAccount, null, isRetail: false, globalScaleFloor: null, AdvisorId, Now);
 
         Assert.False(quotation.BillsToFinalConsumer);
         Assert.Equal(0m, quotation.TaxAmount);
@@ -670,23 +643,23 @@ public sealed class QuotationTests
         Assert.Equal(97_500m, quotation.NetTotal);
     }
 
-    // Con datos propios de facturacion, quien responde retencion/excedente de IVA es esa
-    // respuesta y no el snapshot del cliente -- el cliente ya no es a quien se le factura.
+    // Con datos propios de facturacion, quien responde retencion/excedente de IVA es la parte
+    // (sus selectores y su respuesta) y no la foto del cliente -- el cliente ya no es a quien se le factura.
     [Fact]
     public void AnOwnBillingPartyAnsweringYesAppliesRetentionAndVatSurplusRegardlessOfTheCustomer()
     {
         var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit };
         var quotation = NewQuotation(
             parties: new QuotationParties(
-                ownBilling, Shipping: null,
-                BillingWithRetention: true, BillingVatSurplus: true),
-            customerWithRetention: false,
+                ownBilling, Shipping: null, BillingVatSurplus: true),
+            billingAccount: BillingAccount,
             customerVatSurplus: false);
+        quotation.SetBillingWithholdings([TestWithholdings.RetefuenteCo], AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        Assert.True(quotation.AppliesRetention);
+        Assert.Single(quotation.AppliedWithholdings);
         Assert.True(quotation.AppliesVatSurplus);
         Assert.Equal(2_500m, quotation.RetentionAmount);
         Assert.Equal(0m, quotation.TaxAmount);
@@ -700,15 +673,14 @@ public sealed class QuotationTests
         var ownBilling = new QuotationPartyDetails { Name = "Sede administrativa", IdentificationNumber = "1020304050", IdentificationType = PartyIdentificationType.Nit };
         var quotation = NewQuotation(
             parties: new QuotationParties(
-                ownBilling, Shipping: null,
-                BillingWithRetention: false, BillingVatSurplus: false),
-            customerWithRetention: true,
+                ownBilling, Shipping: null, BillingVatSurplus: false),
+            billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo],
             customerVatSurplus: true);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        Assert.False(quotation.AppliesRetention);
+        Assert.Empty(quotation.AppliedWithholdings);
         Assert.False(quotation.AppliesVatSurplus);
         Assert.Equal(0m, quotation.RetentionAmount);
         Assert.Equal(19_000m, quotation.TaxAmount);
@@ -718,19 +690,18 @@ public sealed class QuotationTests
     [Fact]
     public void WithoutAnOwnBillingPartyTheCustomerSnapshotStillDrivesTaxes()
     {
-        var quotation = NewQuotation(customerWithRetention: true, customerVatSurplus: false);
+        var quotation = NewQuotation(billingAccount: BillingAccount, customerWithholdings: [TestWithholdings.RetefuenteCo], customerVatSurplus: false);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
-        Assert.Null(quotation.PartyWithRetention);
         Assert.Null(quotation.PartyVatSurplus);
-        Assert.True(quotation.AppliesRetention);
+        Assert.Single(quotation.AppliedWithholdings);
         Assert.False(quotation.AppliesVatSurplus);
     }
 
-    // ChangeClient borra la fila de facturacion propia (US-2): la pregunta de retencion/excedente
-    // que dependia de esa fila vuelve a "sin contestar" en vez de arrastrar la respuesta vieja.
+    // ChangeClient borra la fila de facturacion propia (US-2): la pregunta de excedente que
+    // dependia de esa fila vuelve a "sin contestar" en vez de arrastrar la respuesta vieja.
     [Fact]
     public void ChangeClientResetsTheOwnBillingPartyTaxProfileAnswers()
     {
@@ -738,14 +709,13 @@ public sealed class QuotationTests
         var quotation = NewQuotation(
             parties: new QuotationParties(
                 ownBilling, Shipping: null,
-                BillingWithRetention: true, BillingVatSurplus: true));
+                BillingVatSurplus: true));
 
         quotation.ChangeClient(
-            Guid.CreateVersion7(), customerWithRetention: false, customerVatSurplus: false,
+            Guid.CreateVersion7(), customerVatSurplus: false, customerWithholdings: [],
             AdvisorId, Now);
 
         Assert.Null(quotation.Billing);
-        Assert.Null(quotation.PartyWithRetention);
         Assert.Null(quotation.PartyVatSurplus);
     }
 
@@ -823,42 +793,23 @@ public sealed class QuotationTests
     public void ChangeClientResetsTheFinalConsumer()
     {
         var quotation = NewQuotation(
-            parties: QuotationParties.Empty with { BillsToFinalConsumer = true });
+            parties: QuotationParties.Empty with { BillsToFinalConsumer = true }, billingAccount: BillingAccount);
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
 
         quotation.ChangeClient(
-            Guid.CreateVersion7(), customerWithRetention: true, customerVatSurplus: false,
+            Guid.CreateVersion7(), customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo],
             AdvisorId, Now);
 
         Assert.False(quotation.BillsToFinalConsumer);
         Assert.Equal(2_500m, quotation.RetentionAmount);
     }
 
-    // RefreshCustomerTaxProfile sigue actualizando los snapshots, pero con consumidor final la
-    // retencion efectiva sigue en cero y el IVA se sigue cobrando.
-    [Fact]
-    public void RefreshCustomerTaxProfileKeepsTheFinalConsumerFreeOfRetention()
-    {
-        var quotation = NewQuotation(
-            parties: QuotationParties.Empty with { BillsToFinalConsumer = true });
-        quotation.AddItem(
-            QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
-            discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
-
-        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
-
-        Assert.True(quotation.CustomerWithRetention);
-        Assert.True(quotation.CustomerVatSurplus);
-        Assert.Equal(0m, quotation.RetentionAmount);
-        Assert.Equal(19_000m, quotation.TaxAmount);
-    }
-
     [Fact]
     public void SendMarksAsSentAndStampsSentAt()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
 
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
@@ -872,7 +823,7 @@ public sealed class QuotationTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId,
-            validUntil: null, null, null, QuotationParties.Empty, null, "COP", false, false, AdvisorId, Now);
+            validUntil: null, null, null, QuotationParties.Empty, null, "COP", false, [], AdvisorId, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
             quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None));
@@ -888,7 +839,7 @@ public sealed class QuotationTests
     // de este agregado.
     public void SendResendsASentQuotationThatDidNotChange()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         var later = Now.AddHours(3);
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
@@ -905,7 +856,7 @@ public sealed class QuotationTests
     // instante, igual que el primer envío.
     public void CanBeSentStaysTrueAfterSendingWithoutChanges()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
 
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
@@ -920,7 +871,7 @@ public sealed class QuotationTests
     // vencida no vuelven a Sent.
     public void SendStillRejectsAQuotationThatIsNotDraftOrSent(QuotationStatus status)
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         if (status == QuotationStatus.Voided)
         {
             quotation.Void(AdvisorId, Now);
@@ -942,7 +893,7 @@ public sealed class QuotationTests
     [InlineData(true)]
     public void VoidWorksFromDraftOrSent(bool sendFirst)
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         if (sendFirst)
         {
             quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
@@ -984,7 +935,7 @@ public sealed class QuotationTests
     [Fact]
     public void EditingASentQuotationIsAllowed()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
 
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1, 1000m, 0m, 0, AdvisorId, Now);
@@ -995,7 +946,7 @@ public sealed class QuotationTests
     [Fact]
     public void ExpireMovesASentQuotationToExpired()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         var updatedByBeforeExpiring = quotation.UpdatedBy;
 
@@ -1019,7 +970,7 @@ public sealed class QuotationTests
     [Fact]
     public void EditingAnExpiredQuotationIsRejected()
     {
-        var quotation = NewQuotation();
+        var quotation = NewQuotation(billingAccount: BillingAccount);
         quotation.Send(AdvisorId, Now, QuotationProductSnapshot.None);
         quotation.Expire(Now);
 
@@ -1221,25 +1172,6 @@ public sealed class QuotationTests
         Assert.Equal(QuotationStatus.Converted, quotation.Status);
     }
 
-    // Mientras una convertida seguía en Sent, RefreshCustomerTaxProfile le recalculaba los
-    // totales si el cliente cambiaba de perfil fiscal, aunque el pedido ya los hubiera heredado.
-    // En Converted queda tal cual quedó, igual que una anulada o una vencida.
-    [Fact]
-    public void RefreshCustomerTaxProfileLeavesAConvertedQuotationAsItWas()
-    {
-        var quotation = ConvertibleSentQuotation();
-        quotation.ConvertToOrder(AdvisorId, Now.AddHours(1), QuotationProductSnapshot.None);
-        var totalBefore = quotation.Total;
-        var taxBefore = quotation.TaxAmount;
-
-        quotation.RefreshCustomerTaxProfile(customerWithRetention: true, customerVatSurplus: true);
-
-        Assert.False(quotation.CustomerWithRetention);
-        Assert.False(quotation.CustomerVatSurplus);
-        Assert.Equal(totalBefore, quotation.Total);
-        Assert.Equal(taxBefore, quotation.TaxAmount);
-    }
-
     /// <summary>Lleva una cotización ya enviada al estado pedido por el camino real de cada
     /// transición, sin tocar el estado a mano.</summary>
     private static void MoveTo(Quotation quotation, QuotationStatus status)
@@ -1347,7 +1279,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, completeParty,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1527,7 +1459,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, Shipping: null,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -1599,7 +1531,7 @@ public sealed class QuotationTests
             billingAccount: BillingAccount,
             parties: new QuotationParties(
                 completeParty, Shipping: null,
-                BillingWithRetention: false, BillingVatSurplus: false));
+                BillingVatSurplus: false));
         quotation.AddItem(
             QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), quantity: 1, unitPrice: 119_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);

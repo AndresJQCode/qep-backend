@@ -211,8 +211,8 @@ public sealed class ExportQuotationPdfHandlerTests
             QuotationParties.Empty,
             billingAccount: null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
         CurrentQuotationId = quotation.Id.Value;

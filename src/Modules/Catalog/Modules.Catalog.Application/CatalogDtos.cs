@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Modules.Catalog.Application;
@@ -359,29 +360,72 @@ public sealed record UpdateProductRequest(
 public sealed record TaxRateDto(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit);
 
 public sealed record TaxRateResponse(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit);
 
 public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items);
 
-// Percentage es int, no decimal: P-008, decidido por el owner el 2026-08-10, fija el porcentaje
-// en 0 decimales. Encaja con el IVA colombiano —19, 5 o 0— y el gate CAT-00 lo declara como
-// límite de alcance del módulo, o sea que no admite retenciones con fracción.
+// Percentage es decimal: el IVA sigue entero, pero las retenciones admiten hasta tres decimales
+// (0,966 % del ReteICA, D15 del spec de impuestos por tipo, que reabrió P-008). Qué forma admite cada
+// tipo lo decide el dominio, no el contrato.
 //
-// IsActive tampoco viaja acá, por la misma razón que en producto.
-public sealed record CreateTaxRateRequest(string Name, int Percentage);
+// Type y Country son opcionales sólo por compatibilidad con el frontend viejo: sin Type la tasa es IVA
+// y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
+public sealed record CreateTaxRateRequest(
+    string Name,
+    decimal Percentage,
+    string? Type = null,
+    string? Country = null,
+    decimal? MinimumBase = null);
 
-public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+// Type y Country no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
+// un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
+public sealed record UpdateTaxRateRequest(
+    string Name,
+    decimal Percentage)
+{
+    // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
+    // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
+    // Ausente queda en default (ValueKind Undefined), igual que antes.
+    public JsonElement MinimumBase { get; init; }
+}
+
+/// <summary>
+/// Lo que la pantalla de tasas puede elegir: sólo los países donde el tenant tiene empresa y que además
+/// tienen tipos definidos. Backend for Frontend: la pantalla no conoce la tabla de países ni sus
+/// unidades tributarias (anti objetivo del frontend), así que no la duplica ni la deduce.
+/// </summary>
+public sealed record TaxRateOptionsDto(IReadOnlyList<TaxRateCountryOptionDto> Countries);
+
+/// <param name="TaxUnit">"UVT", o null si el país no tiene unidad tributaria.</param>
+/// <param name="Currency">La moneda en la que el país discrimina impuestos.</param>
+public sealed record TaxRateCountryOptionDto(
+    string Country,
+    string? TaxUnit,
+    string Currency,
+    IReadOnlyList<TaxRateTypeOptionDto> Types);
+
+public sealed record TaxRateTypeOptionDto(string Type, string Behavior, bool AllowsFraction, bool AllowsMinimumBase);
 
 public sealed record CategoryDto(
     Guid Id,

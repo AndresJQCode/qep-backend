@@ -11,7 +11,7 @@ public sealed class TaxRateTests
     [Fact]
     public void CreateStartsActive()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
 
         Assert.True(taxRate.IsActive);
         Assert.Equal(TenantId, taxRate.TenantId);
@@ -27,7 +27,7 @@ public sealed class TaxRateTests
     [Fact]
     public void CreateTrimsName()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "  IVA general  ", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "  IVA general  ", 19, "IVA", "CO", null, Now);
 
         Assert.Equal("IVA general", taxRate.Name);
     }
@@ -38,7 +38,7 @@ public sealed class TaxRateTests
     public void CreateRejectsBlankName(string name)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            TaxRate.Create(TaxRateId.New(), TenantId, name, 19, Now));
+            TaxRate.Create(TaxRateId.New(), TenantId, name, 19, "IVA", "CO", null, Now));
 
         Assert.Equal("catalog.tax_rate.name_required", error.Code);
     }
@@ -49,13 +49,13 @@ public sealed class TaxRateTests
     public void CreateRejectsNameOverOneHundredTwentyCharacters()
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            TaxRate.Create(TaxRateId.New(), TenantId, new string('a', 121), 19, Now));
+            TaxRate.Create(TaxRateId.New(), TenantId, new string('a', 121), 19, "IVA", "CO", null, Now));
 
         Assert.Equal("catalog.tax_rate.name_too_long", error.Code);
     }
 
-    // CA-CAT-03-06. El porcentaje es entero de 0 decimales (P-008, owner 2026-08-10) y sólo
-    // tiene sentido dentro de 0..100: un negativo devolvería plata y uno mayor a 100 cobraría
+    // CA-CAT-03-06. El porcentaje sólo tiene sentido dentro de 0..100 (la forma
+    // —entero o con fracción— la fija el tipo, D15): un negativo devolvería plata y uno mayor a 100 cobraría
     // más impuesto que el valor de la línea.
     [Theory]
     [InlineData(-1)]
@@ -65,7 +65,7 @@ public sealed class TaxRateTests
     public void CreateRejectsPercentageOutOfRange(int percentage)
     {
         var error = Assert.Throws<CatalogDomainException>(() =>
-            TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", percentage, Now));
+            TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", percentage, "IVA", "CO", null, Now));
 
         Assert.Equal("catalog.tax_rate.percentage_out_of_range", error.Code);
     }
@@ -78,7 +78,7 @@ public sealed class TaxRateTests
     [InlineData(100)]
     public void CreateAcceptsBoundaryPercentages(int percentage)
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "Exento", percentage, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "Exento", percentage, "IVA", "CO", null, Now);
 
         Assert.Equal(percentage, taxRate.Percentage);
     }
@@ -86,10 +86,10 @@ public sealed class TaxRateTests
     [Fact]
     public void UpdateChangesNameAndPercentageAndAdvancesUpdatedAt()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         var later = Now.AddMinutes(5);
 
-        taxRate.Update("IVA reducido", 5, later);
+        taxRate.Update("IVA reducido", 5, null, later);
 
         Assert.Equal("IVA reducido", taxRate.Name);
         Assert.Equal(5, taxRate.Percentage);
@@ -103,9 +103,9 @@ public sealed class TaxRateTests
     [Fact]
     public void UpdateAdvancesTheConcurrencyToken()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
 
-        taxRate.Update("IVA reducido", 5, Now.AddMinutes(5));
+        taxRate.Update("IVA reducido", 5, null, Now.AddMinutes(5));
 
         Assert.Equal(2, taxRate.Version);
     }
@@ -113,10 +113,10 @@ public sealed class TaxRateTests
     [Fact]
     public void UpdateRejectsBlankName()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            taxRate.Update("  ", 19, Now.AddMinutes(5)));
+            taxRate.Update("  ", 19, null, Now.AddMinutes(5)));
 
         Assert.Equal("catalog.tax_rate.name_required", error.Code);
     }
@@ -124,10 +124,10 @@ public sealed class TaxRateTests
     [Fact]
     public void UpdateRejectsPercentageOutOfRange()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            taxRate.Update("IVA general", 101, Now.AddMinutes(5)));
+            taxRate.Update("IVA general", 101, null, Now.AddMinutes(5)));
 
         Assert.Equal("catalog.tax_rate.percentage_out_of_range", error.Code);
     }
@@ -135,7 +135,7 @@ public sealed class TaxRateTests
     [Fact]
     public void DeactivateTurnsTaxRateInactiveAndAdvancesUpdatedAt()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         var later = Now.AddMinutes(5);
 
         taxRate.Deactivate(later);
@@ -149,7 +149,7 @@ public sealed class TaxRateTests
     [Fact]
     public void DeactivateRejectsAnAlreadyInactiveTaxRate()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         taxRate.Deactivate(Now.AddMinutes(5));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
@@ -161,11 +161,11 @@ public sealed class TaxRateTests
     [Fact]
     public void UpdateRejectsAnInactiveTaxRate()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         taxRate.Deactivate(Now.AddMinutes(5));
 
         var error = Assert.Throws<CatalogDomainException>(() =>
-            taxRate.Update("IVA reducido", 5, Now.AddMinutes(10)));
+            taxRate.Update("IVA reducido", 5, null, Now.AddMinutes(10)));
 
         Assert.Equal("catalog.tax_rate.inactive", error.Code);
     }
@@ -175,7 +175,7 @@ public sealed class TaxRateTests
     [Fact]
     public void ActivateTurnsTaxRateActiveAndAdvancesUpdatedAt()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         taxRate.Deactivate(Now.AddMinutes(5));
         var later = Now.AddMinutes(10);
 
@@ -190,7 +190,7 @@ public sealed class TaxRateTests
     [Fact]
     public void ActivateRejectsAnAlreadyActiveTaxRate()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
 
         var error = Assert.Throws<CatalogDomainException>(() =>
             taxRate.Activate(Now.AddMinutes(5)));
@@ -204,7 +204,7 @@ public sealed class TaxRateTests
     [Fact]
     public void ActivateAdvancesTheConcurrencyToken()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         taxRate.Deactivate(Now.AddMinutes(5));
 
         taxRate.Activate(Now.AddMinutes(10));
@@ -218,13 +218,154 @@ public sealed class TaxRateTests
     [Fact]
     public void ActivateReopensUpdate()
     {
-        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, Now);
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA general", 19, "IVA", "CO", null, Now);
         taxRate.Deactivate(Now.AddMinutes(5));
         taxRate.Activate(Now.AddMinutes(10));
 
-        taxRate.Update("IVA reducido", 5, Now.AddMinutes(15));
+        taxRate.Update("IVA reducido", 5, null, Now.AddMinutes(15));
 
         Assert.Equal("IVA reducido", taxRate.Name);
         Assert.Equal(5, taxRate.Percentage);
+    }
+
+    private static CatalogDomainException CreateError(
+        decimal percentage, string type = "IVA", string country = "CO", decimal? minimumBase = null) =>
+        Assert.Throws<CatalogDomainException>(() =>
+            TaxRate.Create(TaxRateId.New(), TenantId, "Tasa", percentage, type, country, minimumBase, Now));
+
+    [Fact]
+    public void IvaNineteenIsAccepted()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", "CO", null, Now);
+
+        Assert.Equal(19m, taxRate.Percentage);
+        Assert.Equal("IVA", taxRate.Type);
+        Assert.Equal("CO", taxRate.Country);
+        Assert.Null(taxRate.MinimumBase);
+        Assert.Equal(19, taxRate.VatPercentage);
+        Assert.False(taxRate.Withholds);
+    }
+
+    [Fact]
+    public void IvaWithFractionIsRejected() =>
+        Assert.Equal("catalog.tax_rate.percentage_not_integer", CreateError(2.5m).Code);
+
+    [Theory]
+    [InlineData("Retefuente", 2.5)]
+    [InlineData("Retefuente", 0.966)]
+    [InlineData("ReteICA", 2.5)]
+    [InlineData("ReteICA", 0.966)]
+    public void RetentionsAcceptThreeDecimals(string type, double percentage)
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retención", (decimal)percentage, type, "CO", null, Now);
+
+        Assert.Equal((decimal)percentage, taxRate.Percentage);
+        Assert.True(taxRate.Withholds);
+    }
+
+    [Fact]
+    public void TrailingZerosDoNotCountAsDecimals()
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retención", 0.9660m, "Retefuente", "CO", null, Now);
+
+        Assert.Equal(0.966m, taxRate.Percentage);
+    }
+
+    [Fact]
+    public void FourDecimalsAreRejected() =>
+        Assert.Equal(
+            "catalog.tax_rate.percentage_too_precise",
+            CreateError(0.9665m, "Retefuente").Code);
+
+    [Theory]
+    [InlineData("IVA", "ES")]
+    [InlineData("Retencion", "CO")]
+    public void TypeOfAnotherCountryIsRejected(string type, string country) =>
+        Assert.Equal("catalog.tax_rate.type_invalid", CreateError(19m, type, country).Code);
+
+    [Fact]
+    public void IvaWithMinimumBaseIsRejected() =>
+        Assert.Equal("catalog.tax_rate.minimum_base_not_allowed", CreateError(19m, minimumBase: 4m).Code);
+
+    [Fact]
+    public void NegativeMinimumBaseIsRejected() =>
+        Assert.Equal(
+            "catalog.tax_rate.minimum_base_invalid",
+            CreateError(2.5m, "Retefuente", minimumBase: -1m).Code);
+
+    [Fact]
+    public void ZeroMinimumBaseIsAccepted()
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retención", 2.5m, "Retefuente", "CO", 0m, Now);
+
+        Assert.Equal(0m, taxRate.MinimumBase);
+    }
+
+    [Theory]
+    [InlineData(100.001)]
+    [InlineData(-0.5)]
+    public void PercentageOutOfRangeKeepsItsCode(double percentage) =>
+        Assert.Equal(
+            "catalog.tax_rate.percentage_out_of_range",
+            CreateError((decimal)percentage, "Retefuente").Code);
+
+    [Fact]
+    public void UpdateNeverChangesTypeOrCountry()
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "ICA", 0.966m, "ReteICA", "CO", null, Now);
+
+        taxRate.Update("x", 1.104m, 2m, Now.AddMinutes(1));
+
+        Assert.Equal("ReteICA", taxRate.Type);
+        Assert.Equal("CO", taxRate.Country);
+        Assert.Equal(2m, taxRate.MinimumBase);
+        Assert.Equal(1.104m, taxRate.Percentage);
+    }
+
+    [Fact]
+    public void UpdateRevalidatesFractionAndMinimumBaseAgainstTheType()
+    {
+        var iva = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", "CO", null, Now);
+
+        Assert.Equal(
+            "catalog.tax_rate.percentage_not_integer",
+            Assert.Throws<CatalogDomainException>(() => iva.Update("IVA", 2.5m, null, Now)).Code);
+        Assert.Equal(
+            "catalog.tax_rate.minimum_base_not_allowed",
+            Assert.Throws<CatalogDomainException>(() => iva.Update("IVA", 19m, 3m, Now)).Code);
+    }
+
+    [Fact]
+    public void CountryIsNormalized()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", " co ", null, Now);
+
+        Assert.Equal("CO", taxRate.Country);
+    }
+
+    [Fact]
+    public void VatPercentageOfAWithholdingThrows()
+    {
+        var taxRate = TaxRate.Create(
+            TaxRateId.New(), TenantId, "Retención", 2.5m, "Retefuente", "CO", null, Now);
+
+        Assert.Throws<InvalidOperationException>(() => taxRate.VatPercentage);
+    }
+
+    // Una fila con un tipo que la tabla de países ya no tiene (un país o un tipo retirado) no se puede editar, pero el
+    // error tiene que decir por qué, como Behavior, y no ser un NullReferenceException.
+    [Fact]
+    public void UpdateOfAnUnknownTypeSaysWhy()
+    {
+        var taxRate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA", 19m, "IVA", "CO", null, Now);
+        typeof(TaxRate).GetProperty(nameof(TaxRate.Type))!.SetValue(taxRate, "Retirado");
+
+        var error = Assert.Throws<InvalidOperationException>(() => taxRate.Update("IVA", 19m, null, Now));
+
+        Assert.Equal("Unknown tax type 'Retirado' for country 'CO'.", error.Message);
     }
 }

@@ -35,7 +35,7 @@ public sealed class OrderPricingRecalculationTests
         var kept = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(gone, gone, 2m, 10_000m, 10m, 19, new QuotationProductSnapshot("OLD", "Viejo")),
@@ -60,7 +60,7 @@ public sealed class OrderPricingRecalculationTests
         var productId = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0002",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [new OrderLineInput(productId, productId, 1m, 150_000m, 5m, 19)],
             null, AdvisorId, [], Now);
@@ -84,7 +84,7 @@ public sealed class OrderPricingRecalculationTests
         var sizeL = Guid.CreateVersion7();
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0003",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty, BillingAccount, ShippingDetails.None,
             [
                 new OrderLineInput(sizeM, shirt, 6m, 10_000m, 0m, 19),
@@ -162,7 +162,7 @@ public sealed class OrderPricingRecalculationTests
 
     private static Order UsdOrder(OrderSource source, Guid productId)
     {
-        var header = new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false);
+        var header = new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, []);
         var account = new QuotationBillingAccount
         {
             CompanyId = Guid.CreateVersion7(),
@@ -182,7 +182,7 @@ public sealed class OrderPricingRecalculationTests
             };
             return Order.CreateFromStore(
                 OrderId.New(), TenantId, "PED-2026-0011", header,
-                new QuotationParties(details, details, BillingWithRetention: false, BillingVatSurplus: false), account,
+                new QuotationParties(details, details, BillingVatSurplus: false), account,
                 lines, null, AdvisorId, Now, "store-checkout:1");
         }
 

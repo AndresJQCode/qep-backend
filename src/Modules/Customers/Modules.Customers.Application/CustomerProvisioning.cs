@@ -427,7 +427,6 @@ public sealed class CustomerProvisioning(
             cityId,
             cityName,
             data.ClassificationId,
-            customer.WithRetention,
             customer.VatSurplus);
     }
 
@@ -543,7 +542,6 @@ public sealed class CustomerProvisioning(
             data.CityId,
             data.CityName,
             data.ClassificationId,
-            WithRetention: false,
             VatSurplus: false);
 
     // CustomerWriteRules ya no exige la ciudad (spec 2026-11-09): la exige la política del tenant. Una venta externa sin
@@ -609,7 +607,7 @@ public sealed class CustomerProvisioning(
                 CityId = command.CityId,
                 CityName = command.CityName
             },
-            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.WithRetention, command.VatSurplus));
+            CustomerMapping.ToCommercialInfo(command.ClassificationId, command.VatSurplus));
     }
 
     // Spec de ciudades §4.4 / §4.6: el cliente sigue como lo dejó la importación, o no se toca. La versión es la marca de

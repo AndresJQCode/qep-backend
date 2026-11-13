@@ -38,7 +38,7 @@ public sealed class CustomerCompletenessTests
         };
 
     private static CustomerCommercialInfo Commercial(ClientClassificationId classificationId) =>
-        new() { ClassificationId = classificationId, WithRetention = false, VatSurplus = false };
+        new() { ClassificationId = classificationId, VatSurplus = false };
 
     [Fact]
     public void AnIncompleteCustomerHasOnlyNamePhoneCountryAndBsuid()

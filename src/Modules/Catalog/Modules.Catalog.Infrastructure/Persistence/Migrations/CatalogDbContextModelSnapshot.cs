@@ -446,6 +446,13 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("Country")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .HasColumnName("country")
+                        .IsFixedLength();
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -454,19 +461,31 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<decimal?>("MinimumBase")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("minimum_base");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)")
                         .HasColumnName("name");
 
-                    b.Property<int>("Percentage")
-                        .HasColumnType("integer")
+                    b.Property<decimal>("Percentage")
+                        .HasPrecision(6, 3)
+                        .HasColumnType("numeric(6,3)")
                         .HasColumnName("percentage");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -487,6 +506,36 @@ namespace Modules.Catalog.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_tax_rates_tenant_name");
 
                     b.ToTable("tax_rates", "catalog");
+                });
+
+            modelBuilder.Entity("Modules.Catalog.Domain.TaxUnitValue", b =>
+                {
+                    b.Property<string>("Country")
+                        .HasMaxLength(2)
+                        .HasColumnType("character(2)")
+                        .HasColumnName("country")
+                        .IsFixedLength();
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer")
+                        .HasColumnName("year");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<decimal>("Value")
+                        .HasPrecision(14, 2)
+                        .HasColumnType("numeric(14,2)")
+                        .HasColumnName("value");
+
+                    b.HasKey("Country", "Year");
+
+                    b.ToTable("tax_unit_values", "catalog");
                 });
 
             modelBuilder.Entity("Modules.Catalog.Infrastructure.Persistence.CatalogOutboxMessage", b =>

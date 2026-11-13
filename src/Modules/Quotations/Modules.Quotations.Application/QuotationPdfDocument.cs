@@ -57,6 +57,10 @@ public sealed record QuotationPdfDocument(
     /// sin IVA). Cero cuando el cliente no la practica. No resta del <see cref="Total"/>, que
     /// sigue siendo lo facturado — resta del <see cref="NetTotal"/>.</summary>
     decimal RetentionAmount,
+    /// <summary>Una fila por retención que aplicó, en su orden, rotulada con el nombre de la tasa (spec impuestos por
+    /// tipo §9.3, F-1). Vacía cuando no hay retención: la plantilla no imprime fila ni «Neto a pagar». Su suma es
+    /// <see cref="RetentionAmount"/>.</summary>
+    IReadOnlyList<QuotationPdfWithholding> Withholdings,
     /// <summary>Lo que efectivamente se paga en efectivo: <see cref="Total"/> menos la
     /// retención. Igual al total cuando no hay retención.</summary>
     decimal NetTotal,
@@ -101,6 +105,9 @@ public enum QuotationPdfKind
     Quotation,
     Order
 }
+
+/// <summary>Una retención que aplicó, tal como el documento la imprime: el nombre de la tasa y lo que resta.</summary>
+public sealed record QuotationPdfWithholding(string Name, decimal Amount);
 
 /// <summary>Una parte del documento: a quién se le factura, o a quién se le entrega.</summary>
 /// <param name="SameAsCustomer">

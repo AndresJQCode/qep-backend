@@ -242,7 +242,7 @@ public sealed class MarkOrderPaidHandlerTests
         var v2 = Guid.CreateVersion7();
         var row = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), AdvisorId, "USD", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -327,7 +327,6 @@ public sealed class MarkOrderPaidHandlerTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             },
-            BillingWithRetention = false,
             BillingVatSurplus = false,
         };
 

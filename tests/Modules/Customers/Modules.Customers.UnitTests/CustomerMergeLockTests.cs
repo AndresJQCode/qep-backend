@@ -17,7 +17,7 @@ public sealed class CustomerMergeLockTests
         var chained = Guid.NewGuid();
         var references = new LoggingReferences(repository.Log);
         var handler = new MergeCustomersHandler(
-            repository, new UnitOfWork(), new ChainStore([chained]), references, new EngagementTestBed.FakeTags(), null!,
+            repository, new UnitOfWork(), new ChainStore([chained]), references, new EngagementTestBed.FakeTags(), null!, new CustomerWriteDoubles.TaxRates(),
             new FakeCustomerCompanyDirectory([]),
             null!, new RecordingAudit(),
             new EngagementTestBed.Context(Tenant, EngagementTestBed.UserA, CustomersPermissions.CustomerMerge),

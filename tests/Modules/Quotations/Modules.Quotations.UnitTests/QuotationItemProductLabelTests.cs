@@ -165,7 +165,7 @@ public sealed class QuotationItemProductLabelTests
                 Currency = "COP",
             },
             "COP",
-            false, false, AdvisorId, Now);
+            false, [], AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), CamisetaM, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);
@@ -220,7 +220,7 @@ public sealed class QuotationItemProductLabelTests
                 Currency = "COP",
             },
             "COP",
-            false, false, AdvisorId, Now);
+            false, [], AdvisorId, Now);
         quotation.AddItem(
             QuotationItemId.New(), ProductId, ProductId, quantity: 1m, unitPrice: 1_000m,
             discountPercentage: 0m, taxPercentage: 19, AdvisorId, Now);

@@ -43,6 +43,7 @@ public sealed class QCodePdfRendererTests
         TaxAmount: 23949.58m,
         Total: 150000m,
         RetentionAmount: 0m,
+        Withholdings: [],
         NetTotal: 150000m,
         CustomerVatSurplus: false,
         Logo: null);

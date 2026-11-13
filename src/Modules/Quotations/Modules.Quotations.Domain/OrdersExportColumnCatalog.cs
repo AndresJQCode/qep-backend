@@ -171,6 +171,11 @@ public static class OrdersExportColumnCatalog
         new("shipping_department", "Departamento envío", 20, DefaultVisible: false),
         new("shipping_phone", "Teléfono envío", 16, DefaultVisible: false),
         new("shipping_email", "Email envío", 30, DefaultVisible: false),
+        // Spec impuestos por tipo (P12): el monto retenido por tipo, sumando las retenciones aplicadas de ese
+        // tipo (0 si ninguna). «retention_amount» sigue siendo la suma de todas. Ocultas y al final: ningún
+        // Excel que ya existe gana una columna visible. Sus encabezados no chocan con la hoja sembrada.
+        new("withholding_retefuente", "Retefuente", 16, DefaultVisible: false),
+        new("withholding_reteica", "ReteICA", 16, DefaultVisible: false),
     ];
 
     // Declarado después de Columns a propósito: los campos estáticos se inicializan en orden textual.

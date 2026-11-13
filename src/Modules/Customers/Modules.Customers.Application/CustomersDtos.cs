@@ -98,7 +98,26 @@ public sealed record CustomerDto(
     int ContactCount = 0,
     /// <summary>Los contactos de la empresa, hasta <see cref="CustomerContactsLimits.MaxInDetail"/>, por nombre. Sólo lo llena
     /// <c>CustomerMapping.ToDtoAsync</c> (la ficha); el listado no los trae y deja <c>null</c>.</summary>
-    IReadOnlyList<CustomerContactDto>? Contacts = null);
+    IReadOnlyList<CustomerContactDto>? Contacts = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención asignadas, con lo que la ficha pinta. <c>null</c> se
+    /// lee como vacío. <see cref="WithRetention"/> se deriva de ellas.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    /// <summary>Nunca <c>null</c>: un llamador que no conoce el campo recibe la lista vacía.</summary>
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}
+
+/// <summary>
+/// Una tasa de retención asignada a un cliente, con los datos del catálogo que la ficha necesita para pintarla sin otra
+/// llamada (BFF). <c>Type</c> es <c>"Retefuente"</c> o <c>"ReteICA"</c>.
+/// </summary>
+public sealed record CustomerWithholdingTaxRateDto(
+    Guid Id,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    bool IsActive);
 
 /// <summary>Spec 2026-11-10 §4.2: un contacto como lo pinta la ficha de su empresa.</summary>
 public sealed record CustomerContactDto(Guid Id, string Name, string? Phone, string? Email, bool IsComplete, bool IsActive);
@@ -158,7 +177,12 @@ public sealed record CustomerResponse(
     /// <summary>Spec 2026-11-10 §4.2: los contactos de la empresa por nombre (hasta 100); <c>[]</c> para quien no tiene.</summary>
     IReadOnlyList<CustomerContactDto>? Contacts = null,
     /// <summary>Todos los contactos sin fusionar, aunque <c>Contacts</c> venga recortada.</summary>
-    int ContactCount = 0);
+    int ContactCount = 0,
+    /// <summary>Spec impuestos por tipo §9.2: viaja siempre, vacía si el cliente no retiene.</summary>
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}
 
 /// <summary>
 /// La fila del listado. Es un subconjunto a proposito, igual que en empresas: <c>address</c> no
@@ -245,10 +269,14 @@ public sealed record CreateCustomerRequest(
     /// ignorada si lo es.</summary>
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null);
 
 public sealed record UpdateCustomerRequest(
     string Name,
@@ -262,10 +290,14 @@ public sealed record UpdateCustomerRequest(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
     /// <summary>Spec 2026-10-26: <c>"Natural"</c> o <c>"Juridica"</c>. Opcional; en un PUT, ausente lo borra.</summary>
-    string? PersonType = null);
+    string? PersonType = null,
+    /// <summary>Spec impuestos por tipo §9.2: las tasas de retención del cliente (a lo sumo una por país y tipo). Ausente o
+    /// <c>null</c> no toca lo guardado (en el alta, ninguna); una lista vacía las quita.</summary>
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    /// <summary>Heredado: el frontend viejo todavía lo manda. Se ignora; la respuesta lo deriva de las tasas asignadas.</summary>
+    bool? WithRetention = null);
 
 /// <summary>
 /// Una fila que se importo con exito: su numero de fila en el Excel (2-based; la fila 1 es la
@@ -300,7 +332,8 @@ public sealed record CustomerImportRowData(
     string Department,
     string City,
     string Classification,
-    string? WithRetention,
+    string? Retefuente,
+    string? ReteIca,
     string? VatSurplus,
     /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>
     string? CompanyIdentificationNumber = null);
@@ -557,4 +590,8 @@ public sealed record CustomerMergeResponse(
     CustomerCompanyDto? Company,
     IReadOnlyList<CustomerContactDto> Contacts,
     int ContactCount,
-    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags);
+    IReadOnlyList<CustomerMergeDroppedTagDto> DroppedTags,
+    IReadOnlyList<CustomerWithholdingTaxRateDto>? WithholdingTaxRates = null)
+{
+    public IReadOnlyList<CustomerWithholdingTaxRateDto> WithholdingTaxRates { get; init; } = WithholdingTaxRates ?? [];
+}

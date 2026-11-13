@@ -220,6 +220,7 @@ public sealed class MergeCustomersHandler(
     ICustomerMergeReferences references,
     ICustomerTagRepository tags,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerCompanyDirectory companyDirectory,
     IClientClassificationRepository classificationRepository,
     ICustomersAuditPublisher auditPublisher,
@@ -333,7 +334,7 @@ public sealed class MergeCustomersHandler(
         // Se relee sin tracking (FC-04 duda 1): MoveOwnedAsync es un ExecuteUpdate, así que la instancia cargada no ve las
         // direcciones que llegaron, y la respuesta tiene que traer la libreta entera.
         var fresh = (await repository.FindManyAsync(command.TenantId, [survivor.Id], cancellationToken))[survivor.Id];
-        var dto = await fresh.ToDtoAsync(geographyLookup, classificationRepository, tags, companyDirectory, cancellationToken);
+        var dto = await fresh.ToDtoAsync(geographyLookup, classificationRepository, tags, taxRateLookup, companyDirectory, cancellationToken);
         return new CustomerMergeResult(dto, await DroppedAsync(command.TenantId, tagMerge.Dropped, cancellationToken));
     }
 

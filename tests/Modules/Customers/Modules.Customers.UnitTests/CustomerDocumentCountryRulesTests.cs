@@ -11,7 +11,7 @@ public sealed class CustomerDocumentCountryRulesTests
         new(CustomerWriteDoubles.Tenant, "Laura Pérez", null, type, "X1234567", "310 935 2187", "laura@verde.co",
             "Calle 10", country,
             country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase) ? CustomerWriteDoubles.CityId : null,
-            country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase) ? null : "Madrid", null, false, false);
+            country.Trim().Equals("CO", StringComparison.OrdinalIgnoreCase) ? null : "Madrid", null, false);
 
     [Theory]
     [InlineData("NIF", "ES")]

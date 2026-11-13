@@ -14,7 +14,6 @@ public sealed class RemoveQuotationItemHandler(
     IQuotationRepository repository,
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
-    IQuotationCustomerLookup customerLookup,
     IQuotationProductLookup productLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
@@ -34,15 +33,6 @@ public sealed class RemoveQuotationItemHandler(
         var quotation = await repository.FindAsync(
             command.TenantId, new QuotationId(command.QuotationId), cancellationToken)
             ?? throw QuotationNotFound.For(command.QuotationId);
-
-        // Deja la retención/excedente de IVA al día con el cliente maestro antes de recalcular
-        // — ver Quotation.RefreshCustomerTaxProfile.
-        var customer = await customerLookup.FindAsync(
-            command.TenantId, quotation.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            quotation.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
 
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);

@@ -22,7 +22,7 @@ public sealed class QuotationShippingTests
         Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", Guid.CreateVersion7(), Advisor, new DateOnly(2026, 11, 1),
             null, null, new QuotationParties(null, null, IsStorePickup: isStorePickup), Account(currency), currency,
-            customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
 
     // Una línea de 10 × 11.900 con IVA del 19 %: subtotal 100.000, IVA 19.000, total 119.000.
     private static Quotation QuotationWithALineOf119000()

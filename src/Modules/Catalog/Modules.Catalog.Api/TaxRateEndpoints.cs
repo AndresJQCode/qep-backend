@@ -1,4 +1,5 @@
 using BuildingBlocks.Application;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -20,6 +21,12 @@ public static class TaxRateEndpoints
         group.MapGet("/tax-rates", ListTaxRatesAsync)
             .RequireAuthorization(CatalogPermissions.TaxRateRead)
             .Produces<TaxRatesResponse>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
+        // La pantalla de tasas pide acá qué países y tipos puede ofrecer (BFF): no conoce la tabla.
+        group.MapGet("/tax-rate-options", GetTaxRateOptionsAsync)
+            .RequireAuthorization(CatalogPermissions.TaxRateRead)
+            .Produces<TaxRateOptionsDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
         group.MapGet("/tax-rates/{taxRateId:guid}", GetTaxRateAsync)
@@ -73,16 +80,30 @@ public static class TaxRateEndpoints
         return endpoints;
     }
 
+    // `?type=Retefuente&type=ReteICA`: el parámetro se repite, no se separa con comas.
     private static async Task<IResult> ListTaxRatesAsync(
         Guid tenantId,
+        string[]? type,
         IRequestDispatcher dispatcher,
         CancellationToken cancellationToken)
     {
         var taxRates = await dispatcher.QueryAsync(
-            new ListTaxRatesQuery(tenantId),
+            new ListTaxRatesQuery(tenantId, type),
             cancellationToken);
 
         return Results.Ok(new TaxRatesResponse(taxRates.Select(ToResponse).ToArray()));
+    }
+
+    private static async Task<IResult> GetTaxRateOptionsAsync(
+        Guid tenantId,
+        IRequestDispatcher dispatcher,
+        CancellationToken cancellationToken)
+    {
+        var options = await dispatcher.QueryAsync(
+            new GetTaxRateOptionsQuery(tenantId),
+            cancellationToken);
+
+        return Results.Ok(options);
     }
 
     private static async Task<IResult> GetTaxRateAsync(
@@ -105,7 +126,14 @@ public static class TaxRateEndpoints
         CancellationToken cancellationToken)
     {
         var taxRate = await dispatcher.SendAsync(
-            new CreateTaxRateCommand(tenantId, request.Name, request.Percentage),
+            new CreateTaxRateCommand(
+                tenantId,
+                request.Name,
+                request.Percentage,
+                request.Type ?? TaxCountries.IvaType,
+                request.Country ?? TaxCountries.Colombia.Country,
+                CountryExplicit: request.Country is not null,
+                request.MinimumBase),
             cancellationToken);
 
         return Results.Created(
@@ -121,7 +149,7 @@ public static class TaxRateEndpoints
         CancellationToken cancellationToken)
     {
         var taxRate = await dispatcher.SendAsync(
-            new UpdateTaxRateCommand(tenantId, taxRateId, request.Name, request.Percentage),
+            request.ToCommand(tenantId, taxRateId),
             cancellationToken);
 
         return Results.Ok(ToResponse(taxRate));
@@ -173,5 +201,10 @@ public static class TaxRateEndpoints
         taxRate.Percentage,
         taxRate.IsActive,
         taxRate.CreatedAt,
-        taxRate.UpdatedAt);
+        taxRate.UpdatedAt,
+        taxRate.Type,
+        taxRate.Country,
+        taxRate.Behavior,
+        taxRate.MinimumBase,
+        taxRate.MinimumBaseUnit);
 }

@@ -10,6 +10,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
 
+    public DbSet<TaxUnitValue> TaxUnitValues => Set<TaxUnitValue>();
+
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
 
     internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
@@ -40,6 +42,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureOptionDefinition(modelBuilder);
         ConfigureOptionValue(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigureTaxUnitValue(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
@@ -385,7 +388,22 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(TaxRate.NameMaxLength);
-        taxRate.Property(value => value.Percentage).HasColumnName("percentage");
+        taxRate.Property(value => value.Percentage)
+            .HasColumnName("percentage")
+            .HasPrecision(6, 3);
+        taxRate.Property(value => value.Type)
+            .HasColumnName("type")
+            .HasMaxLength(TaxRate.TypeMaxLength);
+        taxRate.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxRate.CountryLength)
+            .IsFixedLength();
+        taxRate.Property(value => value.MinimumBase)
+            .HasColumnName("minimum_base")
+            .HasPrecision(14, 2);
+        taxRate.Ignore(value => value.Behavior);
+        taxRate.Ignore(value => value.Withholds);
+        taxRate.Ignore(value => value.VatPercentage);
         taxRate.Property(value => value.IsActive).HasColumnName("is_active");
         taxRate.Property(value => value.Version)
             .HasColumnName("version")
@@ -400,6 +418,24 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.HasIndex(value => new { value.TenantId, value.Name })
             .IsUnique()
             .HasDatabaseName("IX_tax_rates_tenant_name");
+    }
+
+    // Sin tenant_id a propósito: la UVT es un dato de la plataforma, como las ciudades de Geography.
+    private static void ConfigureTaxUnitValue(ModelBuilder modelBuilder)
+    {
+        var unit = modelBuilder.Entity<TaxUnitValue>();
+        unit.ToTable("tax_unit_values", "catalog");
+        unit.HasKey(value => new { value.Country, value.Year });
+        unit.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxUnitValue.CountryLength)
+            .IsFixedLength();
+        unit.Property(value => value.Year).HasColumnName("year");
+        unit.Property(value => value.Value)
+            .HasColumnName("value")
+            .HasPrecision(14, 2);
+        unit.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        unit.Property(value => value.UpdatedBy).HasColumnName("updated_by");
     }
 
     private static void ConfigureProductCategory(ModelBuilder modelBuilder)

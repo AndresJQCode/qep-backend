@@ -100,6 +100,15 @@ internal sealed class CompanyRepository(CompaniesDbContext dbContext) : ICompany
             company => company.TenantId == tenantId && company.Id == companyId,
             cancellationToken);
 
+    public async Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await dbContext.Companies
+            .AsNoTracking()
+            .Where(company => company.TenantId == tenantId)
+            .Select(company => company.Country)
+            .Distinct()
+            .ToListAsync(cancellationToken))
+        .ToHashSet(StringComparer.Ordinal);
+
     public void Add(Company company) => dbContext.Companies.Add(company);
 
     // Las cuentas bancarias se van con la empresa sin que este método las toque: son una colección

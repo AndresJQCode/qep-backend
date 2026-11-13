@@ -37,7 +37,7 @@ public sealed class QuotationItemEditsTests
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(), UpdatedBy,
             new DateOnly(2026, 9, 30), null, null, QuotationParties.Empty, BillingAccount,
             "COP",
-            false, false, UpdatedBy, Now);
+            false, [], UpdatedBy, Now);
         foreach (var (productId, quantity, unitPrice) in lines)
         {
             quotation.AddItem(QuotationItemId.New(), productId, productId, quantity, unitPrice, 0m, 0, UpdatedBy, Now);

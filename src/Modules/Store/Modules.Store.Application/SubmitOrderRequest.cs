@@ -302,7 +302,6 @@ public sealed partial class SubmitOrderRequestHandler(
             account,
             StoreCheckoutParties.BillingParty(billing),
             StoreCheckoutParties.ShippingParty(billing, shipping),
-            customer.WithRetention,
             customer.VatSurplus,
             quote.Lines.Select(line => new StoreOrderLineInput(line.VariantId, line.Quantity)).ToList(),
             body.Note,

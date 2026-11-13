@@ -37,7 +37,7 @@ public sealed class BillingPersonTypeRequirementTests
         return Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", Guid.CreateVersion7(),
             new MemberId(Guid.CreateVersion7()), null, null, null, parties,
-            null, "COP", false, false, new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
+            null, "COP", false, [], new MemberId(Guid.CreateVersion7()), DateTimeOffset.UtcNow);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public sealed class BillingPersonTypeRequirementTests
         var advisor = new MemberId(Guid.CreateVersion7());
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0001",
-            new OrderHeader(Guid.CreateVersion7(), advisor, "COP", null, false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), advisor, "COP", null, false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -132,7 +132,7 @@ public sealed class BillingPersonTypeRequirementTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             },
-            false, false, false, false, advisor, DateTimeOffset.UtcNow);
+            false, false, false, advisor, DateTimeOffset.UtcNow);
 
         var error = await Assert.ThrowsAsync<QuotationsDomainException>(() =>
             BillingPersonTypeRequirement.EnsureForOrderAsync(

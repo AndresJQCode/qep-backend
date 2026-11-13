@@ -6,6 +6,12 @@ Fecha: 2026-11-10. Trabajo que cruza repos: este spec cubre `qep-backend` y **ma
 Estado: diseño, no construido. No existe código, migración ni prueba de nada de lo que sigue. Las rutas y líneas citadas son
 de `develop` al 2026-11-10 (`1255abe3` en el backend, `ccfde16e` en el frontend).
 
+**Enmienda 2026-11-12 (estados del pedido en ejes, `develop` `0e85094d`).** `OrderStatus.Pending` ya no existe. Donde este spec
+dice «pedido `Pending`» se lee «pedido editable» (`Order.IsEditable`: abierto, sin preparar y sin facturar; spec 2026-11-10 de
+estados del pedido §3.6), la misma regla que el resto de la edición del pedido. El rechazo es `order.order.not_editable`, no
+`order.order.not_pending`. Lo amarran `OrderWithholdingsTests` (preparado, facturado, archivado y anulado) y
+`OrderWithholdingsApiTests.APreparedOrderRejectsWithholdingAndAccountEdits`.
+
 Marcas: **[owner]** decisión del owner (2026-11-10); **[asistente]** decisión de este spec, revisable por el owner; **NUEVO**
 = no existe hoy en el código. Todo lo que no lleva NUEVO se verificó en el archivo citado.
 
@@ -326,8 +332,11 @@ documentDate)` y `.ForRatesAsync(tenantId, taxRateIds, documentDate)`. `Quotatio
   sin retenciones» queda cubierto para filas antiguas con `BillingAccount` nulo, si existen [pendiente de verificación, §15].
 - **Fijar o cambiar la empresa de un pedido `Pending`** (D22): NUEVO `Order.SetBillingAccount(QuotationBillingAccount)` en la
   edición del pedido (`SaveOrderEdits`, `PreviewOrderEdits`), validado contra la empresa como en la cotización
-  (`IQuotationCompanyLookup`). Cambiar la moneda con la cuenta no reprecia (mismo criterio que la cotización,
-  `Quotation.cs:263-275`) [asistente]. Al cambiar de país, aplica D23.
+  (`IQuotationCompanyLookup`). **La cuenta no puede cambiar la moneda del pedido**: una cuenta en otra moneda es 422
+  `order.billing.currency_change_not_allowed` [owner, 2026-11-10, plan P10]. Cambiar la moneda sin repreciar dejaría los importes
+  rotulados en otra moneda, y repreciar un pedido de Shopify cambiaría lo que la plataforma cobró. Esto reemplaza el criterio
+  anterior («cambiar la moneda con la cuenta no reprecia», como la cotización en `Quotation.cs:263-275`), que sigue valiendo sólo para
+  la cotización. Al cambiar de país, aplica D23.
 - **Pendiente de verificación:** si algún tenant no tiene empresas facturadoras (no podría enviar cotizaciones después del
   despliegue).
 
@@ -508,6 +517,7 @@ En `QuotationDto` (`QuotationsDtos.cs:32-75`) y el detalle del pedido (`OrdersDt
 | `catalog.tax_unit.country_without_unit` | escribir un valor para un país sin unidad tributaria |
 | `catalog.tax_unit.year_out_of_range` | año fuera de 2000…año actual + 1 |
 | `catalog.tax_unit.value_invalid` | valor `<= 0` |
+| `order.billing.currency_change_not_allowed` | la cuenta de cobro de la edición de un pedido `Pending` tiene otra moneda que el pedido (§7.7; owner, 2026-11-10, plan P10) |
 
 Existentes que se reutilizan: `catalog.tax_rate.in_use` (ahora también por clientes), `catalog.tax_rate.not_found`,
 `catalog.tax_rate.percentage_out_of_range`, `quotation.billing.account_required` (ahora también al enviar),
@@ -558,7 +568,15 @@ Borrar `customers.customers.with_retention`, `quotations.quotations.customer_wit
 1. Backend (migraciones 11.1–11.3). El frontend viejo sigue funcionando: los campos nuevos son aditivos, los viejos siguen en las
    respuestas y se ignoran en los cuerpos. Diferencias que verá: su vista previa local del 2,5 % puede mostrar un provisional
    distinto; su interruptor «Aplica retención» con datos propios deja de tener efecto; enviar sin empresa da
-   `quotation.billing.account_required`; editar el excedente o la retención de un cliente ya no mueve sus cotizaciones abiertas.
+   `quotation.billing.account_required`; editar el excedente o la retención de un cliente ya no mueve sus cotizaciones abiertas;
+   los selectores de tasa de producto y de envío listan también las tasas que retienen (Retefuente, ReteICA), y elegir una
+   responde 422 `catalog.product.tax_rate_not_vat` o `quotations.freight_tax_rate.not_vat`, códigos que el frontend viejo no
+   mapea a un campo (muestra el error genérico).
+
+   **Corte duro.** Una vez corridas las migraciones, el binario viejo del backend no puede seguir atendiendo escrituras: un
+   documento que él cree o edite no recibe foto de retenciones (no conoce `quotation_withholdings` ni `order_withholdings`) y
+   queda con totales que el binario nuevo no sabe reconstruir. El despliegue reemplaza todas las instancias a la vez, sin
+   convivencia de versiones.
 2. El operador carga la UVT de Colombia del año en curso.
 3. Frontend.
 4. Release N+1: migración de contrato (§11.5).

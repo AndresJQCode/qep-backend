@@ -230,8 +230,10 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("whatsapp_user_id");
 
-                    b.Property<bool>("WithRetention")
+                    b.Property<bool>("with_retention")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
+                        .HasDefaultValue(false)
                         .HasColumnName("with_retention");
 
                     b.HasKey("Id");
@@ -733,6 +735,35 @@ namespace Modules.Customers.Infrastructure.Persistence.Migrations
                         .HasPrincipalKey("TenantId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_customers_client_classifications_classification_id");
+
+                    b.OwnsMany("Modules.Customers.Domain.CustomerTaxRate", "_withholdingTaxRates", b1 =>
+                        {
+                            b1.Property<Guid>("CustomerId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("customer_id");
+
+                            b1.Property<Guid>("TaxRateId")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("uuid")
+                                .HasColumnName("tax_rate_id");
+
+                            b1.Property<Guid>("TenantId")
+                                .HasColumnType("uuid")
+                                .HasColumnName("tenant_id");
+
+                            b1.HasKey("CustomerId", "TaxRateId")
+                                .HasName("PK_customer_tax_rates");
+
+                            b1.HasIndex("TenantId", "TaxRateId")
+                                .HasDatabaseName("IX_customer_tax_rates_tenant_tax_rate");
+
+                            b1.ToTable("customer_tax_rates", "customers");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CustomerId");
+                        });
+
+                    b.Navigation("_withholdingTaxRates");
                 });
 
             modelBuilder.Entity("Modules.Customers.Domain.CustomerAddress", b =>

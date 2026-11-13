@@ -24,6 +24,9 @@ public sealed record QuotationCompanyRef(
     /// <summary>Código de wire del tipo de documento (NIT, CC, NIF…): Quotations no referencia
     /// Companies, así que el tipo cruza sólo como texto.</summary>
     string DocumentType,
+    /// <summary>País de la empresa (ISO 3166-1 alfa-2). La cotización y el pedido lo congelan con la cuenta
+    /// (plan impuestos por tipo P1): decide qué retenciones aplican.</summary>
+    string Country,
     bool IsActive,
     /// <summary>Membrete del PDF: dirección y teléfono tal como están hoy en la empresa, no
     /// congelados como la cuenta bancaria — son datos de contacto, no un compromiso financiero

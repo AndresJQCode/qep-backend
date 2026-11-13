@@ -33,6 +33,8 @@ public sealed class ChangeQuotationClientHandler(
     IQuotationsUnitOfWork unitOfWork,
     IQuotationAuditPublisher auditPublisher,
     IQuotationCustomerLookup customerLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -65,11 +67,21 @@ public sealed class ChangeQuotationClientHandler(
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, command.TenantId, cancellationToken);
 
+        // Las tasas del cliente nuevo, de todos sus países, con la UVT de la fecha de la cotización (su CreatedAt en
+        // la zona del tenant), no la de hoy: el documento es el mismo (spec impuestos por tipo §7.3, §7.6).
+        var calendar = await tenantClock.GetAsync(command.TenantId, cancellationToken);
+        var customerWithholdings = await withholdingLookup.ForCustomerAsync(
+            command.TenantId,
+            command.ClientId,
+            country: null,
+            DocumentDates.LocalDate(calendar, quotation.CreatedAt),
+            cancellationToken);
+
         var now = clock.UtcNow;
         quotation.ChangeClient(
             command.ClientId,
-            customer.WithRetention,
             customer.VatSurplus,
+            customerWithholdings,
             updatedBy,
             now);
 

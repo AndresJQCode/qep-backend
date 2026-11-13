@@ -156,8 +156,8 @@ public sealed class QuotationUsdTaxNotItemizedTests
             QuotationParties.Empty,
             BillingAccount(currency),
             currency,
-            customerWithRetention,
             customerVatSurplus: false,
+            customerWithholdings: TestWithholdings.Customer(customerWithRetention),
             AdvisorId,
             Now);
 
@@ -167,7 +167,8 @@ public sealed class QuotationUsdTaxNotItemizedTests
             CompanyId = Guid.CreateVersion7(),
             BankName = "Bancolombia",
             AccountNumber = "12345678",
-            Currency = currency
+            Currency = currency,
+            Country = "CO",
         };
 
     private static void AddItem(

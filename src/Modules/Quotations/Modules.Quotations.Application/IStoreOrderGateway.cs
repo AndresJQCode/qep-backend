@@ -59,7 +59,6 @@ public sealed record StoreOrderDraft(
     QuotationBillingAccountRequest BillingAccount,
     StoreOrderParty Billing,
     StoreOrderParty Shipping,
-    bool BillingWithRetention,
     bool BillingVatSurplus,
     IReadOnlyList<StoreQuoteLine> Lines,
     string? Notes,
@@ -109,7 +108,8 @@ public sealed class StoreOrderGateway(
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     ITenantDirectory tenantDirectory,
-    ITenantClock tenantClock)
+    ITenantClock tenantClock,
+    IQuotationWithholdingLookup withholdingLookup)
     : IStoreOrderGateway
 {
     /// <summary>La clave de idempotencia del pedido de un checkout: el reintento del navegador devuelve el mismo pedido.</summary>
@@ -177,16 +177,22 @@ public sealed class StoreOrderGateway(
         var lines = await drafts.PriceLinesAsync(
             draft.TenantId, MergeRepeated(draft.Lines), billingAccount.Currency, draft.IsRetail, cancellationToken);
         var advisor = new MemberId(draft.AdvisorMembershipId);
+        // Excepción de D16 (spec impuestos por tipo §7.5): el pedido de la tienda siempre trae parte de facturación propia,
+        // pero congela las tasas del cliente del país de su empresa, no selectores vacíos. El pedido nace hoy en la zona del
+        // tenant (KeyedOrderCommit lo fecha con el mismo calendario).
+        var calendar = await tenantClock.GetAsync(draft.TenantId, cancellationToken);
+        var withholdings = await OrderCustomerWithholdings.ResolveAsync(
+            withholdingLookup, draft.TenantId, draft.ClientId, billingAccount,
+            DocumentDates.LocalDate(calendar, calendar.UtcNow), cancellationToken);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, null, draft.IsRetail, GlobalScaleFloor: null,
-            customer.WithRetention, customer.VatSurplus);
+            customer.VatSurplus, withholdings);
         var parties = new QuotationPartiesRequest(
                 Billing: ToParty(draft.Billing),
                 Shipping: ToParty(draft.Shipping),
                 BillingUsesBusinessName: false,
                 IsStorePickup: false,
                 BillsToFinalConsumer: false,
-                BillingWithRetention: draft.BillingWithRetention,
                 BillingVatSurplus: draft.BillingVatSurplus)
             .ToDomain();
         var regional = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(draft.TenantId), cancellationToken);

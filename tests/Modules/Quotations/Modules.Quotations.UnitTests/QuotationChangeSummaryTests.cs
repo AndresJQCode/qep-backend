@@ -17,7 +17,7 @@ public sealed class QuotationChangeSummaryTests
         bool isStorePickup,
         string? billing = null,
         bool billsToFinalConsumer = false,
-        bool? billingWithRetention = null,
+        IReadOnlyList<Guid>? billingWithholdingTaxRateIds = null,
         bool? billingVatSurplus = null) => new(
         ValidUntil: new DateOnly(2026, 9, 30),
         PaymentMethod: "Efectivo",
@@ -28,7 +28,7 @@ public sealed class QuotationChangeSummaryTests
         Currency: "COP",
         IsStorePickup: isStorePickup,
         BillsToFinalConsumer: billsToFinalConsumer,
-        BillingWithRetention: billingWithRetention,
+        BillingWithholdingTaxRateIds: billingWithholdingTaxRateIds ?? [],
         BillingVatSurplus: billingVatSurplus);
 
     [Fact]
@@ -283,5 +283,31 @@ public sealed class QuotationChangeSummaryTests
         Assert.Equal(
             "Cambió la cantidad de Tornillo: 1,5 → 2.",
             QuotationChangeSummary.ItemQuantityChanged("Tornillo", 1.5m, 2m, Colombian));
+    }
+
+    // Spec §7.8: cambiar qué retenciones elige la facturación propia es un cambio de encabezado aunque el texto de las
+    // partes sea el mismo; el orden también cuenta, porque es el orden de las filas del documento.
+    [Fact]
+    public void ChangingASelectorIsAHeaderChange()
+    {
+        var retefuente = Guid.CreateVersion7();
+        var reteIca = Guid.CreateVersion7();
+
+        var added = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [retefuente]),
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [retefuente, reteIca]),
+            Colombian);
+        var reordered = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [retefuente, reteIca]),
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [reteIca, retefuente]),
+            Colombian);
+        var same = QuotationChangeSummary.HeaderChanged(
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [retefuente]),
+            Snapshot(null, false, billing: "Sede|||Calle 1||", billingWithholdingTaxRateIds: [retefuente]),
+            Colombian);
+
+        Assert.Contains("retenciones", added, StringComparison.Ordinal);
+        Assert.Contains("retenciones", reordered, StringComparison.Ordinal);
+        Assert.Null(same);
     }
 }

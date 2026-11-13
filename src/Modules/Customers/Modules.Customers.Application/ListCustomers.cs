@@ -91,6 +91,7 @@ public sealed class ListCustomersHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerCompanyDirectory companyDirectory,
     IExecutionContext executionContext,
     IValidator<ListCustomersQuery> validator)
@@ -192,6 +193,10 @@ public sealed class ListCustomersHandler(
         var classificationsById = classifications.ToDictionary(
             classification => classification.Id);
 
+        // Una sola consulta al catálogo para toda la página, no una por cliente.
+        var taxRatesById = await CustomerMapping.FindTaxRatesAsync(
+            taxRateLookup, tenantId, customers, cancellationToken);
+
         // Spec 2026-11-10 §4.1: la empresa de cada contacto y los contactos de cada empresa, una consulta en lote cada una para
         // toda la pagina (nunca una por fila).
         var pageIds = customers.Select(customer => customer.Id.Value).ToArray();
@@ -216,7 +221,7 @@ public sealed class ListCustomersHandler(
                 ? new CustomerCompanyDto(companyRef.Id, companyRef.Name, companyRef.IsComplete, companyRef.IsActive)
                 : null;
             items.Add(customer.ToDto(
-                city, classification, citiesById, [], company, contactCounts.GetValueOrDefault(customer.Id.Value)));
+                city, classification, citiesById, [], taxRatesById, company, contactCounts.GetValueOrDefault(customer.Id.Value)));
         }
 
         return items;

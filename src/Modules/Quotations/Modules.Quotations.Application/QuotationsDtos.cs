@@ -64,11 +64,11 @@ public sealed record QuotationDto(
     IReadOnlyCollection<QuotationPartyDto> Parties,
     /// <summary>Si la facturación sigue al cliente, si va con su razón social.</summary>
     bool BillingUsesBusinessName,
-    /// <summary>Si quien recibe la factura practica retención en la fuente, sólo cuando
-    /// <c>Parties</c> trae fila de facturación propia (<c>Quotation.PartyWithRetention</c>). Null
-    /// con los datos del cliente (ahí manda <c>CustomerVatSurplus</c>/lo que ya diga el cliente) o
-    /// mientras no se contestó con datos propios — la pantalla lo trata como "todavía sin elegir",
-    /// no como false.</summary>
+    /// <summary>Derivado para el frontend viejo (spec impuestos por tipo §9.3): con fila de facturación
+    /// propia en <c>Parties</c>, <c>BillingWithholdingTaxRates.Count > 0</c>; con los datos del cliente, null.
+    /// <b>Nunca null con parte propia</b>: el frontend viejo bloquea «Convertir en pedido» mientras sea null
+    /// (<c>qep-frontend/src/features/quotes/utils/quote-actions.ts:104-106</c>), y la conversión ya no exige
+    /// contestarlo. En el cuerpo se ignora.</summary>
     bool? BillingWithRetention,
     /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA
     /// (<c>Quotation.PartyVatSurplus</c>).</summary>
@@ -110,6 +110,14 @@ public sealed record QuotationDto(
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>; 0 con excedente de IVA o fuera de COP.</summary>
     decimal FreightTaxAmount,
+    /// <summary>Sólo las retenciones que aplicaron, de la fuente vigente (spec impuestos por tipo §9.3); su suma es
+    /// <c>RetentionAmount</c>.</summary>
+    IReadOnlyList<WithholdingDto> Withholdings,
+    /// <summary>Las tasas del cliente congeladas al crear o al cambiar de cliente, apliquen o no.</summary>
+    IReadOnlyList<WithholdingTaxRateDto> CustomerWithholdingTaxRates,
+    /// <summary>Los selectores de la facturación propia, apliquen o no. Se conservan aunque la cotización vuelva a los
+    /// datos del cliente (spec §7.5).</summary>
+    IReadOnlyList<WithholdingTaxRateDto> BillingWithholdingTaxRates,
     /// <summary>El piso de escala global elegido, o null. Ver
     /// <c>Quotation.GlobalScaleFloor</c>. Con default para no tocar las construcciones que ya
     /// existen: solo QuotationMapping.ToDto lo llena.</summary>
@@ -118,6 +126,26 @@ public sealed record QuotationDto(
     /// de su producto. Ver <c>Quotation.IsRetail</c>. Con default por el mismo motivo que
     /// <see cref="GlobalScaleFloor"/>.</summary>
     bool IsRetail = false);
+
+/// <summary>Una retención que aplicó (spec impuestos por tipo §9.3): la tasa congelada, la base sobre la que se
+/// calculó y su monto. <c>Type</c> viaja como texto ("Retefuente", "ReteICA").</summary>
+/// <param name="MinimumBase">En unidades tributarias si <c>MinimumBaseUnit</c> no es null, en dinero si no; null sin
+/// base mínima.</param>
+/// <param name="TaxUnitValue">El valor de la unidad congelado para la fecha del documento.</param>
+public sealed record WithholdingDto(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? TaxUnitValue,
+    decimal Base,
+    decimal Amount);
+
+/// <summary>Una tasa de retención congelada en el documento, aplique o no: lo que prellena un selector.</summary>
+public sealed record WithholdingTaxRateDto(Guid Id, string Name, string Type, string Country, decimal Percentage);
 
 /// <summary>
 /// La compra mínima que habilita cualquier descuento de escala, tal como la ve la pantalla.
@@ -253,14 +281,18 @@ public sealed record QuotationPartiesRequest(
     /// <c>quotation.billing.final_consumer_conflict</c>. Como el guardado reemplaza el encabezado
     /// entero, omitirlo lo apaga.</summary>
     bool BillsToFinalConsumer = false,
-    /// <summary>Sólo tiene sentido cuando <c>Billing</c> trae datos propios: si esa facturación
-    /// practica retención en la fuente. Con los datos del cliente se ignora — ahí manda lo que
-    /// diga el cliente. Null es "todavía no se contestó"; un <c>Billing</c> con datos propios y
-    /// esto en null deja la cotización inconvertible a pedido
-    /// (<c>quotation.billing.tax_profile_required</c>).</summary>
+    /// <summary>Se ignora (spec impuestos por tipo §9.3): lo manda el frontend viejo y la cotización ya no lo lee. Las
+    /// retenciones de la facturación propia son <see cref="BillingWithholdingTaxRateIds"/>. Se queda en el record
+    /// sólo para que el cuerpo del frontend viejo siga deserializando.</summary>
     bool? BillingWithRetention = null,
-    /// <summary>Mismo criterio que <c>BillingWithRetention</c> pero para el excedente de IVA.</summary>
-    bool? BillingVatSurplus = null);
+    /// <summary>Con <c>Billing</c> propio, si esa facturación tiene excedente de IVA. Null es "todavía no se
+    /// contestó" y deja la cotización inconvertible a pedido (<c>quotation.billing.tax_profile_required</c>).</summary>
+    bool? BillingVatSurplus = null,
+    /// <summary>Los selectores de retención de la facturación propia (spec impuestos por tipo §7.5, §9.3): ids de
+    /// tasas activas, que retienen, del país de la empresa facturadora, una por tipo. Null o ausente conserva los
+    /// guardados (así el frontend viejo no los borra); una lista vacía los vacía. Con los datos del cliente se
+    /// ignora.</summary>
+    IReadOnlyList<Guid>? BillingWithholdingTaxRateIds = null);
 
 /// <summary>
 /// El cuerpo de <c>POST /quotations</c> y de <c>POST /quotations/preview</c> (spec 2026-10-18 §7.2). Crear y calcular
@@ -548,7 +580,8 @@ public sealed record QuotationResponse(
     IReadOnlyCollection<QuotationPartyResponse> Parties,
     bool BillingUsesBusinessName,
     // Mismo criterio que QuotationDto.BillingWithRetention/BillingVatSurplus: sólo tienen sentido
-    // con Parties trayendo fila de facturación propia, y null ahí es "todavía sin contestar".
+    // con Parties trayendo fila de facturación propia. BillingWithRetention es derivado de los
+    // selectores y nunca null con parte propia; BillingVatSurplus en null es "todavía sin contestar".
     bool? BillingWithRetention,
     bool? BillingVatSurplus,
     // Viaja siempre, aunque sea false: la pantalla decide con esto si muestra el bloque de
@@ -601,6 +634,13 @@ public sealed record QuotationResponse(
     decimal FreightSubtotal,
     /// <summary>IVA del envío que suma a <c>Total</c>.</summary>
     decimal FreightTaxAmount,
+    /// <summary>Sólo las retenciones aplicadas, con su base y su monto; su suma es <c>RetentionAmount</c> (spec
+    /// impuestos por tipo §9.3). Aditivo, como los dos de abajo.</summary>
+    IReadOnlyList<WithholdingResponse> Withholdings,
+    /// <summary>Las tasas del cliente congeladas en la cotización, apliquen o no.</summary>
+    IReadOnlyList<WithholdingTaxRateResponse> CustomerWithholdingTaxRates,
+    /// <summary>Los selectores de la facturación propia, apliquen o no: lo que prellena el editor.</summary>
+    IReadOnlyList<WithholdingTaxRateResponse> BillingWithholdingTaxRates,
     /// <summary>Spec 2026-11-10 §4.6: los contactos sin fusionar de la empresa del cliente, para elegir a quién se envía el
     /// documento. Siempre presente: vacío si el cliente no tiene o si él mismo es un contacto. Lo llena el compositor.</summary>
     IReadOnlyList<ClientContactDto> ClientContacts);
@@ -608,6 +648,23 @@ public sealed record QuotationResponse(
 /// <summary>Un contacto de la empresa del cliente tal como lo ve el diálogo de envío (spec 2026-11-10 §4.6). El teléfono es el de su
 /// ficha y puede faltar: ese contacto se muestra pero no se puede elegir.</summary>
 public sealed record ClientContactDto(Guid Id, string Name, string? Phone);
+
+/// <summary>Gemelo HTTP de <see cref="WithholdingDto"/>, por la regla de pares de este archivo (ver
+/// <see cref="QuotationMinimumPurchaseResponse"/>).</summary>
+public sealed record WithholdingResponse(
+    Guid TaxRateId,
+    string Name,
+    string Type,
+    string Country,
+    decimal Percentage,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit,
+    decimal? TaxUnitValue,
+    decimal Base,
+    decimal Amount);
+
+/// <summary>Gemelo HTTP de <see cref="WithholdingTaxRateDto"/>.</summary>
+public sealed record WithholdingTaxRateResponse(Guid Id, string Name, string Type, string Country, decimal Percentage);
 
 /// <summary>
 /// La compra mínima tal como viaja por HTTP. Es un gemelo de

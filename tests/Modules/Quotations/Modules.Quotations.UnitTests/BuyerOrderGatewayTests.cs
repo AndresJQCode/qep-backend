@@ -27,7 +27,7 @@ public sealed class BuyerOrderGatewayTests
     };
 
     private static OrderHeader Header() =>
-        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, false);
+        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, []);
 
     private static OrderLineInput Line(string name) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", name));
@@ -55,7 +55,7 @@ public sealed class BuyerOrderGatewayTests
     {
         billing ??= ColombianParty();
         return new QuotationParties(
-            billing, ShippingOf(billing), BillingWithRetention: false, BillingVatSurplus: vatSurplus);
+            billing, ShippingOf(billing), BillingVatSurplus: vatSurplus);
     }
 
     private static Order StoreOrder(
@@ -150,7 +150,7 @@ public sealed class BuyerOrderGatewayTests
         var pickup = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
-                billing, ShippingOf(billing), IsStorePickup: true, BillingWithRetention: false, BillingVatSurplus: false),
+                billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
             Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
         pickup.LinkBuyerAccount(Buyer);
         var shipped = StoreOrder(Buyer, "PED-2026-0010", Now.AddDays(-1));
@@ -624,7 +624,7 @@ public sealed class BuyerOrderGatewayTests
     public async Task BillingToTheFinalConsumerHidesTheBillingParty()
     {
         var order = StoreOrder(Buyer);
-        order.SetBilling(null, true, false, null, null, Advisor, Now);
+        order.SetBilling(null, true, false, null, Advisor, Now);
 
         var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
 
@@ -637,7 +637,7 @@ public sealed class BuyerOrderGatewayTests
     public async Task BillingToTheCustomerHidesTheBillingParty()
     {
         var order = StoreOrder(Buyer);
-        order.SetBilling(null, false, false, null, null, Advisor, Now);
+        order.SetBilling(null, false, false, null, Advisor, Now);
 
         var detail = await DetailOf(Gateway(new StubOrderListRepository(order)), order);
 
@@ -652,7 +652,7 @@ public sealed class BuyerOrderGatewayTests
         var order = Order.CreateManual(
             OrderId.New(), TenantId, "PED-2026-0009", Header(),
             new QuotationParties(
-                billing, ShippingOf(billing), IsStorePickup: true, BillingWithRetention: false, BillingVatSurplus: false),
+                billing, ShippingOf(billing), IsStorePickup: true, BillingVatSurplus: false),
             Account, ShippingDetails.None, [Line("Aceite")], null, Advisor, [], Now);
         order.LinkBuyerAccount(Buyer);
 

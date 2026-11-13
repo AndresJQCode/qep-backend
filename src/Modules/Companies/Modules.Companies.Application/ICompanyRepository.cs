@@ -25,6 +25,12 @@ public interface ICompanyRepository
         CompanyId companyId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Los países (ISO alfa-2) de las empresas del tenant, activas e inactivas: una empresa
+    /// desactivada sigue siendo prueba de que el tenant opera en ese país.
+    /// </summary>
+    Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken);
+
     void Add(Company company);
 
     // Borrado en duro, y con el agregado ya cargado por FindAsync: un Remove por id necesitaría

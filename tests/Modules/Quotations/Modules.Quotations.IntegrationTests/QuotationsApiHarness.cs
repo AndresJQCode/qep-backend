@@ -336,6 +336,7 @@ internal static class QuotationsApiHarness
         bool vatSurplus = false,
         string? personType = null,
         bool withDocument = true,
+        IReadOnlyList<Guid>? withholdingTaxRateIds = null,
         string name = "Verde Esencial S.A.S.",
         string? phone = "310 935 2187")
     {
@@ -361,8 +362,10 @@ internal static class QuotationsApiHarness
                 personType,
                 cityId,
                 classificationId,
+                // Se ignora desde impuestos por tipo (spec §9.2): la retención son las tasas de abajo.
                 withRetention,
-                vatSurplus
+                vatSurplus,
+                withholdingTaxRateIds = withholdingTaxRateIds ?? []
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
@@ -395,10 +398,10 @@ internal static class QuotationsApiHarness
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>Prende o apaga retención/excedente de IVA de un cliente ya creado -- para probar
-    /// que una cotización todavía editable (Draft/Sent) se entera del cambio sin haber sido
-    /// creada de nuevo (Quotation.RefreshCustomerTaxProfile). El resto de los campos se repiten
-    /// tal cual porque <c>UpdateCustomerRequest</c> reemplaza el recurso entero.</summary>
+    /// <summary>Cambia el excedente de IVA y, si se pasan, las tasas de retención de un cliente ya creado -- para probar
+    /// que una cotización ya creada **no** se entera (spec impuestos por tipo D17, D24: la foto se congela). El resto de
+    /// los campos se repiten tal cual porque <c>UpdateCustomerRequest</c> reemplaza el recurso entero; tasas en null las
+    /// conserva.</summary>
     public static async Task UpdateCustomerRetentionAsync(
         HttpClient client,
         Guid tenantId,
@@ -406,7 +409,8 @@ internal static class QuotationsApiHarness
         string identificationNumber,
         bool withRetention,
         bool vatSurplus,
-        string? personType = null)
+        string? personType = null,
+        IReadOnlyList<Guid>? withholdingTaxRateIds = null)
     {
         var cityId = await EnsureCityIdAsync(client);
         var classificationId = await CreateClassificationAsync(client, tenantId);
@@ -430,10 +434,73 @@ internal static class QuotationsApiHarness
                 cityId,
                 classificationId,
                 withRetention,
-                vatSurplus
+                vatSurplus,
+                withholdingTaxRateIds
             },
             TestContext.Current.CancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Una tasa de retención en el catálogo del tenant, por SQL: crearla por la API exige una empresa del país y, con
+    /// base mínima, una UVT cargada, y esa cadena es de las pruebas de Catalog (mismo criterio que
+    /// <c>TaxRateCustomerFixtures</c>). La base mínima va en UVT.
+    /// </summary>
+    public static async Task<Guid> InsertWithholdingRateAsync(
+        QepApiFactory factory,
+        Guid tenantId,
+        string name,
+        string type,
+        decimal percentage,
+        decimal? minimumBase = null,
+        string country = "CO")
+    {
+        var id = Guid.CreateVersion7();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO catalog.tax_rates
+                (id, tenant_id, name, percentage, type, country, minimum_base, is_active, version, created_at, updated_at)
+            VALUES ({id}, {tenantId}, {name}, {percentage}, {type}, {country}, {minimumBase}, true, 1, now(), now())
+            """,
+            TestContext.Current.CancellationToken);
+        return id;
+    }
+
+    /// <summary>
+    /// Cambia una tasa del catálogo después de elegida, por SQL como lo haría su pantalla: el porcentaje y si está activa
+    /// (<c>null</c> deja lo actual). Para verificar que la foto congelada de un documento no se mueve.
+    /// </summary>
+    public static async Task ChangeTaxRateAsync(
+        QepApiFactory factory, Guid taxRateId, decimal? percentage = null, bool? isActive = null)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE catalog.tax_rates
+            SET percentage = COALESCE({percentage}, percentage),
+                is_active = COALESCE({isActive}, is_active),
+                version = version + 1,
+                updated_at = now()
+            WHERE id = {taxRateId}
+            """,
+            TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>El valor de la unidad tributaria de un año (spec impuestos por tipo §7.3), por SQL: cargarlo por la API
+    /// es de la consola del operador.</summary>
+    public static async Task InsertTaxUnitValueAsync(QepApiFactory factory, string country, int year, decimal value)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<QuotationsDbContext>();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO catalog.tax_unit_values (country, year, value, updated_at, updated_by)
+            VALUES ({country}, {year}, {value}, now(), {Guid.CreateVersion7()})
+            """,
+            TestContext.Current.CancellationToken);
     }
 
     public static async Task DeactivateCustomerAsync(HttpClient client, Guid tenantId, Guid customerId)
@@ -803,6 +870,18 @@ internal static class QuotationsApiHarness
             TestContext.Current.CancellationToken);
         Assert.NotNull(sent);
         return sent;
+    }
+
+    /// <summary>Una cotización con empresa facturadora, que desde impuestos por tipo (spec §7.7) es lo que el envío
+    /// exige además de la vigencia (<c>quotation.billing.account_required</c>). Para las pruebas que envían una
+    /// cotización sin productos.</summary>
+    public static async Task<QuotationResponse> CreateSendableQuotationAsync(
+        HttpClient client, Guid tenantId, Guid clientId, DateOnly? validUntil = null)
+    {
+        var billing = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        return await CreateQuotationAsync(
+            client, tenantId, clientId, validUntil,
+            new QuotationBillingAccountRequest(billing.CompanyId, billing.BankName, billing.AccountNumber, billing.Currency));
     }
 
     /// <summary>Nace con vigencia porque <c>Quotation.Send</c> la exige: sin

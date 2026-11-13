@@ -129,9 +129,12 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [CustomerImportColumns.Department] = customer.Department?.Name ?? string.Empty,
         [CustomerImportColumns.City] = customer.City?.Name ?? customer.CityName ?? string.Empty,
         [CustomerImportColumns.Classification] = customer.Classification?.Name ?? string.Empty,
+        // El nombre de la tasa de cada tipo, que es lo que el importador lee de vuelta; vacia si no tiene (spec impuestos por
+        // tipo §7.4). Un cliente no tiene dos tasas del mismo pais y tipo, asi que la primera es la unica.
+        [CustomerImportColumns.Retefuente] = RateName(customer, CustomerImportColumns.Retefuente),
+        [CustomerImportColumns.ReteIca] = RateName(customer, CustomerImportColumns.ReteIca),
         // "Si"/"No" y no true/false: es el vocabulario que el importador lee y el que ve la persona
         // que abre el archivo.
-        [CustomerImportColumns.WithRetention] = customer.WithRetention ? "Si" : "No",
         [CustomerImportColumns.VatSurplus] = customer.VatSurplus ? "Si" : "No",
         [ActiveColumn] = customer.IsActive ? "Si" : "No",
         // Como texto y no como fecha de Excel: una celda de fecha se muestra según la configuración
@@ -144,6 +147,9 @@ internal sealed class ClosedXmlCustomerExportBuilder : ICustomerExportBuilder
         [PersonTypeColumn] = customer.PersonType ?? string.Empty,
         [CustomerImportColumns.Company] = companyIdentificationNumber,
     };
+
+    private static string RateName(CustomerDto customer, string type) =>
+        customer.WithholdingTaxRates.FirstOrDefault(rate => rate.Type == type)?.Name ?? string.Empty;
 
     private static void ApplyMinimumWidth(IXLColumns columns)
     {

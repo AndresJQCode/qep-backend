@@ -136,6 +136,7 @@ public sealed class ExternalOrderService(
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     ITenantClock tenantClock,
+    IQuotationWithholdingLookup withholdingLookup,
     IQuotationSettingsStore settingsStore,
     IOrderVariantCostLookup costLookup)
     : IExternalOrderWriter
@@ -174,9 +175,18 @@ public sealed class ExternalOrderService(
             })
             .ToArray();
         var advisor = new MemberId(draft.AdvisorMembershipId);
+        // Las tasas del cliente del país de la empresa (spec impuestos por tipo §7.5, D22), a la fecha del pedido en la zona
+        // del tenant. Un cliente sin tasas da una lista vacía: el webhook de Shopify no empieza a fallar por esto.
+        var withholdings = await OrderCustomerWithholdings.ResolveAsync(
+            withholdingLookup,
+            draft.TenantId,
+            draft.ClientId,
+            billingAccount,
+            DocumentDates.LocalDate(await tenantClock.GetAsync(draft.TenantId, cancellationToken), draft.OccurredAt),
+            cancellationToken);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, draft.PaymentMethod, IsRetail: false,
-            GlobalScaleFloor: null, customer.WithRetention, customer.VatSurplus);
+            GlobalScaleFloor: null, customer.VatSurplus, withholdings);
 
         var committed = await KeyedOrderCommit.CommitAsync(
             orderRepository, unitOfWork, numberGenerator, numberingFormats, tenantClock, draft.TenantId, externalKey,

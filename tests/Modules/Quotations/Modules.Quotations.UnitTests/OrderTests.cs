@@ -16,10 +16,11 @@ public sealed class OrderTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
-        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, withRetention, false);
+        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, false, TestWithholdings.Customer(withRetention));
 
     private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m, decimal discount = 0m) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -118,7 +119,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -141,7 +142,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -166,8 +167,8 @@ public sealed class OrderTests
                     DepartmentId = Guid.CreateVersion7(),
                     CityId = Guid.CreateVersion7(),
                 },
-                null, BillingWithRetention: false, BillingVatSurplus: false),
-            Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+                null, BillingVatSurplus: false),
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
@@ -395,7 +396,7 @@ public sealed class OrderTests
         var item = Assert.Single(order.Items);
         Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
         Assert.Equal("Bodega", order.Shipping!.Name);
-        Assert.True(order.AppliesRetention);
+        Assert.NotEmpty(order.AppliedWithholdings);
     }
 
     [Fact]
@@ -434,7 +435,7 @@ public sealed class OrderTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             }),
-            Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
@@ -1749,7 +1750,7 @@ public sealed class OrderTests
             CityId = Guid.CreateVersion7(),
         };
         var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
-        return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
+        return new QuotationParties(billing, shipping, BillingVatSurplus: false);
     }
 
     private static Order NewBuyerStoreOrder(
@@ -1810,7 +1811,7 @@ public sealed class OrderTests
         var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
 
         order.SetShipping(new ShippingDetails(null, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, false), Advisor, Now);
-        order.SetBilling(null, true, false, null, null, Advisor, Now);
+        order.SetBilling(null, true, false, null, Advisor, Now);
 
         Assert.Equal("Entregar en portería", order.BuyerNotes);
     }
