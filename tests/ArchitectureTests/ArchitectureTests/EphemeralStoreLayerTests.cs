@@ -33,4 +33,11 @@ public sealed class EphemeralStoreLayerTests
         Assert.True(names.Length > 80, $"Sólo se encontraron {names.Length} ensamblados.");
         Assert.Contains(names, name => name?.StartsWith("BuildingBlocks.", StringComparison.Ordinal) == true);
     }
+
+    // Ancla de que la regla mira algo real: el único que puede referenciar el paquete, lo referencia.
+    [Fact]
+    public void BootstrapperReferencesStackExchangeRedis() =>
+        Assert.Contains(
+            typeof(Bootstrapper.QepServiceCollectionExtensions).Assembly.GetReferencedAssemblies(),
+            reference => reference.Name?.StartsWith("StackExchange.Redis", StringComparison.Ordinal) == true);
 }
