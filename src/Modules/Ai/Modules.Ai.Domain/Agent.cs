@@ -67,17 +67,7 @@ public sealed class Agent
     /// pasa a <c>Active</c>; <c>Paused</c> se queda pausado. D-A10: desde ahora las conexiones quedan ocupadas.</summary>
     public AgentVersion Publish(IReadOnlyList<AgentIssue> issues, Guid by, DateTimeOffset now)
     {
-        ArgumentNullException.ThrowIfNull(issues);
-        var errors = issues.Where(issue => issue.Severity == AgentIssueSeverity.Error).ToList();
-        if (errors.Count > 0)
-        {
-            throw new AiDomainException(
-                AiErrorCodes.AgentInvalid,
-                "El agente tiene errores: corrígelos para publicar.",
-                errors.GroupBy(issue => issue.Path, StringComparer.Ordinal)
-                    .ToDictionary(group => group.Key, group => group.Select(issue => issue.Code).ToArray(), StringComparer.Ordinal));
-        }
-
+        EnsurePublishable(issues);
         var model = DraftConfig.Model;
         var version = AgentVersion.Publish(Id, TenantId, _versions.Count + 1, DraftConfigJson, model.Provider, model.Id, by, now);
         _versions.Add(version);
@@ -186,6 +176,22 @@ public sealed class Agent
     {
         UpdatedAt = now;
         Version++;
+    }
+
+    /// <summary>422 <c>ai.agent.invalid</c> con los códigos por ruta si hay algún error; los avisos no frenan. Es la misma regla que aplica
+    /// <see cref="Publish"/>, expuesta para que el handler la corra antes de buscar la cuenta del proveedor (plan 2026-11-12 C-16).</summary>
+    public static void EnsurePublishable(IReadOnlyList<AgentIssue> issues)
+    {
+        ArgumentNullException.ThrowIfNull(issues);
+        var errors = issues.Where(issue => issue.Severity == AgentIssueSeverity.Error).ToList();
+        if (errors.Count > 0)
+        {
+            throw new AiDomainException(
+                AiErrorCodes.AgentInvalid,
+                "El agente tiene errores: corrígelos para publicar.",
+                errors.GroupBy(issue => issue.Path, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.Select(issue => issue.Code).ToArray(), StringComparer.Ordinal));
+        }
     }
 
     private static AiDomainException NotPublished() => new(AiErrorCodes.AgentNotPublished, "El agente todavía no se ha publicado.");

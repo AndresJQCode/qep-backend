@@ -311,10 +311,7 @@ public sealed class PublishAgentHandler(
         AiVersions.Ensure(agent.Version, command.Version);
         var by = await caller.RequireAsync(command.TenantId, cancellationToken);
         var issues = await builder.ValidateAsync(agent, publishing: true, cancellationToken);
-        if (issues.Any(issue => issue.Severity == AgentIssueSeverity.Error))
-        {
-            agent.Publish(issues, by, clock.UtcNow);
-        }
+        Agent.EnsurePublishable(issues);
 
         // Sin errores, el proveedor existe: el validador marca uno desconocido.
         var provider = AiProvider.Parse(agent.DraftConfig.Model.Provider);

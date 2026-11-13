@@ -65,6 +65,20 @@ public sealed class AgentTests
     }
 
     [Fact]
+    public void EnsurePublishableRejectsErrorsWithTheIssuesByPath()
+    {
+        var error = Assert.Throws<AiDomainException>(() => Agent.EnsurePublishable(
+            [new AgentIssue(AgentIssueSeverity.Error, "instructions_missing", "instructions", "Escribe las instrucciones.")]));
+
+        Assert.Equal(AiErrorCodes.AgentInvalid, error.Code);
+        Assert.Equal(["instructions_missing"], ((IHasFieldErrors)error).FieldErrors["instructions"]);
+    }
+
+    [Fact]
+    public void EnsurePublishableLetsWarningsThrough() =>
+        Agent.EnsurePublishable([new AgentIssue(AgentIssueSeverity.Warning, "model_unavailable", "model", "…")]);
+
+    [Fact]
     public void WarningsDoNotStopPublishing()
     {
         var agent = NewAgent();
