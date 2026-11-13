@@ -62,13 +62,14 @@ internal sealed partial class ShopifyAdminGateway(
                 ["client_id"] = shopifyApp.ClientId ?? string.Empty,
                 ["client_secret"] = shopifyApp.ClientSecret ?? string.Empty,
                 ["code"] = code,
+                // Spec 2026-11-12: desde el 2027-01-01 Shopify sólo acepta tokens offline que expiran.
+                ["expiring"] = "1",
             }),
         };
         using var document = await SendAsync("oauth", request, accessToken: null, cancellationToken);
         var root = document.RootElement;
-        var token = ReadString(root, "access_token");
         var scopes = ReadString(root, "scope");
-        if (string.IsNullOrEmpty(token) || scopes is null)
+        if (scopes is null)
         {
             throw Invalid("oauth", "no_token");
         }
@@ -78,8 +79,62 @@ internal sealed partial class ShopifyAdminGateway(
             throw Invalid("oauth", "scopes_too_long");
         }
 
-        return new ShopifyTokenGrant(token, scopes);
+        return ReadGrant("oauth", root, scopes);
     }
+
+    public async Task<ShopifyTokenGrant> RefreshTokenAsync(string shop, string refreshToken, CancellationToken cancellationToken)
+    {
+        // La guía de Shopify lo muestra como formulario; el canje del code va en JSON.
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri($"https://{Host(shop)}/admin/oauth/access_token", UriKind.Absolute))
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["client_id"] = shopifyApp.ClientId ?? string.Empty,
+                ["client_secret"] = shopifyApp.ClientSecret ?? string.Empty,
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = refreshToken,
+            }),
+        };
+        using var document = await SendAsync("oauth-refresh", request, accessToken: null, cancellationToken);
+        var root = document.RootElement;
+
+        // D13: la forma de la respuesta del refresco no está publicada; sin scope se toma vacío.
+        var scopes = ReadString(root, "scope") ?? string.Empty;
+        return ReadGrant("oauth-refresh", root, scopes.Length > ShopifyInstall.ScopesMaxLength ? string.Empty : scopes);
+    }
+
+    /// <summary>El par y sus duraciones. Sin <c>refresh_token</c> o sin duraciones positivas el token no expira, y desde el
+    /// 2027-01-01 no sirve: no se acepta (spec 2026-11-12 §6.1).</summary>
+    private ShopifyTokenGrant ReadGrant(string operation, JsonElement root, string scopes)
+    {
+        var token = ReadString(root, "access_token");
+        if (string.IsNullOrEmpty(token))
+        {
+            throw Invalid(operation, "no_token");
+        }
+
+        var refreshToken = ReadString(root, "refresh_token");
+        if (string.IsNullOrEmpty(refreshToken))
+        {
+            throw Invalid(operation, "no_refresh_token");
+        }
+
+        if (ReadSeconds(root, "expires_in") is not { } expiresIn || ReadSeconds(root, "refresh_token_expires_in") is not { } refreshExpiresIn)
+        {
+            throw Invalid(operation, "no_expiry");
+        }
+
+        return new ShopifyTokenGrant(token, scopes, refreshToken, expiresIn, refreshExpiresIn);
+    }
+
+    private static TimeSpan? ReadSeconds(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value)
+        && value.ValueKind == JsonValueKind.Number
+        && value.TryGetInt64(out var seconds)
+        && seconds > 0
+        && seconds <= (long)TimeSpan.FromDays(3650).TotalSeconds
+            ? TimeSpan.FromSeconds(seconds)
+            : null;
 
     public async Task<ShopifyShopInfo> GetShopAsync(string shop, string accessToken, CancellationToken cancellationToken)
     {

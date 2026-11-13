@@ -23,8 +23,8 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
 
     /// <summary>Como <see cref="Respond"/>, pero sólo si el cuerpo contiene <paramref name="bodyContains"/>: la Admin API es
     /// una sola URL de GraphQL y lo que distingue la consulta es el cuerpo. Se registra antes que una regla sin cuerpo.</summary>
-    public void RespondWhen(string pattern, string bodyContains, Func<string?, HttpResponseMessage> respond) =>
-        _rules.Enqueue((new Regex(pattern, RegexOptions.CultureInvariant), bodyContains, respond, TimeSpan.Zero));
+    public void RespondWhen(string pattern, string bodyContains, Func<string?, HttpResponseMessage> respond, TimeSpan delay = default) =>
+        _rules.Enqueue((new Regex(pattern, RegexOptions.CultureInvariant), bodyContains, respond, delay));
 
     /// <summary>
     /// Las suscripciones de la app en <paramref name="shop"/> (<paramref name="existingTopics"/>, con el enum de GraphQL,
@@ -60,14 +60,20 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
     public static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
-    /// <summary>El canje y la lectura de la tienda de una instalación sana de <paramref name="shop"/>.</summary>
+    /// <summary>El canje y la lectura de la tienda de una instalación sana de <paramref name="shop"/>. El token expira (spec
+    /// 2026-11-12): 1 hora, con un refresh token de 90 días.</summary>
     public void ScriptHappyInstall(
-        string shop, string accessToken, string scopes = "read_orders,read_customers", string name = "Mi Tienda", TimeSpan exchangeDelay = default)
+        string shop,
+        string accessToken,
+        string scopes = "read_orders,read_customers",
+        string name = "Mi Tienda",
+        TimeSpan exchangeDelay = default,
+        string refreshToken = "shprt_install-refresh-SENTINEL")
     {
         Respond(
             $"^{Regex.Escape(shop)}/admin/oauth/access_token$",
             HttpStatusCode.OK,
-            $$"""{"access_token":"{{accessToken}}","scope":"{{scopes}}"}""",
+            $$"""{"access_token":"{{accessToken}}","scope":"{{scopes}}","expires_in":3600,"refresh_token":"{{refreshToken}}","refresh_token_expires_in":7776000}""",
             exchangeDelay);
         Respond(
             $"^{Regex.Escape(shop)}/admin/api/[0-9-]+/graphql\\.json$",

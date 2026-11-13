@@ -78,7 +78,8 @@ public sealed class CompleteShopifyInstallValidator : AbstractValidator<Complete
 /// canjeada = <c>install_not_found</c>, vencida = <c>install_expired</c> → llave de cifrado disponible (503 antes de
 /// gastar el <c>code</c>) → reclamo de la fila con un <c>UPDATE</c> condicionado que consume el <c>state</c> antes de
 /// llamar a Shopify (el perdedor, <c>install_not_found</c>) → canje → scopes → lectura de la tienda → token cifrado con AAD
-/// <c>installId</c> + <c>accessToken</c> → canje guardado sobre la fila reclamada → ruta existente.
+/// <c>installId</c> + <c>accessToken</c>, y el refresh token con <c>installId</c> + <c>refreshToken</c> (spec 2026-11-12)
+/// → canje guardado sobre la fila reclamada → ruta existente.
 /// </summary>
 public sealed class CompleteShopifyInstallHandler(
     IShopifyInstallRepository installs,
@@ -142,7 +143,9 @@ public sealed class CompleteShopifyInstallHandler(
         var shop = await CallAsync(() => gateway.GetShopAsync(shopDomain, grant.AccessToken, cancellationToken));
 
         var token = protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, grant.AccessToken);
-        install.MarkExchanged(shop.Id, shop.Name, grant.Scopes, token, token, now + TimeSpan.FromHours(1), now + TimeSpan.FromDays(90), now);
+        var refreshToken = protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, grant.RefreshToken);
+        install.MarkExchanged(
+            shop.Id, shop.Name, grant.Scopes, token, refreshToken, now + grant.ExpiresIn, now + grant.RefreshTokenExpiresIn, now);
         if (!await installs.TryCompleteExchangeAsync(install, cancellationToken))
         {
             throw ShopifyInstallErrors.InstallNotFound();

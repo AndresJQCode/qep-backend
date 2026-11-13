@@ -50,7 +50,10 @@ internal sealed class ShopifyInstallRepository(IntegrationsDbContext dbContext) 
                     .SetProperty(row => row.ShopName, install.ShopName)
                     .SetProperty(row => row.Scopes, install.Scopes)
                     .SetProperty(row => row.ProtectedToken, install.ProtectedToken)
+                    .SetProperty(row => row.ProtectedRefreshToken, install.ProtectedRefreshToken)
                     .SetProperty(row => row.KeyId, install.KeyId)
+                    .SetProperty(row => row.AccessTokenExpiresAt, install.AccessTokenExpiresAt)
+                    .SetProperty(row => row.RefreshTokenExpiresAt, install.RefreshTokenExpiresAt)
                     .SetProperty(row => row.ExpiresAt, install.ExpiresAt),
                 cancellationToken);
         return updated == 1;

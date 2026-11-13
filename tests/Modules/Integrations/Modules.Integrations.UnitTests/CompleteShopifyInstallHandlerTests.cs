@@ -30,6 +30,8 @@ public sealed class CompleteShopifyInstallHandlerTests
 
     private const string AccessToken = "shpat_access-token-SENTINEL-3c4d";
 
+    private const string RefreshToken = "shprt_refresh-token-SENTINEL-3c4d";
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private sealed class Bed
@@ -275,7 +277,31 @@ public sealed class CompleteShopifyInstallHandlerTests
         Assert.DoesNotContain(AccessToken, response.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(AccessToken, command.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(Code, command.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain(AccessToken, new ShopifyTokenGrant(AccessToken, "read_orders").ToString(), StringComparison.Ordinal);
+        var grant = new ShopifyTokenGrant(AccessToken, "read_orders", RefreshToken, TimeSpan.FromHours(1), TimeSpan.FromDays(90));
+        Assert.DoesNotContain(AccessToken, grant.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(RefreshToken, grant.ToString(), StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-12 §6.1: la instalación guarda el refresh token, cifrado con AAD installId + refreshToken, y los dos
+    // vencimientos calculados con el reloj del handler.
+    [Fact]
+    public async Task ExchangeStoresTheRefreshTokenAndBothExpiries()
+    {
+        var bed = new Bed();
+        var install = bed.Seed();
+        var now = IntegrationsTestBed.Now.AddMinutes(2);
+        bed.Integrations.Clock.UtcNow = now;
+
+        await bed.Handler().HandleAsync(bed.Command(), Ct);
+
+        var stored = Assert.Single(bed.Installs.Exchanged.Values);
+        Assert.Equal(now.AddHours(1), stored.AccessTokenExpiresAt);
+        Assert.Equal(now.AddDays(90), stored.RefreshTokenExpiresAt);
+        Assert.Equal(
+            RefreshToken,
+            bed.Integrations.Protector.Unprotect(install.Id, ShopifyFieldKeys.RefreshToken, new ProtectedSecret(stored.KeyId!, stored.ProtectedRefreshToken!)));
+        Assert.False(bed.Integrations.Protector.TryUnprotect(
+            install.Id, ShopifyFieldKeys.AccessToken, new ProtectedSecret(stored.KeyId!, stored.ProtectedRefreshToken!), out _));
     }
 
     [Fact]
@@ -402,7 +428,23 @@ internal sealed class FakeShopifyAdminGateway : IShopifyAdminGateway
         Calls.Add("exchange");
         OnExchange?.Invoke();
         ThrowIfFailing("exchange");
-        return Task.FromResult(new ShopifyTokenGrant("shpat_access-token-SENTINEL-3c4d", GrantedScopes));
+        return Task.FromResult(new ShopifyTokenGrant(
+            "shpat_access-token-SENTINEL-3c4d", GrantedScopes, "shprt_refresh-token-SENTINEL-3c4d", TimeSpan.FromHours(1), TimeSpan.FromDays(90)));
+    }
+
+    /// <summary>Lo que devuelve el refresco (spec 2026-11-12 §6.1).</summary>
+    public ShopifyTokenGrant RefreshedGrant { get; set; } = new(
+        "shpat_refreshed-token-SENTINEL-5e6f", string.Empty, "shprt_refreshed-refresh-SENTINEL-5e6f", TimeSpan.FromHours(1), TimeSpan.FromDays(90));
+
+    /// <summary>Los refresh tokens con que se pidió un refresco, en orden.</summary>
+    public List<string> RefreshTokens { get; } = [];
+
+    public Task<ShopifyTokenGrant> RefreshTokenAsync(string shop, string refreshToken, CancellationToken cancellationToken)
+    {
+        Calls.Add("refresh");
+        RefreshTokens.Add(refreshToken);
+        ThrowIfFailing("refresh");
+        return Task.FromResult(RefreshedGrant);
     }
 
     public Task<ShopifyShopInfo> GetShopAsync(string shop, string accessToken, CancellationToken cancellationToken)
