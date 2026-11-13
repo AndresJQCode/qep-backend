@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Modules.Messaging.Application;
 using static Modules.Messaging.IntegrationTests.MessagingApiHarness;
 
@@ -755,5 +756,222 @@ public sealed class ExternalSendApiTests
         await AssertValidationAsync(response, key);
         Assert.Equal(0, SendCalls(f));
         Assert.Equal(0L, await ConversationsAsync(f));
+    }
+
+    private const string LogoLink = "https://cdn.example.com/logo.png";
+
+    private static JsonElement TemplateOfLastSend(Fixture f)
+    {
+        var send = f.Factory.MetaHandler.Requests.Last(request => request.Uri!.AbsolutePath.EndsWith("/111/messages", StringComparison.Ordinal));
+        return JsonDocument.Parse(send.Body!).RootElement.GetProperty("template").Clone();
+    }
+
+    [Fact]
+    public async Task AHeaderTypeIsReadIgnoringCase()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var response = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "IMAGE", link = LogoLink }));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ASendWithAnImageHeaderReachesMetaWithTheLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var response = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var components = TemplateOfLastSend(f).GetProperty("components");
+        var expected = JsonNode.Parse($$$"""{"type":"header","parameters":[{"type":"image","image":{"link":"{{{LogoLink}}}"}}]}""");
+        Assert.True(JsonNode.DeepEquals(expected, JsonNode.Parse(components[0].GetRawText())), components[0].GetRawText());
+        // Sin variables en el cuerpo no hay componente body: Meta toma el texto de la plantilla.
+        Assert.Equal(1, components.GetArrayLength());
+        Assert.Equal($"image|{LogoLink}", await ScalarAsync<string>(f.ConnectionString,
+            "SELECT details->'template'->'header'->>'type' || '|' || (details->'template'->'header'->>'link') FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal("Tu guía 1014853 está Pendiente.", await ScalarAsync<string>(f.ConnectionString, "SELECT text FROM messaging.messages WHERE direction = 2"));
+        // QEP entrega el enlace tal cual: nunca lo descarga.
+        Assert.DoesNotContain(f.Factory.MetaHandler.Requests, request => request.Uri!.Host.Contains("cdn.example.com", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ADocumentHeaderTravelsWithItsFilename()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var response = await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "factura_pdf", new { type = "document", link = "https://cdn.example.com/f.pdf", filename = "Factura-1.pdf" }));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var document = TemplateOfLastSend(f).GetProperty("components")[0].GetProperty("parameters")[0].GetProperty("document");
+        Assert.Equal("https://cdn.example.com/f.pdf", document.GetProperty("link").GetString());
+        Assert.Equal("Factura-1.pdf", document.GetProperty("filename").GetString());
+    }
+
+    [Fact]
+    public async Task TheQuotationSystemTemplateIsSentWithALink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var parameters = new Dictionary<string, string>
+        {
+            ["nombre_contacto"] = "Ana", ["numero_cotizacion"] = "COT-12", ["valor_total"] = "$ 1.500.000", ["vigencia"] = "30/11/2026",
+        };
+
+        var response = await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "qep_cotizacion", new { type = "document", link = "https://cdn.example.com/c.pdf" }, language: "es", parameters: parameters));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var document = TemplateOfLastSend(f).GetProperty("components")[0].GetProperty("parameters")[0].GetProperty("document");
+        Assert.Equal("https://cdn.example.com/c.pdf", document.GetProperty("link").GetString());
+    }
+
+    [Theory]
+    [InlineData("aviso_logo", null, "La plantilla requiere un encabezado de imagen.")]
+    [InlineData("aviso_logo", "video", "La plantilla requiere un encabezado de imagen.")]
+    [InlineData("aviso_despacho", "image", "La plantilla no tiene encabezado multimedia.")]
+    public async Task AHeaderProblemIs422HeaderMismatchAndLeavesNoThread(string name, string? type, string detail)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        object? header = type is null ? null : new { type, link = "https://cdn.example.com/x" };
+
+        var response = await PostAsync(f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, name, header, parameters: name == "aviso_despacho" ? DefaultParameters() : null));
+
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "messaging.template.header_mismatch");
+        Assert.Equal(detail, (await BodyAsync(response)).GetProperty("detail").GetString());
+        Assert.Equal(0, SendCalls(f));
+        Assert.Equal(0L, await ConversationsAsync(f));
+    }
+
+    [Fact]
+    public async Task AnImageTemplateWithoutParametersMatchStillSaysParametersMismatch()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var response = await PostAsync(
+            f.Client, HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }, parameters: new() { ["1"] = "x" }));
+
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "messaging.template.parameters_mismatch");
+    }
+
+    [Fact]
+    public async Task RepeatingAHeaderSendAnswers200WithoutCallingMetaAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var body = HeaderBody(Guid.CreateVersion7(), f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink });
+
+        var first = await PostAsync(f.Client, body);
+        var second = await PostAsync(f.Client, body);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    public static TheoryData<string> OtherHeaders => new()
+    {
+        """{"type":"image","link":"https://cdn.example.com/otro.png"}""",
+        "null",
+    };
+
+    [Theory]
+    [MemberData(nameof(OtherHeaders))]
+    public async Task TheSameIdempotencyKeyWithAnotherHeaderIs409(string otherHeader)
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var key = Guid.CreateVersion7();
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "aviso_logo", new { type = "image", link = LogoLink }))).StatusCode);
+        var raw = $$$"""{"idempotencyKey":"{{{key}}}","connectionId":"{{{f.ConnectionId}}}","to":"{{{Phone}}}","template":{"name":"aviso_logo","language":"es_CO","parameters":{},"header":{{{otherHeader}}}}}""";
+
+        var response = await PostRawAsync(f.Client, raw);
+
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task TheSameIdempotencyKeyWithAnotherFilenameIs409()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var key = Guid.CreateVersion7();
+        const string link = "https://cdn.example.com/f.pdf";
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "factura_pdf", new { type = "document", link, filename = "Factura-1.pdf" }))).StatusCode);
+
+        var response = await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "factura_pdf", new { type = "document", link, filename = "Factura-2.pdf" }));
+
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task TheSameIdempotencyKeyAddingAHeaderToAPlainSendIs409()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        ScriptMetaOk(f.Factory.MetaHandler);
+        var key = Guid.CreateVersion7();
+        Assert.Equal(HttpStatusCode.Created, (await PostAsync(f.Client, Body(key, f.ConnectionId))).StatusCode);
+
+        // El reintento se compara antes del catálogo: aunque aviso_despacho no admita encabezado, la respuesta es 409 y no header_mismatch.
+        var response = await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "aviso_despacho", new { type = "image", link = LogoLink }, parameters: DefaultParameters()));
+
+        await AssertProblemAsync(response, HttpStatusCode.Conflict, "external.idempotency_key_reused");
+        Assert.Equal(1, SendCalls(f));
+    }
+
+    [Fact]
+    public async Task AFailedHeaderSendResendsWithTheNewLink()
+    {
+        await using var database = await StartDatabaseAsync();
+        var f = await ArrangeAsync(database);
+        using var host = f.Factory;
+        f.Factory.MetaHandler.Respond("/111/messages$", HttpStatusCode.BadRequest, FakeMetaGraphHandler.GraphError(132015));
+        var key = Guid.CreateVersion7();
+        const string linkA = "https://cdn.example.com/a.png";
+        const string linkB = "https://cdn.example.com/b.png";
+
+        await AssertProblemAsync(
+            await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "aviso_logo", new { type = "image", link = linkA })),
+            HttpStatusCode.UnprocessableEntity, "external.message_rejected");
+        var failedId = await ScalarAsync<Guid>(f.ConnectionString, "SELECT id FROM messaging.messages WHERE direction = 2");
+        f.Factory.MetaHandler.Reset();
+        ScriptMetaOk(f.Factory.MetaHandler);
+
+        var retry = await PostAsync(f.Client, HeaderBody(key, f.ConnectionId, "aviso_logo", new { type = "image", link = linkB }));
+
+        Assert.Equal(HttpStatusCode.Created, retry.StatusCode);
+        Assert.Equal(failedId, (await BodyAsync(retry)).GetProperty("messageId").GetGuid());
+        Assert.Equal(linkB, TemplateOfLastSend(f).GetProperty("components")[0].GetProperty("parameters")[0].GetProperty("image").GetProperty("link").GetString());
+        Assert.Equal(linkB, await ScalarAsync<string>(f.ConnectionString, "SELECT details->'template'->'header'->>'link' FROM messaging.messages WHERE direction = 2"));
+        Assert.Equal(1L, await OutboundMessagesAsync(f));
     }
 }
