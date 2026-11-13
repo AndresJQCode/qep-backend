@@ -127,6 +127,8 @@ public static class IntegrationsInfrastructureExtensions
         services.AddSingleton<IProviderConnectionTester, ShopifyConnectionTester>();
         // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo.
         services.AddHostedService<ShopifyInstallSweeper>();
+        // Spec 2026-11-12 §6.2: el único escritor del token offline de cada tienda, cada 5 minutos.
+        services.AddHostedService<ShopifyTokenRefreshWorker>();
 
         return services;
     }

@@ -15,7 +15,15 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
 {
     private readonly ConcurrentQueue<(Regex Pattern, string? BodyContains, Func<string?, HttpResponseMessage> Respond, TimeSpan Delay)> _rules = new();
 
+    // Las reglas del refresco van antes que todas: el canje y el refresco comparten URL y sólo el cuerpo los distingue. La
+    // última registrada gana, para que una prueba pase de 200 a 401 sin Reset.
+    private readonly List<(Regex Pattern, string? BodyContains, Func<string?, HttpResponseMessage> Respond, TimeSpan Delay)> _first = [];
+
     public ConcurrentQueue<ShopifyRequest> Requests { get; } = new();
+
+    /// <summary>Los requests de refresco (<c>grant_type=refresh_token</c>) que llegaron, en orden.</summary>
+    public IReadOnlyList<ShopifyRequest> RefreshRequests =>
+        Requests.Where(request => request.Body?.Contains("grant_type=refresh_token", StringComparison.Ordinal) == true).ToArray();
 
     /// <param name="delay">Lo que tarda Shopify en responder: con él, dos requests concurrentes se cruzan de verdad.</param>
     public void Respond(string pattern, HttpStatusCode status, string body, TimeSpan delay = default) =>
@@ -55,7 +63,42 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
         });
     }
 
-    public void Reset() => _rules.Clear();
+    /// <summary>
+    /// El refresco del token de <paramref name="shop"/> (spec 2026-11-12): un 200 devuelve el par nuevo con 1 hora y 90 días;
+    /// otro status responde <c>invalid_request</c> y repite el refresh token recibido, para probar que no se filtra. Tiene
+    /// prioridad sobre las demás reglas, así que puede registrarse antes o después de <see cref="ScriptHappyInstall"/>.
+    /// </summary>
+    public void ScriptRefresh(
+        string shop, string accessToken, string refreshToken, HttpStatusCode status = HttpStatusCode.OK, TimeSpan delay = default)
+    {
+        HttpResponseMessage Answer(string? body)
+        {
+            if (status == HttpStatusCode.OK)
+            {
+                return Json(
+                    status,
+                    $$"""{"access_token":"{{accessToken}}","scope":"read_orders,read_customers","expires_in":3600,"refresh_token":"{{refreshToken}}","refresh_token_expires_in":7776000}""");
+            }
+
+            var sent = Regex.Match(body ?? string.Empty, "refresh_token=([^&]*)", RegexOptions.CultureInvariant).Groups[1].Value;
+            return Json(status, $$"""{"error":"invalid_request","echo":"{{Uri.UnescapeDataString(sent)}}"}""");
+        }
+
+        lock (_first)
+        {
+            _first.Insert(
+                0, (new Regex($"^{Regex.Escape(shop)}/admin/oauth/access_token$", RegexOptions.CultureInvariant), "grant_type=refresh_token", Answer, delay));
+        }
+    }
+
+    public void Reset()
+    {
+        _rules.Clear();
+        lock (_first)
+        {
+            _first.Clear();
+        }
+    }
 
     public static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
@@ -91,7 +134,13 @@ internal sealed class FakeShopifyHandler : HttpMessageHandler
             body));
 
         var target = request.RequestUri is { } uri ? uri.Host + uri.AbsolutePath : string.Empty;
-        foreach (var (pattern, bodyContains, respond, delay) in _rules)
+        (Regex Pattern, string? BodyContains, Func<string?, HttpResponseMessage> Respond, TimeSpan Delay)[] first;
+        lock (_first)
+        {
+            first = [.. _first];
+        }
+
+        foreach (var (pattern, bodyContains, respond, delay) in first.Concat(_rules))
         {
             if (pattern.IsMatch(target) && (bodyContains is null || (body?.Contains(bodyContains, StringComparison.Ordinal) ?? false)))
             {

@@ -386,17 +386,9 @@ public sealed class ShopifyLinkApiTests
 
     private const string RefreshedRefreshToken = "shprt_refreshed-link-SENTINEL";
 
-    /// <summary>El refresco de la tienda, antes de <see cref="ShopifyFlow.ScriptHappyShop"/>: el canje y el refresco van a la
-    /// misma URL y sólo el cuerpo los distingue. Un 401 repite el refresh token en el cuerpo, para probar que no se filtra.</summary>
+    /// <summary>El refresco de la tienda; un 401 repite el refresh token en el cuerpo, para probar que no se filtra.</summary>
     private static void ScriptRefresh(FakeShopifyHandler shopify, HttpStatusCode status) =>
-        shopify.RespondWhen(
-            $"^{System.Text.RegularExpressions.Regex.Escape(ShopifyFlow.Shop)}/admin/oauth/access_token$",
-            "grant_type=refresh_token",
-            _ => FakeShopifyHandler.Json(
-                status,
-                status == HttpStatusCode.OK
-                    ? $$"""{"access_token":"{{RefreshedAccessToken}}","scope":"read_orders,read_customers","expires_in":3600,"refresh_token":"{{RefreshedRefreshToken}}","refresh_token_expires_in":7776000}"""
-                    : $$"""{"error":"invalid_request","echo":"{{ShopifyFlow.SentinelRefreshToken}}"}"""));
+        shopify.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccessToken, RefreshedRefreshToken, status);
 
     private static async Task<string> StoredSecretAsync(QepApiFactory factory, Guid tenantId, Guid connectionId, string fieldKey)
     {
