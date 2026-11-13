@@ -192,6 +192,28 @@ public sealed class ShopifyTokenRefreshWorkerTests
         Assert.Equal(2, factory.ShopifyHandler.RefreshRequests.Count);
     }
 
+    // La decisión del owner cubre sólo 4xx salvo 429: un 3xx (una tienda renombrada, con AllowAutoRedirect apagado) o un 429
+    // esperan a la próxima vuelta. token_expired no se recupera sin reautorizar, así que no se gasta en algo que no lo prueba.
+    [Theory]
+    [InlineData(HttpStatusCode.Found, "Active:", 0, 1)]
+    [InlineData(HttpStatusCode.MovedPermanently, "Active:", 0, 1)]
+    [InlineData(HttpStatusCode.TooManyRequests, "Active:", 0, 1)]
+    [InlineData(HttpStatusCode.BadRequest, "NeedsAttention:token_expired", 1, 0)]
+    public async Task OnlyA4xxOtherThan429MarksTokenExpired(HttpStatusCode status, string state, int rejected, int deferred)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var linked = await LinkAsync(factory, connectionString);
+        using var _ = linked.Owner;
+        await ExpireInAsync(linked, TimeSpan.FromMinutes(5));
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccess, RefreshedRefresh, status);
+
+        Assert.Equal((0, rejected, deferred, 0), Counts(await linked.Worker.RunOnceAsync(Ct)));
+        Assert.Equal(state, await StateAsync(linked));
+        Assert.Equal(ShopifyFlow.SentinelRefreshToken, await SecretAsync(linked, ShopifyFieldKeys.RefreshToken));
+    }
+
     // Review Focus 1 (D9): ReportCredentialsRejectedAsync ignoraría la pausada y el worker la reintentaría para siempre.
     [Fact]
     public async Task APausedConnectionRejectedIsMarkedAndNotRetried()

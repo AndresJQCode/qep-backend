@@ -25,7 +25,9 @@ internal sealed record ShopifyTokenRefreshRunResult(int Refreshed, int Rejected,
 /// <item>Bajo el candado se relee la conexión: si el reenlace cambió el refresh token (la fecha de su secreto) o ya no hace
 /// falta refrescar, no se llama a Shopify.</item>
 /// <item>Un 4xx (salvo 429) es definitivo: <see cref="IConnectionHealthReporter.ReportTokenExpiredAsync"/>, desde cualquier
-/// estado. Un 429, 5xx, red o respuesta ilegible esperan a la próxima vuelta (D13).</item>
+/// estado. Un 3xx, 429, 5xx, red o respuesta ilegible esperan a la próxima vuelta (D13). El gateway clasifica un 3xx como
+/// rechazo, porque el canje y el probador no lo distinguen; acá no alcanza: una tienda renombrada responde 301 o 302 (sin
+/// redirecciones automáticas) y <c>token_expired</c> sólo se recupera reautorizando.</item>
 /// <item>El refresco no cambia el estado ni la verificación. Si el guardado falla después de que Shopify rotó, el par viejo
 /// sigue sirviendo hasta que alguien use el nuevo, que nadie tiene: la próxima vuelta refresca con el viejo.</item>
 /// <item>Nada del token ni de la respuesta sale a los logs; tampoco se audita (Instagram no lo hace).</item>
@@ -183,7 +185,7 @@ internal sealed partial class ShopifyTokenRefreshWorker(
             grant = await services.GetRequiredService<IShopifyAdminGateway>().RefreshTokenAsync(
                 connection.Fields.GetValueOrDefault(ShopifyFieldKeys.ShopDomain) ?? string.Empty, refreshToken, cancellationToken);
         }
-        catch (ShopifyGatewayException exception) when (exception.Kind == ShopifyGatewayFailure.Rejected)
+        catch (ShopifyGatewayException exception) when (IsDefinitiveRejection(exception))
         {
             // El guardado del reporte confirma la transacción, con el candado todavía tomado.
             await services.GetRequiredService<IConnectionHealthReporter>()
@@ -194,7 +196,12 @@ internal sealed partial class ShopifyTokenRefreshWorker(
         catch (ShopifyGatewayException exception)
         {
             // D13: un Invalid no prueba que el refresh token murió; marcarlo cortaría una tienda sana.
-            LogOutcome(logger, connection.Id, "transient", exception.Kind == ShopifyGatewayFailure.Invalid ? "invalid_response" : "unreachable", Unchanged);
+            LogOutcome(logger, connection.Id, "transient", exception.Kind switch
+            {
+                ShopifyGatewayFailure.Invalid => "invalid_response",
+                ShopifyGatewayFailure.Rejected => "unexpected_status",
+                _ => "unreachable",
+            }, Unchanged);
             return Outcome.Deferred;
         }
 
@@ -226,6 +233,10 @@ internal sealed partial class ShopifyTokenRefreshWorker(
         LogOutcome(logger, connection.Id, "ok", "refreshed", newExpiry);
         return Outcome.Refreshed;
     }
+
+    // Owner, 2026-11-12: sólo un 4xx salvo 429 prueba que el refresh token murió.
+    private static bool IsDefinitiveRejection(ShopifyGatewayException exception) =>
+        exception is { Kind: ShopifyGatewayFailure.Rejected, Status: >= 400 and < 500 and not (int)System.Net.HttpStatusCode.TooManyRequests };
 
     private async Task RunSafelyAsync(CancellationToken cancellationToken)
     {
