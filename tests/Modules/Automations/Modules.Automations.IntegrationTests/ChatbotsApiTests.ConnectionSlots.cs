@@ -99,6 +99,41 @@ public sealed partial class ChatbotsApiTests
         Assert.Null(await SlotAsync(connectionString, setup.WhatsAppId));
     }
 
+    // Plan 2026-11-12 (correcciones), Tarea 3: borrar en Integrations una conexión que atiende un chatbot es 409 con el ocupante, y la
+    // fila de ocupación sigue ahí. Ejerce el adaptador real sobre messaging.connection_bots.
+    [Fact]
+    public async Task DeletingAConnectionAChatbotServesIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+        var url = $"/api/v1/tenants/{setup.Tenant.TenantId}/integrations/connections/{setup.WhatsAppId}";
+        using var integrations = CreateClient(
+            factory, setup.Tenant.OwnerUserId, setup.Tenant.TenantId,
+            Modules.Integrations.Application.IntegrationsPermissions.ConnectionRead,
+            Modules.Integrations.Application.IntegrationsPermissions.ConnectionManage);
+        var read = await integrations.GetAsync(url, Ct);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        using var connection = JsonDocument.Parse(await read.Content.ReadAsStringAsync(Ct));
+        var request = new HttpRequestMessage(HttpMethod.Delete, url);
+        request.Headers.TryAddWithoutValidation("If-Match", $"\"{connection.RootElement.GetProperty("version").GetInt64()}\"");
+
+        var response = await integrations.SendAsync(request, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        Assert.Equal("integrations.connection.in_use_by_bot", problem.RootElement.GetProperty("code").GetString());
+        var occupant = problem.RootElement.GetProperty("occupant");
+        Assert.Equal(
+            ("chatbot", id, "Servicio técnico"),
+            (occupant.GetProperty("kind").GetString(), occupant.GetProperty("id").GetGuid(), occupant.GetProperty("name").GetString()));
+        Assert.Equal(new Slot(1, id, "Servicio técnico"), await SlotAsync(connectionString, setup.WhatsAppId));
+    }
+
     [Fact]
     public async Task MovingAndRenamingAPublishedChatbotFollowsInTheSlot()
     {

@@ -1192,6 +1192,8 @@ public static class QepServiceCollectionExtensions
         services.AddScoped<IAiConnections, AiConnections>();
         services.AddScoped<IAiMembers, AiMembers>();
         services.AddScoped<IAgentConnectionSlots, AgentConnectionSlots>();
+        // Plan 2026-11-12 (correcciones de la revisión): no se borra una conexión que atiende un bot. Integrations no ve Mensajería.
+        services.AddScoped<IConnectionBotOccupancy, IntegrationsConnectionBotOccupancy>();
 
         // Shopify (spec 2026-10-15): el espejo de pedidos de las tiendas. Sólo ve Tenancy (y Audit para su auditoría atómica);
         // conexiones, clientes, productos, ciudades y pedidos entran por adaptadores que se registran más abajo.

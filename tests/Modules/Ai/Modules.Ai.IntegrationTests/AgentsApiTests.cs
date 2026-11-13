@@ -365,6 +365,68 @@ public sealed class AgentsApiTests
         Assert.Equal(before, await SlotXminAsync(setup.ConnectionString, setup.WhatsAppId));
     }
 
+    // Plan 2026-11-12 (correcciones), Tarea 3: borrar en Integrations una conexión que atiende un agente es 409 con el ocupante, y la fila
+    // de ocupación sigue ahí. Ejerce el adaptador real sobre messaging.connection_bots.
+    [Fact]
+    public async Task DeletingAConnectionAnAgentServesIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var (id, version) = await PublishableAsync(setup);
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: version)).StatusCode);
+
+        var response = await DeleteConnectionAsync(factory, setup.WhatsAppId);
+
+        await AssertInUseByAgentAsync(response, id);
+        Assert.Equal(((short)2, id, "Asesor virtual"), await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
+    }
+
+    // D-A10: un agente pausado conserva la conexión, así que borrarla sigue bloqueado.
+    [Fact]
+    public async Task DeletingAConnectionAPausedAgentServesIsRejected()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var (id, version) = await PublishableAsync(setup);
+        var published = await JsonAsync(await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: version));
+        var paused = await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/pause", ifMatch: published.GetProperty("version").GetInt64());
+        Assert.Equal(HttpStatusCode.OK, paused.StatusCode);
+
+        var response = await DeleteConnectionAsync(factory, setup.WhatsAppId);
+
+        await AssertInUseByAgentAsync(response, id);
+        Assert.Equal(((short)2, id, "Asesor virtual"), await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
+    }
+
+    /// <summary><c>DELETE</c> de Integrations con el <c>If-Match</c> vigente de la conexión, desde un cliente con los permisos de
+    /// Integrations: el del setup sólo trae los de Ai.</summary>
+    private static async Task<HttpResponseMessage> DeleteConnectionAsync(QepApiFactory factory, Guid connectionId)
+    {
+        var url = $"/api/v1/tenants/{TenantId}/integrations/connections/{connectionId}";
+        using var client = CreateClient(
+            factory, permissions: [Modules.Integrations.Application.IntegrationsPermissions.ConnectionRead, Modules.Integrations.Application.IntegrationsPermissions.ConnectionManage]);
+        var read = await client.GetAsync(url, Ct);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        return await SendAsync(client, HttpMethod.Delete, url, ifMatch: (await JsonAsync(read)).GetProperty("version").GetInt64());
+    }
+
+    private static async Task AssertInUseByAgentAsync(HttpResponseMessage response, Guid agentId)
+    {
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var (code, root) = await ProblemAsync(response);
+        Assert.Equal("integrations.connection.in_use_by_bot", code);
+        var occupant = root.GetProperty("occupant");
+        Assert.Equal(
+            ("agent", agentId, "Asesor virtual"),
+            (occupant.GetProperty("kind").GetString(), occupant.GetProperty("id").GetGuid(), occupant.GetProperty("name").GetString()));
+    }
+
     // §5: una conexión de otro tenant es 404 sin decir de quién es; una sin salida de bot (Instagram, por ahora) es 422.
     [Fact]
     public async Task OnlyTheTenantsWhatsAppConnectionsCanBeChosen()

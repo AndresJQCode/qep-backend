@@ -19,6 +19,9 @@ public static class IntegrationsErrorCodes
     public const string NotFound = "integrations.connection.not_found";
     public const string SecretProtectionUnavailable = "integrations.secret_protection.unavailable";
 
+    /// <summary>Plan 2026-11-12 (correcciones de la revisión), 409: un chatbot o un agente atiende la conexión que se quiere borrar.</summary>
+    public const string InUseByBot = "integrations.connection.in_use_by_bot";
+
     /// <summary>Plan 2026-10-21, 403: el proveedor exige habilitación y el operador no la dio (o la quitó) para el
     /// tenant. Se responde después de <c>tenancy.module_not_enabled</c>: con el módulo apagado gana ése.</summary>
     public const string ProviderNotEnabled = "integrations.provider.not_enabled";

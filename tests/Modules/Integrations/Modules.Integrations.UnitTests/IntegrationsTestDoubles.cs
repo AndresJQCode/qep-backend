@@ -196,6 +196,15 @@ internal sealed class FakeAuthorNames : IConnectionAuthorNames
             Names.Where(entry => memberIds.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value));
 }
 
+/// <summary>Quién atiende cada conexión (plan 2026-11-12, correcciones de la revisión, Tarea 3). Sin ocupante, la conexión está libre.</summary>
+internal sealed class FakeConnectionBotOccupancy : IConnectionBotOccupancy
+{
+    public ConnectionBotOccupant? Occupant { get; set; }
+
+    public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
+        Task.FromResult(Occupant);
+}
+
 /// <summary>
 /// Todo lo que un handler necesita, con valores por defecto: un tenant, un sujeto con membresía activa
 /// y los dos permisos. Clase partial: las Tasks 7, 8 y 9 suman su parte en archivos propios.
