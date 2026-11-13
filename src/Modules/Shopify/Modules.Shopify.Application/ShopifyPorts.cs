@@ -15,7 +15,8 @@ public interface IShopifyConnectionDirectory
     Task<ShopifyConnectionRef?> FindByShopDomainAsync(string shopDomain, CancellationToken cancellationToken);
 
     /// <summary>§5.3: las conexiones operativas de todos los tenants, para la conciliación. Cross-tenant a propósito, como la
-    /// ruta del webhook: el cron no corre en nombre de ningún tenant.</summary>
+    /// ruta del webhook: el cron no corre en nombre de ningún tenant. Deja fuera las que están operativas sin token (spec
+    /// 2026-11-12 §6.4): el cron no tiene con qué llamar a Shopify.</summary>
     Task<IReadOnlyList<ShopifyConnectionRef>> ListOperationalAsync(CancellationToken cancellationToken);
 
     /// <summary>§5.3 «Sincronizar ahora»: la conexión de Shopify <paramref name="connectionId"/> del tenant, en cualquier estado
@@ -28,6 +29,9 @@ public interface IShopifyConnectionDirectory
 /// Lo que el módulo sabe de una conexión. <see cref="IsOperational"/> es conexión <c>Active</c> <b>y</b> módulo <c>shopify</c>
 /// activo en el tenant: sin eso el espejo se actualiza igual y no se importa (§5.2). <see cref="AccessToken"/> sólo viaja si es
 /// operativa y nunca se imprime: <see cref="ToString"/> lo omite, para que un log del registro no lo filtre (§12).
+/// <para>Spec 2026-11-12 §6.4: <see cref="IsOperational"/> <b>no</b> implica <see cref="AccessToken"/>. Con el token vencido
+/// —el refresco de Integrations va tarde— la conexión sale operativa y sin token: la ingesta y el redact la tratan como
+/// operativa (importan, no borran), y quien llame a la Admin API salta la corrida sin reportar nada.</para>
 /// </summary>
 public sealed record ShopifyConnectionRef(
     Guid TenantId, Guid ConnectionId, string ShopId, string ShopDomain, bool IsOperational, string? AccessToken)
