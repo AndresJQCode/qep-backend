@@ -152,6 +152,37 @@ public sealed partial class ChatbotsApiTests
         Assert.Equal(new Slot(1, id, "Soporte"), await SlotAsync(connectionString, other));
     }
 
+    // Plan 2026-11-12 (correcciones), Tarea 4: la sincronización de la ocupación toma el candado del tenant antes de tocar una fila, el
+    // mismo que toman los agentes (ConnectionSlotsLock, 20261112). Con el candado tomado desde otra conexión, el renombre espera; al
+    // soltarlo, termina.
+    [Fact]
+    public async Task TheSlotSyncWaitsForTheTenantLock()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString, FakeExternalApis.WithAnnexA());
+        var setup = await SetupAsync(factory, connectionString);
+        using var _ = setup.Client;
+        var (id, version) = await PublishableAsync(setup);
+        var published = await ReadEditorAsync(await ActAsync(setup.Client, setup, id, "publish", version));
+
+        await using var holder = new Npgsql.NpgsqlConnection(connectionString);
+        await holder.OpenAsync(Ct);
+        await using var transaction = await holder.BeginTransactionAsync(Ct);
+        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261112, hashtext(@t))", holder, transaction))
+        {
+            command.Parameters.AddWithValue("t", setup.Tenant.TenantId.ToString());
+            await command.ExecuteNonQueryAsync(Ct);
+        }
+
+        var rename = SetConnectionsAsync(setup, id, "Soporte", published.Chatbot.Version, [setup.WhatsAppId], []);
+
+        Assert.NotSame(rename, await Task.WhenAny(rename, Task.Delay(TimeSpan.FromMilliseconds(1500), Ct)));
+        await transaction.RollbackAsync(Ct);
+        Assert.Equal(HttpStatusCode.OK, (await rename).StatusCode);
+        Assert.Equal(new Slot(1, id, "Soporte"), await SlotAsync(connectionString, setup.WhatsAppId));
+    }
+
     // Spec 2026-10-23 D-X1: tomar la conexión de otro chatbot mueve también la fila.
     [Fact]
     public async Task TakingOverAConnectionMovesTheSlot()

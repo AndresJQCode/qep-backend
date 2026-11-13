@@ -11,8 +11,8 @@ namespace Bootstrapper;
 ///
 /// **Corre sobre el <see cref="AutomationsDbContext"/> de la petición**, dentro de la transacción que abrió
 /// <c>AutomationsUnitOfWork</c>: la fila de Mensajería cambia en el mismo commit que el chatbot. La clave primaria de
-/// <c>connection_bots</c> es la conexión, así que dos bots que la quieren a la vez se ordenan solos: el segundo espera al primero y ve
-/// la fila tomada.
+/// <c>connection_bots</c> es la conexión, así que dos bots que la quieren a la vez se ordenan: el candado del tenant
+/// (<see cref="ConnectionSlotsLock"/>) hace esperar al segundo, que ve la fila tomada.
 ///
 /// **Acoplamiento por nombre** con <c>automations.chatbots</c>, <c>automations.chatbot_connections</c> y
 /// <c>messaging.connection_bots</c>: renombrar una de esas columnas compila y deja publicar, pausar, editar y borrar chatbots en 500
@@ -22,6 +22,10 @@ internal sealed class ChatbotConnectionSlots(AutomationsDbContext automations) :
 {
     public async Task<IReadOnlyList<ConnectionOccupant>> SyncChatbotsAsync(Guid tenantId, CancellationToken cancellationToken)
     {
+        // Antes de tocar una fila: dos sincronizaciones del mismo tenant (también la de un agente) hacen fila acá en vez de cruzarse
+        // en un deadlock entre el DELETE y el INSERT de abajo (ConnectionSlotsLock).
+        await ConnectionSlotsLock.AcquireAsync(automations, tenantId, cancellationToken);
+
         // Libera lo que ningún chatbot activo del tenant tiene ya (despublicado, borrado, conexión quitada o tomada por otro chatbot).
         await automations.Database.ExecuteSqlAsync($"""
             DELETE FROM messaging.connection_bots b
@@ -32,8 +36,8 @@ internal sealed class ChatbotConnectionSlots(AutomationsDbContext automations) :
             """, cancellationToken);
 
         // Toma las nuevas y renueva el nombre de las propias. Una conexión que ocupa otro bot (un agente) no se pisa: queda en la
-        // consulta de abajo y el guardado se deshace con 409. El ORDER BY hace que dos guardados tomen las filas en el mismo orden: uno
-        // espera al otro en vez de cruzarse en un deadlock.
+        // consulta de abajo y el guardado se deshace con 409. Lo que evita el deadlock es el candado de arriba; el ORDER BY sólo deja el
+        // orden fijo.
         await automations.Database.ExecuteSqlAsync($"""
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             SELECT cc.connection_id, cc.tenant_id, 1, c.id, c.name, now()

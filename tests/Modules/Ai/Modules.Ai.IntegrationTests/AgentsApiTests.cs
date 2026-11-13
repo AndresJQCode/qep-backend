@@ -365,6 +365,39 @@ public sealed class AgentsApiTests
         Assert.Equal(before, await SlotXminAsync(setup.ConnectionString, setup.WhatsAppId));
     }
 
+    // Plan 2026-11-12 (correcciones), Tarea 4: la sincronización de la ocupación toma el candado del tenant antes de tocar una fila, el
+    // mismo que toman los chatbots (ConnectionSlotsLock, 20261112). Con el candado tomado desde otra conexión, el renombre espera; al
+    // soltarlo, termina. Sin el candado, dos sincronizaciones del tenant pueden cruzarse en un deadlock.
+    [Fact]
+    public async Task TheSlotSyncWaitsForTheTenantLock()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        await SeedAnthropicConnectionAsync(factory);
+        var (id, version) = await PublishableAsync(setup);
+        var published = await JsonAsync(await SendAsync(setup.Client, HttpMethod.Post, $"{Agents}/{id}/publish", ifMatch: version));
+
+        await using var holder = new Npgsql.NpgsqlConnection(setup.ConnectionString);
+        await holder.OpenAsync(Ct);
+        await using var transaction = await holder.BeginTransactionAsync(Ct);
+        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261112, hashtext(@t))", holder, transaction))
+        {
+            command.Parameters.AddWithValue("t", TenantId);
+            await command.ExecuteNonQueryAsync(Ct);
+        }
+
+        var rename = SendAsync(
+            setup.Client, HttpMethod.Put, $"{Agents}/{id}", new { name = "Asistente", connectionIds = new[] { setup.WhatsAppId } },
+            ifMatch: published.GetProperty("version").GetInt64());
+
+        Assert.NotSame(rename, await Task.WhenAny(rename, Task.Delay(TimeSpan.FromMilliseconds(1500), Ct)));
+        await transaction.RollbackAsync(Ct);
+        Assert.Equal(HttpStatusCode.OK, (await rename).StatusCode);
+        Assert.Equal(((short)2, id, "Asistente"), await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
+    }
+
     // Plan 2026-11-12 (correcciones), Tarea 3: borrar en Integrations una conexión que atiende un agente es 409 con el ocupante, y la fila
     // de ocupación sigue ahí. Ejerce el adaptador real sobre messaging.connection_bots.
     [Fact]

@@ -11,7 +11,8 @@ namespace Bootstrapper;
 ///
 /// **Corre sobre el <see cref="AiDbContext"/> de la petición**, dentro de la transacción que abrió <c>AiUnitOfWork</c>: la fila de
 /// Mensajería cambia en el mismo commit que el agente. La clave primaria de <c>connection_bots</c> es la conexión, así que un chatbot y un
-/// agente que la quieren a la vez se ordenan solos: el segundo espera al primero y ve la fila tomada.
+/// agente que la quieren a la vez se ordenan: el candado del tenant (<see cref="ConnectionSlotsLock"/>) hace esperar al segundo, que ve
+/// la fila tomada.
 ///
 /// **Acoplamiento por nombre** con <c>ai.agents</c>, <c>ai.agent_connections</c> y <c>messaging.connection_bots</c>: renombrar una de esas
 /// columnas compila y deja publicar, pausar, editar y borrar agentes en 500 (<c>42703</c>). Lo amarran las pruebas de
@@ -21,6 +22,10 @@ internal sealed class AgentConnectionSlots(AiDbContext ai) : IAgentConnectionSlo
 {
     public async Task<IReadOnlyList<AiConnectionOccupant>> SyncAgentsAsync(Guid tenantId, CancellationToken cancellationToken)
     {
+        // Antes de tocar una fila: dos sincronizaciones del mismo tenant (también la de un chatbot) hacen fila acá en vez de cruzarse
+        // en un deadlock entre el DELETE y el INSERT de abajo (ConnectionSlotsLock).
+        await ConnectionSlotsLock.AcquireAsync(ai, tenantId, cancellationToken);
+
         // Libera lo que ningún agente publicado del tenant tiene ya (borrado, conexión quitada). Un borrador no ocupa (D-A10).
         await ai.Database.ExecuteSqlAsync($"""
             DELETE FROM messaging.connection_bots b
@@ -32,8 +37,7 @@ internal sealed class AgentConnectionSlots(AiDbContext ai) : IAgentConnectionSlo
             """, cancellationToken);
 
         // Toma las nuevas y renueva el nombre de las propias. Una conexión que ocupa otro bot no se pisa: queda en la consulta de abajo
-        // y el guardado se deshace con 409. El ORDER BY hace que dos guardados tomen las filas en el mismo orden: uno espera al otro en
-        // vez de cruzarse en un deadlock.
+        // y el guardado se deshace con 409. Lo que evita el deadlock es el candado de arriba; el ORDER BY sólo deja el orden fijo.
         await ai.Database.ExecuteSqlAsync($"""
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             SELECT ac.connection_id, ac.tenant_id, 2, a.id, a.name, now()
