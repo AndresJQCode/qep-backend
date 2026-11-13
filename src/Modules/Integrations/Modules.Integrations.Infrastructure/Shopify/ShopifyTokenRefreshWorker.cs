@@ -31,6 +31,9 @@ internal sealed record ShopifyTokenRefreshRunResult(int Refreshed, int Rejected,
 /// <item>El refresco no cambia el estado ni la verificación. Si el guardado falla después de que Shopify rotó, el par viejo
 /// sigue sirviendo hasta que alguien use el nuevo, que nadie tiene: la próxima vuelta refresca con el viejo.</item>
 /// <item>Nada del token ni de la respuesta sale a los logs; tampoco se audita (Instagram no lo hace).</item>
+/// <item>Una conexión que lanza algo inesperado (una carrera de concurrencia al reportar, un dominio que el gateway no acepta)
+/// cuenta como diferida y la vuelta sigue: la lista no tiene orden, así que una que falla siempre dejaría sin refrescar a las
+/// que vienen detrás. Se registra sólo el id y un código fijo, nunca el mensaje, que podría citar un valor.</item>
 /// </list>
 /// <see cref="FirstRunCompletion"/> se completa siempre tras la primera corrida: las pruebas la esperan.
 /// </summary>
@@ -110,7 +113,7 @@ internal sealed partial class ShopifyTokenRefreshWorker(
         int refreshed = 0, rejected = 0, deferred = 0, skipped = 0;
         foreach (var (connectionId, savedAt) in due)
         {
-            switch (await RefreshOneAsync(connectionId, savedAt, cancellationToken))
+            switch (await RefreshGuardedAsync(connectionId, savedAt, cancellationToken))
             {
                 case Outcome.Refreshed:
                     refreshed++;
@@ -133,6 +136,24 @@ internal sealed partial class ShopifyTokenRefreshWorker(
 
     private static ConnectionSecret? RefreshSecretOf(IntegrationConnection connection) =>
         connection.Secrets.FirstOrDefault(secret => string.Equals(secret.FieldKey, ShopifyFieldKeys.RefreshToken, StringComparison.Ordinal));
+
+    private async Task<Outcome> RefreshGuardedAsync(Guid connectionId, DateTimeOffset? listedSavedAt, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await RefreshOneAsync(connectionId, listedSavedAt, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Sin la excepción en el log: su mensaje podría citar un valor. La transacción se deshizo al salir del scope.
+            LogOutcome(logger, connectionId, "transient", "unexpected_error", Unchanged);
+            return Outcome.Deferred;
+        }
+    }
 
     private async Task<Outcome> RefreshOneAsync(Guid connectionId, DateTimeOffset? listedSavedAt, CancellationToken cancellationToken)
     {

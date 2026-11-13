@@ -214,6 +214,34 @@ public sealed class ShopifyTokenRefreshWorkerTests
         Assert.Equal(ShopifyFlow.SentinelRefreshToken, await SecretAsync(linked, ShopifyFieldKeys.RefreshToken));
     }
 
+    // Una conexión que lanza algo inesperado (acá, un dominio que el gateway no acepta) no tumba la vuelta: la lista no tiene
+    // orden, así que una que falla siempre dejaría sin refrescar a las que vienen detrás.
+    [Fact]
+    public async Task AConnectionThatThrowsDoesNotStopTheOthers()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var broken = await LinkAsync(factory, connectionString);
+        using var brokenOwner = broken.Owner;
+        // La ruta se libera para enlazar la misma tienda a otro tenant; la conexión vieja queda con un dominio ilegible.
+        await ExecuteAsync(connectionString, "DELETE FROM integrations.connection_routes WHERE connection_id = @id", ("id", broken.ConnectionId));
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE integrations.connections SET fields = jsonb_set(fields, '{shopDomain}', to_jsonb('no es un dominio'::text)) WHERE id = @id",
+            ("id", broken.ConnectionId));
+        var healthy = await LinkAsync(factory, connectionString);
+        using var healthyOwner = healthy.Owner;
+        await ExpireInAsync(broken, TimeSpan.FromMinutes(5));
+        await ExpireInAsync(healthy, TimeSpan.FromMinutes(5));
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, RefreshedAccess, RefreshedRefresh);
+
+        Assert.Equal((1, 0, 1, 0), Counts(await healthy.Worker.RunOnceAsync(Ct)));
+        Assert.Single(factory.ShopifyHandler.RefreshRequests);
+        Assert.Equal(RefreshedAccess, await SecretAsync(healthy, ShopifyFieldKeys.AccessToken));
+        Assert.Equal("Active:", await StateAsync(broken));
+    }
+
     // Review Focus 1 (D9): ReportCredentialsRejectedAsync ignoraría la pausada y el worker la reintentaría para siempre.
     [Fact]
     public async Task APausedConnectionRejectedIsMarkedAndNotRetried()
