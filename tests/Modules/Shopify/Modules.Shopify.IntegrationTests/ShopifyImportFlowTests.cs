@@ -50,14 +50,15 @@ public sealed class ShopifyImportFlowTests
     }
 
     [Fact]
-    public async Task ImportWithoutDocumentIncompleteAndPendingOrder()
+    public async Task ImportWithoutDocumentIncompleteAndOpenOrder()
     {
         await using var flow = await Flow.StartAsync();
 
         await flow.DeliverAsync("orders/create", "wh-1", Fixture("no-document"));
 
+        // Spec 2026-11-10: el pedido nace Open; Pending ya no es un estado.
         Assert.Equal(
-            "Incomplete|none|Pending|Shopify",
+            "Incomplete|none|Open|Shopify",
             await flow.ScalarAsync(
                 """
                 SELECT c.completeness || '|' || coalesce(c.cuc, 'none') || '|' || o.status || '|' || o.source
@@ -298,14 +299,16 @@ public sealed class ShopifyImportFlowTests
         Assert.Equal(1L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
     }
 
-    // §6.3: Shopify cancela cuatro pedidos que quedaron en cuatro lugares distintos de QEP. Pendiente y aprobado se anulan; el
-    // facturado no se toca y la fila avisa invoiced_before_cancel; el que esperaba un producto se ignora y nunca nace.
+    // §6.3: Shopify cancela cuatro pedidos que quedaron en cuatro lugares distintos de QEP. El abierto se anula; el preparado
+    // también, porque la anulación de la plataforma gana sobre preparado y conserva la marca (spec 2026-11-10 §3.1); el
+    // facturado no se toca (sigue Open con invoiced_at) y la fila avisa invoiced_before_cancel; el que esperaba un producto se
+    // ignora y nunca nace. El fixture llega pagado, así que el pedido ya nace pagado y facturarlo no pide marcarlo antes.
     [Fact]
-    public async Task CancelOnPendingApprovedInvoicedAndWaiting()
+    public async Task CancelOnOpenPreparedInvoicedAndWaiting()
     {
         await using var flow = await Flow.StartAsync();
-        await flow.DeliverAsync("orders/create", "wh-p", Fixture("taxes-included", order => Renumber(order, 5550000000301, "#1301")));
-        await flow.DeliverAsync("orders/create", "wh-a", Fixture("taxes-included", order => Renumber(order, 5550000000302, "#1302")));
+        await flow.DeliverAsync("orders/create", "wh-o", Fixture("taxes-included", order => Renumber(order, 5550000000301, "#1301")));
+        await flow.DeliverAsync("orders/create", "wh-p", Fixture("taxes-included", order => Renumber(order, 5550000000302, "#1302")));
         await flow.DeliverAsync("orders/create", "wh-i", Fixture("taxes-included", order => Renumber(order, 5550000000303, "#1303")));
         await flow.DeliverAsync("orders/create", "wh-w", Fixture("taxes-included", order =>
         {
@@ -313,12 +316,12 @@ public sealed class ShopifyImportFlowTests
             order["line_items"]![0]!["sku"] = "NO-EXISTE";
         }));
         Assert.Equal("product_unmatched", await flow.MirrorAsync(5550000000304, "wait_reason"));
-        using var approver = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderApprove, OrdersPermissions.OrderInvoice);
-        var approved = await flow.QepOrderAsync(5550000000302);
+        using var operatorClient = flow.Client(OrdersPermissions.OrderRead, OrdersPermissions.OrderManage, OrdersPermissions.OrderInvoice);
+        var prepared = await flow.QepOrderAsync(5550000000302);
         var invoiced = await flow.QepOrderAsync(5550000000303);
-        foreach (var (orderId, action) in new[] { (approved, "approve"), (invoiced, "approve"), (invoiced, "invoice") })
+        foreach (var (orderId, action) in new[] { (prepared, "prepare"), (invoiced, "invoice") })
         {
-            var response = await approver.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}/{action}", content: null, Ct);
+            var response = await operatorClient.PostAsync($"/api/v1/tenants/{flow.World.TenantId}/orders/{orderId}/{action}", content: null, Ct);
             Assert.True(response.IsSuccessStatusCode, $"{action} {orderId}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(Ct)}");
         }
 
@@ -329,14 +332,16 @@ public sealed class ShopifyImportFlowTests
 
         Assert.Equal(
             "5550000000301|Cancelled||Cancelled,"
-            + "5550000000302|Cancelled||Cancelled,"
-            + "5550000000303|Cancelled|invoiced_before_cancel|Invoiced,"
+            + "5550000000302|Cancelled||Cancelled prepared,"
+            + "5550000000303|Cancelled|invoiced_before_cancel|Open invoiced,"
             + "5550000000304|Ignored||",
             await flow.ScalarAsync(
                 """
                 SELECT string_agg(
                     m.shopify_order_id || '|' || m.import_state || '|' || coalesce(m.wait_detail ->> 'reason', '') || '|'
-                    || coalesce(o.status, ''), ',' ORDER BY m.shopify_order_id)
+                    || coalesce(o.status, '') || CASE WHEN o.prepared_at IS NOT NULL THEN ' prepared' ELSE '' END
+                    || CASE WHEN o.invoiced_at IS NOT NULL THEN ' invoiced' ELSE '' END,
+                    ',' ORDER BY m.shopify_order_id)
                 FROM shopify.orders m LEFT JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
                 """));
         Assert.Equal(3L, await ScalarAsync<long>(flow.ConnectionString, "SELECT count(*) FROM quotations.orders"));
