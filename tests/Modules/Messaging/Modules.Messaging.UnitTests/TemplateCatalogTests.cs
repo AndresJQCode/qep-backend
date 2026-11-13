@@ -340,4 +340,21 @@ public sealed class TemplateCatalogTests
         Assert.Null(template.HeaderMedia);
         Assert.True(template.SendableWithHeaderMedia);
     }
+
+    [Fact]
+    public void BuildSendCarriesTheHeaderToMetaAndToTheDetail()
+    {
+        var template = Single(NamedUtility);
+        var values = new Dictionary<string, string> { ["first_name"] = "Ana", ["order_id"] = "A-1" };
+        var header = TemplateHeader.ByLink("image", "https://cdn.example.com/logo.png", null);
+
+        var built = TemplateCatalog.BuildSend(template, values, header);
+
+        Assert.Equal(header, built.Send.Header);
+        Assert.Equal(header, TemplateDetailsJson.ParseSend(built.DetailsJson)!.Header);
+
+        var plain = TemplateCatalog.BuildSend(template, values);
+        Assert.Null(plain.Send.Header);
+        Assert.Null(TemplateDetailsJson.ParseSend(plain.DetailsJson)!.Header);
+    }
 }

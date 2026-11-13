@@ -34,14 +34,17 @@ public sealed record MessageTemplateDto(
     bool SendableWithHeaderMedia = false);
 
 /// <summary>Lo que <see cref="TemplateDetailsJson.Serialize"/> guardó de un envío de plantilla: nombre, idioma y valores. Spec 2026-10-30 §6.3:
-/// un reintento con el mismo <c>clientId</c> compara contra esto.</summary>
-public sealed record StoredTemplateSend(string Name, string Language, IReadOnlyDictionary<string, string> Parameters);
+/// un reintento con el mismo <c>clientId</c> compara contra esto. Spec 2026-11-13: <c>Header</c> es el encabezado por enlace, si lo hubo.</summary>
+public sealed record StoredTemplateSend(string Name, string Language, IReadOnlyDictionary<string, string> Parameters, TemplateHeader? Header = null);
 
 /// <summary>Spec 2026-10-11 §5.2: el <c>details</c> de un mensaje <c>Template</c>:
 /// <c>{ "template": { "name", "language", "category", "parameters": { clave: valor } } }</c>.</summary>
 public static class TemplateDetailsJson
 {
-    public static string Serialize(string name, string language, string category, IReadOnlyDictionary<string, string> parameters)
+    /// <summary>Spec 2026-11-13 §4.6: <c>header</c> (<c>{ type, link, filename? }</c>) sólo se guarda para un encabezado por enlace; uno por
+    /// <c>id</c> es una media de QEP que nunca llega al hilo.</summary>
+    public static string Serialize(
+        string name, string language, string category, IReadOnlyDictionary<string, string> parameters, TemplateHeader? header = null)
     {
         ArgumentNullException.ThrowIfNull(parameters);
         var values = new JsonObject();
@@ -50,10 +53,19 @@ public static class TemplateDetailsJson
             values[key] = value;
         }
 
-        return new JsonObject
+        var template = new JsonObject { ["name"] = name, ["language"] = language, ["category"] = category, ["parameters"] = values };
+        if (header?.Link is not null)
         {
-            ["template"] = new JsonObject { ["name"] = name, ["language"] = language, ["category"] = category, ["parameters"] = values },
-        }.ToJsonString();
+            var stored = new JsonObject { ["type"] = header.Type, ["link"] = header.Link };
+            if (header.FileName is not null)
+            {
+                stored["filename"] = header.FileName;
+            }
+
+            template["header"] = stored;
+        }
+
+        return new JsonObject { ["template"] = template }.ToJsonString();
     }
 
     /// <summary>Si el detalle falta o no trae nombre e idioma, <c>null</c>: el mensaje sale sin <c>template</c> en vez de romper la página.</summary>
@@ -70,7 +82,7 @@ public static class TemplateDetailsJson
             return document.RootElement.ValueKind == JsonValueKind.Object
                 && document.RootElement.TryGetProperty("template", out var template) && template.ValueKind == JsonValueKind.Object
                 && Text(template, "name") is { Length: > 0 } name && Text(template, "language") is { Length: > 0 } language
-                ? new MessageTemplateRefDto(name, language)
+                ? new MessageTemplateRefDto(name, language, VisibleHeader(template))
                 : null;
         }
         catch (JsonException)
@@ -110,13 +122,27 @@ public static class TemplateDetailsJson
                 }
             }
 
-            return new StoredTemplateSend(name, language, parameters);
+            return new StoredTemplateSend(name, language, parameters, StoredHeader(template));
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>El <c>header</c> guardado tal cual, si es un objeto con <c>type</c> y <c>link</c> de texto; si no, <c>null</c>.</summary>
+    private static TemplateHeader? StoredHeader(JsonElement template) =>
+        template.TryGetProperty("header", out var header) && header.ValueKind == JsonValueKind.Object
+        && Text(header, "type") is { } type && Text(header, "link") is { } link
+            ? new TemplateHeader(type, link, null, Text(header, "filename"))
+            : null;
+
+    /// <summary>Lo que sale al hilo: sólo un tipo conocido con un enlace que cumple el contrato; el resto se oculta en vez de romper la página.</summary>
+    private static MessageTemplateHeaderDto? VisibleHeader(JsonElement template) =>
+        StoredHeader(template) is { Link: { } link } header
+        && TemplateHeaderMedia.FromMetaType(header.Type) is { } media && ExternalMediaLink.IsValidLink(link)
+            ? new MessageTemplateHeaderDto(TemplateHeaderMedia.ToMetaType(media), link, header.FileName)
+            : null;
 
     private static string? Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
@@ -313,7 +339,7 @@ public static partial class TemplateCatalog
     /// que verá la persona y el <c>details</c> del mensaje. El envío humano y el worker de campañas arman lo mismo por acá: dos copias se
     /// separarían la primera vez que alguien tocara una.
     /// </summary>
-    public static BuiltTemplate BuildSend(MessageTemplateDto template, IReadOnlyDictionary<string, string> values)
+    public static BuiltTemplate BuildSend(MessageTemplateDto template, IReadOnlyDictionary<string, string> values, TemplateHeader? header = null)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(values);
@@ -323,9 +349,10 @@ public static partial class TemplateCatalog
             template.ParameterFormat == Named,
             [.. template.Parameters.Where(key => !IsButtonParameter(key)).Select(key => new TemplateParameter(key, values[key]))],
             [.. template.Parameters.Where(IsButtonParameter).Select(key => new TemplateUrlButton(
-                int.Parse(key.AsSpan(ButtonParameterPrefix.Length), System.Globalization.CultureInfo.InvariantCulture), values[key]))]);
+                int.Parse(key.AsSpan(ButtonParameterPrefix.Length), System.Globalization.CultureInfo.InvariantCulture), values[key]))],
+            header);
         return new BuiltTemplate(
-            send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values));
+            send, Render(template, values), TemplateDetailsJson.Serialize(template.Name, template.Language, template.Category, values, header));
     }
 
     /// <summary>Lo que verá la persona: encabezado, cuerpo con las variables sustituidas y pie, separados por una línea en
