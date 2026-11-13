@@ -14,11 +14,21 @@ namespace Modules.Integrations.Infrastructure.Persistence;
 /// </summary>
 internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : IIntegrationsUnitOfWork
 {
+    public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await dbContext.SaveChangesAsync(cancellationToken);
+            var saved = await dbContext.SaveChangesAsync(cancellationToken);
+            // With the caller's transaction open, saving is committing (the handle disposed uncommitted rolls back).
+            if (dbContext.Database.CurrentTransaction is { } transaction)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+
+            return saved;
         }
         // Primero: DbUpdateConcurrencyException hereda de DbUpdateException.
         catch (DbUpdateConcurrencyException exception)

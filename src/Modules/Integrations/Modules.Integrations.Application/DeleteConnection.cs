@@ -26,8 +26,11 @@ public sealed class DeleteConnectionHandler(
         var (connection, _) = await ConnectionLoader.LoadVisibleAsync(
             repository, catalog, tenantModules, command.TenantId, command.ConnectionId, cancellationToken);
         ConcurrencyGuard.EnsureVersion(connection, command.ExpectedVersion);
-        // Sin limpieza en cascada (decisión del owner): quien la atiende tiene que soltarla primero. Un bot que publica justo después de
-        // este chequeo queda con una conexión muerta, y Ai la ignora al validar y en el editor.
+        // No cascade cleanup (owner decision): whoever serves it has to release it first. The check and the delete share one
+        // transaction, where the adapter takes the tenant's slot lock, the same one the bot slot sync takes first (plan 2026-11-12,
+        // Task 6): a publish that started before waits for the delete, or the delete waits for it and sees its row. A bot published
+        // after the commit is left with a dead connection, and Ai ignores it when validating and in the editor.
+        await using var transaction = await unitOfWork.BeginTransactionAsync(cancellationToken);
         if (await botOccupancy.FindAsync(command.TenantId, command.ConnectionId, cancellationToken) is { } occupant)
         {
             throw new ConnectionInUseByBotException(occupant);

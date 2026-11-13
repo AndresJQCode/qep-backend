@@ -136,6 +136,14 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
 
     public Exception? FailWith { get; set; }
 
+    /// <summary>Whether a transaction of <see cref="BeginTransactionAsync"/> is open and not yet disposed.</summary>
+    public bool InTransaction { get; private set; }
+
+    public int Transactions { get; private set; }
+
+    /// <summary>Whether the last save ran inside the open transaction (saving then commits it, like the real unit of work).</summary>
+    public bool SavedInsideTransaction { get; private set; }
+
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         if (FailWith is { } failure)
@@ -144,7 +152,24 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
         }
 
         Saves++;
+        SavedInsideTransaction = InTransaction;
         return Task.FromResult(1);
+    }
+
+    public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        InTransaction = true;
+        Transactions++;
+        return Task.FromResult<IAsyncDisposable>(new Transaction(this));
+    }
+
+    private sealed class Transaction(FakeUnitOfWork owner) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            owner.InTransaction = false;
+            return ValueTask.CompletedTask;
+        }
     }
 }
 
@@ -205,8 +230,14 @@ internal sealed class FakeConnectionBotOccupancy : IConnectionBotOccupancy
     public void Occupy(Guid tenantId, Guid connectionId, ConnectionBotOccupant occupant) =>
         occupants[(tenantId, connectionId)] = occupant;
 
-    public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-        Task.FromResult(occupants.GetValueOrDefault((tenantId, connectionId)));
+    /// <summary>Runs on every lookup, before answering: lets a test observe the state of the unit of work at check time.</summary>
+    public Action? OnFind { get; set; }
+
+    public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        OnFind?.Invoke();
+        return Task.FromResult(occupants.GetValueOrDefault((tenantId, connectionId)));
+    }
 }
 
 /// <summary>

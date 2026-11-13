@@ -437,6 +437,42 @@ public sealed class AgentsApiTests
         Assert.Equal(((short)2, id, "Asesor virtual"), await SlotAsync(setup.ConnectionString, setup.WhatsAppId));
     }
 
+    // Plan 2026-11-12, Task 6: the occupancy check and the delete hold the tenant's slot lock until the delete commits. Another
+    // connection plays a publish's slot sync: it takes the lock and occupies the free connection. The delete waits for it and, once it
+    // commits, sees the occupant. Before Task 6 the check read the empty table, the FOR SHARE locked nothing, and the delete went through.
+    [Fact]
+    public async Task DeletingAConnectionWaitsForASlotSyncInFlight()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var setup = await SetupAsync(factory, database.GetConnectionString());
+        using var _ = setup.Client;
+        var agentId = Guid.CreateVersion7();
+
+        await using var sync = new Npgsql.NpgsqlConnection(setup.ConnectionString);
+        await sync.OpenAsync(Ct);
+        await using var transaction = await sync.BeginTransactionAsync(Ct);
+        await using (var command = new Npgsql.NpgsqlCommand(
+            """
+            SELECT pg_advisory_xact_lock(20261112, hashtext(@t));
+            INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
+            VALUES (@c, @tenant, 2, @b, 'Asesor virtual', now());
+            """, sync, transaction))
+        {
+            command.Parameters.AddWithValue("t", TenantId);
+            command.Parameters.AddWithValue("c", setup.WhatsAppId);
+            command.Parameters.AddWithValue("tenant", Guid.Parse(TenantId));
+            command.Parameters.AddWithValue("b", agentId);
+            await command.ExecuteNonQueryAsync(Ct);
+        }
+
+        var delete = DeleteConnectionAsync(factory, setup.WhatsAppId);
+
+        Assert.NotSame(delete, await Task.WhenAny(delete, Task.Delay(TimeSpan.FromMilliseconds(1500), Ct)));
+        await transaction.CommitAsync(Ct);
+        await AssertInUseByAgentAsync(await delete, agentId);
+    }
+
     /// <summary><c>DELETE</c> de Integrations con el <c>If-Match</c> vigente de la conexión, desde un cliente con los permisos de
     /// Integrations: el del setup sólo trae los de Ai.</summary>
     private static async Task<HttpResponseMessage> DeleteConnectionAsync(QepApiFactory factory, Guid connectionId)

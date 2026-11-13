@@ -56,4 +56,43 @@ public sealed class DeleteConnectionHandlerTests
         Assert.Empty(bed.Repository.Connections);
         Assert.Equal(1, bed.UnitOfWork.Saves);
     }
+
+    /// <summary>Plan 2026-11-12, Task 6: the check and the delete are one transaction, the one where the adapter takes the tenant's slot
+    /// lock. Outside it the lock would be released right after the check, and a bot published in between would keep a dead connection.</summary>
+    [Fact]
+    public async Task TheOccupancyCheckRunsInsideTheTransactionThatDeletes()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        var checkedInsideTransaction = false;
+        var connectionsAtCheck = -1;
+        bed.BotOccupancy.OnFind = () =>
+        {
+            checkedInsideTransaction = bed.UnitOfWork.InTransaction;
+            connectionsAtCheck = bed.Repository.Connections.Count;
+        };
+
+        Assert.True(await bed.DeleteHandler().HandleAsync(new DeleteConnectionCommand(bed.TenantId, connection.Id, 1), Ct));
+
+        Assert.True(checkedInsideTransaction);
+        Assert.Equal(1, connectionsAtCheck);
+        Assert.Equal(1, bed.UnitOfWork.Transactions);
+        Assert.True(bed.UnitOfWork.SavedInsideTransaction);
+        Assert.False(bed.UnitOfWork.InTransaction);
+    }
+
+    [Fact]
+    public async Task AConflictDisposesTheTransactionWithoutSaving()
+    {
+        var bed = new IntegrationsTestBed();
+        var connection = bed.Seed();
+        bed.BotOccupancy.Occupy(bed.TenantId, connection.Id, new ConnectionBotOccupant("chatbot", Guid.CreateVersion7(), "Bot de ventas"));
+
+        await Assert.ThrowsAsync<ConnectionInUseByBotException>(() =>
+            bed.DeleteHandler().HandleAsync(new DeleteConnectionCommand(bed.TenantId, connection.Id, 1), Ct));
+
+        Assert.Equal(1, bed.UnitOfWork.Transactions);
+        Assert.False(bed.UnitOfWork.InTransaction);
+        Assert.Equal(0, bed.UnitOfWork.Saves);
+    }
 }
