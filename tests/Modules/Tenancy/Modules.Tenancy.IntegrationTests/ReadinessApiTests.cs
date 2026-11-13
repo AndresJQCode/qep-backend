@@ -47,6 +47,32 @@ public sealed class ReadinessApiTests
         Assert.Equal(HttpStatusCode.OK, live.StatusCode);
     }
 
+    // Valkey no entra a /health/ready (spec 2026-11-13, D-1): con las áreas prendidas y nadie escuchando en el puerto,
+    // el host arranca y las dos sondas responden 200. Cada área vuelve a su respaldo local.
+    [Fact]
+    public async Task TheHostStartsWithoutValkey()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(
+            database.GetConnectionString(),
+            new Dictionary<string, string>
+            {
+                ["Valkey:Enabled"] = "true",
+                ["Valkey:Areas:Presence"] = "true",
+                ["Valkey:Areas:RateLimiting"] = "true",
+                ["ConnectionStrings:Valkey"] = "127.0.0.1:1,connectTimeout=500",
+            });
+        using var client = factory.CreateClient();
+
+        using var ready = await client.GetAsync(
+            new Uri("/health/ready", UriKind.Relative), TestContext.Current.CancellationToken);
+        using var live = await client.GetAsync(
+            new Uri("/health/live", UriKind.Relative), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+    }
+
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
@@ -58,7 +84,8 @@ public sealed class ReadinessApiTests
         return database;
     }
 
-    private sealed class QepApiFactory(string connectionString) : WebApplicationFactory<Program>
+    private sealed class QepApiFactory(string connectionString, IReadOnlyDictionary<string, string>? settings = null)
+        : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -75,6 +102,10 @@ public sealed class ReadinessApiTests
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:MinimumAgeHours", "24");
             builder.UseSetting("Storage:PaymentProofOrphanCleanup:IntervalHours", "24");
             builder.UseSetting("Quotations:PaymentProofs:PublicLinks", "false");
+            foreach (var (key, value) in settings ?? new Dictionary<string, string>())
+            {
+                builder.UseSetting(key, value);
+            }
         }
     }
 }

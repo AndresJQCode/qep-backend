@@ -2,6 +2,7 @@ using Bootstrapper.Authentication;
 using Bootstrapper.Deployment;
 using Bootstrapper.Messaging;
 using Bootstrapper.Seeding;
+using Bootstrapper.Valkey;
 using BuildingBlocks.Application;
 using BuildingBlocks.Infrastructure;
 using BuildingBlocks.Observability;
@@ -92,11 +93,8 @@ public static class QepServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton<IValidateOptions<ApiAccessOptions>, ApiAccessOptionsValidator>();
         services.AddSingleton<ApiKeyRateLimiter>();
-        // Valkey (spec 2026-11-13, D-1): en Production la cadena es obligatoria aunque todo esté apagado.
-        services.AddOptions<Bootstrapper.Valkey.ValkeyOptions>()
-            .Bind(configuration.GetSection(Bootstrapper.Valkey.ValkeyOptions.SectionName))
-            .ValidateOnStart();
-        services.AddSingleton<IValidateOptions<Bootstrapper.Valkey.ValkeyOptions>, Bootstrapper.Valkey.ValkeyOptionsValidator>();
+        // Valkey (spec 2026-11-13, D-1): cliente, opciones, métricas y gateway.
+        services.AddQepValkey(configuration);
         services.AddScoped<IRequestDispatcher, RequestDispatcher>();
         services.AddScoped<
             IQueryHandler<GetTenantSettingsQuery, TenantSettingsDto>,

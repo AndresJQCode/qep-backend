@@ -24,7 +24,7 @@ internal sealed class ValkeyOptionsValidator(IHostEnvironment environment, IConf
             failures.Add($"{ValkeyOptions.SectionName}:OperationTimeoutMs must be greater than zero.");
         }
 
-        if (environment.IsProduction() && IsMissing(configuration.GetConnectionString(ValkeyConnection.ConnectionStringName)))
+        if (environment.IsProduction() && ValkeyConnection.ReadConnectionString(configuration) is null)
         {
             failures.Add(
                 $"{ConnectionStringKey} is required in Production, even with every Valkey area off; "
@@ -35,7 +35,4 @@ internal sealed class ValkeyOptionsValidator(IHostEnvironment environment, IConf
             ? ValidateOptionsResult.Fail(failures)
             : ValidateOptionsResult.Success;
     }
-
-    private static bool IsMissing(string? value) =>
-        string.IsNullOrWhiteSpace(value) || value.TrimStart().StartsWith("#{", StringComparison.Ordinal);
 }

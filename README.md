@@ -2656,6 +2656,16 @@ historial y los abandonados. `campaign` no tiene columna de edad, así que sólo
 Ninguna lleva tenant ni datos de la persona. El dashboard de Grafana `QEP Backend` no vive en este repo: está en
 `migracion-k8s/k8s/platform/dashboards/qep-backend-dashboard.yaml`.
 
+El cliente de Valkey (spec 2026-11-13) publica dos métricas en el meter `Qep.Platform`. Valkey **no** entra a
+`/health/ready`: si se cae, cada área vuelve a su respaldo local y la caída se ve acá, no sacando pods del Service.
+
+| Métrica                | Prometheus                         | Etiqueta | Qué mide                                                                                       |
+| ---------------------- | ---------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `qep.valkey.connected` | `qep_valkey_connected`             | —        | 1 si el cliente del pod está conectado; 0 si está apagado (`Valkey:Enabled`), sin cadena o caído |
+| `qep.valkey.fallbacks` | `qep_valkey_fallbacks_total{area}` | `area`   | Operaciones que no llegaron a Valkey (sin conexión, tope de `OperationTimeoutMs` o error) y usaron el respaldo del área: `presence`, `rate_limiting`, `sessions`, `permissions`, `send_budget`, `doorbells`, `api_key_touch` |
+
+La alerta sobre estas dos no vive en este repo: está en `migracion-k8s`, con las demás reglas de la plataforma.
+
 ### Infraestructura local
 
 `compose.yaml` solo levanta PostgreSQL 18 y el `otel-collector`. No hay Redis
