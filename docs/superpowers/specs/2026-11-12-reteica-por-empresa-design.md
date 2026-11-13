@@ -522,7 +522,10 @@ tasa nacional o si la ciudad no se encontró). La forma `{ id, name, departmentI
 ### 9.4 Cotizaciones y pedidos
 
 En `QuotationDto`/`QuotationResponse` (`QuotationsDtos.cs`) y el detalle del pedido (`OrdersDtos.cs`), y en todas sus vistas previas
-(`POST /quotations/preview`, `POST /quotations/{id}/preview`, `POST /orders/preview`, `POST /orders/{id}/preview`):
+(`POST /quotations/preview`, `POST /quotations/{id}/preview`, `POST /orders/preview`, `POST /orders/{id}/preview`). En el pedido
+los tres campos (`operationCity`, `billingCompanyCity`, `municipalWithholdings`) van en la **raíz** de `OrderDetailResponse`, junto a
+`order` y no dentro de él, como `client` y `availableFloors`: los compone el endpoint, no los guarda el pedido; `order.withholdings`
+no se mueve (owner, 2026-11-13). En la cotización van en la raíz de `QuotationResponse`:
 
 ```json
 {
