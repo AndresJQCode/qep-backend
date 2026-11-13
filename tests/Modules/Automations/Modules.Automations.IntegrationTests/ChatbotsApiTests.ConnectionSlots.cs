@@ -185,7 +185,7 @@ public sealed partial class ChatbotsApiTests
     }
 
     // Plan 2026-11-12 (correcciones), Tarea 4: la sincronización de la ocupación toma el candado del tenant antes de tocar una fila, el
-    // mismo que toman los agentes (ConnectionSlotsLock, 20261112). Con el candado tomado desde otra conexión, el renombre espera; al
+    // mismo que toman los agentes (ConnectionSlotsLock, 20261113). Con el candado tomado desde otra conexión, el renombre espera; al
     // soltarlo, termina.
     [Fact]
     public async Task TheSlotSyncWaitsForTheTenantLock()
@@ -201,7 +201,7 @@ public sealed partial class ChatbotsApiTests
         await using var holder = new Npgsql.NpgsqlConnection(connectionString);
         await holder.OpenAsync(Ct);
         await using var transaction = await holder.BeginTransactionAsync(Ct);
-        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261112, hashtext(@t))", holder, transaction))
+        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261113, hashtext(@t))", holder, transaction))
         {
             command.Parameters.AddWithValue("t", setup.Tenant.TenantId.ToString());
             await command.ExecuteNonQueryAsync(Ct);

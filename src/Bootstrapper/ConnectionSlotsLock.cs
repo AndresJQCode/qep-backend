@@ -14,9 +14,10 @@ namespace Bootstrapper;
 /// </summary>
 internal static class ConnectionSlotsLock
 {
-    /// <summary>Primera clave de la forma de dos: la fecha del plan. Cualquier constante sirve mientras ningún otro candado de dos claves
-    /// la use (hoy están <c>TenantChangeLock.Namespace</c> = 20261008 y <c>AutomationsConversationLock.Namespace</c> = 20261022).</summary>
-    public const int Namespace = 20261112;
+    /// <summary>Primera clave de la forma de dos. Cualquier constante sirve mientras ningún otro candado de dos claves la use (hoy están
+    /// <c>TenantChangeLock.Namespace</c> = 20261008, <c>AutomationsConversationLock.Namespace</c> = 20261022 y
+    /// <c>ShopifyTokenLock.Namespace</c> = 20261112; por eso esta no es la fecha del plan sino el día siguiente).</summary>
+    public const int Namespace = 20261113;
 
     public static Task AcquireAsync(DbContext dbContext, Guid tenantId, CancellationToken cancellationToken) =>
         dbContext.Database.ExecuteSqlAsync(

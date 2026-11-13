@@ -366,7 +366,7 @@ public sealed class AgentsApiTests
     }
 
     // Plan 2026-11-12 (correcciones), Tarea 4: la sincronización de la ocupación toma el candado del tenant antes de tocar una fila, el
-    // mismo que toman los chatbots (ConnectionSlotsLock, 20261112). Con el candado tomado desde otra conexión, el renombre espera; al
+    // mismo que toman los chatbots (ConnectionSlotsLock, 20261113). Con el candado tomado desde otra conexión, el renombre espera; al
     // soltarlo, termina. Sin el candado, dos sincronizaciones del tenant pueden cruzarse en un deadlock.
     [Fact]
     public async Task TheSlotSyncWaitsForTheTenantLock()
@@ -382,7 +382,7 @@ public sealed class AgentsApiTests
         await using var holder = new Npgsql.NpgsqlConnection(setup.ConnectionString);
         await holder.OpenAsync(Ct);
         await using var transaction = await holder.BeginTransactionAsync(Ct);
-        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261112, hashtext(@t))", holder, transaction))
+        await using (var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(20261113, hashtext(@t))", holder, transaction))
         {
             command.Parameters.AddWithValue("t", TenantId);
             await command.ExecuteNonQueryAsync(Ct);
@@ -454,7 +454,7 @@ public sealed class AgentsApiTests
         await using var transaction = await sync.BeginTransactionAsync(Ct);
         await using (var command = new Npgsql.NpgsqlCommand(
             """
-            SELECT pg_advisory_xact_lock(20261112, hashtext(@t));
+            SELECT pg_advisory_xact_lock(20261113, hashtext(@t));
             INSERT INTO messaging.connection_bots (connection_id, tenant_id, bot_kind, bot_id, bot_name, reserved_at)
             VALUES (@c, @tenant, 2, @b, 'Asesor virtual', now());
             """, sync, transaction))
