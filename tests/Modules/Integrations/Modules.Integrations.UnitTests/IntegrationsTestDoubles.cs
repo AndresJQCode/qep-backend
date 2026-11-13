@@ -196,13 +196,17 @@ internal sealed class FakeAuthorNames : IConnectionAuthorNames
             Names.Where(entry => memberIds.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value));
 }
 
-/// <summary>Quién atiende cada conexión (plan 2026-11-12, correcciones de la revisión, Tarea 3). Sin ocupante, la conexión está libre.</summary>
+/// <summary>Who serves each connection (plan 2026-11-12, review corrections, Tasks 3 and 6). Keyed by tenant and connection, like
+/// <c>messaging.connection_bots</c>: an occupant of another connection, or of the same id under another tenant, does not count.</summary>
 internal sealed class FakeConnectionBotOccupancy : IConnectionBotOccupancy
 {
-    public ConnectionBotOccupant? Occupant { get; set; }
+    private readonly Dictionary<(Guid TenantId, Guid ConnectionId), ConnectionBotOccupant> occupants = [];
+
+    public void Occupy(Guid tenantId, Guid connectionId, ConnectionBotOccupant occupant) =>
+        occupants[(tenantId, connectionId)] = occupant;
 
     public Task<ConnectionBotOccupant?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-        Task.FromResult(Occupant);
+        Task.FromResult(occupants.GetValueOrDefault((tenantId, connectionId)));
 }
 
 /// <summary>
