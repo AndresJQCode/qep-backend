@@ -187,7 +187,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   allowlist en `.claude/settings.json` llevan comodín a propósito, para que no sean un cuarto
   lugar que se olvida.
 - **Cambiar `Directory.Packages.props` sin regenerar los lock files no rompe tu máquina: rompe
-  el `docker build`.** Los 74 `packages.lock.json` —uno por `.csproj`, activados por
+  el `docker build`.** Los 152 `packages.lock.json` —uno por `.csproj`, activados por
   `RestorePackagesWithLockFile` en `Directory.Build.props`— se regeneran con
   `dotnet restore --force-evaluate` y se commitean **junto** con el props. En local un `restore`
   normal los actualiza solo y no protesta; el `Dockerfile` corre `--locked-mode`, donde NuGet

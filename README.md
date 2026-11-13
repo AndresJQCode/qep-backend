@@ -46,6 +46,10 @@ dotnet restore --locked-mode
 # Requerido una sola vez: la cadena de conexión no vive en appsettings.json.
 dotnet user-secrets set "ConnectionStrings:QepDatabase" "Host=localhost;Port=5432;Database=qep;Username=qep;Password=qep_dev" --project src/Api
 
+# Valkey (estado compartido entre pods). Con Valkey:Enabled = false, el default, no conecta nada; si ya tienes
+# otro Valkey en 6379, no levantes el servicio valkey de compose.yaml.
+dotnet user-secrets set "ConnectionStrings:Valkey" "localhost:6379" --project src/Api
+
 dotnet run --project src/Api --launch-profile http
 ```
 
@@ -97,7 +101,7 @@ corren con `ValidateOnStart` (`StorageOptionsValidator`,
 `NotificationsOptionsValidator`, `SessionOptionsValidator`,
 `AuditOptionsValidator`, `QuotationsOptionsValidator`, `SeedOptionsValidator`,
 `PaymentProofsOptionsValidator`, `ForwardedHeadersSettingsValidator`,
-`CorsSettingsValidator`, `OperatorTenantOptionsValidator` y los dos de Integrations,
+`CorsSettingsValidator`, `OperatorTenantOptionsValidator`, `ValkeyOptionsValidator` y los dos de Integrations,
 `SecretProtectionOptionsValidator` y `ZenviaOptionsValidator`): si algo
 falta o está mal escrito, la API **no arranca**.
 
@@ -111,6 +115,9 @@ local y por variable de entorno en k8s
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `ConnectionStrings:QepDatabase`                        | **sin valor por defecto — requerido**                                                         | Conexión compartida por los módulos. Ausente ⇒ la API no inicia                                                     |
 | `ConnectionStrings:QepDatabaseListener`                | opcional; sin definir cae a `QepDatabase`                                                     | Conexión del listener de tiempo real (`LISTEN messaging_events`). `LISTEN` necesita una conexión directa: en producción debe apuntar a `pg-platform-rw`, nunca al pooler (PgBouncer en modo `transaction` no mantiene el `LISTEN` y no da error). Ausente, vacía o con el token `#{…}#` sin resolver ⇒ usa `QepDatabase` |
+| `ConnectionStrings:Valkey`                             | `localhost:6379` (user-secrets)                                                               | Cadena de StackExchange.Redis hacia Valkey (spec 2026-11-13). En producción, `prod-secret.yaml` con el usuario ACL `qep` y su contraseña. `ValkeyOptionsValidator` la exige en `Production` aunque `Valkey:Enabled` sea `false`; vacía o con el token `#{…}#` sin resolver cuenta como ausente |
+| `Valkey:Enabled` / `Valkey:Areas:*`                    | `false`                                                                                       | Interruptor general del cliente y uno por área (`Presence`, `RateLimiting`, `Sessions`, `Permissions`, `SendBudget`, `Doorbells`, `ApiKeyTouch`). Un área apagada usa exactamente las clases de antes |
+| `Valkey:OperationTimeoutMs`                            | `100`                                                                                         | Tope de cada operación contra Valkey; pasado, el área vuelve a su respaldo local. Debe ser mayor que cero |
 | `OpenTelemetry:Endpoint`                               | `http://localhost:4317`                                                                       | Exportación OTLP de trazas y métricas                                                                               |
 | `OTEL_SERVICE_NAME`                                    | sin definir (cae a `qep-api`)                                                                 | `service.name` del recurso; en k8s lo fija el Deployment                                                            |
 | `ForwardedHeaders:KnownNetworks`                       | ausente (sólo el loopback del framework)                                                      | Redes CIDR desde las que se confía en `X-Real-IP` y `X-Forwarded-Proto`; `X-Forwarded-For` se ignora (ver [Pipeline HTTP](#pipeline-http-programcs)). De ahí sale la IP del cliente para el rate limiter `public`, la sesión y la auditoría del registro. Una red inválida ⇒ la API no inicia. En k8s: los nodos del ingress y el pod CIDR de Cilium |
