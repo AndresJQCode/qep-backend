@@ -58,4 +58,25 @@ internal sealed class ShopifyInstallRepository(IntegrationsDbContext dbContext) 
                 cancellationToken);
         return updated == 1;
     }
+
+    // Spec 2026-11-12 §6.1: sólo el par y sus vencimientos; la instalación conserva su propio vencimiento.
+    public async Task<bool> TryStoreRefreshedTokenAsync(ShopifyInstall install, CancellationToken cancellationToken)
+    {
+        if (!install.IsExchanged || install.ProtectedRefreshToken is null)
+        {
+            throw new InvalidOperationException("ApplyRefreshedToken has to run before the refreshed token is stored.");
+        }
+
+        var updated = await dbContext.ShopifyInstalls
+            .Where(row => row.Id == install.Id && row.ProtectedToken != null)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(row => row.ProtectedToken, install.ProtectedToken)
+                    .SetProperty(row => row.ProtectedRefreshToken, install.ProtectedRefreshToken)
+                    .SetProperty(row => row.KeyId, install.KeyId)
+                    .SetProperty(row => row.AccessTokenExpiresAt, install.AccessTokenExpiresAt)
+                    .SetProperty(row => row.RefreshTokenExpiresAt, install.RefreshTokenExpiresAt),
+                cancellationToken);
+        return updated == 1;
+    }
 }

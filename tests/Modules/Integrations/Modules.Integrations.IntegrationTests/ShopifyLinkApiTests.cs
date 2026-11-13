@@ -20,6 +20,8 @@ internal static class ShopifyFlow
 
     public const string SentinelAccessToken = "shpat_link-token-SENTINEL-6d5c";
 
+    public const string SentinelRefreshToken = "shprt_link-refresh-SENTINEL-6d5c";
+
     public const string SentinelCode = "shopify-code-SENTINEL-link";
 
     private const string Timestamp = "1760796000";
@@ -30,10 +32,11 @@ internal static class ShopifyFlow
 
     /// <summary>Los webhooks (sin ninguno previo) y el canje sano: el orden importa, ver
     /// <see cref="FakeShopifyHandler.ScriptWebhooks"/>.</summary>
-    public static void ScriptHappyShop(FakeShopifyHandler shopify, string token = SentinelAccessToken, bool rejectWebhooks = false)
+    public static void ScriptHappyShop(
+        FakeShopifyHandler shopify, string token = SentinelAccessToken, bool rejectWebhooks = false, string refreshToken = SentinelRefreshToken)
     {
         shopify.ScriptWebhooks(Shop, ShopifyWebhookCallbackUrl, rejectWebhooks);
-        shopify.ScriptHappyInstall(Shop, token);
+        shopify.ScriptHappyInstall(Shop, token, refreshToken: refreshToken);
     }
 
     /// <summary>Inicio A con <paramref name="client"/> en <paramref name="tenantId"/> y canje anónimo; devuelve el installId.</summary>

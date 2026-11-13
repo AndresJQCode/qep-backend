@@ -159,6 +159,13 @@ public sealed class ConnectionSecretRekeyWorkerTests
                 installId, ShopifyFieldKeys.AccessToken, new ProtectedSecret("test", ciphertext), out var plaintext));
             Assert.Equal(ShopifyFlow.SentinelAccessToken, plaintext);
 
+            // Spec 2026-11-12 D5: el refresh token se re-cifra con el access token, con la misma llave.
+            var refreshCiphertext = await ScalarAsync<byte[]>(
+                connectionString, "SELECT refresh_token_protected FROM integrations.shopify_installs WHERE id = @id", ("id", installId));
+            Assert.True(scope.ServiceProvider.GetRequiredService<ISecretProtector>().TryUnprotect(
+                installId, ShopifyFieldKeys.RefreshToken, new ProtectedSecret("test", refreshCiphertext), out var refreshPlaintext));
+            Assert.Equal(ShopifyFlow.SentinelRefreshToken, refreshPlaintext);
+
             // Idempotente: la segunda corrida ya no la toca.
             Assert.Equal(new RekeyRunResult(0, 0), await WorkerOf(newHost).RunOnceAsync(Ct));
         }

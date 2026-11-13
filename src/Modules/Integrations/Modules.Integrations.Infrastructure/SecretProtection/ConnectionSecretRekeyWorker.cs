@@ -189,10 +189,21 @@ internal sealed partial class ConnectionSecretRekeyWorker(
                     continue;
                 }
 
+                // Spec 2026-11-12 D5: los dos tokens comparten key_id, así que se re-cifran juntos; si alguno no descifra, la
+                // fila se salta entera y queda como estaba.
                 var stored = new ProtectedSecret(install.KeyId!, install.ProtectedToken!);
-                if (protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext))
+                string? refreshPlaintext = null;
+                if (protector.TryUnprotect(install.Id, ShopifyFieldKeys.AccessToken, stored, out var plaintext)
+                    && (install.ProtectedRefreshToken is null
+                        || protector.TryUnprotect(
+                            install.Id,
+                            ShopifyFieldKeys.RefreshToken,
+                            new ProtectedSecret(install.KeyId!, install.ProtectedRefreshToken),
+                            out refreshPlaintext)))
                 {
-                    install.Reprotect(protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext), null);
+                    install.Reprotect(
+                        protector.Protect(install.Id, ShopifyFieldKeys.AccessToken, plaintext),
+                        refreshPlaintext is null ? null : protector.Protect(install.Id, ShopifyFieldKeys.RefreshToken, refreshPlaintext));
                     done++;
                 }
                 else

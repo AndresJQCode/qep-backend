@@ -14,11 +14,39 @@ namespace Modules.Integrations.Infrastructure.Persistence;
 /// </summary>
 internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : IIntegrationsUnitOfWork
 {
+    public async Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+    // Spec 2026-11-12 D1, con la forma de AutomationsUnitOfWork: el candado se suelta con la transacción, así que sin una
+    // abierta no serializaría nada.
+    public async Task LockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        await dbContext.Database.ExecuteSqlAsync(
+            $"SELECT pg_advisory_xact_lock({ShopifyTokenLock.Namespace}, hashtext({ownerId.ToString()}))", cancellationToken);
+    }
+
+    public async Task<bool> TryLockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        var taken = await dbContext.Database.SqlQuery<bool>(
+                $"SELECT pg_try_advisory_xact_lock({ShopifyTokenLock.Namespace}, hashtext({ownerId.ToString()})) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return taken.Single();
+    }
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken)
     {
         try
         {
-            return await dbContext.SaveChangesAsync(cancellationToken);
+            var saved = await dbContext.SaveChangesAsync(cancellationToken);
+            // Con la transacción del candado abierta, guardar es confirmar (el handle sin confirmar deshace al disponerse).
+            if (dbContext.Database.CurrentTransaction is { } transaction)
+            {
+                await transaction.CommitAsync(cancellationToken);
+            }
+
+            return saved;
         }
         // Primero: DbUpdateConcurrencyException hereda de DbUpdateException.
         catch (DbUpdateConcurrencyException exception)
@@ -77,6 +105,14 @@ internal sealed class IntegrationsUnitOfWork(IntegrationsDbContext dbContext) : 
                 IntegrationsErrorCodes.NameTaken,
                 "Another connection of this provider already uses that name.",
                 exception);
+        }
+    }
+
+    private void EnsureTransaction()
+    {
+        if (dbContext.Database.CurrentTransaction is null)
+        {
+            throw new InvalidOperationException("The Shopify token lock requires the transaction of BeginTransactionAsync.");
         }
     }
 
