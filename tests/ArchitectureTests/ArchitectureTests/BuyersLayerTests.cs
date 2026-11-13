@@ -43,7 +43,8 @@ public sealed class BuyersLayerTests
         Assert.DoesNotContain(references, name =>
             name is not null &&
             (name.StartsWith("Microsoft.EntityFrameworkCore", StringComparison.Ordinal) ||
-             name.StartsWith("Npgsql", StringComparison.Ordinal)));
+             name.StartsWith("Npgsql", StringComparison.Ordinal) ||
+             name.StartsWith("StackExchange.Redis", StringComparison.Ordinal)));
     }
 
     /// <summary>Las cuentas de comprador no se mezclan con las de los usuarios del tenant: ninguna capa referencia Identity.</summary>
