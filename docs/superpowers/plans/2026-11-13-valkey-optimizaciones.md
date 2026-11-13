@@ -489,7 +489,9 @@ El handler llama `TouchLastUsedAsync` sólo si `ShouldTouchAsync` dio `true`, de
   Corre `dotnet test $BU --filter "FullyQualifiedName~ValkeyAclCompatibilityTests"`.
 - [ ] Commit: `test(platform): pin every valkey area to the production acl`
 
-### Tarea 9: presupuesto de envío en Valkey (D-6) — se puede omitir (P6)
+### Tarea 9: presupuesto de envío en Valkey (D-6) — OMITIDA (owner, 2026-11-13)
+
+> **No se ejecuta.** El owner decidió el 2026-11-13 que el cubo de envío se queda en Postgres (`messaging.connection_send_budgets`): sin Lua la ganancia no paga la complejidad. El bloque C sale sin esta tarea; el área `SendBudget` del enum queda sin adaptador y nunca se prende. Lo de abajo queda como registro del diseño descartado.
 
 **Files:**
 - Modify: `src/Modules/Messaging/Modules.Messaging.Application/ConnectionSendBudget.cs` (nuevo `ConnectionSendBudgetKeys`; el comentario «no hay Redis» ya lo reescribe el plan base)
