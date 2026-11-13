@@ -60,6 +60,14 @@ public interface IShopifyOrderMirrorRepository
     Task<IReadOnlyDictionary<Guid, int>> CountWaitingByConnectionAsync(Guid tenantId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// <c>GET /stores/{connectionId}/document-sources</c>: los nombres de atributo distintos (crudos, sin recortar) del payload de
+    /// los <paramref name="recentOrders"/> pedidos más recientes de la tienda (<c>shopify_created_at</c>). Sin orden: lo pone
+    /// <see cref="ShopifyDocumentSources.Options"/>.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListAttributeKeysAsync(
+        Guid tenantId, Guid connectionId, int recentOrders, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Spec 2026-10-26 D-C12: el recorrido de la historia previa. Las filas <c>Imported</c> con pedido (<c>qep_order_id</c>) de
     /// <b>todos</b> los tenants, por id y después de <paramref name="afterId"/> (<c>null</c>: desde el principio), hasta
     /// <paramref name="limit"/>. Sin tracking: sólo se leen. Va por la llave primaria; paginar por id no se salta ni repite filas

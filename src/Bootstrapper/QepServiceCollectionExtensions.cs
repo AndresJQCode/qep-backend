@@ -1220,6 +1220,7 @@ public static class QepServiceCollectionExtensions
         // (quotations.order.read|manage); las cuatro políticas ya las registran Integrations y Quotations, sin permisos nuevos.
         services.AddScoped<IQueryHandler<ListShopifyStoresQuery, IReadOnlyList<ShopifyStoreSummaryDto>>, ListShopifyStoresHandler>();
         services.AddScoped<IQueryHandler<GetShopifyStoreQuery, ShopifyStoreDto>, GetShopifyStoreHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyDocumentSourcesQuery, ShopifyDocumentSourcesDto>, GetShopifyDocumentSourcesHandler>();
         services.AddScoped<ICommandHandler<UpdateShopifyStoreCommand, ShopifyStoreDto>, UpdateShopifyStoreHandler>();
         services.AddScoped<IQueryHandler<ListShopifyOrdersQuery, ShopifyOrderPageDto>, ListShopifyOrdersHandler>();
         services.AddScoped<IQueryHandler<GetShopifyOrdersSummaryQuery, ShopifyOrdersSummaryDto>, GetShopifyOrdersSummaryHandler>();

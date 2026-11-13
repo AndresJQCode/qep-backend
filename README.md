@@ -4404,7 +4404,11 @@ prendido, al importador:
   (`store_not_configured`, `advisor_inactive`, `billing_account_missing`, `currency_mismatch`, `customer_inactive`,
   `product_unmatched`, `freight_tax_rate_missing`, `order_rejected`). La tienda se configura con
   `PUT /tenants/{tenantId}/shopify/stores/{connectionId}` (`If-Match`): asesor, cuenta de cobro, clasificación por
-  defecto y las claves del atributo del documento.
+  defecto y de dónde sale el documento: `documentAttributeKey` es una ruta, `shipping_address.company` (el campo
+  «Empresa» de la dirección de envío) o el nombre de un atributo del checkout. Las opciones del select las da
+  `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
+  `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
+  tienda en el espejo.
 - El comprador se busca por documento, por el cliente de Shopify ya visto en el espejo, por teléfono y por correo; si no
   aparece, nace completo (con CUC) cuando hay documento, clasificación, dirección y ciudad, e incompleto si no. El
   cliente nunca detiene la importación salvo que exista y esté inactivo.

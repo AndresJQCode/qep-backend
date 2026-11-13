@@ -1,3 +1,5 @@
+using Modules.Shopify.Domain;
+
 namespace Modules.Shopify.Application;
 
 /// <summary>
@@ -13,6 +15,28 @@ public static class ShopifyDocumentSources
 
     /// <summary>Las rutas de dirección que se ofrecen en la configuración; el resto de las opciones son atributos.</summary>
     public static IReadOnlyList<string> AddressPaths { get; } = [ShippingAddressCompany];
+
+    /// <summary>
+    /// Las opciones del select «Atributo del documento»: <see cref="AddressPaths"/> primero, y después los nombres de atributo vistos
+    /// en los pedidos de la tienda, tal como <see cref="Read"/> los resuelve. Por eso cada nombre va recortado; dos que sólo difieren
+    /// en mayúsculas o espacios se ofrecen una vez (la primera en orden ordinal), porque <see cref="Attribute"/> los lee igual; uno
+    /// que se llama como una ruta de dirección no se repite, porque <see cref="Read"/> lo toma por la dirección; y uno más largo que
+    /// <see cref="ShopifyStore.AttributeKeyMaxLength"/> se omite, porque el <c>PUT</c> de la tienda no lo guardaría. El orden es
+    /// ordinal sin distinguir mayúsculas, para que la lista no dependa del orden en que llegaron los pedidos.
+    /// </summary>
+    public static IReadOnlyList<string> Options(IEnumerable<string> attributeKeys)
+    {
+        ArgumentNullException.ThrowIfNull(attributeKeys);
+        var attributes = attributeKeys
+            .Select(key => key.Trim())
+            .Where(key => key.Length is > 0 and <= ShopifyStore.AttributeKeyMaxLength)
+            .Where(key => !AddressPaths.Contains(key, StringComparer.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .DistinctBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(key => key, StringComparer.Ordinal);
+        return [.. AddressPaths, .. attributes];
+    }
 
     public static string? Read(ShopifyOrderSnapshot snapshot, string key)
     {
