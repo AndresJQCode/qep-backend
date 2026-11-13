@@ -37,4 +37,12 @@ public interface IShopifyInstallRepository
     /// no debería dar <c>false</c>; si lo da, el handler responde <c>install_not_found</c>.
     /// </summary>
     Task<bool> TryCompleteExchangeAsync(ShopifyInstall install, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-12 §6.1: guarda el par ya aplicado en el agregado (<see cref="ShopifyInstall.ApplyRefreshedToken"/>) con
+    /// <c>UPDATE … SET access_token_protected, refresh_token_protected, key_id, access_token_expires_at,
+    /// refresh_token_expires_at WHERE id = @id AND access_token_protected IS NOT NULL</c>. <c>false</c> = la borró el enlace o
+    /// el barrido. Lo llama el enlace con el candado de la instalación tomado.
+    /// </summary>
+    Task<bool> TryStoreRefreshedTokenAsync(ShopifyInstall install, CancellationToken cancellationToken);
 }

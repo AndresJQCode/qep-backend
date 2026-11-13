@@ -20,7 +20,7 @@ public sealed class OrderStatusAxesTests
     };
 
     private static OrderHeader Header() =>
-        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, false);
+        new(ClientId, Advisor, "COP", "Transferencia", false, null, false, []);
 
     private static OrderLineInput Line() =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -64,7 +64,7 @@ public sealed class OrderStatusAxesTests
     {
         var order = NewOrder();
 
-        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
 
         Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
         Assert.Equal(Advisor, order.PaidMarkedBy);
@@ -118,11 +118,11 @@ public sealed class OrderStatusAxesTests
     public void MarkingPaidTwiceIsAlreadyPaid()
     {
         var order = NewOrder();
-        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
 
         Assert.Equal(
             "order.order.already_paid",
-            CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: false, Now)));
+            CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now)));
     }
 
     [Fact]
@@ -132,19 +132,19 @@ public sealed class OrderStatusAxesTests
 
         Assert.Equal(
             "order.order.payment_proof_required",
-            CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: true, Now)));
+            CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: true, order.WithoutCosts(), Now)));
     }
 
     [Fact]
     public void UnmarkingPaidIsRejectedOncePreparedOrInvoiced()
     {
         var prepared = NewOrder();
-        prepared.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        prepared.MarkPaid(Advisor, requirePaymentProof: false, prepared.WithoutCosts(), Now);
         prepared.Prepare(Advisor, Now);
         Assert.Equal("order.order.already_prepared", CodeOf(() => prepared.UnmarkPaid(Now)));
 
         var invoiced = NewOrder();
-        invoiced.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        invoiced.MarkPaid(Advisor, requirePaymentProof: false, invoiced.WithoutCosts(), Now);
         invoiced.Invoice(Advisor, requireFullPayment: true, Now);
         Assert.Equal("order.order.already_invoiced", CodeOf(() => invoiced.UnmarkPaid(Now)));
     }
@@ -153,7 +153,7 @@ public sealed class OrderStatusAxesTests
     public void UnmarkingPaidReturnsToTheCalculatedStatus()
     {
         var order = NewOrder(proofs: [new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m)]);
-        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
 
         order.UnmarkPaid(Now);
 
@@ -213,7 +213,7 @@ public sealed class OrderStatusAxesTests
         order.Archive(Advisor, Now);
 
         Assert.Equal("order.order.not_open", CodeOf(() => order.Prepare(Advisor, Now)));
-        Assert.Equal("order.order.not_open", CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: false, Now)));
+        Assert.Equal("order.order.not_open", CodeOf(() => order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now)));
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public sealed class OrderStatusAxesTests
     {
         var order = NewOrder();
         order.Prepare(Advisor, Now);
-        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
         order.Archive(Advisor, Now);
 
         order.CancelFromPlatform(Advisor, "Anulado en Shopify", Now);
@@ -266,7 +266,7 @@ public sealed class OrderStatusAxesTests
     public void ArchiveIfSettledArchivesOnlyWhenPaidAndPrepared()
     {
         var order = NewOrder();
-        order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+        order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
 
         Assert.False(order.ArchiveIfSettled(Advisor, Now));
         Assert.Equal(OrderStatus.Open, order.Status);
@@ -296,7 +296,7 @@ public sealed class OrderStatusAxesTests
         {
             "prepare" => o => o.Prepare(Advisor, Now),
             "invoice" => o => o.Invoice(Advisor, requireFullPayment: false, Now),
-            "markPaid" => o => o.MarkPaid(Advisor, requirePaymentProof: false, Now),
+            "markPaid" => o => o.MarkPaid(Advisor, requirePaymentProof: false, o.WithoutCosts(), Now),
             "archive" => o => o.Archive(Advisor, Now),
             _ => _ => { },
         };

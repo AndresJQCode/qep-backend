@@ -133,8 +133,8 @@ public sealed class QuotationPriceRoundingTests
                 Currency = currency
             },
             currency,
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 

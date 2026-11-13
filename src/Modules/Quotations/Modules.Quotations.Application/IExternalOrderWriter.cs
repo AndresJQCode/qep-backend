@@ -136,7 +136,9 @@ public sealed class ExternalOrderService(
     IOrderNumberGenerator numberGenerator,
     IDocumentNumberingFormatLookup numberingFormats,
     ITenantClock tenantClock,
-    IQuotationSettingsStore settingsStore)
+    IQuotationWithholdingLookup withholdingLookup,
+    IQuotationSettingsStore settingsStore,
+    IOrderVariantCostLookup costLookup)
     : IExternalOrderWriter
 {
     public async Task<ExternalOrderResult> CreateAsync(ExternalOrderDraft draft, CancellationToken cancellationToken)
@@ -173,23 +175,39 @@ public sealed class ExternalOrderService(
             })
             .ToArray();
         var advisor = new MemberId(draft.AdvisorMembershipId);
+        // Las tasas del cliente del país de la empresa (spec impuestos por tipo §7.5, D22), a la fecha del pedido en la zona
+        // del tenant. Un cliente sin tasas da una lista vacía: el webhook de Shopify no empieza a fallar por esto.
+        var withholdings = await OrderCustomerWithholdings.ResolveAsync(
+            withholdingLookup,
+            draft.TenantId,
+            draft.ClientId,
+            billingAccount,
+            DocumentDates.LocalDate(await tenantClock.GetAsync(draft.TenantId, cancellationToken), draft.OccurredAt),
+            cancellationToken);
         var header = new OrderHeader(
             draft.ClientId, advisor, billingAccount.Currency, draft.PaymentMethod, IsRetail: false,
-            GlobalScaleFloor: null, customer.WithRetention, customer.VatSurplus);
+            GlobalScaleFloor: null, customer.VatSurplus, withholdings);
 
         var committed = await KeyedOrderCommit.CommitAsync(
             orderRepository, unitOfWork, numberGenerator, numberingFormats, tenantClock, draft.TenantId, externalKey,
-            (orderNumber, _) =>
+            async (orderNumber, _) =>
             {
+                // Un pedido que nace pagado congela todas sus líneas al crearse (§4.3). Se busca acá, dentro de la
+                // fábrica, para que un reingreso con clave (la rama Existing) nunca consulte el catálogo.
+                var costs = draft.PaymentStatus == OrderPaymentStatus.FullPaymentReceived
+                    ? await OrderLineCostsLoader.LoadAsync(
+                        costLookup, draft.TenantId, header.Currency,
+                        lines.Select(line => line.VariantId).Distinct().ToArray(), cancellationToken)
+                    : OrderLineCosts.None;
                 var order = Order.CreateExternal(
                     OrderId.New(), draft.TenantId, orderNumber, header, draft.Parties.ToDomain(), billingAccount, lines,
                     draft.PaymentStatus, draft.Notes, advisor, [], draft.OccurredAt, draft.Source, draft.ExternalReference,
-                    draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle);
+                    draft.Shipping ?? ShippingDetails.None, externalKey, draft.ExternalShippingTitle, costs);
                 // Decisión del owner (spec 2026-10-27 §4): un pedido de una integración se precia siempre con el valor por
                 // defecto de su moneda, no con la regla del tenant. Se fija acá, explícito, y OrderPricingRecalculation
                 // lo mantiene así cuando el pedido se edita.
                 order.UsePriceRounding(PriceRoundingDefaults.For(order.Currency), draft.OccurredAt);
-                return Task.FromResult(order);
+                return order;
             },
             (order, _) =>
             {
@@ -327,7 +345,12 @@ public sealed class ExternalOrderService(
         // tenant, quedar pagado y preparado lo archiva. Lo archiva la integración, no una persona: historial sin autor y
         // auditoría firmada por la integración.
         var settings = await settingsStore.GetOrderSettingsAsync(tenantId, cancellationToken);
-        var archived = order.SyncExternalPaymentStatus(status, settings.AutoArchive, now);
+        // Hacia pagado congela lo que todavía no congeló (§4.3); hacia otro estado no hay nada que buscar.
+        var costs = status == OrderPaymentStatus.FullPaymentReceived
+            ? await OrderLineCostsLoader.LoadAsync(
+                costLookup, tenantId, order.Currency, order.UncostedVariantIds, cancellationToken)
+            : OrderLineCosts.None;
+        var archived = order.SyncExternalPaymentStatus(status, settings.AutoArchive, costs, now);
         auditPublisher.PublishByIntegration(
             tenantId, "quotation.order.payment_status_synced", order.Id.ToString(), "success", now);
         if (archived)

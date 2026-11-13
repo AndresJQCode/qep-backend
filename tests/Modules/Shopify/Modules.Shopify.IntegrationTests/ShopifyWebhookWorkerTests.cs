@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Shopify.Application;
@@ -97,6 +99,135 @@ public sealed class ShopifyWebhookWorkerTests
                 ("c", world.ConnectionId)));
     }
 
+    // Spec impuestos por tipo D22 (regresión, Review Focus 4): con las retenciones congeladas al crear, el webhook sigue creando
+    // el pedido. El comprador nace en el import, sin tasas: el pedido entra sin retenciones y el neto es el total.
+    [Fact]
+    public async Task ShopifyWebhookStillCreatesOrders()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        await ConfigureStoreAsync(factory, world);
+        using var client = factory.CreateClient();
+
+        await PostWebhookAsync(client, "orders/create", "wh-taxes", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-taxes"));
+        Assert.Equal("Imported|119000.00|0.00|119000.00|0", await ImportedOrderTotalsAsync(connectionString, world));
+    }
+
+    // Spec impuestos por tipo §7.5 (Review Focus 4): el pedido de Shopify congela las tasas del cliente, pero sólo las del país de la
+    // empresa con que cobra la tienda. Con una empresa española la Retefuente colombiana no viaja, y el pedido entra igual. La tabla
+    // de países sólo tiene Colombia, así que el filtro se prueba moviendo la empresa y no con una tasa de otro país.
+    [Theory]
+    [InlineData("CO", 1)]
+    [InlineData("ES", 0)]
+    public async Task ExternalOrderCopiesOnlyCustomerRatesOfTheCompanyCountry(string companyCountry, int copied)
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var world = await ShopifyWorld.ArrangeAsync(factory, connectionString);
+        var retefuente = await CreateRetefuenteAsync(world);
+        // El comprador del fixture (CC 1036000111) ya es cliente y tiene la Retefuente: el import lo encuentra por documento.
+        await CreateBuyerWithRateAsync(factory, world, retefuente);
+        var company = companyCountry == "CO" ? world.Company : await CreateSpanishCompanyAsync(world);
+        await ConfigureStoreAsync(factory, world, company);
+        using var client = factory.CreateClient();
+
+        await PostWebhookAsync(client, "orders/create", "wh-rates", OrderFixture("taxes-included"));
+        await DrainAsync(factory);
+
+        Assert.Equal("1|none|none", await DeliveryAsync(connectionString, "wh-rates"));
+        Assert.Equal(
+            copied == 0 ? string.Empty : $"{retefuente}|2.500|true",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT coalesce(string_agg(w.tax_rate_id || '|' || w.percentage || '|' || w.applied, ','), '')
+                FROM shopify.orders m
+                JOIN quotations.order_withholdings w ON w.document_id = m.qep_order_id
+                WHERE m.connection_id = @c
+                """,
+                ("c", world.ConnectionId)));
+        var totals = (await ImportedOrderTotalsAsync(connectionString, world)).Split('|');
+        Assert.Equal("Imported", totals[0]);
+        Assert.Equal(copied == 0, decimal.Parse(totals[2], System.Globalization.CultureInfo.InvariantCulture) == 0m);
+    }
+
+    // import_state | total | retention_amount | net_total | filas de retención, del pedido que creó el import.
+    private static Task<string> ImportedOrderTotalsAsync(string connectionString, ShopifyWorld world) =>
+        ScalarAsync<string>(
+            connectionString,
+            """
+            SELECT m.import_state || '|' || o.total || '|' || o.retention_amount || '|' || o.net_total || '|'
+                   || (SELECT count(*) FROM quotations.order_withholdings w WHERE w.document_id = o.id)
+            FROM shopify.orders m
+            JOIN quotations.orders o ON o.id = m.qep_order_id AND o.tenant_id = m.tenant_id
+            WHERE m.connection_id = @c
+            """,
+            ("c", world.ConnectionId));
+
+    private static async Task<Guid> CreateRetefuenteAsync(ShopifyWorld world)
+    {
+        var response = await world.Tenant.Seeder.PostAsJsonAsync(
+            $"/api/v1/tenants/{world.TenantId}/catalog/tax-rates",
+            new { name = "Retefuente 2,5 %", percentage = 2.5m, type = "Retefuente", country = "CO" },
+            Ct);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(Ct));
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        return json.RootElement.GetProperty("id").GetGuid();
+    }
+
+    private static async Task CreateBuyerWithRateAsync(QepApiFactory factory, ShopifyWorld world, Guid taxRateId)
+    {
+        using var customers = CreateClient(
+            factory, world.Tenant.OwnerUserId, world.TenantId,
+            Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage,
+            Modules.Customers.Application.CustomersPermissions.ClassificationRead);
+        var response = await customers.PostAsJsonAsync(
+            $"/api/v1/tenants/{world.TenantId}/customers",
+            new
+            {
+                name = "Laura Gómez",
+                identificationType = "CC",
+                identificationNumber = "1036000111",
+                phone = "+573001112233",
+                email = "laura.gomez@example.com",
+                address = "Calle 10 # 20-30",
+                country = "CO",
+                cityId = await AnyCityIdAsync(world.Tenant.Seeder),
+                classificationId = world.ClassificationId,
+                withholdingTaxRateIds = new[] { taxRateId },
+            },
+            Ct);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(Ct));
+    }
+
+    // Una empresa de afuera con cuenta en pesos: otro país sin cambiar la moneda del pedido.
+    private static async Task<CompanyRef> CreateSpanishCompanyAsync(ShopifyWorld world)
+    {
+        var accountNumber = $"ES-{Random.Shared.Next(100000, 999999)}";
+        var response = await world.Tenant.Seeder.PostAsJsonAsync(
+            $"/api/v1/tenants/{world.TenantId}/companies",
+            new
+            {
+                name = "Iberia S.L.",
+                bankAccounts = new[] { new { bankName = "Santander", accountNumber, currency = "COP" } },
+                taxId = $"B{Random.Shared.Next(10000000, 99999999)}",
+                country = "ES",
+                documentType = "NIF",
+                cityName = "Madrid",
+            },
+            Ct);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync(Ct));
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Ct));
+        return new CompanyRef(json.RootElement.GetProperty("id").GetGuid(), "Santander", accountNumber);
+    }
+
     // §6.3 de punta a punta, sin dobles: la reacción registrada en Bootstrapper anula en Quotations el pedido que Shopify canceló,
     // a nombre del asesor de la tienda, y la fila del espejo cierra en Cancelled. El mismo aviso otra vez (llega orders/updated con
     // la misma foto) encuentra la fila terminal y no anula dos veces. La repetición antes de cerrar la fila (bucle de concurrencia,
@@ -145,13 +276,16 @@ public sealed class ShopifyWebhookWorkerTests
         return System.Text.Encoding.UTF8.GetBytes(node.ToJsonString());
     }
 
-    private static async Task ConfigureStoreAsync(QepApiFactory factory, ShopifyWorld world)
+    private static Task ConfigureStoreAsync(QepApiFactory factory, ShopifyWorld world) =>
+        ConfigureStoreAsync(factory, world, world.Company);
+
+    private static async Task ConfigureStoreAsync(QepApiFactory factory, ShopifyWorld world, CompanyRef company)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var store = ShopifyStore.Create(world.ConnectionId, world.TenantId, DateTimeOffset.UtcNow);
         store.Configure(
             world.AdvisorMembershipId,
-            new ShopifyBillingAccount(world.Company.Id, world.Company.BankName, world.Company.AccountNumber, "COP"),
+            new ShopifyBillingAccount(company.Id, company.BankName, company.AccountNumber, "COP"),
             world.ClassificationId,
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,

@@ -129,7 +129,7 @@ public sealed class BilledCustomerFieldsRequiredTests
         var lookup = Customer(identificationType: null, identificationNumber: null);
         var order = NewOrder(QuotationParties.Empty with
             {
-                Billing = Party("Otra S.A.S."), BillingWithRetention = false, BillingVatSurplus = false,
+                Billing = Party("Otra S.A.S."), BillingVatSurplus = false,
             });
 
         await EnsureAsync(directory, lookup, order);

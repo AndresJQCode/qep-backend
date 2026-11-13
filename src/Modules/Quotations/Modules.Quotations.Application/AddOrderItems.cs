@@ -43,7 +43,8 @@ public sealed class AddOrderItemsHandler(
     ITenantDirectory tenantDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<AddOrderItemsCommand> validator)
+    IValidator<AddOrderItemsCommand> validator,
+    IOrderVariantCostLookup costLookup)
     : ICommandHandler<AddOrderItemsCommand, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -73,6 +74,9 @@ public sealed class AddOrderItemsHandler(
         // abajo, línea por línea, en el mismo orden.
         var products = await QuotationProductPricingResolver.FindVariantsAsync(
             pricingLookup, command.TenantId, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);
+        // Un pedido pagado sigue editable y lo que entra ya cuenta como vendido: congela al llegar (§4.3).
+        var costs = await OrderLineCostsLoader.LoadForAdditionsAsync(
+            costLookup, command.TenantId, order, command.ToAdd.Select(addition => addition.VariantId), cancellationToken);
         foreach (var addition in command.ToAdd)
         {
             // Misma resolución que el cotizador: precio en la moneda del pedido, descuento por
@@ -83,7 +87,7 @@ public sealed class AddOrderItemsHandler(
             order.AddItem(
                 OrderItemId.New(), addition.VariantId, pricing.ProductId, addition.Quantity,
                 pricing.Pricing.UnitPrice, pricing.Pricing.DiscountPercentage,
-                pricing.Pricing.TaxPercentage, updatedBy, now);
+                pricing.Pricing.TaxPercentage, costs, updatedBy, now);
             orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
                 OrderHistoryEntryId.New(), order.Id, OrderHistoryEventType.ItemsChanged,
                 updatedBy, OrderChangeSummary.ItemAdded(pricing.Name, addition.Quantity, format), now));

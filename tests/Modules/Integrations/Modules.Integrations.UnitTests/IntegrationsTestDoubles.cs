@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using BuildingBlocks.Application;
@@ -115,8 +115,14 @@ internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepos
 {
     public List<IntegrationConnection> Connections { get; } = [];
 
-    public Task<IntegrationConnection?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken) =>
-        Task.FromResult(Connections.SingleOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
+    /// <summary>Lo que pasa en cada lectura por id, antes de devolverla (por ejemplo, anotar qué candados había).</summary>
+    public Action? OnFind { get; set; }
+
+    public Task<IntegrationConnection?> FindAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        OnFind?.Invoke();
+        return Task.FromResult(Connections.SingleOrDefault(connection => connection.TenantId == tenantId && connection.Id == connectionId));
+    }
 
     public Task<IReadOnlyList<IntegrationConnection>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<IntegrationConnection>>(Connections.Where(connection => connection.TenantId == tenantId).ToList());
@@ -130,18 +136,32 @@ internal sealed class InMemoryConnectionRepository : IIntegrationConnectionRepos
     public void Remove(IntegrationConnection connection) => Connections.Remove(connection);
 }
 
+/// <summary>Sin base: cuenta guardados, transacciones y candados del token de Shopify (spec 2026-11-12). Los candados
+/// exigen una transacción abierta, como el real; guardar la cierra (confirma) y disponerla también.</summary>
 internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
 {
+    private int _open;
+
     public int Saves { get; private set; }
 
     public Exception? FailWith { get; set; }
 
-    /// <summary>Whether a transaction of <see cref="BeginTransactionAsync"/> is open and not yet disposed.</summary>
-    public bool InTransaction { get; private set; }
-
+    /// <summary>Las transacciones abiertas con <see cref="BeginTransactionAsync"/>.</summary>
     public int Transactions { get; private set; }
 
-    /// <summary>Whether the last save ran inside the open transaction (saving then commits it, like the real unit of work).</summary>
+    /// <summary>Los ids con los que se tomó el candado que espera, en orden.</summary>
+    public List<Guid> Locks { get; } = [];
+
+    /// <summary>Los ids con los que se intentó el candado sin espera, en orden.</summary>
+    public List<Guid> TryLocks { get; } = [];
+
+    /// <summary>Lo que responde <see cref="TryLockShopifyTokenAsync"/>.</summary>
+    public bool LockTaken { get; set; } = true;
+
+    /// <summary>Si hay una transacción de <see cref="BeginTransactionAsync"/> abierta y sin disponer ni confirmar.</summary>
+    public bool InTransaction => _open > 0;
+
+    /// <summary>Si el último guardado corrió dentro de la transacción abierta (guardar la confirma, como el real).</summary>
     public bool SavedInsideTransaction { get; private set; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken)
@@ -153,21 +173,44 @@ internal sealed class FakeUnitOfWork : IIntegrationsUnitOfWork
 
         Saves++;
         SavedInsideTransaction = InTransaction;
+        _open = 0;
         return Task.FromResult(1);
     }
 
     public Task<IAsyncDisposable> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        InTransaction = true;
         Transactions++;
-        return Task.FromResult<IAsyncDisposable>(new Transaction(this));
+        _open++;
+        return Task.FromResult<IAsyncDisposable>(new Handle(this));
     }
 
-    private sealed class Transaction(FakeUnitOfWork owner) : IAsyncDisposable
+    public Task LockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        Locks.Add(ownerId);
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> TryLockShopifyTokenAsync(Guid ownerId, CancellationToken cancellationToken)
+    {
+        EnsureTransaction();
+        TryLocks.Add(ownerId);
+        return Task.FromResult(LockTaken);
+    }
+
+    private void EnsureTransaction()
+    {
+        if (_open == 0)
+        {
+            throw new InvalidOperationException("The Shopify token lock requires a transaction.");
+        }
+    }
+
+    private sealed class Handle(FakeUnitOfWork owner) : IAsyncDisposable
     {
         public ValueTask DisposeAsync()
         {
-            owner.InTransaction = false;
+            owner._open = Math.Max(0, owner._open - 1);
             return ValueTask.CompletedTask;
         }
     }

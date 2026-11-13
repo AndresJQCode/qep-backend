@@ -226,6 +226,77 @@ public sealed class ReconcileStoreTests
         Assert.Equal(1, world.Leases.Released);
     }
 
+    // Spec 2026-11-12 §6.4 (D8): el directorio entrega la conexión operativa sin token mientras el worker de Integrations va tarde.
+    // La corrida se salta con 503 sin llamar a Shopify ni reportar nada: un reporte marcaría NeedsAttention una tienda sana.
+    [Fact]
+    public async Task ReconcileWithAnExpiredTokenSkipsWithoutCallingOrReporting()
+    {
+        var world = new World().WithStore(LastReconciled);
+        var expired = world.Connection with { AccessToken = null };
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(expired, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
+        Assert.Empty(world.Source.Calls);
+        Assert.Empty(world.Health.Rejected);
+        Assert.Empty(world.Leases.Acquired);
+        Assert.Equal(0, world.Leases.Released);
+    }
+
+    // §6.4, la red ante un 401: el worker rotó el token entre la lectura y la llamada. Se relee una vez y se sigue con el nuevo,
+    // también en las páginas siguientes.
+    [Fact]
+    public async Task Reconcile401WithARotatedTokenRereadsAndRetriesOnce()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = "shpat_rotated" };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(1)], "cursor-2"));
+        world.Source.Pages.Enqueue(new ShopifyOrdersPage([Order(2)], null));
+
+        var result = await world.Reconcile.RunAsync(world.Connection, Ct);
+
+        Assert.Equal(["shpat_x", "shpat_rotated", "shpat_rotated"], world.Source.Calls.Select(call => call.Connection.AccessToken));
+        Assert.Empty(world.Health.Rejected);
+        Assert.Equal(2, result.Fetched);
+        Assert.Equal([Now], world.Leases.Reconciled);
+    }
+
+    // Review Focus 6: el 401 llegó porque el token venció a mitad de corrida y el worker todavía no lo refrescó. Se salta la
+    // corrida sin reportar credentials_rejected.
+    [Fact]
+    public async Task Reconcile401WhileTheTokenExpiredSkipsWithoutReporting()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = null };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+
+        var error = await Assert.ThrowsAsync<ServiceUnavailableException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreSyncUnavailable, error.Code);
+        Assert.Single(world.Source.Calls);
+        Assert.Empty(world.Health.Rejected);
+        Assert.Empty(world.Leases.Reconciled);
+        Assert.Equal(1, world.Leases.Released);
+    }
+
+    // La red se usa una sola vez por corrida: con el token releído también rechazado, la tienda se reporta como hoy.
+    [Fact]
+    public async Task Reconcile401TwiceWithARotatedTokenReportsOnce()
+    {
+        var world = new World().WithStore(LastReconciled);
+        world.Directory.Connections[world.Connection.ShopDomain] = world.Connection with { AccessToken = "shpat_rotated" };
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+        world.Source.Failures.Enqueue(new ShopifyOrdersSourceException(ShopifyOrdersSourceFailure.Rejected, null));
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Reconcile.RunAsync(world.Connection, Ct));
+
+        Assert.Equal(ShopifyErrorCodes.StoreNotOperational, error.Code);
+        Assert.Equal(["shpat_x", "shpat_rotated"], world.Source.Calls.Select(call => call.Connection.AccessToken));
+        Assert.Equal([(TenantId, ConnectionId)], world.Health.Rejected);
+        Assert.Equal(1, world.Leases.Released);
+    }
+
     [Fact]
     public async Task ReconcileUnreachableShopifyKeepsTheWindow()
     {
@@ -417,8 +488,12 @@ public sealed class ReconcileStoreTests
             IShopifyOrderChangeReaction reaction = realReaction ? new ShopifyOrderChanges(Writer, new FakeCustomerDirectory(), Clock) : Reaction;
             Ingestion = new ShopifyOrderIngestion(stores, mirrors, Importer, reaction, UnitOfWork, Clock);
             Leases = new FakeReconcileLeases(Database);
-            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, UnitOfWork, Clock, Time, Logs);
+            Reconcile = new ReconcileStore(Source, Ingestion, stores, mirrors, Leases, Health, Directory, UnitOfWork, Clock, Time, Logs);
+            Directory.Connections[Connection.ShopDomain] = Connection;
         }
+
+        /// <summary>Lo que la conciliación relee ante un 401 (spec 2026-11-12 §6.4). Por defecto, la misma conexión de la corrida.</summary>
+        public FakeConnectionDirectory Directory { get; } = new();
 
         public FakeShopifyDatabase Database { get; } = new();
 

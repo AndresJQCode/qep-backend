@@ -68,6 +68,20 @@ public sealed partial class QuotationTemplateTests
         Assert.True(checkedPaths > 20, $"solo se verificaron {checkedPaths} referencias");
     }
 
+    // Dos retenciones: una fila por cada una, rotulada con el nombre de la tasa, y el neto al final.
+    [Fact]
+    public async Task TheTemplateCompilesWithTwoWithholdings() =>
+        await AssertCompilesAsync(Complete() with
+        {
+            RetentionAmount = 10_398m,
+            Withholdings =
+            [
+                new QuotationPdfWithholding("Retefuente 2,5 %", 7_500m),
+                new QuotationPdfWithholding("ReteICA Bogotá", 2_898m),
+            ],
+            NetTotal = 1_525_722m,
+        });
+
     // El caso completo ejercita todas las ramas que dibujan algo: descuento por linea, retencion,
     // cuenta de cobro y partes con datos propios.
     [Fact]
@@ -543,6 +557,10 @@ public sealed partial class QuotationTemplateTests
         TaxAmount: 245262.85m,
         Total: 1536120m,
         RetentionAmount: 32271.43m,
+        Withholdings:
+        [
+            new QuotationPdfWithholding("Retefuente 2,5 %", 32271.43m),
+        ],
         NetTotal: 1503848.57m,
         CustomerVatSurplus: false,
         Logo: null,
@@ -578,6 +596,7 @@ public sealed partial class QuotationTemplateTests
         TaxAmount: 247.48m,
         Total: 1550m,
         RetentionAmount: 0m,
+        Withholdings: [],
         NetTotal: 1550m,
         CustomerVatSurplus: true,
         Logo: null);

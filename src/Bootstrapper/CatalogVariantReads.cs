@@ -150,7 +150,7 @@ internal static class CatalogVariantReads
             var taxRate = await taxRates.FindAsync(tenantId, taxRateId, cancellationToken);
             if (taxRate is not null)
             {
-                percentages[taxRateId] = taxRate.Percentage;
+                percentages[taxRateId] = taxRate.VatPercentage;
             }
         }
 

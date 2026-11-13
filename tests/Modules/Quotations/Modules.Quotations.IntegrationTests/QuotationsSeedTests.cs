@@ -126,6 +126,22 @@ public sealed class QuotationsSeedTests
             header => string.Equals(header, variant.DefaultHeader, StringComparison.OrdinalIgnoreCase));
     }
 
+    // Spec impuestos por tipo (P12): «Retefuente» y «ReteICA» nacen ocultas y ninguna visible de la hoja
+    // sembrada comparte su encabezado. No necesita base de datos.
+    [Fact]
+    public void NoHeaderCollidesWithTheSeedLayout()
+    {
+        foreach (var key in new[] { "withholding_retefuente", "withholding_reteica" })
+        {
+            var column = Assert.Single(OrdersExportColumnCatalog.Columns, candidate => candidate.Key == key);
+
+            Assert.False(column.DefaultVisible);
+            Assert.DoesNotContain(
+                SeededLayoutHeaders,
+                header => string.Equals(header, column.DefaultHeader, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     // Spec 2026-10-26 tipo de persona, reubicada el 2026-10-28: la hoja sembrada muestra «billing_person_type» como
     // «Tipo de persona» (el de quien se factura) y ese encabezado no puede chocar con ningún otro visible. Las del
     // catálogo nacen ocultas y sus encabezados por defecto no chocan con la hoja. No necesita base de datos.

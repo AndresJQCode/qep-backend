@@ -1,7 +1,10 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using BuildingBlocks.Application;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
@@ -878,6 +881,121 @@ public sealed class ExternalOrderServiceTests
         Assert.Null(without.Shipping);
     }
 
+    // Spec costo de producto §4.3: un pedido que la plataforma entrega ya pagado congela todas sus líneas al crearse.
+    [Fact]
+    public async Task AnExternalOrderBornPaidFreezesItsLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        await OrderLineCostApiTests.SetCostAsync(connectionString, setup.ProductId, 6000m);
+
+        var result = await CreateAsync(
+            factory, Draft(setup, "#7001") with { PaymentStatus = OrderPaymentStatus.FullPaymentReceived });
+
+        Assert.Equal(
+            "6000.00|Manual",
+            await OrderLineCostApiTests.LineCostAsync(connectionString, result.OrderId, setup.ProductId));
+        Assert.NotNull(await OrderLineCostApiTests.PaidAtAsync(connectionString, result.OrderId));
+    }
+
+    // La rama Existing (D-S23) devuelve el pedido tal cual: ni consulta el catálogo ni toca las líneas.
+    [Fact]
+    public async Task ReingestingAPaidExternalOrderDoesNotLookUpCostsAgain()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var costs = new CountingOrderVariantCostLookup(setup.ProductId, 6000m);
+        using var counted = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IOrderVariantCostLookup>();
+            services.AddSingleton<IOrderVariantCostLookup>(costs);
+        }));
+        var draft = Draft(setup, "#7002", externalKey: "shop-1:7002") with
+        {
+            PaymentStatus = OrderPaymentStatus.FullPaymentReceived,
+        };
+
+        var first = await CreateAsync(counted, draft);
+        var linesAfterFirst = await LinesAsync(connectionString, first.OrderId);
+        var second = await CreateAsync(counted, draft);
+
+        Assert.True(second.AlreadyExisted);
+        Assert.Equal(first.OrderId, second.OrderId);
+        Assert.Equal(1, costs.Calls);
+        Assert.Equal(linesAfterFirst, await LinesAsync(connectionString, first.OrderId));
+        Assert.Equal(
+            "6000.00|Manual",
+            await OrderLineCostApiTests.LineCostAsync(connectionString, first.OrderId, setup.ProductId));
+    }
+
+    // Revisión de la tarea 5: la plataforma también lleva a pagado. Se buscan las variantes que no congelaron.
+    [Fact]
+    public async Task SyncingAnExternalOrderToPaidFreezesItsLines()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var created = await CreateAsync(factory, Draft(setup, "#7003"));
+        await OrderLineCostApiTests.SetCostAsync(connectionString, setup.ProductId, 6000m);
+        Assert.Null(await OrderLineCostApiTests.PaidAtAsync(connectionString, created.OrderId));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().SyncPaymentStatusAsync(
+                setup.TenantId, created.OrderId, OrderPaymentStatus.FullPaymentReceived,
+                TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            "6000.00|Manual",
+            await OrderLineCostApiTests.LineCostAsync(connectionString, created.OrderId, setup.ProductId));
+        Assert.NotNull(await OrderLineCostApiTests.PaidAtAsync(connectionString, created.OrderId));
+    }
+
+    private static async Task<IReadOnlyList<string>> LinesAsync(string connectionString, Guid orderId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(
+            "SELECT id::text || '|' || coalesce(unit_cost::text, '') || '|' || coalesce(cost_captured_at::text, '') " +
+            $"FROM quotations.order_items WHERE order_id = '{orderId}' ORDER BY id",
+            connection);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var rows = new List<string>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            rows.Add(reader.GetString(0));
+        }
+
+        return rows;
+    }
+
+    /// <summary>Cuenta las consultas de costo: lo que se prueba es que el reingreso no vuelva a consultar.</summary>
+    private sealed class CountingOrderVariantCostLookup(Guid variantId, decimal cost) : IOrderVariantCostLookup
+    {
+        private int _calls;
+
+        public int Calls => _calls;
+
+        public Task<IReadOnlyDictionary<Guid, decimal>> FindAsync(
+            Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _calls);
+            IReadOnlyDictionary<Guid, decimal> found = variantIds.Contains(variantId)
+                ? new Dictionary<Guid, decimal> { [variantId] = cost }
+                : new Dictionary<Guid, decimal>();
+            return Task.FromResult(found);
+        }
+    }
+
     private sealed record ExternalSetup(
         Guid TenantId, HttpClient Client, Guid ClientId, Guid ProductId, Guid AdvisorId,
         QuotationBillingAccountRequest Billing);
@@ -926,7 +1044,7 @@ public sealed class ExternalOrderServiceTests
     }
 
     // Un scope por llamada, como el worker: cada una con su DbContext.
-    private static async Task<ExternalOrderResult> CreateAsync(QepApiFactory factory, ExternalOrderDraft draft)
+    private static async Task<ExternalOrderResult> CreateAsync(WebApplicationFactory<Program> factory, ExternalOrderDraft draft)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var writer = scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>();

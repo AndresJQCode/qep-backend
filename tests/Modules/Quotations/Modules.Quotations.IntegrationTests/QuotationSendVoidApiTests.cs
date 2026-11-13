@@ -21,7 +21,7 @@ public sealed class QuotationSendVoidApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -81,7 +81,7 @@ public sealed class QuotationSendVoidApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -103,8 +103,9 @@ public sealed class QuotationSendVoidApiTests
     // existe una cotizacion sin `ValidUntil` y su 422 quedo inalcanzable. La invariante sigue
     // viva en `EnsureSendable` y cubierta por `QuotationTests` a nivel de dominio.
     //
-    // Enviar exige solo estado y vigencia. Los otros tres requisitos --productos, forma de pago
-    // y cuenta de cobro-- son de `EnsureConvertibleToOrder`, y se prueban contra ese endpoint.
+    // Enviar exige estado, vigencia y, desde impuestos por tipo (spec §7.7), cuenta de cobro: sin empresa no hay país
+    // y no se sabe qué retenciones aplican (QuotationWithholdingsApiTests.SendWithoutCompanyIs422). Productos y forma
+    // de pago son de `EnsureConvertibleToOrder`, y se prueban contra ese endpoint.
 
     // Reemplaza a `SendWithAnUnknownFileIsUnprocessable`, que dejo de tener sentido: enviar ya
     // no recibe un archivo. Lo que esta prueba fija es la compatibilidad -- el frontend todavia
@@ -118,7 +119,7 @@ public sealed class QuotationSendVoidApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -167,7 +168,7 @@ public sealed class QuotationSendVoidApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         if (sendFirst)
         {
             var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
@@ -249,7 +250,7 @@ public sealed class QuotationSendVoidApiTests
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
         var productId = await CreateProductWithScalesAsync(client, tenantId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, clientId);
         var pdfFileId = await CreateAvailablePdfFileAsync(client, factory, tenantId);
         await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -301,7 +302,7 @@ public sealed class QuotationSendVoidApiTests
         var companyId = await CreateActiveCustomerAsync(client, tenantId);
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez", phone: "311 555 0101");
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",
@@ -324,7 +325,7 @@ public sealed class QuotationSendVoidApiTests
         var otherCompanyId = await CreateActiveCustomerAsync(client, tenantId);
         var strangerId = await CreateActiveCustomerAsync(client, tenantId, name: "Pedro Ríos");
         await LinkContactAsync(client, tenantId, strangerId, otherCompanyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         foreach (var contactId in new Guid?[] { strangerId, companyId, Guid.CreateVersion7(), null })
         {
@@ -359,7 +360,7 @@ public sealed class QuotationSendVoidApiTests
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
         var survivorId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura G.");
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         // El contacto se fusiona en otro cliente: queda marcado como fusionado y ya no es de la empresa.
         var customersUrl = $"/api/v1/tenants/{tenantId}/customers";
@@ -397,7 +398,7 @@ public sealed class QuotationSendVoidApiTests
         var contactId = await CreateActiveCustomerAsync(client, tenantId, name: "Laura Gómez");
         await ClearCustomerPhoneAsync(database.GetConnectionString(), contactId);
         await LinkContactAsync(client, tenantId, contactId, companyId);
-        var quotation = await CreateQuotationAsync(client, tenantId, companyId);
+        var quotation = await CreateSendableQuotationAsync(client, tenantId, companyId);
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/send",

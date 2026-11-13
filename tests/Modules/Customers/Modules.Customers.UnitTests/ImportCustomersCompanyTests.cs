@@ -97,7 +97,7 @@ public sealed class ImportCustomersCompanyTests
         public async Task<ImportCustomersResponse> ImportAsync(params ExcelCustomerRow[] rows)
         {
             var handler = new ImportCustomersHandler(
-                Repository, Directory, new Classifications([]), new ColombiaGeography(), new SequentialCucs(), new StubImporter(rows),
+                Repository, Directory, new Classifications([]), new ColombiaGeography(), new CustomerWriteDoubles.TaxRates(), new SequentialCucs(), new StubImporter(rows),
                 Work, new RecordingAudit(), Importer, new FixedClock(), new TenantDirectory(), new PlusNormalizer());
             return await handler.HandleAsync(
                 new ImportCustomersCommand(CustomerWriteDoubles.Tenant, "clientes.xlsx", 10, new MemoryStream([1])), CancellationToken.None);
@@ -113,7 +113,7 @@ public sealed class ImportCustomersCompanyTests
 
     private static ExcelCustomerRow Row(
         int rowNumber, string name, string number, string? company = null, string? cuc = null, string type = "NIT") =>
-        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, "No", "No", company);
+        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, ReteIca: null, VatSurplus: "No", company);
 
     private static ImportRowError ErrorOf(ImportCustomersResponse response, int rowNumber) =>
         Assert.Single(response.Errors, error => error.RowNumber == rowNumber);

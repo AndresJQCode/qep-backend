@@ -38,7 +38,8 @@ public sealed class CustomerWriteApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(customer);
         Assert.True(customer.IsActive);
-        Assert.True(customer.WithRetention);
+        // El campo del cuerpo se ignora (spec impuestos por tipo §9.2): la retención se deriva de las tasas asignadas.
+        Assert.False(customer.WithRetention);
         Assert.Equal(classification.Id, customer.Classification?.Id);
         // `City`/`Department` son nulos para un cliente de afuera (ver los tests de pais al final
         // de este archivo). Este es colombiano, asi que tenerlos resueltos es parte de lo que se

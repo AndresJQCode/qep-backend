@@ -3,6 +3,7 @@ using System.Text.Json;
 using BuildingBlocks.Application;
 using FluentValidation;
 using FluentValidation.Results;
+using Modules.Automations.Application.Engine;
 using Modules.Automations.Domain;
 using Modules.Automations.Domain.Flow;
 using Modules.Tenancy.Application;
@@ -792,14 +793,17 @@ public sealed class DuplicateChatbotHandler(
     }
 }
 
-/// <summary>§4.4 y D-C13: borrar libera las conexiones; versiones y conexiones se van por la cascada de la base. Con corridas vivas
-/// (<c>Running</c> o <c>Waiting</c>) es 409 <c>has_live_runs</c>: cortarlas dejaría al cliente hablando solo (D-C5). La auditoría se
-/// registra antes de quitar el chatbot para que el mismo <c>SaveChangesAsync</c> confirme las dos cosas.</summary>
+/// <summary>§4.4 y D-C13: borrar libera las conexiones; versiones y conexiones se van por la cascada de la base. Spec 2026-11-03 D-7: es
+/// 409 <c>has_live_runs</c> sólo si el bot de verdad atiende alguna conversación (una corrida viva que una persona no ha interrumpido,
+/// con la regla de <see cref="BotAttendance"/>): cortarla dejaría al cliente hablando solo (D-C5). Una corrida viva de una conversación
+/// resuelta, tomada o pausada por una persona no bloquea, aunque el worker todavía no la haya cerrado. La auditoría se registra antes de
+/// quitar el chatbot para que el mismo <c>SaveChangesAsync</c> confirme las dos cosas.</summary>
 public sealed class DeleteChatbotHandler(
     IExecutionContext executionContext,
     ITenantModules tenantModules,
     IChatbotRepository chatbots,
     IConversationRunQueries runs,
+    IAutomationConversations conversations,
     IAutomationsUnitOfWork unitOfWork,
     IAutomationsAuditRecorder audit,
     IClock clock)
@@ -811,7 +815,7 @@ public sealed class DeleteChatbotHandler(
         var chatbot = await chatbots.FindAsync(command.TenantId, command.ChatbotId, cancellationToken)
             ?? throw AutomationsNotFound.Chatbot(command.ChatbotId);
         AutomationsVersions.Ensure(chatbot.Version, command.Version);
-        if (await runs.HasLiveRunsAsync(command.TenantId, chatbot.Id, cancellationToken))
+        if (await ChatbotLiveRuns.AnyAttendingAsync(runs, conversations, command.TenantId, chatbot.Id, cancellationToken))
         {
             throw new ResourceConflictException(
                 AutomationsErrorCodes.ChatbotHasLiveRuns, "El chatbot tiene conversaciones en curso: pausa el chatbot y espera a que terminen.");
@@ -821,6 +825,26 @@ public sealed class DeleteChatbotHandler(
         chatbots.Remove(chatbot);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return true;
+    }
+}
+
+/// <summary>Spec 2026-11-03 D-7: ¿el bot atiende de verdad alguna conversación del chatbot? Lee las corridas vivas y, de a una, el estado
+/// de su conversación; corta en la primera que atiende. Una conversación inexistente no atiende (no hay a quién dejar hablando solo).</summary>
+internal static class ChatbotLiveRuns
+{
+    public static async Task<bool> AnyAttendingAsync(
+        IConversationRunQueries runs, IAutomationConversations conversations, Guid tenantId, Guid chatbotId, CancellationToken cancellationToken)
+    {
+        foreach (var run in await runs.ListLiveAsync(tenantId, chatbotId, cancellationToken))
+        {
+            var conversation = await conversations.GetAsync(tenantId, run.ConversationId, cancellationToken);
+            if (conversation is not null && BotAttendance.IsAttending(conversation, run))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

@@ -17,9 +17,10 @@ public sealed class OrderShippingTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
-    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, false);
+    private static OrderHeader Header => new(ClientId, Advisor, "COP", null, false, null, false, []);
 
     private static OrderLineInput Line =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -37,7 +38,7 @@ public sealed class OrderShippingTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         var shipping = new ShippingDetails(CarrierId, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, true);
         quotation.SetShipping(shipping, Advisor, Now);
@@ -80,7 +81,7 @@ public sealed class OrderShippingTests
     {
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "COT-2026-0001", ClientId, Advisor, new DateOnly(2026, 11, 1), null, null,
-            QuotationParties.Empty, Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+            QuotationParties.Empty, Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 0m, 19, Advisor, Now);
         quotation.SetShipping(new ShippingDetails(null, null, null, 0m, 0, true), Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>());
@@ -165,11 +166,14 @@ public sealed class OrderShippingTests
         OrderPaymentStatus paymentStatus = OrderPaymentStatus.FullPaymentReceived,
         bool isStorePickup = false,
         string? externalKey = null,
-        string? externalShippingTitle = null) =>
-        Order.CreateExternal(
+        string? externalShippingTitle = null)
+    {
+        var line = Line;
+        return Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header, new QuotationParties(null, null, IsStorePickup: isStorePickup),
-            Account, [Line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
-            externalShippingTitle);
+            Account, [line], paymentStatus, null, Advisor, [], Now, OrderSource.Shopify, "#1001", shipping, externalKey,
+            externalShippingTitle, OrderCostFixtures.WithoutCosts([line]));
+    }
 
     [Fact]
     public void CreateExternalWithoutShippingHasNone()

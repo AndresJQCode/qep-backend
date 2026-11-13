@@ -217,7 +217,7 @@ public sealed class CreateQuotationHandlerTests
     private static StubQuotationRepository EmptyRepository() =>
         new(Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, new MemberId(MembershipId),
-            null, null, null, QuotationParties.Empty, null, "COP", false, false,
+            null, null, null, QuotationParties.Empty, null, "COP", false, [],
             new MemberId(MembershipId), Now));
 
     private static CreateQuotationHandler Handler(
@@ -239,7 +239,8 @@ public sealed class CreateQuotationHandlerTests
             settings,
             new FixedTenantPriceRounding(),
             new ShippingResolver(new StubCarrierRepository(), new StubQuotationTaxRateLookup(null), settings),
-            defaultCurrency ?? new FixedTenantDefaultCurrency());
+            defaultCurrency ?? new FixedTenantDefaultCurrency(),
+            new StubQuotationWithholdingLookup());
 
         return new(
             repository ?? EmptyRepository(),

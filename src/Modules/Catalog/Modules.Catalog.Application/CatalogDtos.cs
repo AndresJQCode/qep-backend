@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Modules.Catalog.Application;
@@ -94,6 +95,9 @@ public sealed record ProductOptionValueResponse(Guid Id, string Name);
 /// entretanto, alguien la vendió (la respuesta lo muestra). Con false, pedir su borrado la
 /// desactiva. No mira la regla de «al menos una variante activa»: esa la responde el PUT con su
 /// propio código.</param>
+/// <param name="Costs">El costo unitario manual por moneda, en orden de catálogo. <c>null</c> = el
+/// llamador no puede verlo (sin <c>catalog.product_cost.read</c> ni <c>.manage</c>); <c>{}</c> = no
+/// tiene costo. BFF: la pantalla distingue «no puedes verlo» de «no tiene» sin adivinar.</param>
 public sealed record ProductVariantResponse(
     Guid Id,
     string Name,
@@ -107,7 +111,8 @@ public sealed record ProductVariantResponse(
     Guid? GalleryFileId,
     string? ImageUrl,
     bool IsActive,
-    bool CanDelete);
+    bool CanDelete,
+    IReadOnlyDictionary<string, decimal>? Costs);
 
 /// <param name="Url">Null si el archivo no está publicado o no es del tenant, igual que
 /// <c>ImageUrl</c>; <c>FileId</c> viaja siempre porque es lo que el PUT manda de vuelta.</param>
@@ -283,6 +288,9 @@ public sealed record CreateProductRequest(
 /// <param name="GalleryFileId">La foto de la variante, por id de archivo: una foto que se sube en el
 /// mismo PUT todavía no tiene fila de galería. Tiene que estar en <c>Gallery</c>.</param>
 /// <param name="IsActive">Null es activa en una variante nueva y «como está» en una guardada.</param>
+/// <param name="Costs">Null o ausente conserva el costo guardado (un cliente que no lo conoce no lo
+/// borra); un mapa lo reemplaza entero, y <c>{}</c> lo quita. Exige
+/// <c>catalog.product_cost.manage</c>: sin él, 403 <c>catalog.product_cost.forbidden</c>.</param>
 public sealed record ProductVariantRequest(
     Guid? Id,
     string? Code,
@@ -290,7 +298,8 @@ public sealed record ProductVariantRequest(
     IReadOnlyList<Guid>? OptionValueIds,
     ProductPricingRequest? Pricing,
     Guid? GalleryFileId,
-    bool? IsActive);
+    bool? IsActive,
+    IReadOnlyDictionary<string, decimal>? Costs = null);
 
 /// <summary>
 /// El cuerpo de la copia de escalas: de qué variante salen y a cuáles van. No lleva las escalas
@@ -351,29 +360,72 @@ public sealed record UpdateProductRequest(
 public sealed record TaxRateDto(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit);
 
 public sealed record TaxRateResponse(
     Guid Id,
     string Name,
-    int Percentage,
+    decimal Percentage,
     bool IsActive,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string Type,
+    string Country,
+    string Behavior,
+    decimal? MinimumBase,
+    string? MinimumBaseUnit);
 
 public sealed record TaxRatesResponse(IReadOnlyCollection<TaxRateResponse> Items);
 
-// Percentage es int, no decimal: P-008, decidido por el owner el 2026-08-10, fija el porcentaje
-// en 0 decimales. Encaja con el IVA colombiano —19, 5 o 0— y el gate CAT-00 lo declara como
-// límite de alcance del módulo, o sea que no admite retenciones con fracción.
+// Percentage es decimal: el IVA sigue entero, pero las retenciones admiten hasta tres decimales
+// (0,966 % del ReteICA, D15 del spec de impuestos por tipo, que reabrió P-008). Qué forma admite cada
+// tipo lo decide el dominio, no el contrato.
 //
-// IsActive tampoco viaja acá, por la misma razón que en producto.
-public sealed record CreateTaxRateRequest(string Name, int Percentage);
+// Type y Country son opcionales sólo por compatibilidad con el frontend viejo: sin Type la tasa es IVA
+// y sin Country es CO (spec §9.2). IsActive no viaja acá, por la misma razón que en producto.
+public sealed record CreateTaxRateRequest(
+    string Name,
+    decimal Percentage,
+    string? Type = null,
+    string? Country = null,
+    decimal? MinimumBase = null);
 
-public sealed record UpdateTaxRateRequest(string Name, int Percentage);
+// Type y Country no se editan: si el cuerpo los trae, se ignoran. MinimumBase es un JsonElement porque
+// un decimal? no distingue «ausente» (conservar la base) de null (quitarla, «siempre aplica»).
+public sealed record UpdateTaxRateRequest(
+    string Name,
+    decimal Percentage)
+{
+    // Propiedad y no parámetro del constructor: con `JsonElement MinimumBase = default` el esquema de OpenAPI
+    // (JsonSchemaExporter) intentaba escribir ese valor por defecto y /openapi/v1.json entero respondía 500.
+    // Ausente queda en default (ValueKind Undefined), igual que antes.
+    public JsonElement MinimumBase { get; init; }
+}
+
+/// <summary>
+/// Lo que la pantalla de tasas puede elegir: sólo los países donde el tenant tiene empresa y que además
+/// tienen tipos definidos. Backend for Frontend: la pantalla no conoce la tabla de países ni sus
+/// unidades tributarias (anti objetivo del frontend), así que no la duplica ni la deduce.
+/// </summary>
+public sealed record TaxRateOptionsDto(IReadOnlyList<TaxRateCountryOptionDto> Countries);
+
+/// <param name="TaxUnit">"UVT", o null si el país no tiene unidad tributaria.</param>
+/// <param name="Currency">La moneda en la que el país discrimina impuestos.</param>
+public sealed record TaxRateCountryOptionDto(
+    string Country,
+    string? TaxUnit,
+    string Currency,
+    IReadOnlyList<TaxRateTypeOptionDto> Types);
+
+public sealed record TaxRateTypeOptionDto(string Type, string Behavior, bool AllowsFraction, bool AllowsMinimumBase);
 
 public sealed record CategoryDto(
     Guid Id,

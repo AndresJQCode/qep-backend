@@ -821,8 +821,8 @@ public sealed class OrphanUserCleanupTests
             defaultCurrency: "COP",
             // El cliente de esta cotizacion de prueba no aplica retencion ni excedente de IVA:
             // lo que se ejercita aca es la limpieza de usuarios huerfanos, no los totales.
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             advisor,
             DateTimeOffset.UtcNow));
         await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -849,7 +849,7 @@ public sealed class OrphanUserCleanupTests
             OrderId.New(),
             tenantId,
             $"PED-{Guid.NewGuid():N}"[..20],
-            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(Guid.CreateVersion7(), convertedBy, "COP", null, IsRetail: false, null, false, []),
             QuotationParties.Empty,
             new QuotationBillingAccount
             {
@@ -867,7 +867,11 @@ public sealed class OrphanUserCleanupTests
 
         if (approvedByMembershipId is { } approvedBy)
         {
-            order.MarkPaid(new MemberId(approvedBy), requirePaymentProof: false, occurredAt);
+            order.MarkPaid(
+                new MemberId(approvedBy),
+                requirePaymentProof: false,
+                OrderLineCosts.Of(order.UncostedVariantIds, new Dictionary<Guid, decimal>()),
+                occurredAt);
         }
 
         // Facturar exige pagado (spec 2026-11-10 §3.4, ajuste por defecto): quien pida invoicedBy tiene que

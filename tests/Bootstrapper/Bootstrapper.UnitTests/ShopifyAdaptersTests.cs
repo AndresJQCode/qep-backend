@@ -58,7 +58,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShippingLookupInactiveRateReturnsNull()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var taxRates = new FakeTaxRateRepository(rate);
         var lookup = ShippingLookup(new FakeCarrierRepository(), new FakeQuotationSettingsStore(rate.Id.Value), taxRates);
         Assert.Equal(19, await lookup.GetFreightTaxPercentageAsync(TenantId, Ct));
@@ -76,7 +76,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ProductLookupReadsTaxPercentageByRateId()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var taxed = NewProduct("SH-400", rate.Id);
         var untaxed = NewProduct("SH-200", null);
         untaxed.Deactivate(Now);
@@ -94,7 +94,7 @@ public sealed class ShopifyAdaptersTests
     [Fact]
     public async Task ShopifyLookupMatchesVariantCodeExactly()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id, largeIsActive: false);
         var lookup = new ShopifyProductLookup(new FakeProductRepository(world.Product), new FakeTaxRateRepository(rate));
 
@@ -702,6 +702,47 @@ public sealed class ShopifyAdaptersTests
             Assert.Equal(ConnectionWorld.Domain, connection.ShopDomain);
             Assert.Equal(ConnectionWorld.Token, connection.AccessToken);
         });
+    }
+
+    // Spec 2026-11-12 §6.4 (D7): un token vencido no vuelve la conexión no operativa (el redact y la ingesta la tratarían como
+    // desinstalada o pausada); sólo deja de viajar el token, para que la conciliación salte la corrida.
+    [Fact]
+    public async Task ConnectionDirectoryKeepsAnExpiredTokenConnectionOperationalWithoutToken()
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt: "2026-10-18T11:59:00.0000000+00:00");
+
+        var byDomain = await world.Directory.FindByShopDomainAsync(ConnectionWorld.Domain, Ct);
+        var byId = await world.Directory.FindAsync(world.Connection.TenantId, world.Connection.Id, Ct);
+
+        Assert.NotNull(byDomain);
+        Assert.NotNull(byId);
+        Assert.Equal((true, (string?)null), (byDomain.IsOperational, byDomain.AccessToken));
+        Assert.Equal((true, (string?)null), (byId.IsOperational, byId.AccessToken));
+    }
+
+    [Fact]
+    public async Task ConnectionDirectoryListOperationalSkipsAnExpiredToken()
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt: "2026-10-18T11:59:00.0000000+00:00");
+
+        Assert.Empty(await world.Directory.ListOperationalAsync(Ct));
+    }
+
+    // D14: sin vencimiento guardado (una conexión anterior al cambio), el token sigue viajando hasta que el worker la marque.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("no-es-fecha")]
+    [InlineData("2026-10-18T12:01:00.0000000+00:00")]
+    public async Task ConnectionDirectoryWithoutExpiryStillCarriesTheToken(string? tokenExpiresAt)
+    {
+        var world = new ConnectionWorld(ConnectionStatus.Active, shopifyEnabled: true, tokenExpiresAt);
+
+        var found = await world.Directory.FindByShopDomainAsync(ConnectionWorld.Domain, Ct);
+        var listed = Assert.Single(await world.Directory.ListOperationalAsync(Ct));
+
+        Assert.NotNull(found);
+        Assert.Equal((true, (string?)ConnectionWorld.Token), (found.IsOperational, found.AccessToken));
+        Assert.Equal(ConnectionWorld.Token, listed.AccessToken);
     }
 
     [Fact]

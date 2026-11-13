@@ -16,10 +16,11 @@ public sealed class OrderTests
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     private static OrderHeader Header(bool isRetail = false, bool withRetention = false) =>
-        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, withRetention, false);
+        new(ClientId, Advisor, "COP", "Transferencia", isRetail, null, false, TestWithholdings.Customer(withRetention));
 
     private static OrderLineInput Line(decimal quantity = 2m, decimal unitPrice = 11_900m, decimal discount = 0m) =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), quantity, unitPrice, discount, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -39,7 +40,7 @@ public sealed class OrderTests
     private static Order PaidOrder(IReadOnlyCollection<OrderPaymentProofInput>? proofs = null)
     {
         var order = NewOrder(proofs: proofs);
-        order.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
+        order.MarkPaid(ConvertedBy, requirePaymentProof: false, order.WithoutCosts(), Now);
         return order;
     }
 
@@ -118,7 +119,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -141,7 +142,7 @@ public sealed class OrderTests
                         DepartmentId = Guid.CreateVersion7(),
                         CityId = Guid.CreateVersion7(),
                     },
-                    null, BillingWithRetention: false, BillingVatSurplus: false),
+                    null, BillingVatSurplus: false),
                 Account, ShippingDetails.None, [Line()], null, ConvertedBy, [], Now));
 
         Assert.Equal("order.billing.identification_required", error.Code);
@@ -166,8 +167,8 @@ public sealed class OrderTests
                     DepartmentId = Guid.CreateVersion7(),
                     CityId = Guid.CreateVersion7(),
                 },
-                null, BillingWithRetention: false, BillingVatSurplus: false),
-            Account, "COP", customerWithRetention: false, customerVatSurplus: false, Advisor, Now);
+                null, BillingVatSurplus: false),
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
@@ -187,7 +188,8 @@ public sealed class OrderTests
     {
         var order = Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null,
+            OrderLineCosts.None);
 
         Assert.Equal((OrderSource.Shopify, "#1001"), (order.Source, order.ExternalReference));
     }
@@ -198,9 +200,11 @@ public sealed class OrderTests
     [Fact]
     public void CreateExternalAcceptsAPaidStatusWithoutProofs()
     {
+        var line = Line();
         var order = Order.CreateExternal(
-            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null);
+            OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [line],
+            OrderPaymentStatus.FullPaymentReceived, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null,
+            OrderCostFixtures.WithoutCosts([line]));
 
         Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
         Assert.Empty(order.PaymentProofs);
@@ -211,7 +215,8 @@ public sealed class OrderTests
     {
         var error = Assert.Throws<QuotationsDomainException>(() => Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, Account, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Quotation, "#1", ShippingDetails.None, null, null));
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Quotation, "#1", ShippingDetails.None, null, null,
+            OrderLineCosts.None));
 
         Assert.Equal("order.order.source_invalid", error.Code);
     }
@@ -230,7 +235,8 @@ public sealed class OrderTests
     {
         Assert.Throws<ArgumentNullException>(() => Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0002", Header(), QuotationParties.Empty, null!, [Line()],
-            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null));
+            OrderPaymentStatus.PaymentPending, null, ConvertedBy, [], Now, OrderSource.Shopify, "#1001", ShippingDetails.None, null, null,
+            OrderLineCosts.None));
     }
 
     [Fact]
@@ -292,7 +298,7 @@ public sealed class OrderTests
         var order = NewOrder(proofs: [], lines: [Line()]);
         var first = Assert.Single(order.Items);
 
-        order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now);
+        order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, OrderLineCosts.None, ConvertedBy, Now);
         Assert.Equal(2, order.Items.Count);
         Assert.Equal(23_800m + 5_000m, order.Total);
 
@@ -308,7 +314,7 @@ public sealed class OrderTests
         order.Prepare(ConvertedBy, Now);
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, ConvertedBy, Now));
+            order.AddItem(OrderItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 1m, 5_000m, 0m, 19, OrderLineCosts.None, ConvertedBy, Now));
 
         Assert.Equal("order.order.not_editable", error.Code);
     }
@@ -322,7 +328,7 @@ public sealed class OrderTests
         var added = Guid.CreateVersion7();
         var order = NewOrder(
             lines: [new OrderLineInput(frozen, frozen, 1m, 1_000m, 0m, 19, new QuotationProductSnapshot("A-001", "Tornillo"))]);
-        order.AddItem(OrderItemId.New(), added, added, 1m, 1_000m, 0m, 19, ConvertedBy, Now.AddHours(1));
+        order.AddItem(OrderItemId.New(), added, added, 1m, 1_000m, 0m, 19, OrderLineCosts.None, ConvertedBy, Now.AddHours(1));
         var version = order.Version;
 
         order.CaptureProductSnapshots(new Dictionary<Guid, QuotationProductSnapshot>
@@ -345,7 +351,7 @@ public sealed class OrderTests
         var order = NewOrder(proofs: []);
         var version = order.Version;
 
-        order.SyncExternalPaymentStatus(OrderPaymentStatus.FullPaymentReceived, autoArchive: false, Now.AddHours(1));
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.FullPaymentReceived, autoArchive: false, order.WithoutCosts(), Now.AddHours(1));
 
         Assert.Equal(OrderPaymentStatus.FullPaymentReceived, order.PaymentStatus);
         Assert.Equal(version + 1, order.Version);
@@ -357,7 +363,7 @@ public sealed class OrderTests
         var order = NewOrder();
 
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, autoArchive: false, Now.AddHours(1)));
+            order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, autoArchive: false, order.WithoutCosts(), Now.AddHours(1)));
 
         Assert.Equal("order.order.payment_has_proofs", error.Code);
         Assert.Equal(OrderPaymentStatus.PendingVerification, order.PaymentStatus);
@@ -369,7 +375,7 @@ public sealed class OrderTests
         var order = NewOrder(proofs: []);
         var version = order.Version;
 
-        order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, autoArchive: false, Now.AddHours(1));
+        order.SyncExternalPaymentStatus(OrderPaymentStatus.PaymentPending, autoArchive: false, order.WithoutCosts(), Now.AddHours(1));
 
         Assert.Equal(version, order.Version);
     }
@@ -390,7 +396,7 @@ public sealed class OrderTests
         var item = Assert.Single(order.Items);
         Assert.Equal(("ABC", 10m, 5m), (item.ProductCode, item.Quantity, item.DiscountPercentage));
         Assert.Equal("Bodega", order.Shipping!.Name);
-        Assert.True(order.AppliesRetention);
+        Assert.NotEmpty(order.AppliedWithholdings);
     }
 
     [Fact]
@@ -429,7 +435,7 @@ public sealed class OrderTests
                 DepartmentId = Guid.CreateVersion7(),
                 CityId = Guid.CreateVersion7(),
             }),
-            Account, "COP", customerWithRetention: true, customerVatSurplus: false, Advisor, Now);
+            Account, "COP", customerVatSurplus: false, customerWithholdings: [TestWithholdings.RetefuenteCo], Advisor, Now);
         quotation.AddItem(QuotationItemId.New(), Guid.CreateVersion7(), Guid.CreateVersion7(), 10m, 11_900m, 5m, 19, Advisor, Now);
         quotation.ConvertToOrder(Advisor, Now, new Dictionary<Guid, QuotationProductSnapshot>
         {
@@ -956,7 +962,7 @@ public sealed class OrderTests
     {
         var order = NewOrder();
         var paidBy = new MemberId(Guid.CreateVersion7());
-        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
+        order.MarkPaid(paidBy, requirePaymentProof: false, order.WithoutCosts(), Now);
 
         order.Cancel(ConvertedBy, "Pagado por error", Now.AddDays(1));
 
@@ -983,7 +989,7 @@ public sealed class OrderTests
     {
         var order = NewOrder();
         order.EnsureSendable();
-        order.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
+        order.MarkPaid(ConvertedBy, requirePaymentProof: false, order.WithoutCosts(), Now);
         order.EnsureSendable();
         order.Invoice(ConvertedBy, requireFullPayment: true, Now);
 
@@ -1070,7 +1076,7 @@ public sealed class OrderTests
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var markPaid = Assert.Throws<QuotationsDomainException>(() =>
-            order.MarkPaid(ConvertedBy, requirePaymentProof: false, later));
+            order.MarkPaid(ConvertedBy, requirePaymentProof: false, order.WithoutCosts(), later));
 
         Assert.Equal("order.order.not_editable", addProofs.Code);
         Assert.Equal("order.order.not_editable", recalculate.Code);
@@ -1276,7 +1282,7 @@ public sealed class OrderTests
         Order.CreateExternal(
             OrderId.New(), TenantId, "PED-2026-0003", Header(), parties ?? QuotationParties.Empty, Account, [Line()],
             OrderPaymentStatus.PaymentPending, notes, ConvertedBy, [], Now, OrderSource.Shopify, "#1001",
-            ShippingDetails.None, null, null);
+            ShippingDetails.None, null, null, OrderLineCosts.None);
 
     [Fact]
     public void AttachExternalShippingAddsThePartyAndDropsTheRawAddressLine()
@@ -1436,7 +1442,7 @@ public sealed class OrderTests
         Assert.Null(order.InvoicedAt);
         Assert.Null(order.InvoicedBy);
         var paidBy = new MemberId(Guid.CreateVersion7());
-        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
+        order.MarkPaid(paidBy, requirePaymentProof: false, order.WithoutCosts(), Now);
         var invoicedBy = new MemberId(Guid.CreateVersion7());
         var later = Now.AddDays(1);
 
@@ -1501,7 +1507,7 @@ public sealed class OrderTests
     {
         var order = NewOrder();
         var paidBy = new MemberId(Guid.CreateVersion7());
-        order.MarkPaid(paidBy, requirePaymentProof: false, Now);
+        order.MarkPaid(paidBy, requirePaymentProof: false, order.WithoutCosts(), Now);
         order.Invoice(ConvertedBy, requireFullPayment: true, Now.AddDays(1));
         var later = Now.AddDays(2);
 
@@ -1549,7 +1555,7 @@ public sealed class OrderTests
     {
         var open = NewOrder();
         var paid = NewOrder();
-        paid.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
+        paid.MarkPaid(ConvertedBy, requirePaymentProof: false, paid.WithoutCosts(), Now);
         var cancelled = NewOrder();
         cancelled.Cancel(ConvertedBy, "El cliente desistió", Now);
 
@@ -1594,7 +1600,7 @@ public sealed class OrderTests
     {
         var order = NewOrder();
         var proofId = Assert.Single(order.PaymentProofs).Id;
-        order.MarkPaid(ConvertedBy, requirePaymentProof: false, Now);
+        order.MarkPaid(ConvertedBy, requirePaymentProof: false, order.WithoutCosts(), Now);
         order.Invoice(ConvertedBy, requireFullPayment: true, Now);
         var later = Now.AddDays(1);
 
@@ -1609,7 +1615,7 @@ public sealed class OrderTests
         var removeProof = Assert.Throws<QuotationsDomainException>(() =>
             order.RemovePaymentProof(proofId, later));
         var markPaid = Assert.Throws<QuotationsDomainException>(() =>
-            order.MarkPaid(ConvertedBy, requirePaymentProof: false, later));
+            order.MarkPaid(ConvertedBy, requirePaymentProof: false, order.WithoutCosts(), later));
         var attach = Assert.Throws<QuotationsDomainException>(() =>
             order.AttachPaymentProofs([], ConvertedBy, later));
         var correct = Assert.Throws<QuotationsDomainException>(() =>
@@ -1744,7 +1750,7 @@ public sealed class OrderTests
             CityId = Guid.CreateVersion7(),
         };
         var shipping = billing with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
-        return new QuotationParties(billing, shipping, BillingWithRetention: false, BillingVatSurplus: false);
+        return new QuotationParties(billing, shipping, BillingVatSurplus: false);
     }
 
     private static Order NewBuyerStoreOrder(
@@ -1754,7 +1760,7 @@ public sealed class OrderTests
             OrderId.New(), TenantId, "PED-2026-0001", Header(isRetail: true), StoreParties(), Account, [Line()], notes, Advisor, Now, "store-checkout:abc", buyerAccountId: buyer);
         if (payment != OrderPaymentStatus.PaymentPending)
         {
-            order.SyncExternalPaymentStatus(payment, autoArchive: false, Now);
+            order.SyncExternalPaymentStatus(payment, autoArchive: false, order.WithoutCosts(), Now);
         }
 
         return order;
@@ -1805,7 +1811,7 @@ public sealed class OrderTests
         var order = NewBuyerStoreOrder(Guid.CreateVersion7(), notes: "Entregar en portería");
 
         order.SetShipping(new ShippingDetails(null, "Coordinadora", FreightChargeMode.Charged, 15_000m, 19, false), Advisor, Now);
-        order.SetBilling(null, true, false, null, null, Advisor, Now);
+        order.SetBilling(null, true, false, null, Advisor, Now);
 
         Assert.Equal("Entregar en portería", order.BuyerNotes);
     }
@@ -1848,7 +1854,7 @@ public sealed class OrderTests
         switch (step)
         {
             case "paid":
-                order.MarkPaid(Advisor, requirePaymentProof: false, Now);
+                order.MarkPaid(Advisor, requirePaymentProof: false, order.WithoutCosts(), Now);
                 break;
             case "invoiced":
                 order.Invoice(Advisor, requireFullPayment: false, Now);

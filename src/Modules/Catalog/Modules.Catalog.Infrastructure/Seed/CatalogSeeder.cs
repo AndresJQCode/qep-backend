@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BuildingBlocks.Domain.Taxes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Domain;
@@ -43,7 +44,7 @@ public static class CatalogSeeder
         if (taxRate is null)
         {
             taxRate = TaxRate.Create(
-                TaxRateId.New(), tenantId, seed.TaxRate.Name, seed.TaxRate.Percentage, now);
+                TaxRateId.New(), tenantId, seed.TaxRate.Name, seed.TaxRate.Percentage, TaxCountries.IvaType, "CO", null, now);
             dbContext.TaxRates.Add(taxRate);
             await dbContext.SaveChangesAsync(cancellationToken);
         }

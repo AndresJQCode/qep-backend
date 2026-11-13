@@ -133,11 +133,16 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             .HasMaxLength(16);
         quotation.Property(value => value.BillsToFinalConsumer)
             .HasColumnName("bills_to_final_consumer");
-        quotation.Property(value => value.CustomerWithRetention)
-            .HasColumnName("customer_with_retention");
+        // Plan impuestos por tipo P5: las dos columnas de la retención de antes quedan como propiedades sombra, sin
+        // propiedad de dominio (la retención sale de quotation_withholdings). El modelo las conserva para que EF no
+        // genere un DropColumn ahora y para que el binario viejo las siga leyendo durante el despliegue; el DEFAULT
+        // hace que el INSERT nuevo, que no las nombra, no falle por NOT NULL. Las quita la migración de contrato.
+        quotation.Property<bool>("customer_with_retention")
+            .HasColumnName("customer_with_retention")
+            .HasDefaultValue(false);
         quotation.Property(value => value.CustomerVatSurplus)
             .HasColumnName("customer_vat_surplus");
-        quotation.Property(value => value.PartyWithRetention)
+        quotation.Property<bool?>("party_with_retention")
             .HasColumnName("party_with_retention");
         quotation.Property(value => value.PartyVatSurplus)
             .HasColumnName("party_vat_surplus");
@@ -178,12 +183,32 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             billing.Property(value => value.Currency)
                 .HasColumnName("billing_account_currency")
                 .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+            // Plan impuestos por tipo P1: el país de la empresa, congelado con la cuenta.
+            billing.Property(value => value.Country)
+                .HasColumnName("billing_company_country")
+                .HasColumnType("char(2)")
+                .HasMaxLength(QuotationBillingAccount.CountryLength);
         });
         quotation.Navigation(value => value.BillingAccount).IsRequired(false);
 
         quotation.Navigation(value => value.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
         quotation.Navigation(value => value.Parties)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La foto de las tasas de retención (spec impuestos por tipo §7.5): tabla hija de la cotización, una fila por
+        // tasa y fuente. Se derivan del agregado y no se persisten aparte.
+        quotation.Ignore(value => value.CustomerWithholdings);
+        quotation.Ignore(value => value.BillingWithholdings);
+        quotation.Ignore(value => value.ActiveWithholdings);
+        quotation.Ignore(value => value.AppliedWithholdings);
+        quotation.OwnsMany(value => value.Withholdings, withholding =>
+        {
+            withholding.ToTable("quotation_withholdings", "quotations", table =>
+                table.HasCheckConstraint("CK_quotation_withholdings_source", "source IN ('Customer','Billing')"));
+            ConfigureWithholding<Quotation, QuotationId>(withholding, "PK_quotation_withholdings");
+        });
+        quotation.Navigation(value => value.Withholdings)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
         quotation.HasIndex(value => value.TenantId).HasDatabaseName("IX_quotations_tenant");
@@ -202,6 +227,43 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         quotation.HasIndex(value => new { value.TenantId, value.QuotationNumber })
             .IsUnique()
             .HasDatabaseName("IX_quotations_tenant_number");
+    }
+
+    /// <summary>
+    /// Una fila de la foto de retenciones (spec impuestos por tipo §7.5), la misma forma para cotización y pedido.
+    /// Sin FK a <c>catalog.tax_rates</c>: la tasa puede editarse o borrarse y la foto no se mueve. La clave
+    /// (documento, fuente, posición) la pone el código: sin <c>ValueGeneratedNever</c>, EF toma una fila nueva con la
+    /// clave ya puesta en un documento rastreado como Modified (UPDATE de 0 filas → 412) en vez de Added (lección de
+    /// <c>customer_tax_rates</c>).
+    /// </summary>
+    private static void ConfigureWithholding<TOwner, TDocumentId>(
+        Microsoft.EntityFrameworkCore.Metadata.Builders.OwnedNavigationBuilder<TOwner, DocumentWithholding> withholding,
+        string primaryKeyName)
+        where TOwner : class
+    {
+        withholding.WithOwner().HasForeignKey("DocumentId");
+        withholding.Property<TDocumentId>("DocumentId").HasColumnName("document_id").ValueGeneratedNever();
+        withholding.Property(value => value.Source)
+            .HasColumnName("source")
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .ValueGeneratedNever();
+        withholding.Property(value => value.Position).HasColumnName("position").ValueGeneratedNever();
+        withholding.HasKey("DocumentId", nameof(DocumentWithholding.Source), nameof(DocumentWithholding.Position))
+            .HasName(primaryKeyName);
+        withholding.Property(value => value.TaxRateId).HasColumnName("tax_rate_id");
+        withholding.Property(value => value.Name).HasColumnName("name").HasMaxLength(120);
+        withholding.Property(value => value.Type).HasColumnName("type").HasMaxLength(32);
+        withholding.Property(value => value.Country).HasColumnName("country").HasColumnType("char(2)").HasMaxLength(2);
+        withholding.Property(value => value.Percentage).HasColumnName("percentage").HasPrecision(6, 3);
+        withholding.Property(value => value.MinimumBase).HasColumnName("minimum_base").HasPrecision(14, 2);
+        withholding.Property(value => value.MinimumBaseUnit).HasColumnName("minimum_base_unit").HasMaxLength(8);
+        withholding.Property(value => value.TaxUnitValue).HasColumnName("tax_unit_value").HasPrecision(14, 2);
+        withholding.Property(value => value.BaseAmount).HasColumnName("base_amount").HasPrecision(14, 2);
+        withholding.Property(value => value.Amount).HasColumnName("amount").HasPrecision(14, 2);
+        // Plan P3: distingue «no aplica» de una tasa al 0 % que sí aplicó.
+        withholding.Property(value => value.Applied).HasColumnName("applied");
+        withholding.Ignore(value => value.Rate);
     }
 
     private const string FreightChargeModeCheck =
@@ -549,9 +611,14 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         order.Property(value => value.BillingUsesBusinessName).HasColumnName("billing_uses_business_name");
         order.Property(value => value.IsStorePickup).HasColumnName("is_store_pickup");
         order.Property(value => value.BillsToFinalConsumer).HasColumnName("bills_to_final_consumer");
-        order.Property(value => value.PartyWithRetention).HasColumnName("party_with_retention");
+        // Plan impuestos por tipo P5, igual que en la cotización: las dos columnas de la retención de antes quedan como
+        // propiedades sombra (la retención sale de order_withholdings), con DEFAULT para que el INSERT nuevo no falle
+        // por NOT NULL. Las quita la migración de contrato.
+        order.Property<bool?>("party_with_retention").HasColumnName("party_with_retention");
         order.Property(value => value.PartyVatSurplus).HasColumnName("party_vat_surplus");
-        order.Property(value => value.CustomerWithRetention).HasColumnName("customer_with_retention");
+        order.Property<bool>("customer_with_retention")
+            .HasColumnName("customer_with_retention")
+            .HasDefaultValue(false);
         order.Property(value => value.CustomerVatSurplus).HasColumnName("customer_vat_surplus");
         order.Property(value => value.Subtotal).HasColumnName("subtotal").HasPrecision(14, 2);
         order.Property(value => value.TaxPercentage).HasColumnName("tax_percentage").HasPrecision(5, 2);
@@ -572,10 +639,28 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
             billing.Property(value => value.Currency)
                 .HasColumnName("billing_account_currency")
                 .HasMaxLength(QuotationBillingAccount.CurrencyLength);
+            // Plan impuestos por tipo P1: el país de la empresa, congelado con la cuenta.
+            billing.Property(value => value.Country)
+                .HasColumnName("billing_company_country")
+                .HasColumnType("char(2)")
+                .HasMaxLength(QuotationBillingAccount.CountryLength);
         });
         order.Navigation(value => value.BillingAccount).IsRequired();
         order.Navigation(value => value.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
         order.Navigation(value => value.Parties).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // La foto de las tasas de retención del pedido (spec impuestos por tipo §7.5): misma forma que la de la
+        // cotización, con una sola fuente ('Document').
+        order.Ignore(value => value.AppliedWithholdings);
+        order.OwnsMany(value => value.Withholdings, withholding =>
+        {
+            withholding.ToTable("order_withholdings", "quotations", table =>
+                table.HasCheckConstraint("CK_order_withholdings_source", "source IN ('Document')"));
+            ConfigureWithholding<Order, OrderId>(withholding, "PK_order_withholdings");
+        });
+        order.Navigation(value => value.Withholdings)
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         order.Property(value => value.Status)
             .HasColumnName("status")
             .HasConversion<string>()
@@ -594,6 +679,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // Spec 2026-11-10: quién y cuándo marcó pagado, preparado y archivado. Nullables, porque un pedido sin esa
         // marca no tiene nada que guardar acá; misma conversión nullable que invoiced_by.
         order.Property(value => value.PaidMarkedAt).HasColumnName("paid_marked_at");
+        // Spec costo de producto §4.4: cuándo quedó pagado por cualquier vía, la fecha del reporte de margen.
+        order.Property(value => value.PaidAt).HasColumnName("paid_at");
         order.Property(value => value.PaidMarkedBy)
             .HasColumnName("paid_marked_by")
             .HasConversion(
@@ -683,6 +770,8 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         // tenant.
         order.HasIndex(value => new { value.TenantId, value.ConvertedAt, value.OrderNumber })
             .HasDatabaseName("IX_orders_tenant_converted_at_number");
+        // El período del reporte de margen (spec costo de producto §6.3) filtra por paid_at detrás del tenant.
+        order.HasIndex(value => new { value.TenantId, value.PaidAt }).HasDatabaseName("IX_orders_tenant_paid_at");
 
         // RESTRICT, no CASCADE: el pedido es el registro que sobrevive -- borrar la cotizacion de
         // origen (si algun dia existiera un borrado duro) no deberia poder llevarse el pedido
@@ -734,6 +823,15 @@ public sealed class QuotationsDbContext(DbContextOptions<QuotationsDbContext> op
         item.Property(value => value.Position).HasColumnName("position");
         item.Property(value => value.CreatedAt).HasColumnName("created_at");
         item.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        // Costo congelado cuando la línea cuenta como vendida (spec costo de producto §4.2): los tres nulos en las
+        // líneas anteriores y en las que todavía no se vendieron. (18,2) como el costo del catálogo, para que un
+        // costo válido allá no desborde la línea al congelarse.
+        item.Property(value => value.UnitCost).HasColumnName("unit_cost").HasPrecision(18, 2);
+        item.Property(value => value.CostSource)
+            .HasColumnName("cost_source")
+            .HasConversion<string>()
+            .HasMaxLength(20);
+        item.Property(value => value.CostCapturedAt).HasColumnName("cost_captured_at");
         item.Ignore(value => value.Amounts);
         item.HasIndex(value => value.OrderId).HasDatabaseName("IX_order_items_order");
         // Mismo motivo que IX_quotation_items_variant: la consulta de uso de Catalog.

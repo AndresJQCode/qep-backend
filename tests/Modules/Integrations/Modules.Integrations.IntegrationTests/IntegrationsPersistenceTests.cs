@@ -2,6 +2,7 @@ using BuildingBlocks.Application;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Audit.Domain;
 using Modules.Integrations.Application;
+using Modules.Integrations.Application.Shopify;
 using Modules.Integrations.Domain;
 using Npgsql;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
@@ -219,5 +220,116 @@ public sealed class IntegrationsPersistenceTests
             connectionString,
             "SELECT count(*) FROM platform.outbox_messages WHERE event_name = 'integrations.connection-paused.v1' AND payload->>'connectionId' = @id AND payload->>'providerKey' = 'zenvia'",
             ("id", id.ToString())));
+    }
+
+    // Spec 2026-11-12 D1: el candado del token de Shopify es por id (conexión o instalación) y vive con la transacción.
+    [Fact]
+    public async Task TheShopifyTokenLockExcludesASecondTransaction()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var id = Guid.CreateVersion7();
+        using var first = factory.Services.CreateScope();
+        using var second = factory.Services.CreateScope();
+        var mine = first.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+        var theirs = second.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+
+        var held = await mine.BeginTransactionAsync(Ct);
+        Assert.True(await mine.TryLockShopifyTokenAsync(id, Ct));
+        await using (await theirs.BeginTransactionAsync(Ct))
+        {
+            Assert.False(await theirs.TryLockShopifyTokenAsync(id, Ct));
+            Assert.True(await theirs.TryLockShopifyTokenAsync(Guid.CreateVersion7(), Ct));
+        }
+
+        await held.DisposeAsync();
+        await using (await theirs.BeginTransactionAsync(Ct))
+        {
+            Assert.True(await theirs.TryLockShopifyTokenAsync(id, Ct));
+        }
+    }
+
+    // La variante que espera: el segundo queda bloqueado hasta que el primero confirma al guardar.
+    [Fact]
+    public async Task TheWaitingShopifyTokenLockWaitsUntilTheFirstSaves()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var id = Guid.CreateVersion7();
+        using var first = factory.Services.CreateScope();
+        using var second = factory.Services.CreateScope();
+        var mine = first.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+        var theirs = second.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+
+        await using var held = await mine.BeginTransactionAsync(Ct);
+        await mine.LockShopifyTokenAsync(id, Ct);
+        await using var waiting = await theirs.BeginTransactionAsync(Ct);
+        var lockTask = theirs.LockShopifyTokenAsync(id, Ct);
+        await Task.Delay(TimeSpan.FromMilliseconds(500), Ct);
+        Assert.False(lockTask.IsCompleted);
+
+        await mine.SaveChangesAsync(Ct);
+
+        await lockTask.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Fact]
+    public async Task TheLockWithoutATransactionThrows()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var scope = factory.Services.CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unitOfWork.TryLockShopifyTokenAsync(Guid.CreateVersion7(), Ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unitOfWork.LockShopifyTokenAsync(Guid.CreateVersion7(), Ct));
+    }
+
+    // Spec 2026-11-12 §6.1: el refresco de la instalación cambia el par y sus vencimientos; la instalación sigue venciendo igual.
+    [Fact]
+    public async Task StoringARefreshedTokenReplacesThePairOnly()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var now = new DateTimeOffset(2026, 11, 12, 12, 0, 0, TimeSpan.Zero);
+        var install = ShopifyInstall.Start(
+            Guid.CreateVersion7(), "mi-tienda.myshopify.com", "c3RhdGUtb2YtdGhlLXJlZnJlc2gtdGVzdC0wMTIzNDU2", "https://qep.qcode.co/shopify/callback",
+            null, null, now);
+        install.MarkExchanged(
+            "12345678", "Mi Tienda", "read_orders", new ProtectedSecret("test", [1]), new ProtectedSecret("test", [2]),
+            now.AddHours(1), now.AddDays(90), now);
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>().Add(install);
+            await scope.ServiceProvider.GetRequiredService<IIntegrationsUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var repository = scope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>();
+            var loaded = (await repository.FindAsync(install.Id, Ct))!;
+            loaded.ApplyRefreshedToken(new ProtectedSecret("test", [3]), new ProtectedSecret("test", [4]), now.AddHours(2), now.AddDays(91));
+
+            Assert.True(await repository.TryStoreRefreshedTokenAsync(loaded, Ct));
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var stored = (await scope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>().FindAsync(install.Id, Ct))!;
+            Assert.Equal([3], stored.ProtectedToken);
+            Assert.Equal([4], stored.ProtectedRefreshToken);
+            Assert.Equal(now.AddHours(2), stored.AccessTokenExpiresAt);
+            Assert.Equal(now.AddDays(91), stored.RefreshTokenExpiresAt);
+            Assert.Equal(now.AddDays(7), stored.ExpiresAt);
+            Assert.Equal("Mi Tienda", stored.ShopName);
+        }
+
+        // Una fila que ya no existe (la borró el enlace o el barrido) no se guarda.
+        await ExecuteAsync(connectionString, "DELETE FROM integrations.shopify_installs WHERE id = @id", ("id", install.Id));
+        using (var scope = factory.Services.CreateScope())
+        {
+            Assert.False(await scope.ServiceProvider.GetRequiredService<IShopifyInstallRepository>().TryStoreRefreshedTokenAsync(install, Ct));
+        }
     }
 }

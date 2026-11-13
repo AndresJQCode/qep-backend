@@ -27,7 +27,10 @@ internal static class QuotationMapping
         quotation.Notes,
         quotation.Parties.Select(ToDto).ToArray(),
         quotation.BillingUsesBusinessName,
-        quotation.PartyWithRetention,
+        // Derivado para el frontend viejo (spec impuestos por tipo §9.3): con parte propia, si hay algún selector
+        // (= billingWithholdingTaxRates no vacía); nunca null con parte propia, porque el frontend viejo bloquea la
+        // conversión con null.
+        quotation.Billing is null ? null : quotation.BillingWithholdings.Any(),
         quotation.PartyVatSurplus,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
@@ -45,8 +48,28 @@ internal static class QuotationMapping
         quotation.ShippingDtoOf(),
         quotation.FreightSubtotal,
         quotation.FreightTaxAmount,
+        [.. quotation.AppliedWithholdings.Select(ToDto)],
+        [.. quotation.CustomerWithholdings.Select(ToRateDto)],
+        [.. quotation.BillingWithholdings.Select(ToRateDto)],
         quotation.GlobalScaleFloor,
         quotation.IsRetail);
+
+    /// <summary>Una retención aplicada tal como viaja (spec impuestos por tipo §9.3). La usa también el pedido.</summary>
+    internal static WithholdingDto ToDto(DocumentWithholding withholding) => new(
+        withholding.TaxRateId,
+        withholding.Name,
+        withholding.Type,
+        withholding.Country,
+        withholding.Percentage,
+        withholding.MinimumBase,
+        withholding.MinimumBaseUnit,
+        withholding.TaxUnitValue,
+        withholding.BaseAmount,
+        withholding.Amount);
+
+    /// <summary>Una tasa congelada, aplique o no: lo que prellena un selector.</summary>
+    internal static WithholdingTaxRateDto ToRateDto(DocumentWithholding withholding) => new(
+        withholding.TaxRateId, withholding.Name, withholding.Type, withholding.Country, withholding.Percentage);
 
     /// <summary>La entrega por envío con forma fija, también en recogida (spec 2026-10-17 §7).</summary>
     public static ShippingDto ShippingDtoOf(this Quotation quotation) => new(
@@ -157,8 +180,9 @@ internal static class QuotationMapping
                 request.BillingUsesBusinessName,
                 request.IsStorePickup,
                 request.BillsToFinalConsumer,
-                request.BillingWithRetention,
-                request.BillingVatSurplus);
+                // BillingWithRetention del cuerpo no baja al dominio (spec impuestos por tipo §9.3): las retenciones
+                // salen de la foto de tasas, no de un interruptor.
+                BillingVatSurplus: request.BillingVatSurplus);
 
     internal static QuotationPartyDetails? ToDomain(this QuotationPartyRequest? request) =>
         request is null

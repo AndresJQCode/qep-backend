@@ -79,7 +79,7 @@ public sealed class BatchUpdateQuotationItemsHandlerTests
         var quotation = Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, Advisor,
             new DateOnly(2026, 11, 30), null, null, QuotationParties.Empty, null,
-            "COP", false, false, Advisor, Now);
+            "COP", false, [], Advisor, Now);
         foreach (var variantId in variantIds)
         {
             quotation.AddItem(QuotationItemId.New(), variantId, variantId, 1m, 100_000m, 0m, 0, Advisor, Now);
@@ -101,9 +101,6 @@ public sealed class BatchUpdateQuotationItemsHandlerTests
             new FixedQuotationSettingsStore(),
             new FixedTenantPriceRounding(),
             new StubQuotationProductLookup(new Dictionary<Guid, QuotationVariantRef>()),
-            new StubQuotationCustomerLookup(new QuotationCustomerRef(
-                ClientId, TenantId, "CUC-001", IsActive: true, "Ferretería El Tornillo",
-                "3001234567", "Calle 1 # 2-3", WithRetention: false, VatSurplus: false)),
             new StubMembershipDirectory(Advisor.Value),
             new StubTenantDirectory(),
             new StubExecutionContext(SubjectId, TenantId),

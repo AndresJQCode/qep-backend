@@ -257,8 +257,8 @@ public sealed class QuotationsExportProcessorTests
             QuotationParties.Empty,
             billingAccount: null,
             defaultCurrency: "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             createdAt ?? Now);
 

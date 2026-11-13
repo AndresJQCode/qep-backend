@@ -171,8 +171,12 @@ public sealed class QuotationApiTests
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
         var clientId = await CreateActiveCustomerAsync(client, tenantId);
+        // Con empresa: sin ella el envío frena antes por quotation.billing.account_required (spec impuestos por tipo §7.7).
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
         var quotation = await CreateQuotationAsync(
             client, tenantId, clientId,
+            billingAccount: new QuotationBillingAccountRequest(
+                company.CompanyId, company.BankName, company.AccountNumber, company.Currency),
             parties: new QuotationPartiesRequest(
                 new QuotationPartyRequest(
                     "Sede administrativa", "1020304050", null, null, null, null, null,
@@ -267,8 +271,8 @@ public sealed class QuotationApiTests
         Assert.Equal(100_000m, updated.NetTotal);
     }
 
-    // Snapshot al crear (Quotation.CustomerWithRetention): 2.5% de lo facturado sin IVA, y resta
-    // del neto a cobrar (no del Total facturado).
+    // Foto al crear (spec impuestos por tipo §7.5): la Retefuente 2,5 % del cliente sobre lo facturado sin IVA, que
+    // resta del neto a cobrar (no del Total facturado). Aplica sólo con empresa facturadora colombiana.
     [Fact]
     public async Task AddingAnItemForAWithRetentionCustomerComputesRetentionAndNetTotal()
     {
@@ -276,13 +280,18 @@ public sealed class QuotationApiTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
         using var _ = client;
-        var clientId = await CreateActiveCustomerAsync(client, tenantId, withRetention: true);
+        var retefuente = await InsertWithholdingRateAsync(factory, tenantId, "Retefuente 2,5 %", "Retefuente", 2.5m);
+        var clientId = await CreateActiveCustomerAsync(client, tenantId, withholdingTaxRateIds: [retefuente]);
         var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
         // 119_000 con el IVA del 19% ya adentro: la base es 100_000 redondo, que es lo que
         // dejan las aserciones de abajo legibles.
         var productId = await CreateProductWithScalesAsync(
             client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
-        var quotation = await CreateQuotationAsync(client, tenantId, clientId);
+        var company = await CreateCompanyWithBankAccountAsync(client, tenantId);
+        var quotation = await CreateQuotationAsync(
+            client, tenantId, clientId,
+            billingAccount: new QuotationBillingAccountRequest(
+                company.CompanyId, company.BankName, company.AccountNumber, company.Currency));
 
         var response = await client.PostAsJsonAsync(
             $"{QuotationsUrl(tenantId)}/{quotation.Id}/items",
@@ -395,54 +404,9 @@ public sealed class QuotationApiTests
         Assert.Equal(created.QuotationNumber, fetched.QuotationNumber);
     }
 
-    // Regresión: retención/excedente de IVA son hechos del cliente, no una foto congelada al
-    // crear -- si el cliente cambia mientras la cotización sigue editable (Draft/Sent), la
-    // próxima lectura tiene que notarlo (Quotation.RefreshCustomerTaxProfile), no seguir
-    // mostrando el IVA/retención de cuando se creó.
-    [Fact]
-    public async Task GetRefreshesRetentionAndVatSurplusFromTheCurrentCustomer()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        var (tenantId, _, client) = await RegisterTenantAsync(factory, ManagerPermissions);
-        using var _ = client;
-        var identificationNumber = "900.111.222-3";
-        var clientId = await CreateActiveCustomerAsync(
-            client, tenantId, identificationNumber, withRetention: false, vatSurplus: false);
-        var taxRateId = await CreateTaxRateAsync(client, tenantId, "IVA 19%", 19);
-        // 119_000 con el IVA del 19% ya adentro: la base es 100_000 redondo, que es lo que
-        // dejan las aserciones de abajo legibles.
-        var productId = await CreateProductWithScalesAsync(
-            client, tenantId, baseCop: 119_000m, taxRateId: taxRateId);
-        var created = await CreateQuotationAsync(client, tenantId, clientId);
-        await client.PostAsJsonAsync(
-            $"{QuotationsUrl(tenantId)}/{created.Id}/items",
-            new AddQuotationItemRequest(productId, 1m),
-            TestContext.Current.CancellationToken);
-
-        // El cliente activa retención y excedente de IVA después de creada la cotización.
-        await UpdateCustomerRetentionAsync(
-            client, tenantId, clientId, identificationNumber, withRetention: true, vatSurplus: true);
-
-        var response = await client.GetAsync(
-            $"{QuotationsUrl(tenantId)}/{created.Id}", TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var fetched = await response.Content.ReadFromJsonAsync<QuotationResponse>(
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(fetched);
-        // subtotal = 100_000; excedente de IVA -> impuesto 0; retencion = 100_000 * 0.025 = 2_500
-        Assert.Equal(100_000m, fetched.Subtotal);
-        Assert.True(fetched.CustomerVatSurplus);
-        Assert.Equal(0m, fetched.TaxAmount);
-        Assert.Equal(100_000m, fetched.Total);
-        Assert.Equal(2_500m, fetched.RetentionAmount);
-        Assert.Equal(97_500m, fetched.NetTotal);
-    }
-
-    // El mismo cambio de cliente, pero después de anular la cotización -- una vez Voided queda
-    // de sólo lectura para siempre (Quotation.RefreshCustomerTaxProfile no toca nada ahí), así
-    // que el resumen histórico no se mueve aunque el cliente cambie después.
+    // Un cambio en el cliente después de anular la cotización: la foto es de la creación (spec impuestos por tipo
+    // D17, D24) y ninguna lectura la mueve; que GET no escribe en una editable lo prueba
+    // QuotationWithholdingsApiTests.GetNoLongerWrites.
     [Fact]
     public async Task GetDoesNotRefreshRetentionOrVatSurplusForAVoidedQuotation()
     {

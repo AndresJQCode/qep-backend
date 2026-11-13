@@ -357,6 +357,35 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   como `IIdentityAuditRecorder`). Y un consumidor de una conexión nunca referencia
   `Modules.Integrations.Application`: declara su puerto y el adaptador va en Bootstrapper
   (`IntegrationsLayerTests`).
+- **El token de Shopify de una conexión lo refresca sólo `ShopifyTokenRefreshWorker`; el canje y el enlace adquieren y guardan
+  uno nuevo, y los tres van bajo el candado `ShopifyTokenLock.Namespace`** (spec 2026-11-12). El canje
+  (`CompleteShopifyInstall`) guarda el token en la instalación y, si la tienda ya tiene conexión, canjea con el candado de esa
+  conexión; el enlace (`LinkShopifyStore`) refresca el de la instalación con el candado de la instalación y lo pasa a la
+  conexión con el de la conexión. El refresh token rota: dos refrescos de la misma tienda, o un refresco y un canje o un
+  reenlace a la vez, dejan guardado un par que Shopify ya retiró, y la tienda se cae una hora después sin error. El candado es
+  un advisory lock de transacción de dos claves `(20261112, hashtext(id))` sobre el id de la conexión o de la instalación
+  (`IIntegrationsUnitOfWork`): el worker usa la variante que no espera y salta la conexión; el canje y el reenlace, la que
+  espera, **antes** de llamar a Shopify o de cargar la conexión. Ningún request tiene dos candados a la vez, y así no hay
+  ciclo. El `Version` optimista no alcanza: el perdedor ya gastó el refresh token. Un camino nuevo que pida o refresque un
+  token de Shopify —o que reemplace los secretos de una conexión que ya existe— toma el mismo candado; los consumidores sólo
+  leen el guardado.
+- **Rotar el client secret de la app de Shopify en el Partner Dashboard sin actualizar `Backend-prod` deja todas las tiendas en
+  `token_expired` en el siguiente refresco** (spec 2026-11-12). El refresco se firma con ese secreto, Shopify responde un 4xx y
+  el worker lo toma como definitivo; la única salida es que cada comercio vuelva a abrir la app. El secreto se rota en los dos
+  lados en el mismo despliegue.
+- **Una conexión puede publicar `integrations.connection-needs-attention.v1` dos veces seguidas, y el payload trae
+  `failureCode`** (owner, 2026-11-12: el evento identifica el error). `ReportTokenExpiredAsync` publica también desde
+  `NeedsAttention` con otro código (por ejemplo `webhooks_not_registered` → `token_expired`); desde `Paused` no publica, y ya en
+  `token_expired` no hace nada. Hoy nadie consume ese evento: el primero que lo haga (un correo, un aviso) decide por
+  `failureCode`, o le llegan dos avisos por la misma conexión.
+- **Con el token de Shopify vencido, `ShopifyConnectionRef` sale `IsOperational = true` y `AccessToken = null`** (spec
+  2026-11-12 §6.4, D7). No lo «arregles» a no operativa: `RedactShopAsync` daría la tienda por desinstalada y borraría su espejo,
+  y la ingesta dejaría de importar, todo porque el worker iba tarde. Quien llame a la Admin API mira `AccessToken`, no
+  `IsOperational` (`ReconcileStore` salta con 503 `sync_unavailable`; `ListOperationalAsync` la deja fuera). Lo amarran
+  `ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection` y `OrdersTopicWithAnExpiredTokenStillImports`.
+- **`token_expired` sale sólo de un 4xx salvo 429 en el refresco.** El gateway clasifica todo no-2xx que no sea 429 ni 5xx como
+  `Rejected` (un 3xx incluido), y eso sirve al canje y al probador; el worker filtra por status (`IsDefinitiveRejection`) porque
+  `token_expired` sólo se sale reautorizando. Un consumidor nuevo del refresco hace lo mismo.
 - **Instagram es un canal de la misma bandeja de Messaging, no un módulo** (spec 2026-10-14). La conversación lleva
   `channel` (`WhatsApp` | `Instagram`) y en Instagram `user_id` es el IGSID numérico y `wa_id` es siempre `null`: todo
   código nuevo que empareje por teléfono tiene que tratar ese `null`. Las plantillas, las campañas y `POST /conversations`
@@ -526,6 +555,7 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   `Touch` y sube la versión del fusionado, así que dos fusiones simultáneas del mismo cliente hacia distintos que quedan
   chocan por concurrencia optimista, y `merged_into_id` lo saca de toda fusión posterior (`customers.merge.already_merged`).
   No quites el `Touch` ni marques fusionados con un `ExecuteUpdate` que se salte el agregado.
+- **`MarginReportSource` lee `quotations.order_items`/`orders` (`unit_cost`, `paid_at`), `pos.sale_lines`/`sales` y `catalog.products`/`product_variants` por nombre.** Renombrar una columna compila y deja `/reports/margin` en 500; lo amarra `MarginReportApiTests`. Una vía nueva a `FullPaymentReceived` pasa `OrderLineCosts` al dominio: si no, el pedido cuenta en el reporte con líneas «sin costo».
 - **`OrdersReportSource` lee `quotations.orders` y `pos.sales` por nombre** (spec 2026-10-23). Es SQL crudo en
   Bootstrapper, un `UNION ALL` de las dos tablas (`ReportRowsSql`), porque son de `DbContext` distintos y EF no los une.
   Renombrar una columna de cualquiera de las dos compila y deja `/reports/orders` y `/summary` respondiendo 500: lo amarran
@@ -557,11 +587,15 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   migración normaliza esas filas a 'None'.
 - **El motor sólo responde una conversación `Open`, sin asesor y con el asistente `Active`; `IBotOutbound` lo vuelve a verificar al
   enviar** (`RunProcessor.DecideAsync`): entre el claim del inbox y el envío un asesor puede haber tomado la conversación.
-- **Una fila de `automation_inbox` sin mensaje es un arranque manual** (spec 2026-10-31). `POST …/automation/start` encola una fila
-  cuyo `message_id` **no siempre existe en `messages`**: no hay entrante, lo inició una persona. Por eso `run_units.inbound_message_id` y
-  `conversation_runs.last_inbound_message_id` pueden apuntar a esa fila y no a un mensaje, y el camino del motor es `ResumeAsync`, no
-  el de un entrante. Un `INNER JOIN` del inbox a `messages` pierde la fila en silencio: el arranque se encola, se marca procesado y
-  el bot no contesta, sin error. Todo lector nuevo del inbox o de esas dos columnas usa `LEFT JOIN` y trata el mensaje `null`.
+- **Una fila de `automation_inbox` tiene tipo** (spec 2026-11-03). `ReleaseRun` es la señal de que una persona resolvió, tomó, transfirió o
+  devolvió la conversación: `RunProcessor` sólo cierra la corrida viva (`Interrupted`, `human_took_over`) si arrancó antes de la fila y
+  `HumanTookOver` sigue siendo verdadero, y nunca arranca ni avanza nada. Dentro de `Engine`, una fila sin mensaje sigue siendo un arranque
+  manual: todo lector nuevo usa `LEFT JOIN` y filtra por `kind`. Una acción humana nueva sobre una conversación con asistente decide si
+  encola la señal, en el handler y no en el agregado (el bot también resuelve). Una fila del inbox puede existir sin mensaje —un arranque
+  manual (spec 2026-10-31) o una señal—, y por eso `run_units.inbound_message_id` y `conversation_runs.last_inbound_message_id` pueden
+  apuntar a una fila y no a un mensaje; el camino manual del motor es `ResumeAsync`, no el de un entrante. Un `INNER JOIN` del inbox a
+  `messages` pierde esas filas en silencio: el arranque se encola, se marca procesado y el bot no contesta, sin error. La regla del
+  `LEFT JOIN` cubre también a quien lea esas dos columnas: tiene que tratar el mensaje `null`.
 - **`Conversation.ContinueAutomation` no escribe `AutomationResumedAt`, y esa ausencia es todo el mecanismo** (spec 2026-11-01). Sellarlo
   hace que `BotAttendance.HumanTookOver` dé verdadero, la corrida termine `Interrupted` y el flujo reinicie: justo lo que `automation/continue`
   evita. No hay columna ni bandera de «continuada». Por la misma razón `AutomationPauseReason = Manual` **no** prueba que ningún asesor

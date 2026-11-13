@@ -10,6 +10,8 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
 
     public DbSet<TaxRate> TaxRates => Set<TaxRate>();
 
+    public DbSet<TaxUnitValue> TaxUnitValues => Set<TaxUnitValue>();
+
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
 
     internal DbSet<PriceScale> PriceScales => Set<PriceScale>();
@@ -40,6 +42,7 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         ConfigureOptionDefinition(modelBuilder);
         ConfigureOptionValue(modelBuilder);
         ConfigureTaxRate(modelBuilder);
+        ConfigureTaxUnitValue(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigurePriceScale(modelBuilder);
         ConfigureProductPriceChange(modelBuilder);
@@ -244,6 +247,26 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         });
         variant.Navigation(value => value.Prices).UsePropertyAccessMode(PropertyAccessMode.Field);
 
+        // Costo unitario manual (spec 2026-11-10): tabla propia y no una columna de product_prices,
+        // porque no es parte del precio y su ausencia (sin fila) significa «costo desconocido». El
+        // CHECK es > 0: un cero se confundiría con «gratis» en el reporte de margen.
+        variant.OwnsMany(value => value.Costs, cost =>
+        {
+            cost.ToTable("product_variant_costs", "catalog", table =>
+                table.HasCheckConstraint("CK_product_variant_costs_amount_positive", "amount > 0"));
+            cost.WithOwner().HasForeignKey("VariantId");
+            cost.Property<VariantId>("VariantId")
+                .HasColumnName("variant_id")
+                .HasConversion(id => id.Value, value => new VariantId(value));
+            cost.Property(value => value.Currency)
+                .HasColumnName("currency")
+                .HasColumnType("character(3)")
+                .HasMaxLength(3);
+            cost.Property(value => value.Amount).HasColumnName("amount").HasPrecision(18, 2);
+            cost.HasKey("VariantId", nameof(ProductVariantCost.Currency));
+        });
+        variant.Navigation(value => value.Costs).UsePropertyAccessMode(PropertyAccessMode.Field);
+
         // Mismo criterio que product_options: FK RESTRICT a option_values, para que un valor en
         // uso no se borre ni por SQL; y el índice por valor sirve la pregunta «¿está en uso?».
         variant.OwnsMany<ProductVariantOptionValue>("_optionValues", value =>
@@ -365,7 +388,22 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.Property(value => value.Name)
             .HasColumnName("name")
             .HasMaxLength(TaxRate.NameMaxLength);
-        taxRate.Property(value => value.Percentage).HasColumnName("percentage");
+        taxRate.Property(value => value.Percentage)
+            .HasColumnName("percentage")
+            .HasPrecision(6, 3);
+        taxRate.Property(value => value.Type)
+            .HasColumnName("type")
+            .HasMaxLength(TaxRate.TypeMaxLength);
+        taxRate.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxRate.CountryLength)
+            .IsFixedLength();
+        taxRate.Property(value => value.MinimumBase)
+            .HasColumnName("minimum_base")
+            .HasPrecision(14, 2);
+        taxRate.Ignore(value => value.Behavior);
+        taxRate.Ignore(value => value.Withholds);
+        taxRate.Ignore(value => value.VatPercentage);
         taxRate.Property(value => value.IsActive).HasColumnName("is_active");
         taxRate.Property(value => value.Version)
             .HasColumnName("version")
@@ -380,6 +418,24 @@ public sealed class CatalogDbContext(DbContextOptions<CatalogDbContext> options)
         taxRate.HasIndex(value => new { value.TenantId, value.Name })
             .IsUnique()
             .HasDatabaseName("IX_tax_rates_tenant_name");
+    }
+
+    // Sin tenant_id a propósito: la UVT es un dato de la plataforma, como las ciudades de Geography.
+    private static void ConfigureTaxUnitValue(ModelBuilder modelBuilder)
+    {
+        var unit = modelBuilder.Entity<TaxUnitValue>();
+        unit.ToTable("tax_unit_values", "catalog");
+        unit.HasKey(value => new { value.Country, value.Year });
+        unit.Property(value => value.Country)
+            .HasColumnName("country")
+            .HasMaxLength(TaxUnitValue.CountryLength)
+            .IsFixedLength();
+        unit.Property(value => value.Year).HasColumnName("year");
+        unit.Property(value => value.Value)
+            .HasColumnName("value")
+            .HasPrecision(14, 2);
+        unit.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        unit.Property(value => value.UpdatedBy).HasColumnName("updated_by");
     }
 
     private static void ConfigureProductCategory(ModelBuilder modelBuilder)

@@ -288,6 +288,61 @@ public sealed class TaxRateActivationApiTests
         Assert.Equal(21, (await ReadTaxRateAsync(edited)).Percentage);
     }
 
+    // Spec impuestos por tipo §7.4: un cliente con la tasa asignada también la deja «en uso», y sin FK (Customers no
+    // referencia Catalog) lo único que lo frena es esta consulta.
+    [Fact]
+    public async Task DeactivatingARateAssignedToACustomerIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var id = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios");
+        await TaxRateCustomerFixtures.AssignToANewCustomerAsync(customers, TenantId, id);
+
+        var response = await DeactivateAsync(client, TenantId, id);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.in_use",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.True(await QueryIsActiveFromAsync(database, id));
+    }
+
+    // Un cliente fusionado ya no se edita ni se cotiza: su tasa no deja «en uso» a la del catálogo.
+    [Fact]
+    public async Task DeactivatingARateAssignedOnlyToAMergedCustomerIsAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, ManagePermissions);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var id = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios");
+        await TaxRateCustomerFixtures.AssignToANewCustomerAsync(customers, TenantId, id);
+        await TaxRateCustomerFixtures.MergeCustomersWithAsync(database.GetConnectionString(), id);
+
+        var response = await DeactivateAsync(client, TenantId, id);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.False(await QueryIsActiveFromAsync(database, id));
+    }
+
+    private static async Task<bool> QueryIsActiveFromAsync(PostgreSqlContainer database, Guid id)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        return await QueryIsActiveAsync(connection, id);
+    }
+
     private static async Task<Guid> CreateTaxRateAsync(
         HttpClient client,
         string tenantId,

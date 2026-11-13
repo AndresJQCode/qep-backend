@@ -1,3 +1,4 @@
+using BuildingBlocks.Domain.Taxes;
 using Modules.Customers.Application;
 using Modules.Customers.Domain;
 using Modules.Quotations.Application;
@@ -18,6 +19,7 @@ namespace Bootstrapper;
 internal sealed class QuotationCustomerLookup(
     ICustomerRepository repository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerCompanyDirectory companies)
     : IQuotationCustomerLookup
 {
@@ -56,8 +58,9 @@ internal sealed class QuotationCustomerLookup(
                 .Distinct()
                 .ToArray(),
             cancellationToken);
+        var withRetention = await RetefuenteHoldersAsync(tenantId, [customer], cancellationToken);
 
-        return ToRef(customer, citiesById);
+        return ToRef(customer, citiesById, withRetention.Contains(customer.Id.Value));
     }
 
     public async Task<IReadOnlyDictionary<Guid, QuotationCustomerRef>> FindManyAsync(
@@ -81,9 +84,34 @@ internal sealed class QuotationCustomerLookup(
                 .Distinct()
                 .ToArray(),
             cancellationToken);
+        var withRetention = await RetefuenteHoldersAsync(tenantId, customers.Values, cancellationToken);
 
         return customers.Values.ToDictionary(
-            customer => customer.Id.Value, customer => ToRef(customer, citiesById));
+            customer => customer.Id.Value,
+            customer => ToRef(customer, citiesById, withRetention.Contains(customer.Id.Value)));
+    }
+
+    // WithRetention ya no es una columna del cliente: se deriva de sus tasas asignadas (spec impuestos por tipo §9,
+    // client.withRetention sigue en la respuesta para el frontend viejo). Es «tiene alguna Retefuente», de cualquier
+    // país. Una consulta para todo el lote; una tasa borrada del catálogo no cuenta.
+    private async Task<IReadOnlySet<Guid>> RetefuenteHoldersAsync(
+        Guid tenantId, IEnumerable<Customer> customers, CancellationToken cancellationToken)
+    {
+        var holders = customers.Where(customer => customer.WithholdingTaxRateIds.Count > 0).ToArray();
+        if (holders.Length == 0)
+        {
+            return new HashSet<Guid>();
+        }
+
+        var rates = await taxRateLookup.FindManyAsync(
+            tenantId,
+            holders.SelectMany(customer => customer.WithholdingTaxRateIds).Distinct().ToArray(),
+            cancellationToken);
+        return holders
+            .Where(customer => customer.WithholdingTaxRateIds.Any(id =>
+                rates.TryGetValue(id, out var rate) && rate.Type == TaxCountries.RetefuenteType))
+            .Select(customer => customer.Id.Value)
+            .ToHashSet();
     }
 
     // Las ciudades DIVIPOLA de la libreta: una direccion de afuera no tiene id que resolver.
@@ -98,7 +126,7 @@ internal sealed class QuotationCustomerLookup(
         customer.CityId is { } cityId ? [cityId] : [];
 
     private static QuotationCustomerRef ToRef(
-        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById)
+        Customer customer, IReadOnlyDictionary<Guid, CustomerCityRef> citiesById, bool withRetention)
     {
         CustomerCityRef? contactCity = null;
         if (customer.CityId is { } domicileCityId)
@@ -118,7 +146,7 @@ internal sealed class QuotationCustomerLookup(
             // la cotizacion y al pedido, y lo que viaja en el WhatsApp. La principal sigue yendo
             // primera en Addresses, que es lo que el selector de envio preselecciona.
             customer.Address,
-            customer.WithRetention,
+            withRetention,
             customer.VatSurplus,
             customer.Email,
             contactCity?.CityId,

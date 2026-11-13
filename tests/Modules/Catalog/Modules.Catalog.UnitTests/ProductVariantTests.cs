@@ -14,14 +14,25 @@ public sealed class ProductVariantTests
         string code,
         IReadOnlyList<Guid>? values = null,
         Guid? id = null,
-        ProductPricing? pricing = null) =>
+        ProductPricing? pricing = null,
+        IReadOnlyDictionary<string, decimal>? costs = null) =>
         new()
         {
             Id = id,
             Code = code,
             OptionValueIds = values ?? [],
             Pricing = pricing ?? PricedIn(10m),
+            Costs = costs,
         };
+
+    private static void UpdateCosts(Product product, IReadOnlyDictionary<string, decimal>? costs) =>
+        product.Update(
+            "Camiseta básica",
+            ProductDetails.Empty,
+            [],
+            [Variant("CAM-001", id: product.Variants.Single().Id.Value, costs: costs)],
+            [],
+            Now.AddMinutes(5));
 
     private static Product NewProduct(ProductVariantInput? defaultVariant = null) =>
         Product.Create(
@@ -430,5 +441,73 @@ public sealed class ProductVariantTests
                 [photo, Guid.CreateVersion7(), photo], Now));
 
         Assert.Equal("catalog.product.gallery_duplicate", error.Code);
+    }
+
+    [Fact]
+    public void CreateWithCostsStoresOneRowPerCurrency()
+    {
+        var product = NewProduct(Variant(
+            "CAM-001",
+            costs: new Dictionary<string, decimal> { ["COP"] = 12000m, ["USD"] = 3m }));
+
+        var variant = Assert.Single(product.Variants);
+        Assert.Equal(12000m, variant.CostIn("COP"));
+        Assert.Equal(3m, variant.CostIn("USD"));
+        Assert.Null(variant.CostIn("EUR"));
+    }
+
+    [Fact]
+    public void UpdateWithNullCostsKeepsTheSavedOnes()
+    {
+        var product = NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 12000m }));
+
+        UpdateCosts(product, null);
+
+        Assert.Equal(12000m, product.Variants.Single().CostIn("COP"));
+    }
+
+    [Fact]
+    public void UpdateWithAMapReplacesTheCosts()
+    {
+        var product = NewProduct(Variant(
+            "CAM-001",
+            costs: new Dictionary<string, decimal> { ["COP"] = 12000m, ["USD"] = 3m }));
+
+        UpdateCosts(product, new Dictionary<string, decimal> { ["COP"] = 15000m });
+
+        var variant = product.Variants.Single();
+        Assert.Equal(15000m, variant.CostIn("COP"));
+        Assert.Null(variant.CostIn("USD"));
+        Assert.Single(variant.Costs);
+    }
+
+    [Fact]
+    public void UpdateWithAnEmptyMapClearsTheCosts()
+    {
+        var product = NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 12000m }));
+
+        UpdateCosts(product, new Dictionary<string, decimal>());
+
+        Assert.Empty(product.Variants.Single().Costs);
+    }
+
+    [Fact]
+    public void ANonPositiveCostIsAProgrammingError() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 0m })));
+
+    [Fact]
+    public void ACostBeyondTwoDecimalsIsAProgrammingError() =>
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            NewProduct(Variant("CAM-001", costs: new Dictionary<string, decimal> { ["COP"] = 0.001m })));
+
+    [Fact]
+    public void ANewVariantWithoutCostsStartsEmpty()
+    {
+        var product = NewProduct();
+
+        UpdateCosts(product, null);
+
+        Assert.Empty(product.Variants.Single().Costs);
     }
 }

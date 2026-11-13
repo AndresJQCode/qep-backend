@@ -120,7 +120,7 @@ public sealed class QuotationProductLookupTests
     [Fact]
     public async Task PricingLookupReturnsVariantPricesAndProductTax()
     {
-        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, Now);
+        var rate = TaxRate.Create(TaxRateId.New(), TenantId, "IVA 19", 19, "IVA", "CO", null, Now);
         var world = VariantWorld.Create(TenantId, Now, taxRateId: rate.Id);
         var lookup = new QuotationProductPricingLookup(
             new FakeProductRepository(world.Product), new FakeOptionDefinitionRepository(world.Size), new FakeTaxRateRepository(rate));

@@ -1051,7 +1051,7 @@ acepta en `Development` y `Testing` (en Staging el arranque falla, para que no c
 | --- | --- | --- |
 | 400 | `store.public.body_invalid` | El cuerpo de `POST /order-requests` no es JSON o llegó cortado. |
 | 401 | `store.public.client_unauthorized` | Falta `X-Qep-Storefront-Key` o no coincide. |
-| 404 | `store.public.not_found` | No hay tienda publicada en ese host. |
+| 404 | `store.public.not_found` | No hay tienda publicada en ese host. En un `GET` sale con `Cache-Control: public, max-age=60` (el max-age del catálogo, sin `stale-while-revalidate`); el resto de los errores no se cachea. |
 | 404 | `store.public.product_not_found` / `store.public.department_not_found` | El producto o el departamento no existe o no se publica. |
 | 413 | `store.public.body_too_large` | El cuerpo de `POST /order-requests` pasa de 64 KB. |
 | 422 | `validation.failed` | Un campo no cumple su forma; el detalle viaja en `errors`. |
@@ -1767,6 +1767,12 @@ nacen sin datos propios. Antes de volver al código nuevo, esos pedidos se compl
 pasos 4 y 5 de `AddOrderOwnData` acotado a `client_id IS NULL` y se restauran los `NOT NULL` (spec
 2026-10-15 §10).
 
+**Pagado y costo congelado.** `Order.PaidAt` (columna `paid_at`) es el instante en que el pedido llegó a pago completo (nulo si no está pagado); no viaja en ninguna respuesta de la API, es de uso interno del reporte de margen. Con él, el costo unitario de cada línea (`unit_cost`) se congela desde el costo de la variante en ese momento y no cambia si la variante se edita después. Toda vía a `FullPaymentReceived` pasa `OrderLineCosts` al dominio.
+
+### Reporte de margen
+
+`GET /api/v1/tenants/{tenantId}/reports/margin` y `GET …/reports/margin/summary` (permiso `reporting.margin.read`) leen el costo **congelado** en cada línea vendida (`unit_cost`), de `quotations.order_items` y `pos.sale_lines`, por producto y variante. Una línea sin costo no suma al margen y se informa aparte. `MarginReportSource` (Bootstrapper) es SQL crudo, como `OrdersReportSource`.
+
 ### Reporte de pedidos: pedidos y ventas POS
 
 `GET /api/v1/tenants/{tenantId}/reports/orders` y `GET …/reports/orders/summary` leen **la unión** de
@@ -1894,6 +1900,7 @@ Todas las rutas cuelgan de `/api/v1/tenants/{tenantId}/catalog`, con `catalog.pr
   transacción del `PUT`. Borrar una variante sin uso borra en cascada su historial de precios.
 - **Escalas por variante**: una escala sin agrupación cuenta sólo la cantidad de su variante (6 M y 6 L
   no suman 12); una con `allowGrouping` suma entre variantes, como antes sumaba entre productos.
+- **Costo por variante**: `costs` es un mapa por código de moneda (p. ej. `{ "COP": 12000 }`), sin conversión entre monedas. En la respuesta de cada variante siempre está presente: `null` = el llamador no tiene `catalog.product_cost.read` (`manage` también cuenta como lectura) y `{}` = la variante no tiene costo. En el `POST/PUT /products`, `null` o ausente conserva el costo guardado y un objeto lo reemplaza (`{}` lo borra). Escribirlo exige `catalog.product_cost.manage`; sin él, 403 `catalog.product_cost.forbidden`. Cada monto es > 0 y con máximo 2 decimales; si no, 422 bajo `Variants[i].Costs.<CUR>`.
 - **Historial de precios** por variante: `GET /reports/price-changes` y `/summary` aceptan `variantId`, y
   el resumen desglosa cada producto en `variants[]`, todas incluso en cero.
 - **Excel de productos**: una fila por variante (activas e inactivas), con `Código`, `Código de barras`,
@@ -3726,7 +3733,7 @@ suma las conversaciones con asistente (activo o en pausa) y `GET …/conversatio
 `POST …/conversations/{id}/automation/start` inicia el asistente desde el hilo (spec 2026-10-31). Pide `messaging.conversation.manage` y
 `If-Match` (428 sin él, 412 si la versión cambió, también si la ingesta tocó la conversación mientras se decidía) y responde 200 con el
 `ConversationSummary`. **Responde antes del envío:** deja la conversación `Active` con el evento `AutomationStarted` y encola una fila
-manual en `automation_inbox` (sin mensaje, ver `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
+manual en `automation_inbox` (sin mensaje; ver «Una fila de `automation_inbox` tiene tipo» en `CLAUDE.md`); la unidad corre en el worker, así que el primer mensaje del bot llega
 después de la respuesta. La decisión es la de `ManualRunStarter` (la misma del motor). Los 422, en el orden en que se deciden: `messaging.conversation.not_open`,
 `messaging.automation.has_advisor`, `messaging.contact.blocked`, `messaging.channel_unsupported` (sólo WhatsApp),
 `messaging.automation.not_available` (el módulo no está activo para el tenant), `messaging.automation.already_active` (el asistente ya
@@ -3964,7 +3971,9 @@ tiene que mandar el que le devolvió el último guardado, y al revés.
 - **Publicar.** Copia el borrador a una versión inmutable; `Draft` pasa a `Active` y ocupa todas sus conexiones. Con
   errores responde 422 `automations.chatbot.invalid` y `errors.flow` trae **sólo los errores** (no los avisos), cada uno
   como `"<código>: <mensaje>"` (R16).
-- **Borrar** un chatbot con corridas vivas es 409 `automations.chatbot.has_live_runs`.
+- **Borrar** un chatbot es 409 `automations.chatbot.has_live_runs` sólo mientras alguna corrida viva esté atendida por el bot
+  (`BotAttendance.IsAttending`: corrida viva y nadie humano tomó la conversación; una conversación que no existe no atiende). Una
+  corrida viva que un asesor ya tomó no bloquea (spec 2026-11-03, D-7).
 - **Exportar e importar.** El export lleva el borrador (flujo y layout), nombre, descripción, disparador, palabras clave y
 las «API externa» que usa. El cuerpo de
   `POST /import` tiene un tope propio de 1 MB, para que un export con flujo y layout en sus topes se pueda volver a
@@ -4035,6 +4044,25 @@ empezó** (D-C1): se lee su `chatbot_version_id`, no la publicada. La excepción
 chatbot que atiende la conexión es el mismo de la corrida, está `Active` y publicó una versión distinta, la corrida termina
 `Completed` y en la misma unidad arranca una nueva con la publicada (la conversación sigue `Active`). Con la misma versión, con el
 chatbot pausado o con otro chatbot en la conexión, el reinicio se queda en la corrida vieja.
+
+Cada fila de `automation_inbox` tiene un `kind` (spec 2026-11-03): `Engine` (los entrantes y los arranques manuales) o `ReleaseRun`, la
+señal de que una persona resolvió, tomó, transfirió o devolvió la conversación (también la asignación automática al responder);
+pausar **no** la encola. `RunProcessor` atiende `ReleaseRun` en su propia rama: cierra la corrida viva (`Interrupted`, motivo
+`human_took_over`, outcome `interrupted`) sólo si arrancó antes de la fila (`run.StartedAt < item.CreatedAt`) y
+`BotAttendance.HumanTookOver` sigue siendo verdadero; si no, la fila se cierra `skipped`. Nunca arranca, avanza ni envía. La métrica de
+cola `automation` (`QueueMetricsSource`) cuenta también las `ReleaseRun` pendientes como backlog, a propósito: son trabajo real del
+worker.
+
+**Despliegue y rollback.** Antes de volver a un código que no conoce `kind`, cierra las señales pendientes:
+
+```sql
+UPDATE messaging.automation_inbox SET processed_at = now(), outcome = 'skipped'
+ WHERE kind = 'ReleaseRun' AND processed_at IS NULL;
+```
+
+El código viejo lee una `ReleaseRun` pendiente como un arranque manual y, tras «Devolver al asistente», arrancaría el flujo y mandaría
+el primer mensaje. Lo mismo pasa unos segundos en un despliegue gradual (un pod worker viejo que se solapa con el pod de la API
+nuevo), así que el despliegue va en un momento tranquilo.
 
 - **Reintento sin duplicar.** El `clientId` de cada envío es `DeterministicClientId.For(runId, baseStepNumber, effectIndex)`
   (P2-R5): `baseStepNumber` es el `StepNumber` persistido al empezar la unidad y `effectIndex` el ordinal del envío dentro de ella
@@ -4341,6 +4369,28 @@ existían **no** lo reciben (sin backfill, D-S20): se prende desde la consola de
    reintenta. Los tres webhooks de cumplimiento (`customers/data_request`, `customers/redact`, `shop/redact`) no se
    registran por API: van en la configuración de la app.
 
+**Tokens que expiran** (spec `2026-11-12-shopify-tokens-que-expiran-design.md`). Desde el 2027-01-01 Shopify exige tokens
+offline que expiran, así que el canje pide `expiring=1` y rechaza la respuesta sin `refresh_token` ni `expires_in`
+(`integrations.shopify.code_exchange_failed`). El token dura 1 hora y el refresh token 90 días; la conexión guarda los dos
+cifrados (`accessToken`, `refreshToken`) y sus vencimientos en `fields` (`tokenExpiresAt`, `refreshTokenExpiresAt`).
+
+- `ShopifyTokenRefreshWorker` corre al arrancar y cada **5 minutos**, y refresca las conexiones a las que les quedan
+  **20 minutos** o menos. Entran todos los estados salvo `NeedsAttention` con `token_expired` o `app_uninstalled`: una
+  pausada se reanuda sin reautorizar. El refresco no cambia el estado ni la verificación de la conexión.
+- Un **4xx salvo 429** al refrescar (el `401` con `invalid_request` de un refresh token vencido o reemplazado) deja la
+  conexión `NeedsAttention` con `token_expired`, desde cualquier estado, y el worker deja de intentarlo. Lo mismo una
+  conexión que no tiene `refreshToken` (enlazada antes de este cambio). En pantalla se ve como una conexión que pide
+  atención; se arregla **volviendo a abrir la app desde el admin de Shopify** de la tienda y enlazándola otra vez. Un 3xx,
+  429, 5xx, timeout o una respuesta ilegible no cambian nada: el worker lo intenta en la siguiente vuelta, y con tokens de
+  1 hora eso deja tres vueltas de margen.
+- Si el worker va tarde y el token venció, la conexión sigue operativa: los webhooks se procesan e importan y el
+  `shop/redact` no la da por desinstalada. Sólo la conciliación se salta: «Sincronizar ahora» responde 503
+  `shopify.store.sync_unavailable` («reintenta») y el cron la omite hasta el siguiente refresco. «Probar» responde
+  `provider_unreachable` sin llamar a Shopify, para no confundir un token vencido con credenciales rechazadas.
+- Una instalación vive 7 días y su token 1 hora: si al enlazar le quedan 20 minutos o menos, el enlace la refresca antes
+  de registrar los webhooks. Si Shopify rechaza ese refresco, el enlace responde 422
+  `integrations.shopify.install_expired` sin crear la conexión, y la persona vuelve a abrir la app desde su Shopify.
+
 **Flujo de un pedido.** `POST /api/webhooks/shopify` (anónimo, limitador `webhook`, cuerpo hasta
 `Shopify:Webhook:MaxBodyBytes`) verifica `X-Shopify-Hmac-Sha256` —HMAC-SHA256 del cuerpo crudo con el client secret, en
 base64— y responde 401 sin firma válida. Con firma válida encola en `shopify.webhook_deliveries` y responde 200 antes de
@@ -4442,7 +4492,7 @@ El último comando tiene que dar `Count 2`. Sin túnel, Shopify no puede entrega
 1. Variables `SHOPIFY_APP_CLIENT_ID` (normal) y `SHOPIFY_APP_CLIENT_SECRET` (**secreta**) en `Backend-prod`. El pipeline
    no las nombra: la plantilla reemplaza cada `#{…}#` de `k8s/` con la variable del grupo que se llame igual.
 2. Backend, con sus migraciones (`AddShopifyModuleKey` en Tenancy, `AddOrderExternalKey` en Quotations,
-   `AddCustomerEmailIndex` en Customers, `AddShopifyProvider` y `AddShopifyInstalls` en Integrations, `InitialShopify` y
+   `AddCustomerEmailIndex` en Customers, `AddShopifyProvider`, `AddShopifyInstalls` y `AddShopifyInstallRefreshToken` en Integrations, `InitialShopify` y
    `AddStoreShopDomain` en Shopify), y el frontend de Shopify en la misma ventana (el porqué va abajo). **Rollback del
    backend:** el SPA muestra rutas que responden 404; nada se corrompe.
 

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Modules.Integrations.Application;
 using Modules.Integrations.Application.Shopify;
@@ -131,9 +132,13 @@ public static class IntegrationsInfrastructureExtensions
             .RemoveAllLoggers();
         // Singleton: sus dependencias lo son, y el probador (singleton, como el registro de probadores) lo usa.
         services.AddSingleton<IShopifyAdminGateway, ShopifyAdminGateway>();
+        // El probador es singleton y no ve IClock (scoped): lee la hora del TimeProvider, el del sistema si nadie registró otro.
+        services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IProviderConnectionTester, ShopifyConnectionTester>();
         // §9: las instalaciones vencidas se barren cada hora, con margen para el canje en vuelo.
         services.AddHostedService<ShopifyInstallSweeper>();
+        // Spec 2026-11-12 §6.2: el único escritor del token offline de cada tienda, cada 5 minutos.
+        services.AddHostedService<ShopifyTokenRefreshWorker>();
 
         return services;
     }

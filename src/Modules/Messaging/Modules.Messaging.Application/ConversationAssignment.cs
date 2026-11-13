@@ -110,7 +110,8 @@ public sealed class ConversationAssignmentSteps(
     }
 }
 
-public sealed class TakeConversationHandler(ConversationAssignmentSteps steps) : ICommandHandler<TakeConversationCommand, ConversationSummary>
+/// <summary>Spec 2026-11-03 D-6: tomar una conversación con asistente encola la señal que suelta la corrida viva, en el mismo guardado.</summary>
+public sealed class TakeConversationHandler(ConversationAssignmentSteps steps, IAutomationInbox inbox) : ICommandHandler<TakeConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(TakeConversationCommand command, CancellationToken cancellationToken)
     {
@@ -118,11 +119,15 @@ public sealed class TakeConversationHandler(ConversationAssignmentSteps steps) :
         var (conversation, member) = await steps.LoadAsync(command.TenantId, command.ConversationId, cancellationToken);
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
-        return await steps.CommitAsync(command.TenantId, conversation, conversation.Take(member, now), now, cancellationToken);
+        var before = conversation.AutomationStatus;
+        var changes = conversation.Take(member, now);
+        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
+        return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }
 
-public sealed class TransferConversationHandler(ConversationAssignmentSteps steps, IMessagingAssignees assignees, IValidator<TransferConversationCommand> validator)
+public sealed class TransferConversationHandler(
+    ConversationAssignmentSteps steps, IMessagingAssignees assignees, IValidator<TransferConversationCommand> validator, IAutomationInbox inbox)
     : ICommandHandler<TransferConversationCommand, ConversationSummary>
 {
     public async Task<ConversationSummary> HandleAsync(TransferConversationCommand command, CancellationToken cancellationToken)
@@ -139,7 +144,9 @@ public sealed class TransferConversationHandler(ConversationAssignmentSteps step
 
         ConversationConcurrency.EnsureVersion(conversation, command.ExpectedVersion);
         var now = steps.Now;
+        var before = conversation.AutomationStatus;
         var changes = conversation.TransferTo(member, target, now);
+        inbox.EnqueueIfAssisted(conversation, before, changes.Count, now);
         return await steps.CommitAsync(command.TenantId, conversation, changes, now, cancellationToken);
     }
 }

@@ -91,6 +91,22 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal("#1001", payload.RootElement.GetProperty("name").GetString());
     }
 
+    // Spec 2026-11-12 §6.4 (D7): un token vencido mientras el worker de Integrations va tarde no detiene la ingesta. El directorio
+    // entrega la conexión operativa y sin token, y el webhook importa igual: importar no llama a la Admin API.
+    [Fact]
+    public async Task OrdersTopicWithAnExpiredTokenStillImports()
+    {
+        var world = new World().WithExpiredTokenConnection();
+
+        var result = await world.Processor.ProcessAsync(Delivery("orders/paid", RestFixture("taxes-included")), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        var row = Assert.Single(world.Database.Orders.Values);
+        var call = Assert.Single(world.Importer.Calls);
+        Assert.Same(row, call.Row);
+        Assert.Null(Assert.Single(world.Importer.Connections).AccessToken);
+    }
+
     [Fact]
     public async Task OrdersTopicImportedRowIsNotImportedAgain()
     {
@@ -170,6 +186,24 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         Assert.Equal([(Shop, DeliveryId)], world.Database.DeletedDeliveriesOf);
         // §5.5: la tienda y la conexión quedan como estén.
         Assert.True(world.Database.Stores.ContainsKey(ConnectionId));
+        Assert.Empty(world.Health.Uninstalled);
+    }
+
+    // Spec 2026-11-12 §6.4 (D7): con el token vencido la tienda sigue instalada. El redact no la da por desinstalada: no borra el
+    // espejo de la conexión vigente ni las entregas, que podrían ser suyas.
+    [Fact]
+    public async Task ShopRedactWithAnExpiredTokenDeletesNothingOfTheCurrentConnection()
+    {
+        var world = new World().WithExpiredTokenConnection();
+        await world.Processor.ProcessAsync(Delivery("orders/create", RestFixture("taxes-included")), Ct);
+        Assert.Single(world.Database.Orders);
+
+        var result = await world.Processor.ProcessAsync(Delivery("shop/redact", """{"shop_id":954889,"shop_domain":"mi-tienda.myshopify.com"}"""), Ct);
+
+        Assert.Equal(ShopifyDeliveryResult.Processed, result);
+        Assert.Empty(world.Database.DeletedOrdersOf);
+        Assert.Single(world.Database.Orders);
+        Assert.Empty(world.Database.DeletedDeliveriesOf);
         Assert.Empty(world.Health.Uninstalled);
     }
 
@@ -503,6 +537,13 @@ public sealed class ShopifyWebhookDeliveryProcessorTests
         {
             Directory.Connections[Shop] = new ShopifyConnectionRef(
                 TenantId, ConnectionId, "954889", Shop, operational, operational ? "shpat_sentinel" : null);
+            return this;
+        }
+
+        /// <summary>Lo que entrega el directorio con el token vencido (spec 2026-11-12, D7): operativa y sin token.</summary>
+        public World WithExpiredTokenConnection()
+        {
+            Directory.Connections[Shop] = new ShopifyConnectionRef(TenantId, ConnectionId, "954889", Shop, IsOperational: true, AccessToken: null);
             return this;
         }
 

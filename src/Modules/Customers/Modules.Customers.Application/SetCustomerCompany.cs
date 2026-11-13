@@ -13,6 +13,7 @@ public sealed class SetCustomerCompanyHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
     ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
@@ -78,6 +79,6 @@ public sealed class SetCustomerCompanyHandler(
         await transaction.CommitAsync(cancellationToken);
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }

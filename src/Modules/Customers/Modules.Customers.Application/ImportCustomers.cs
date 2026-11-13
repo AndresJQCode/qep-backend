@@ -173,11 +173,6 @@ public sealed class ExcelCustomerRowRules : AbstractValidator<ExcelCustomerRow>
                 .WithMessage("The city is required.")
             .When(row => IsBlank(row.City) && (!IsBlank(row.Department) || (!IsUpdate(row) && cityRequired)));
 
-        RuleFor(row => row.WithRetention)
-            .Must(BeSiOrNoOrEmpty)
-                .WithErrorCode("customers.import.row.with_retention_invalid")
-                .WithMessage("The 'Con Retencion' column must be 'Si', 'No' or empty.");
-
         RuleFor(row => row.VatSurplus)
             .Must(BeSiOrNoOrEmpty)
                 .WithErrorCode("customers.import.row.vat_surplus_invalid")
@@ -203,6 +198,7 @@ public sealed class ImportCustomersHandler(
     ICustomerCompanyDirectory companyDirectory,
     IClientClassificationRepository classificationRepository,
     ICustomerGeographyLookup geographyLookup,
+    ICustomerTaxRateLookup taxRateLookup,
     ICucGenerator cucGenerator,
     IExcelCustomerImporter excelImporter,
     ICustomersUnitOfWork unitOfWork,
@@ -296,7 +292,8 @@ public sealed class ImportCustomersHandler(
             var (writable, links) = await PlanCompanyLinksAsync(
                 command.TenantId, eligible, loaded, ownersByNumber, errors, cancellationToken);
             var written = await CreateOrUpdateCustomersAsync(
-                command.TenantId, writable, loaded, now, cancellationToken);
+                command.TenantId, writable, loaded, parsed.WithholdingColumns ?? CustomerImportColumns.WithholdingTypes, now,
+                cancellationToken);
             imported = written.Imported;
             ApplyCompanyLinks(links, written.CustomersByRow, now);
 
@@ -366,6 +363,9 @@ public sealed class ImportCustomersHandler(
         // La politica del tenant se lee una sola vez por archivo, no por fila.
         var settings = await tenantDirectory.GetRegionalSettingsAsync(new TenantId(tenantId), cancellationToken);
         var rowValidator = new ExcelCustomerRowRules(settings?.EffectiveCustomerFieldPolicy ?? CustomerFieldPolicy.Default);
+
+        // Las tasas de retencion activas del tenant, una sola vez por archivo y solo si alguna fila trae el nombre de una.
+        IReadOnlyList<CustomerTaxRateRef>? withholdingRates = null;
 
         var fieldValidRows = new List<ExcelCustomerRow>();
         foreach (var row in rows)
@@ -446,6 +446,20 @@ public sealed class ImportCustomersHandler(
                 continue;
             }
 
+            var withholdingTaxRateIds = Array.Empty<Guid>();
+            if (!string.IsNullOrWhiteSpace(row.Retefuente) || !string.IsNullOrWhiteSpace(row.ReteIca))
+            {
+                withholdingRates ??= await taxRateLookup.ListWithholdingAsync(tenantId, cancellationToken);
+                var (resolvedIds, withholdingError) = ResolveWithholdings(row, withholdingRates);
+                if (withholdingError is not null)
+                {
+                    errors.Add(withholdingError);
+                    continue;
+                }
+
+                withholdingTaxRateIds = resolvedIds;
+            }
+
             candidates.Add(new CandidateRow(
                 row.RowNumber,
                 string.IsNullOrWhiteSpace(row.Cuc) ? null : row.Cuc.Trim(),
@@ -460,13 +474,95 @@ public sealed class ImportCustomersHandler(
                 row.Address,
                 city,
                 classification,
-                ParseSiNo(row.WithRetention),
                 ParseSiNo(row.VatSurplus),
+                withholdingTaxRateIds,
                 null,
                 row));
         }
 
         return (candidates, errors);
+    }
+
+    /// <summary>
+    /// Las tasas del cliente que una actualizacion no toca: las de un tipo cuya columna no vino en el archivo. Una tasa que
+    /// el catalogo ya no tiene (borrada) no tiene tipo que comparar y tambien se conserva: la importacion no borra lo que
+    /// no sabe leer. Con las dos columnas presentes no consulta el catalogo.
+    /// </summary>
+    private async Task<IReadOnlyList<Guid>> KeptWithholdingsAsync(
+        Guid tenantId,
+        Customer customer,
+        IReadOnlyCollection<string> withholdingColumns,
+        CancellationToken cancellationToken)
+    {
+        if (customer.WithholdingTaxRateIds.Count == 0
+            || CustomerImportColumns.WithholdingTypes.All(withholdingColumns.Contains))
+        {
+            return [];
+        }
+
+        var rates = await taxRateLookup.FindManyAsync(tenantId, customer.WithholdingTaxRateIds, cancellationToken);
+        return
+        [
+            .. customer.WithholdingTaxRateIds.Where(id =>
+                !rates.TryGetValue(id, out var rate) || !withholdingColumns.Contains(rate.Type))
+        ];
+    }
+
+    /// <summary>
+    /// Resuelve las columnas por tipo (Retefuente, ReteICA) al id de la tasa del catalogo, por nombre y sin importar
+    /// mayusculas. Una celda vacia no asigna tasa. Un nombre que no es una tasa activa de ese tipo es un error de la fila,
+    /// con la columna como campo; el resultado pasa por las mismas reglas que el alta por API
+    /// (<see cref="CustomerWithholdingRules"/>), asi el Excel no se salta ningun invariante.
+    /// </summary>
+    private static (Guid[] Ids, ImportRowError? Error) ResolveWithholdings(
+        ExcelCustomerRow row, IReadOnlyList<CustomerTaxRateRef> activeWithholdingRates)
+    {
+        (string Type, string? Cell, string Field)[] columns =
+        [
+            (CustomerImportColumns.Retefuente, row.Retefuente, nameof(ExcelCustomerRow.Retefuente)),
+            (CustomerImportColumns.ReteIca, row.ReteIca, nameof(ExcelCustomerRow.ReteIca))
+        ];
+
+        var chosen = new Dictionary<Guid, CustomerTaxRateRef>();
+        foreach (var (type, cell, field) in columns)
+        {
+            if (string.IsNullOrWhiteSpace(cell))
+            {
+                continue;
+            }
+
+            // Dos paises pueden llamar igual a sus tasas; la importacion es colombiana, asi que gana la de CO.
+            var matches = activeWithholdingRates
+                .Where(rate => rate.Type == type && string.Equals(rate.Name, cell.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length > 1)
+            {
+                matches = [.. matches.Where(rate => rate.Country == Customer.ColombiaCountryCode)];
+            }
+
+            if (matches.Length != 1)
+            {
+                return ([], new ImportRowError(
+                    row.RowNumber,
+                    "customers.customer.withholding_tax_rate_invalid",
+                    $"The {type} column must hold the name of an active {type} rate, or be empty.",
+                    field,
+                    ToRowData(row)));
+            }
+
+            chosen[matches[0].Id] = matches[0];
+        }
+
+        try
+        {
+            CustomerWithholdingRules.Validate(chosen, [.. chosen.Keys]);
+        }
+        catch (CustomersDomainException exception)
+        {
+            return ([], new ImportRowError(row.RowNumber, exception.Code, exception.Message, null, ToRowData(row)));
+        }
+
+        return ([.. chosen.Keys], null);
     }
 
     /// <summary>
@@ -694,6 +790,7 @@ public sealed class ImportCustomersHandler(
         Guid tenantId,
         List<CandidateRow> candidates,
         Dictionary<CustomerId, Customer> loaded,
+        IReadOnlyCollection<string> withholdingColumns,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -755,12 +852,20 @@ public sealed class ImportCustomersHandler(
                     new CustomerCommercialInfo
                     {
                         ClassificationId = classification?.Id,
-                        WithRetention = candidate.WithRetention,
                         VatSurplus = candidate.VatSurplus
                     },
                     classification?.Prefix,
                     now,
                     phoneNormalizer);
+
+                // Celda vacia = sin tasa de ese tipo. Una columna que el archivo no trae (armado antes de que existiera, o
+                // con solo una de las dos) conserva las tasas de ese tipo que el cliente ya tiene.
+                customer.SetWithholdingTaxRates(
+                    [
+                        .. candidate.WithholdingTaxRateIds,
+                        .. await KeptWithholdingsAsync(tenantId, customer, withholdingColumns, cancellationToken)
+                    ],
+                    now);
 
                 imported.Add(new ImportedCustomerRow(
                     // Update exige una ficha completa (EnsureComplete), y una completa siempre tiene CUC.
@@ -799,11 +904,15 @@ public sealed class ImportCustomersHandler(
                 new CustomerCommercialInfo
                 {
                     ClassificationId = candidate.Classification?.Id,
-                    WithRetention = candidate.WithRetention,
                     VatSurplus = candidate.VatSurplus
                 },
                 now,
                 phoneNormalizer);
+
+            if (candidate.WithholdingTaxRateIds.Count > 0)
+            {
+                newCustomer.SetWithholdingTaxRates(candidate.WithholdingTaxRateIds, now);
+            }
 
             customerRepository.Add(newCustomer);
             imported.Add(new ImportedCustomerRow(candidate.RowNumber, cuc, candidate.Name, "created"));
@@ -1065,7 +1174,8 @@ public sealed class ImportCustomersHandler(
         row.Department ?? string.Empty,
         row.City ?? string.Empty,
         row.Classification ?? string.Empty,
-        row.WithRetention,
+        row.Retefuente,
+        row.ReteIca,
         row.VatSurplus,
         row.CompanyIdentificationNumber);
 
@@ -1125,8 +1235,8 @@ public sealed class ImportCustomersHandler(
         string? Address,
         CustomerCityRef? City,
         ClientClassification? Classification,
-        bool WithRetention,
         bool VatSurplus,
+        IReadOnlyList<Guid> WithholdingTaxRateIds,
         CustomerId? TargetId,
         ExcelCustomerRow SourceRow)
     {

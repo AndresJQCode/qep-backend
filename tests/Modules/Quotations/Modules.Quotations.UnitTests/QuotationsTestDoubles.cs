@@ -834,6 +834,9 @@ internal sealed class StubQuotationResponseComposer : IQuotationResponseComposer
             ShippingResponse.From(quotation.Shipping),
             quotation.FreightSubtotal,
             quotation.FreightTaxAmount,
+            [],
+            [],
+            [],
             []));
 
     // The DTO no longer carries the minimum purchase (plan decision A13): the stub computes it the
@@ -1369,6 +1372,7 @@ internal static class OrderBuilders
         BankName = "Bancolombia",
         AccountNumber = "7542",
         Currency = "COP",
+        Country = "CO",
     };
 
     public static Order Pending(
@@ -1384,7 +1388,7 @@ internal static class OrderBuilders
             OrderId.New(),
             tenantId,
             orderNumber,
-            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, false),
+            new OrderHeader(clientId ?? Guid.CreateVersion7(), advisorId, "COP", null, IsRetail: false, null, false, []),
             parties ?? QuotationParties.Empty,
             BillingAccount,
             shipping ?? ShippingDetails.None,
@@ -1548,5 +1552,71 @@ public sealed class FixedTenantPriceRounding(params (string Currency, PriceRound
         }
 
         return all;
+    }
+}
+
+/// <summary>El catálogo de tasas de retención y las asignadas a cada cliente, en memoria. Las fotos salen tal cual:
+/// la resolución de la UVT es del adaptador y se prueba en Bootstrapper.</summary>
+internal sealed class StubQuotationWithholdingLookup : IQuotationWithholdingLookup
+{
+    private readonly Dictionary<Guid, WithholdingRateCandidate> _catalog = [];
+    private readonly Dictionary<Guid, IReadOnlyList<Guid>> _customerRates = [];
+
+    /// <summary>Las fechas con que se preguntó, para probar qué fecha del documento llega.</summary>
+    public List<DateOnly> RequestedDates { get; } = [];
+
+    public StubQuotationWithholdingLookup WithRate(WithholdingRate rate, bool isActive = true, bool withholds = true)
+    {
+        _catalog[rate.TaxRateId] = new WithholdingRateCandidate(rate, isActive, withholds);
+        return this;
+    }
+
+    public StubQuotationWithholdingLookup WithCustomer(Guid customerId, params WithholdingRate[] rates)
+    {
+        foreach (var rate in rates)
+        {
+            WithRate(rate);
+        }
+
+        _customerRates[customerId] = [.. rates.Select(rate => rate.TaxRateId)];
+        return this;
+    }
+
+    public Task<IReadOnlyList<WithholdingRate>> ForCustomerAsync(
+        Guid tenantId, Guid customerId, string? country, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        RequestedDates.Add(documentDate);
+        IReadOnlyList<WithholdingRate> rates = [.. _customerRates.GetValueOrDefault(customerId, [])
+            .Select(id => _catalog[id].Rate)
+            .Where(rate => country is null || string.Equals(rate.Country, country, StringComparison.OrdinalIgnoreCase))];
+        return Task.FromResult(rates);
+    }
+
+    public Task<IReadOnlyDictionary<Guid, WithholdingRateCandidate>> ForRatesAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> taxRateIds, DateOnly documentDate, CancellationToken cancellationToken)
+    {
+        RequestedDates.Add(documentDate);
+        IReadOnlyDictionary<Guid, WithholdingRateCandidate> found = _catalog
+            .Where(entry => taxRateIds.Contains(entry.Key))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
+        return Task.FromResult(found);
+    }
+}
+
+/// <summary>El costo de catálogo (spec costo de producto §4.3): devuelve lo que se le da y anota cada consulta, para
+/// verificar qué variantes y en qué moneda pide el handler, o que no pide nada.</summary>
+internal sealed class RecordingOrderVariantCostLookup(IReadOnlyDictionary<Guid, decimal>? costs = null)
+    : IOrderVariantCostLookup
+{
+    public List<(Guid TenantId, string Currency, IReadOnlyCollection<Guid> VariantIds)> Calls { get; } = [];
+
+    public Task<IReadOnlyDictionary<Guid, decimal>> FindAsync(
+        Guid tenantId, string currency, IReadOnlyCollection<Guid> variantIds, CancellationToken cancellationToken)
+    {
+        Calls.Add((tenantId, currency, variantIds.ToArray()));
+        IReadOnlyDictionary<Guid, decimal> found = (costs ?? new Dictionary<Guid, decimal>())
+            .Where(pair => variantIds.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        return Task.FromResult(found);
     }
 }

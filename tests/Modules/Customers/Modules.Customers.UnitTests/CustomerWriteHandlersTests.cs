@@ -42,23 +42,23 @@ public sealed class CustomerWriteHandlersTests
 
     private static CreateCustomerHandler NewCreate(
         FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
-        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
+        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new TaxRates(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
             new Cucs(calls ?? []), Manager, new FixedClock(), new CreateCustomerValidator(), new PlusNormalizer(),
             tenant ?? new TenantDirectory());
 
     private static UpdateCustomerHandler NewUpdate(
         FakeCustomerRepository customers, UnitOfWork unitOfWork, TenantDirectory? tenant = null, List<string>? calls = null) =>
-        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
+        new(customers, new Classifications([]), new EngagementTestBed.FakeTags(), new TaxRates(), new Geography([]), new FakeCustomerCompanyDirectory([]), unitOfWork, new RecordingAudit(),
             new Cucs(calls ?? []), Manager, new FixedClock(), new UpdateCustomerValidator(), new PlusNormalizer(),
             tenant ?? new TenantDirectory());
 
     private static CreateCustomerCommand CreateCommand() =>
         new(CustomerWriteDoubles.Tenant, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO", CityId,
-            null, Classification.Id.Value, false, false);
+            null, Classification.Id.Value, false);
 
     private static UpdateCustomerCommand UpdateCommand(Customer target) =>
         new(CustomerWriteDoubles.Tenant, target.Id.Value, "Laura Pérez", null, "CC", "1020304050", "310 935 2187", "laura@verde.co", "Calle 10 # 45-12", "CO",
-            CityId, null, Classification.Id.Value, false, false);
+            CityId, null, Classification.Id.Value, false);
 
     private static UnitOfWork Taken() => new(new CustomersDomainException(TakenCode, "taken"));
 

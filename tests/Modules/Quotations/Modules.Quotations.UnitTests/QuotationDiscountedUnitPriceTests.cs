@@ -97,8 +97,8 @@ public sealed class QuotationDiscountedUnitPriceTests
                 Currency = "COP"
             },
             "COP",
-            customerWithRetention: false,
             customerVatSurplus: false,
+            customerWithholdings: [],
             AdvisorId,
             Now);
 

@@ -84,7 +84,7 @@ public sealed class ListCustomersContactsTests
         public FakeCustomerCompanyDirectory Directory { get; }
 
         public ListCustomersHandler Handler() =>
-            new(Repository, new BatchClassifications(), new BatchGeography(), Directory, Reader, new ListCustomersValidator());
+            new(Repository, new BatchClassifications(), new BatchGeography(), new CustomerWriteDoubles.TaxRates(), Directory, Reader, new ListCustomersValidator());
     }
 
     private static ListCustomersQuery Query(

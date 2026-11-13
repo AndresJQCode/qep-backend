@@ -178,14 +178,18 @@ public static class QuotationChangeSummary
         {
             AppendParty(changes, "facturación", before.Billing, after.Billing);
 
-            // Cambiar la respuesta de retención/excedente de IVA no cambia el texto de la fila
-            // (Describe no las lee), así que sin esto una edición que sólo tocara estas dos
-            // preguntas quedaría sin fila de historial.
-            if (after.Billing is not null &&
-                (before.BillingWithRetention != after.BillingWithRetention ||
-                 before.BillingVatSurplus != after.BillingVatSurplus))
+            // Las retenciones que elige la facturación propia tampoco viven en el texto de la fila: se comparan los
+            // ids de las tasas, en orden, porque el orden es el de las filas del documento (spec §7.8).
+            if (!before.BillingWithholdingTaxRateIds.SequenceEqual(after.BillingWithholdingTaxRateIds))
             {
-                changes.Add("retención/excedente de IVA de facturación");
+                changes.Add("retenciones de facturación");
+            }
+
+            // Cambiar el excedente de IVA no cambia el texto de la fila (Describe no lo lee), así que sin esto una
+            // edición que sólo tocara esa pregunta quedaría sin fila de historial.
+            if (after.Billing is not null && before.BillingVatSurplus != after.BillingVatSurplus)
+            {
+                changes.Add("excedente de IVA de facturación");
             }
         }
 
@@ -318,7 +322,7 @@ public sealed record QuotationHeaderSnapshot(
     string Currency,
     bool IsStorePickup,
     bool BillsToFinalConsumer,
-    bool? BillingWithRetention,
+    IReadOnlyList<Guid> BillingWithholdingTaxRateIds,
     bool? BillingVatSurplus,
     int? GlobalScaleFloor = null,
     bool IsRetail = false,
@@ -345,7 +349,7 @@ public sealed record QuotationHeaderSnapshot(
         quotation.Currency,
         quotation.IsStorePickup,
         quotation.BillsToFinalConsumer,
-        quotation.PartyWithRetention,
+        [.. quotation.BillingWithholdings.Select(withholding => withholding.Rate.TaxRateId)],
         quotation.PartyVatSurplus,
         quotation.GlobalScaleFloor,
         quotation.IsRetail,

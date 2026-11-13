@@ -64,8 +64,13 @@ internal sealed class FakeTaxRateRepository(params TaxRate[] rates) : ITaxRateRe
     public Task<TaxRate?> FindAsync(Guid tenantId, TaxRateId taxRateId, CancellationToken cancellationToken) =>
         Task.FromResult(rates.FirstOrDefault(rate => rate.TenantId == tenantId && rate.Id == taxRateId));
 
-    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public int ListCalls { get; private set; }
+
+    public Task<IReadOnlyList<TaxRate>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        ListCalls++;
+        return Task.FromResult<IReadOnlyList<TaxRate>>([.. rates.Where(rate => rate.TenantId == tenantId)]);
+    }
 
     public Task<TaxRate?> FindByNameAsync(Guid tenantId, string name, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
@@ -255,6 +260,9 @@ internal sealed class FakeCustomerRepository(params Customer[] seeded) : ICustom
 
     public Task<bool> AnyWithClassificationAsync(
         Guid tenantId, ClientClassificationId classificationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+    public Task<bool> AnyWithTaxRateAsync(Guid tenantId, Guid taxRateId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
 
     public Task<IReadOnlyDictionary<string, CustomerId>> FindIdsByCucSuffixAsync(
         Guid tenantId, IReadOnlyCollection<string> suffixes, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -464,25 +472,34 @@ internal sealed class FakeCitySynonymRepository(params CitySynonym[] synonyms) :
 
 /// <summary>Una tienda Shopify enlazada en el estado que pide la prueba, con su ruta y el módulo prendido o no. El
 /// <see cref="IIntegrationConnections"/> falso resuelve toda conexión Active sin mirar el módulo: así, que el módulo
-/// apagado no deje operar lo tiene que decidir el adaptador.</summary>
+/// apagado no deje operar lo tiene que decidir el adaptador. El reloj del directorio está fijo en <see cref="Now"/>, y
+/// <c>tokenExpiresAt</c> se guarda en los campos sólo si la prueba lo da.</summary>
 internal sealed class ConnectionWorld
 {
     public const string Domain = "mi-tienda.myshopify.com";
     public const string Token = "shpat_TEST_token";
 
-    public ConnectionWorld(ConnectionStatus status, bool shopifyEnabled)
+    public static readonly DateTimeOffset Now = new(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+
+    public ConnectionWorld(ConnectionStatus status, bool shopifyEnabled, string? tokenExpiresAt = null)
     {
-        var now = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var now = Now;
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ShopifyFieldKeys.ShopDomain] = Domain,
+            [ShopifyFieldKeys.ShopName] = "Mi tienda",
+            [ShopifyFieldKeys.ShopId] = "987654321",
+        };
+        if (tokenExpiresAt is not null)
+        {
+            fields[ShopifyFieldKeys.TokenExpiresAt] = tokenExpiresAt;
+        }
+
         Connection = IntegrationConnection.Create(
             IntegrationProviders.Shopify,
             Guid.CreateVersion7(),
             "Mi tienda",
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [ShopifyFieldKeys.ShopDomain] = Domain,
-                [ShopifyFieldKeys.ShopName] = "Mi tienda",
-                [ShopifyFieldKeys.ShopId] = "987654321",
-            },
+            fields,
             new Dictionary<string, string>(StringComparer.Ordinal) { [ShopifyFieldKeys.AccessToken] = Token },
             (connectionId, fieldKey, plaintext) => new ProtectedSecret("k1", Encoding.UTF8.GetBytes(plaintext)),
             Guid.CreateVersion7(),
@@ -503,7 +520,8 @@ internal sealed class ConnectionWorld
             new FakeIntegrationConnections(Connection),
             new FakeTenantModules(Connection.TenantId, TenantModuleSet.FromStored(shopifyEnabled
                 ? TenantModuleKeys.DefaultForNewTenants
-                : TenantModuleKeys.DefaultForNewTenants.Where(key => key != TenantModuleKeys.Shopify))));
+                : TenantModuleKeys.DefaultForNewTenants.Where(key => key != TenantModuleKeys.Shopify))),
+            new FixedClock(now));
     }
 
     public IntegrationConnection Connection { get; }
@@ -577,6 +595,14 @@ internal sealed class RecordingHealthReporter : IConnectionHealthReporter
         Reports.Add((tenantId, connectionId, failureCode));
         return Task.CompletedTask;
     }
+
+    public List<(Guid TenantId, Guid ConnectionId)> TokenExpired { get; } = [];
+
+    public Task ReportTokenExpiredAsync(Guid tenantId, Guid connectionId, CancellationToken cancellationToken)
+    {
+        TokenExpired.Add((tenantId, connectionId));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class NamedDepartments(params Department[] departments) : IDepartmentRepository
@@ -641,6 +667,9 @@ internal sealed class FakeCompanyRepository(params Company[] companies) : ICompa
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         Guid tenantId, string? search, string? name, string? taxId, CompanyStatusFilter? status, CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
+    public Task<IReadOnlySet<string>> ListCountriesAsync(Guid tenantId, CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
     public void Add(Company company) => throw new NotSupportedException();

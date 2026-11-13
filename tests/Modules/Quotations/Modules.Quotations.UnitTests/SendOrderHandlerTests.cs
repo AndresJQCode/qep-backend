@@ -624,10 +624,10 @@ public sealed class SendOrderHandlerTests
             TenantId, AdvisorId, Now.AddDays(-1), clientId: ClientId,
             parties: billing is null
                 ? null
-                : new QuotationParties(billing, null, BillingWithRetention: false, BillingVatSurplus: false));
+                : new QuotationParties(billing, null, BillingVatSurplus: false));
         if (invoiced)
         {
-            order.MarkPaid(AdvisorId, requirePaymentProof: false, Now.AddHours(-3));
+            order.MarkPaid(AdvisorId, requirePaymentProof: false, order.WithoutCosts(), Now.AddHours(-3));
             order.Invoice(AdvisorId, requireFullPayment: true, Now.AddHours(-2));
         }
 
@@ -681,5 +681,5 @@ public sealed class SendOrderHandlerTests
         Quotation.Create(
             QuotationId.New(), TenantId, "QUO-2026-0001", ClientId, AdvisorId, new DateOnly(2026, 10, 30),
             paymentMethod: null, notes: null, QuotationParties.Empty, billingAccount: null, defaultCurrency: "COP",
-            customerWithRetention: false, customerVatSurplus: false, AdvisorId, Now);
+            customerVatSurplus: false, customerWithholdings: [], AdvisorId, Now);
 }

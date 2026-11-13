@@ -18,9 +18,10 @@ public sealed record CreateCustomerCommand(
     Guid? CityId,
     string? CityName,
     Guid? ClassificationId,
-    bool WithRetention,
     bool VatSurplus,
-    string? PersonType = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
+    string? PersonType = null,
+    // Spec impuestos por tipo §9.2: null no asigna ninguna. El WithRetention del cuerpo viejo ya no entra al comando.
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null) : ICommand<CustomerDto>, ICustomerWriteCommand;
 
 // Las reglas viven en CustomerWriteRules y se incluyen, no se copian. Ver el hallazgo `D` alla.
 public sealed class CreateCustomerValidator : AbstractValidator<CreateCustomerCommand>
@@ -32,6 +33,7 @@ public sealed class CreateCustomerHandler(
     ICustomerRepository repository,
     IClientClassificationRepository classificationRepository,
     ICustomerTagRepository tagRepository,
+    ICustomerTaxRateLookup taxRateLookup,
     ICustomerGeographyLookup geographyLookup,
     ICustomerCompanyDirectory companyDirectory,
     ICustomersUnitOfWork unitOfWork,
@@ -56,6 +58,8 @@ public sealed class CreateCustomerHandler(
         CustomersAuthorization.EnsureAuthorized(
             executionContext, command.TenantId, CustomersPermissions.CustomerManage);
         await validator.ValidateAndThrowAsync(command, cancellationToken);
+        await CustomerWithholdingRules.ValidateAsync(
+            taxRateLookup, command.TenantId, command.WithholdingTaxRateIds ?? [], cancellationToken);
         await CustomerPersonTypeRequirement.EnsureSatisfiedAsync(
             tenantDirectory, command.TenantId, command.Country, command.PersonType, cancellationToken);
         await CustomerFieldPolicyRequirement.EnsureSatisfiedAsync(
@@ -122,9 +126,14 @@ public sealed class CreateCustomerHandler(
                 CityName = command.CityName
             },
             CustomerMapping.ToCommercialInfo(
-                command.ClassificationId, command.WithRetention, command.VatSurplus),
+                command.ClassificationId, command.VatSurplus),
             now,
             phoneNormalizer);
+
+        if (command.WithholdingTaxRateIds is { Count: > 0 } taxRateIds)
+        {
+            customer.SetWithholdingTaxRates(taxRateIds, now);
+        }
 
         repository.Add(customer);
         auditPublisher.Publish(
@@ -152,6 +161,6 @@ public sealed class CreateCustomerHandler(
         }
 
         return await customer.ToDtoAsync(
-            geographyLookup, classificationRepository, tagRepository, companyDirectory, cancellationToken);
+            geographyLookup, classificationRepository, tagRepository, taxRateLookup, companyDirectory, cancellationToken);
     }
 }

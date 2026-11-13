@@ -254,6 +254,54 @@ public sealed class TaxRateDeletionApiTests
         Assert.Equal("catalog.tax_rate.in_use", error.Code);
     }
 
+    // Spec impuestos por tipo §7.4: sin FK a catalog, un cliente con la tasa asignada la deja «en uso» y el borrado lo frena la
+    // consulta; la fila sobrevive.
+    [Fact]
+    public async Task DeletingARateAssignedToACustomerIs422()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var taxRateId = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios");
+        await TaxRateCustomerFixtures.AssignToANewCustomerAsync(customers, TenantId, taxRateId);
+
+        var response = await DeleteTaxRateAsync(client, TenantId, taxRateId);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Contains(
+            "catalog.tax_rate.in_use",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal);
+        Assert.Equal(1, await CountTaxRateAsync(database, taxRateId));
+    }
+
+    // Un cliente fusionado ya no se edita ni se cotiza: su tasa no frena el borrado.
+    [Fact]
+    public async Task DeletingARateAssignedOnlyToAMergedCustomerIsAllowed()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateClient(factory, SubjectId, TenantId, All);
+        using var customers = CreateClient(
+            factory, SubjectId, TenantId, Modules.Customers.Application.CustomersPermissions.CustomerRead,
+            Modules.Customers.Application.CustomersPermissions.CustomerManage);
+        var taxRateId = await TaxRateCustomerFixtures.CreateWithholdingRateAsync(
+            database.GetConnectionString(), TenantId, "Retefuente servicios");
+        await TaxRateCustomerFixtures.AssignToANewCustomerAsync(customers, TenantId, taxRateId);
+        await TaxRateCustomerFixtures.MergeCustomersWithAsync(database.GetConnectionString(), taxRateId);
+
+        var response = await DeleteTaxRateAsync(client, TenantId, taxRateId);
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.NoContent,
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await CountTaxRateAsync(database, taxRateId));
+    }
+
     private static Task<HttpResponseMessage> DeleteTaxRateAsync(
         HttpClient client,
         string tenantId,

@@ -44,6 +44,13 @@ public sealed class SetFreightTaxRateHandler(
                     "quotations.freight_tax_rate.inactive",
                     "La tasa de impuesto está inactiva.");
             }
+
+            if (!taxRate.AddsTax)
+            {
+                throw new QuotationsDomainException(
+                    "quotations.freight_tax_rate.not_vat",
+                    "La tasa de impuesto retiene: el envío sólo admite una que suma (IVA).");
+            }
         }
 
         // El store bloquea la fila del tenant hasta el commit, como el guardado del mínimo de compra.

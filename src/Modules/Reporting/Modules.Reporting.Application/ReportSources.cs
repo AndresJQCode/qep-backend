@@ -151,3 +151,24 @@ public interface ICustomerReportSource
         int rankSize,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// De dónde salen las líneas vendidas del reporte de margen: pedidos pagados y ventas POS
+/// completadas. Ver <see cref="IOrdersReportSource"/> para por qué el adaptador vive en
+/// <c>Bootstrapper</c>.
+///
+/// Las dos operaciones agregan **en la base** sobre el mismo conjunto de líneas, así que el resumen y
+/// el listado no pueden hablar de ventas distintas.
+/// </summary>
+public interface IMarginReportSource
+{
+    Task<(IReadOnlyList<MarginReportProductDto> Items, int Total)> ListAsync(
+        MarginReportCriteria criteria,
+        int page,
+        int pageSize,
+        CancellationToken ct);
+
+    Task<IReadOnlyList<MarginReportCurrencyDto>> SummarizeAsync(
+        MarginReportCriteria criteria,
+        CancellationToken ct);
+}

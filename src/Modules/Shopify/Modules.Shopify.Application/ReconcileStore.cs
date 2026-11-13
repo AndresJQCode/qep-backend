@@ -27,6 +27,9 @@ namespace Modules.Shopify.Application;
 /// vuelve a traer todo desde el mismo punto, y el upsert es idempotente.</para>
 /// <para>Un pedido que falla no frena a los demás: lo que dejó pendiente en la unidad de trabajo se descarta para que el guardado
 /// del siguiente no lo confirme: un snapshot no se guarda sin su reacción de §6.3.</para>
+/// <para><b>Token que expira (spec 2026-11-12 §6.4).</b> Una conexión operativa sin token —venció y el worker de Integrations va
+/// tarde— salta la corrida con 503 <c>sync_unavailable</c> sin llamar a Shopify ni reportar. Ante un 401 se relee el token una vez
+/// por corrida: si cambió, se sigue con el nuevo; si venció, se salta sin reportar; si es el mismo, se reporta como siempre.</para>
 /// </summary>
 public sealed partial class ReconcileStore(
     IShopifyOrdersSource source,
@@ -35,6 +38,7 @@ public sealed partial class ReconcileStore(
     IShopifyOrderMirrorRepository mirrors,
     IShopifyReconcileLeases leases,
     IShopifyConnectionHealth health,
+    IShopifyConnectionDirectory connections,
     IShopifyUnitOfWork unitOfWork,
     IClock clock,
     TimeProvider time,
@@ -63,9 +67,14 @@ public sealed partial class ReconcileStore(
     public async Task<ShopifySyncResult> RunAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        if (!connection.IsOperational || string.IsNullOrWhiteSpace(connection.AccessToken))
+        if (!connection.IsOperational)
         {
             throw NotOperational();
+        }
+
+        if (string.IsNullOrWhiteSpace(connection.AccessToken))
+        {
+            throw TokenRefreshPending();
         }
 
         var started = time.GetTimestamp();
@@ -82,9 +91,13 @@ public sealed partial class ReconcileStore(
             var run = new Run();
             var since = (store.LastReconciledAt ?? startedAt) - Overlap;
             string? cursor = null;
+            var reread = false;
             do
             {
-                var page = await FetchAsync(connection, since, cursor, cancellationToken);
+                (var page, var current) = await FetchAsync(connection, since, cursor, reread, cancellationToken);
+                // El token releído ante un 401 sirve para las páginas siguientes; la red no se vuelve a usar en esta corrida.
+                reread |= !ReferenceEquals(current, connection);
+                connection = current;
                 foreach (var snapshot in page.Orders)
                 {
                     run.Fetched++;
@@ -164,14 +177,14 @@ public sealed partial class ReconcileStore(
         }
     }
 
-    private async Task<ShopifyOrdersPage> FetchAsync(
-        ShopifyConnectionRef connection, DateTimeOffset since, string? cursor, CancellationToken cancellationToken)
+    private async Task<(ShopifyOrdersPage Page, ShopifyConnectionRef Connection)> FetchAsync(
+        ShopifyConnectionRef connection, DateTimeOffset since, string? cursor, bool reread, CancellationToken cancellationToken)
     {
         for (var throttles = 0; ;)
         {
             try
             {
-                return await source.FetchUpdatedSinceAsync(connection, since, cursor, cancellationToken);
+                return (await source.FetchUpdatedSinceAsync(connection, since, cursor, cancellationToken), connection);
             }
             catch (ShopifyOrdersSourceException exception) when (exception.Failure == ShopifyOrdersSourceFailure.Throttled)
             {
@@ -184,6 +197,22 @@ public sealed partial class ReconcileStore(
             }
             catch (ShopifyOrdersSourceException exception) when (exception.Failure == ShopifyOrdersSourceFailure.Rejected)
             {
+                if (!reread)
+                {
+                    // Spec 2026-11-12 §6.4: el worker pudo rotar el token entre la lectura y la llamada, o el token venció en medio.
+                    var fresh = await connections.FindAsync(connection.TenantId, connection.ConnectionId, cancellationToken);
+                    if (fresh is { IsOperational: true, AccessToken: null })
+                    {
+                        throw TokenRefreshPending();
+                    }
+
+                    if (fresh is { IsOperational: true, AccessToken: { Length: > 0 } token }
+                        && !string.Equals(token, connection.AccessToken, StringComparison.Ordinal))
+                    {
+                        return await FetchAsync(fresh, since, cursor, reread: true, cancellationToken);
+                    }
+                }
+
                 // §5.3: la conexión queda NeedsAttention y sale del ciclo hasta que vuelva a Active.
                 await health.ReportRejectedAsync(connection.TenantId, connection.ConnectionId, cancellationToken);
                 throw NotOperational(exception);
@@ -281,6 +310,9 @@ public sealed partial class ReconcileStore(
     private static ShopifyDomainException NotOperational(Exception? inner = null) => inner is null
         ? new(ShopifyErrorCodes.StoreNotOperational, "The Shopify connection is not operational.")
         : new(ShopifyErrorCodes.StoreNotOperational, "Shopify rejected the store credentials; the connection was reported.", inner);
+
+    private static ServiceUnavailableException TokenRefreshPending() =>
+        new(ShopifyErrorCodes.StoreSyncUnavailable, "The Shopify access token is waiting for its refresh; the next run retries.");
 
     private static ServiceUnavailableException Unavailable(ShopifyOrdersSourceException exception) =>
         new(ShopifyErrorCodes.StoreSyncUnavailable, $"Shopify could not be reconciled now ({exception.Failure}); the next run retries.");

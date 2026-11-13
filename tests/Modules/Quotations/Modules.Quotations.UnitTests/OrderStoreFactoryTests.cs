@@ -19,7 +19,7 @@ public sealed class OrderStoreFactoryTests
     };
 
     private static OrderHeader Header() =>
-        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, false);
+        new(Guid.CreateVersion7(), Advisor, "COP", null, IsRetail: true, null, false, []);
 
     private static OrderLineInput Line() =>
         new(Guid.CreateVersion7(), Guid.CreateVersion7(), 2m, 11_900m, 0m, 19, new QuotationProductSnapshot("ABC", "Aceite"));
@@ -41,8 +41,8 @@ public sealed class OrderStoreFactoryTests
         Billing() with { IdentificationNumber = null, IdentificationType = null, PersonType = null };
 
     private static QuotationParties Parties(
-        QuotationPartyDetails? shipping = null, bool? withRetention = false, bool? vatSurplus = false) =>
-        new(Billing(), shipping ?? Shipping(), BillingWithRetention: withRetention, BillingVatSurplus: vatSurplus);
+        QuotationPartyDetails? shipping = null, bool? vatSurplus = false) =>
+        new(Billing(), shipping ?? Shipping(), BillingVatSurplus: vatSurplus);
 
     private static Order NewStoreOrder(QuotationParties parties) =>
         Order.CreateFromStore(
@@ -110,7 +110,7 @@ public sealed class OrderStoreFactoryTests
             Order.CreateExternal(
                 OrderId.New(), TenantId, "PED-2026-0001", Header(), Parties(), Account, [Line()],
                 OrderPaymentStatus.PaymentPending, null, Advisor, [], Now, OrderSource.Store, "T-0001",
-                ShippingDetails.None, null, null));
+                ShippingDetails.None, null, null, OrderLineCosts.None));
 
         Assert.Equal(ExternalOrderErrors.SourceInvalid, error.Code);
     }
@@ -149,7 +149,7 @@ public sealed class OrderStoreFactoryTests
     public void AStoreOrderStillRequiresTheBillingTaxProfile()
     {
         var error = Assert.Throws<QuotationsDomainException>(() =>
-            NewStoreOrder(Parties(withRetention: null)));
+            NewStoreOrder(Parties(vatSurplus: null)));
 
         Assert.Equal("order.billing.tax_profile_required", error.Code);
     }

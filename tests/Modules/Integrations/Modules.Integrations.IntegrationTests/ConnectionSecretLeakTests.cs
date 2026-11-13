@@ -1,7 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Modules.Integrations.Application;
+using Modules.Integrations.Domain;
+using Modules.Integrations.Infrastructure.Shopify;
 using static Modules.Integrations.IntegrationTests.IntegrationsApiHarness;
 
 namespace Modules.Integrations.IntegrationTests;
@@ -384,5 +390,66 @@ public sealed class ConnectionSecretLeakTests
         Assert.Contains("fromNumber", trail, StringComparison.Ordinal);
         Assert.DoesNotContain(FromNumber, trail, StringComparison.Ordinal);
         Assert.DoesNotContain("573009999999", trail, StringComparison.Ordinal);
+    }
+
+    // Spec 2026-11-12 anti-objetivo 3: ni el access token, ni el refresh token, ni el par refrescado, ni el secreto de la app,
+    // ni el cuerpo de /admin/oauth/access_token salen a los logs, la auditoría, el outbox o las fallas guardadas. El host
+    // corre en Trace, como TheKeyNeverAppearsInLogsAuditOrHttpCalls: a Information, un log de headers pasaría sin verse.
+    [Fact]
+    public async Task ShopifyRefreshNeverLeaksEitherTokenOrTheResponse()
+    {
+        const string refreshedAccess = "shpat_leak-refreshed-SENTINEL-0e1f";
+        const string refreshedRefresh = "shprt_leak-refreshed-SENTINEL-0e1f";
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var logs = new CapturedLogs();
+        using var host = factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddFilter<CapturedLogs>(null, LogLevel.Trace));
+            builder.ConfigureServices(services => services.AddSingleton<ILoggerProvider>(logs));
+        });
+        ShopifyFlow.ScriptHappyShop(factory.ShopifyHandler);
+        var tenant = await RegisterTenantAsync(host);
+        using var owner = CreateClient(host, tenant.OwnerUserId, tenant.TenantId, ManagePermissions);
+        var linked = await SendAsync(
+            owner, HttpMethod.Post, ShopifyFlow.LinkUrl(tenant.TenantId),
+            new { installId = await ShopifyFlow.InstallAsync(host, owner, tenant.TenantId) });
+        var linkedBody = await linked.Content.ReadAsStringAsync(Ct);
+        Assert.Equal(HttpStatusCode.Created, linked.StatusCode);
+        var connectionId = JsonDocument.Parse(linkedBody).RootElement.GetProperty("id").GetGuid();
+        var worker = host.Services.GetServices<IHostedService>().OfType<ShopifyTokenRefreshWorker>().Single();
+        await worker.FirstRunCompletion;
+
+        Task<int> ExpireSoonAsync() =>
+            ExecuteAsync(
+                connectionString,
+                "UPDATE integrations.connections SET fields = jsonb_set(fields, '{tokenExpiresAt}', to_jsonb(@at::text)) WHERE id = @id",
+                ("at", ShopifyTokenRefresh.Format(DateTimeOffset.UtcNow.AddMinutes(5))),
+                ("id", connectionId));
+
+        await ExpireSoonAsync();
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, refreshedAccess, refreshedRefresh);
+        Assert.Equal(1, (await worker.RunOnceAsync(Ct)).Refreshed);
+        await ExpireSoonAsync();
+        // El 401 repite en su cuerpo el refresh token que recibió: el refrescado.
+        factory.ShopifyHandler.ScriptRefresh(ShopifyFlow.Shop, refreshedAccess, refreshedRefresh, HttpStatusCode.Unauthorized);
+        Assert.Equal(1, (await worker.RunOnceAsync(Ct)).Rejected);
+
+        // Control positivo: los tokens sí viajaron a Shopify, el host registró en Trace y el worker dejó su línea.
+        Assert.Contains(factory.ShopifyHandler.RefreshRequests, request => request.Body!.Contains(refreshedRefresh, StringComparison.Ordinal));
+        Assert.Contains(LogLevel.Trace, logs.Levels);
+        AssertLogged(logs, "token refresh ok");
+        AssertLogged(logs, "token refresh rejected");
+        await AssertNothingLeaksAsync(
+            connectionString,
+            logs,
+            [linkedBody],
+            ShopifyFlow.SentinelAccessToken,
+            ShopifyFlow.SentinelRefreshToken,
+            refreshedAccess,
+            refreshedRefresh,
+            SentinelShopifyClientSecret,
+            "invalid_request");
     }
 }

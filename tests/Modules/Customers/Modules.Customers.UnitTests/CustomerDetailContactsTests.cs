@@ -53,7 +53,7 @@ public sealed class CustomerDetailContactsTests
     {
         repository.Known.AddRange(all);
         return new(
-            repository, new Classifications([]), new EngagementTestBed.FakeTags(), new BatchGeography(),
+            repository, new Classifications([]), new EngagementTestBed.FakeTags(), new CustomerWriteDoubles.TaxRates(), new BatchGeography(),
             new FakeCustomerCompanyDirectory(all), Manager);
     }
 
@@ -120,7 +120,7 @@ public sealed class CustomerDetailContactsTests
         repository.Known.AddRange([company, existing]);
         var directory = new FakeCustomerCompanyDirectory([company, existing]);
         var deactivate = new DeactivateCustomerHandler(
-            repository, new Classifications([]), new EngagementTestBed.FakeTags(), new BatchGeography(), directory,
+            repository, new Classifications([]), new EngagementTestBed.FakeTags(), new CustomerWriteDoubles.TaxRates(), new BatchGeography(), directory,
             new UnitOfWork(), new RecordingAudit(), Manager, new FixedClock());
 
         var dto = await deactivate.HandleAsync(

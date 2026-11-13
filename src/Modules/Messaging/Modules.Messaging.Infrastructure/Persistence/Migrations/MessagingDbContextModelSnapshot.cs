@@ -1065,6 +1065,14 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Engine")
+                        .HasColumnName("kind");
+
                     b.Property<DateTimeOffset>("NextAttemptAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("next_attempt_at");
@@ -1094,7 +1102,10 @@ namespace Modules.Messaging.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "NextAttemptAt" }, "IX_automation_inbox_pending")
                         .HasFilter("processed_at IS NULL");
 
-                    b.ToTable("automation_inbox", "messaging");
+                    b.ToTable("automation_inbox", "messaging", t =>
+                        {
+                            t.HasCheckConstraint("CK_automation_inbox_kind", "kind IN ('Engine','ReleaseRun')");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Messaging.Infrastructure.Persistence.CampaignRecipientRecord", b =>

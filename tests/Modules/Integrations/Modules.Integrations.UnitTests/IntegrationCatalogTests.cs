@@ -85,12 +85,21 @@ public sealed class IntegrationCatalogTests
         Assert.Equal(IntegrationProviders.DefaultMaxConnections, provider.MaxConnections);
         Assert.Equal(ProviderOnboarding.ShopifyOAuth, provider.Onboarding);
         Assert.Equal(
-            [ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes, ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.AccessToken],
+            [
+                ShopifyFieldKeys.ShopDomain, ShopifyFieldKeys.ShopName, ShopifyFieldKeys.ShopId, ShopifyFieldKeys.Scopes,
+                ShopifyFieldKeys.WebhookSubscriptionIds, ShopifyFieldKeys.TokenExpiresAt, ShopifyFieldKeys.RefreshTokenExpiresAt,
+                ShopifyFieldKeys.AccessToken, ShopifyFieldKeys.RefreshToken,
+            ],
             provider.Fields.Select(field => field.Key));
-        Assert.Equal(["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "accessToken"], provider.Fields.Select(field => field.Key));
+        Assert.Equal(
+            ["shopDomain", "shopName", "shopId", "scopes", "webhookSubscriptionIds", "tokenExpiresAt", "refreshTokenExpiresAt", "accessToken", "refreshToken"],
+            provider.Fields.Select(field => field.Key));
         Assert.Equal(["shopDomain", "shopName"], provider.CatalogFields.Select(field => field.Key));
-        Assert.Equal(["accessToken"], provider.SecretFields.Select(field => field.Key));
+        Assert.Equal(["accessToken", "refreshToken"], provider.SecretFields.Select(field => field.Key));
         Assert.True(provider.FindField("accessToken")!.Internal);
+        Assert.True(provider.FindField("refreshToken")!.Internal);
+        Assert.True(provider.FindField("tokenExpiresAt")!.Internal);
+        Assert.True(provider.FindField("refreshTokenExpiresAt")!.Internal);
         Assert.Same(provider, IntegrationProviders.Parse("shopify"));
         Assert.Equal("app_uninstalled", ConnectionFailureCodes.AppUninstalled);
         Assert.Equal("webhooks_not_registered", ConnectionFailureCodes.WebhooksNotRegistered);

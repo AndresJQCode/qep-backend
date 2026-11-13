@@ -39,12 +39,13 @@ public sealed class PreviewQuotationValidator()
 /// </summary>
 public sealed class PreviewQuotationHandler(
     IQuotationRepository repository,
-    IQuotationCustomerLookup customerLookup,
     IQuotationCompanyLookup companyLookup,
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
     ShippingResolver shippingResolver,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
@@ -73,8 +74,10 @@ public sealed class PreviewQuotationHandler(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
 
         await QuotationEditsApplication.ApplyAsync(
-            quotation, query, query.TenantId, customerLookup, companyLookup, pricingLookup, settingsStore, priceRounding,
-            shippingResolver, updatedBy, clock.UtcNow, cancellationToken);
+            quotation, query, query.TenantId, companyLookup, pricingLookup, settingsStore, priceRounding,
+            shippingResolver,
+            QuotationWithholdingContext.For(withholdingLookup, tenantClock, query.TenantId, quotation),
+            updatedBy, clock.UtcNow, cancellationToken);
 
         return quotation.ToDto() with { Version = storedVersion };
     }

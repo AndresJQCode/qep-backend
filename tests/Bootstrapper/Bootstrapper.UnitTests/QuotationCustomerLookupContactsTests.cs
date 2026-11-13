@@ -39,7 +39,7 @@ public sealed class QuotationCustomerLookupContactsTests
         }
     }
 
-    private static QuotationCustomerLookup Adapter(FakeCompanies companies) => new(null!, null!, companies);
+    private static QuotationCustomerLookup Adapter(FakeCompanies companies) => new(null!, null!, null!, companies);
 
     [Fact]
     public async Task AContactOfTheCompanyIsFoundWithNameAndPhone()

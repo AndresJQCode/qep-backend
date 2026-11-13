@@ -151,7 +151,7 @@ public sealed class RemoveOrderPaymentProofHandlerTests
                 new OrderPaymentProofInput(Guid.CreateVersion7(), 100_000m),
                 new OrderPaymentProofInput(Guid.CreateVersion7(), 19_000m),
             ]);
-        order.MarkPaid(AdvisorId, requirePaymentProof: false, Now);
+        order.MarkPaid(AdvisorId, requirePaymentProof: false, order.WithoutCosts(), Now);
         return order;
     }
 
@@ -191,8 +191,8 @@ public sealed class RemoveOrderPaymentProofHandlerTests
             QuotationParties.Empty,
             OrderBuilders.BillingAccount,
             defaultCurrency: "COP",
-            customerWithRetention,
             customerVatSurplus: false,
+            customerWithholdings: TestWithholdings.Customer(customerWithRetention),
             AdvisorId,
             Now);
         quotation.AddItem(

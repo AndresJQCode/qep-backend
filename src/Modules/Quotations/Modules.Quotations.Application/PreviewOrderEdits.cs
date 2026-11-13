@@ -16,7 +16,9 @@ public sealed record PreviewOrderEditsQuery(
     int? GlobalScaleFloor,
     bool IsRetail,
     ShippingRequest? Shipping = null,
-    OrderBillingEditRequest? Billing = null) : IQuery<OrderDetailDto>, IOrderEdits;
+    OrderBillingEditRequest? Billing = null,
+    IReadOnlyList<Guid>? WithholdingTaxRateIds = null,
+    QuotationBillingAccountRequest? BillingAccount = null) : IQuery<OrderDetailDto>, IOrderEdits;
 
 public sealed class PreviewOrderEditsValidator : OrderEditsValidator<PreviewOrderEditsQuery>
 {
@@ -32,12 +34,15 @@ public sealed class PreviewOrderEditsHandler(
     IQuotationProductPricingLookup pricingLookup,
     IQuotationSettingsStore settingsStore,
     ITenantPriceRounding priceRounding,
-    IQuotationCustomerLookup customerLookup,
     ShippingResolver shippingResolver,
     IMembershipDirectory membershipDirectory,
     IExecutionContext executionContext,
     IClock clock,
-    IValidator<PreviewOrderEditsQuery> validator)
+    IValidator<PreviewOrderEditsQuery> validator,
+    IQuotationCompanyLookup companyLookup,
+    IQuotationWithholdingLookup withholdingLookup,
+    ITenantClock tenantClock,
+    IOrderVariantCostLookup costLookup)
     : IQueryHandler<PreviewOrderEditsQuery, OrderDetailDto>
 {
     public async Task<OrderDetailDto> HandleAsync(
@@ -62,17 +67,11 @@ public sealed class PreviewOrderEditsHandler(
 
         var storedVersion = order.Version;
         var previousNetTotal = order.NetTotal;
-        var customer = await customerLookup.FindAsync(query.TenantId, order.ClientId, cancellationToken);
-        if (customer is not null)
-        {
-            order.RefreshCustomerTaxProfile(customer.WithRetention, customer.VatSurplus);
-        }
-
         var updatedBy = await QuotationAdvisorResolver.ResolveAsync(
             membershipDirectory, executionContext, query.TenantId, cancellationToken);
         var now = clock.UtcNow;
         await OrderItemEdits.ApplyAsync(
-            order, query.Items, pricingLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
+            order, query.Items, pricingLookup, costLookup, query.TenantId, updatedBy, now, query.IsRetail, cancellationToken);
         foreach (var proofId in query.Proofs.RemoveIds)
         {
             order.RemovePaymentProof(new OrderPaymentProofId(proofId), now);
@@ -107,6 +106,13 @@ public sealed class PreviewOrderEditsHandler(
         // de recalcular. Sin la regla NIT ni las exigencias de fila completa: el preview no las aplica mientras la persona teclea.
         OrderBillingEdits.Apply(
             order, query.Billing, tenantCountry: null, strict: false, updatedBy, now);
+
+        // Las mismas reglas que el guardado (D21–D23): una tasa de otro país es 422 también acá, para que la vista previa
+        // no muestre una retención que el guardado rechazaría.
+        await OrderWithholdingEdits.ApplyAsync(
+            order, query,
+            new OrderWithholdingEditsContext(companyLookup, withholdingLookup, tenantClock, query.TenantId),
+            updatedBy, now, cancellationToken);
 
         // Mismo orden que el guardado: el envío antes de recalcular el estado de pago.
         var shipping = await shippingResolver.ResolveAsync(

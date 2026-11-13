@@ -289,6 +289,8 @@ app.MapCustomerEngagementEndpoints();
 app.MapGeographyEndpoints();
 // Spec 2026-10-26 §6: la consola de ciudades sin resolver y sinónimos del operador.
 app.MapCityOperatorEndpoints();
+// Spec 2026-11-10: la consola de la unidad tributaria del operador.
+app.MapTaxUnitOperatorEndpoints();
 app.MapQuotationEndpoints();
 app.MapOrderEndpoints();
 app.MapOrdersExportLayoutEndpoints();
@@ -365,9 +367,12 @@ await app.Services.InitializeCompaniesDatabaseAsync(
 // Después de Geography: suppliers.suppliers lleva una FK real a geography.cities.
 await app.Services.InitializeSuppliersDatabaseAsync(
     app.Lifetime.ApplicationStopping);
-// Despues de Catalog y Customers: quotations referencia sus datos (producto, cliente) por id
-// suelto, sin FK real -- no hay dependencia de orden estricta, pero se inicializa al final del
-// grupo de modulos de negocio por consistencia con el resto de este archivo.
+// Despues de Catalog, Customers y Companies, y el orden es estricto: quotations referencia sus datos
+// (producto, cliente) por id suelto, sin FK real, pero dos migraciones de impuestos por tipo leen y escriben esos
+// esquemas: AddQuotationWithholdings copia el pais de la empresa desde companies.companies, y
+// MigrateRetentionToWithholdings (§11.2) escribe en catalog.tax_rates y customers.customer_tax_rates. Tienen que
+// existir con su forma final cuando corren: si faltan, el guard de to_regclass las deja sin hacer nada y no vuelven a
+// correr.
 await app.Services.InitializeQuotationsDatabaseAsync(
     app.Lifetime.ApplicationStopping);
 // Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
