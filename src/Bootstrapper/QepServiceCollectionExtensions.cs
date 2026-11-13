@@ -1167,9 +1167,8 @@ public static class QepServiceCollectionExtensions
         // clientes y almacenamiento entran por adaptadores que se registran más abajo.
         services.AddMessagingInfrastructure(configuration);
 
-        // Presencia de la bandeja: quién tiene una conexión abierta. Es por proceso, en memoria, y sólo vale con `replicas: 1`;
-        // con más réplicas cada una vería sólo a sus conectados.
-        services.AddSingleton<IMessagingPresence, MessagingPresence>();
+        // La presencia de la bandeja (IMessagingPresence, IMessagingPresenceReader) la registra AddQepValkey: con
+        // Valkey:Areas:Presence es compartida entre pods, y apagada es el registro local de siempre.
 
         // Pipeline (spec 2026-10-13): el embudo de ventas. Sólo ve Tenancy (y Audit en Infrastructure); conversaciones,
         // clientes y nombres de miembros entran por adaptadores que se registran más abajo.

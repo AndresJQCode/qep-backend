@@ -64,4 +64,57 @@ public sealed class MessagingPresenceTests
 
         Assert.Equal([Member], presence.Snapshot()[Tenant]);
     }
+
+    [Fact]
+    public async Task TheLocalReaderReturnsOnlyTheRequestedTenants()
+    {
+        var other = Guid.CreateVersion7();
+        var presence = new MessagingPresence();
+        presence.Connected("a", Tenant, Member);
+        presence.Connected("b", other, Guid.CreateVersion7());
+        var reader = new LocalMessagingPresenceReader(presence);
+
+        var connected = await reader.ListConnectedAsync([Tenant], TestContext.Current.CancellationToken);
+
+        Assert.Equal([Tenant], connected.Keys);
+        Assert.Equal([Member], connected[Tenant]);
+    }
+
+    [Fact]
+    public async Task TheLocalReaderDeduplicatesTabs()
+    {
+        var presence = new MessagingPresence();
+        presence.Connected("a", Tenant, Member);
+        presence.Connected("b", Tenant, Member);
+        var reader = new LocalMessagingPresenceReader(presence);
+
+        var connected = await reader.ListConnectedAsync([Tenant], TestContext.Current.CancellationToken);
+
+        Assert.Equal([Member], connected[Tenant]);
+    }
+
+    [Fact]
+    public void TryRemoveReturnsTheOwnerOfTheConnection()
+    {
+        var presence = new MessagingPresence();
+        presence.Connected("a", Tenant, Member);
+
+        Assert.True(presence.TryRemove("a", out var tenantId, out var memberId));
+        Assert.Equal((Tenant, Member), (tenantId, memberId));
+        Assert.False(presence.TryRemove("nobody", out _, out _));
+    }
+
+    [Fact]
+    public void HasConnectionSeesTheOtherTab()
+    {
+        var presence = new MessagingPresence();
+        presence.Connected("a", Tenant, Member);
+        presence.Connected("b", Tenant, Member);
+
+        presence.TryRemove("a", out _, out _);
+        Assert.True(presence.HasConnection(Tenant, Member));
+
+        presence.TryRemove("b", out _, out _);
+        Assert.False(presence.HasConnection(Tenant, Member));
+    }
 }

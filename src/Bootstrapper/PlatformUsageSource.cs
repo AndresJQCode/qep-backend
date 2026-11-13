@@ -14,11 +14,12 @@ namespace Bootstrapper;
 /// conexión de Instagram borrada no le quita lo que ya contó. Un tenant sin conversaciones sigue en la lista, en cero.
 ///
 /// Renombrar una columna de esas tablas compila y deja <c>/operator/usage</c> respondiendo 500 (<c>42703</c>). Lo amarra
-/// <c>PlatformUsageApiTests</c> (Messaging.IntegrationTests), que corre contra el esquema migrado. La presencia es por proceso
-/// (<see cref="IMessagingPresence"/>): con más de una réplica cada una vería sólo a sus conectados.
+/// <c>PlatformUsageApiTests</c> (Messaging.IntegrationTests), que corre contra el esquema migrado. Los conectados salen de
+/// <see cref="IMessagingPresenceReader"/>: con la presencia de Valkey prendida son los de todos los pods; sin ella, o con
+/// Valkey caído, sólo los de este pod.
 /// </summary>
 internal sealed class PlatformUsageSource(
-    MessagingDbContext messaging, IMessagingPresence presence, IMessagingMemberNames memberNames) : IPlatformUsageSource
+    MessagingDbContext messaging, IMessagingPresenceReader presence, IMessagingMemberNames memberNames) : IPlatformUsageSource
 {
     // Misma redacción que MessageMapping.DeletedMemberName (D-M20), que es internal de Messaging.Application.
     private const string DeletedMemberName = "Miembro eliminado";
@@ -39,7 +40,7 @@ internal sealed class PlatformUsageSource(
             GROUP BY t.id, t.display_name, t.created_at
             """).ToListAsync(cancellationToken);
 
-        var snapshot = presence.Snapshot();
+        var snapshot = await presence.ListConnectedAsync(rows.Select(row => row.TenantId).ToArray(), cancellationToken);
         var known = rows.Select(row => row.TenantId).ToHashSet();
         var names = new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
         foreach (var (tenantId, memberIds) in snapshot)

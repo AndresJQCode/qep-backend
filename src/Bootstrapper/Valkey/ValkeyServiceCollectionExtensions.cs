@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Modules.Messaging.Application;
 
 namespace Bootstrapper.Valkey;
 
@@ -32,6 +33,20 @@ public static class ValkeyServiceCollectionExtensions
             _ = provider.GetRequiredService<ValkeyMetrics>();
             return provider.GetRequiredService<ValkeyConnection>();
         });
+
+        AddPresence(services);
         return services;
+    }
+
+    /// <summary>
+    /// La presencia de la bandeja (D-2): el registro local de <c>MessagingHub</c> y el lector del reporte de uso. Una sola
+    /// instancia de <see cref="MessagingPresence"/> detrás de <see cref="IMessagingPresence"/>, para que el hub escriba en el
+    /// mismo registro que lee el lector.
+    /// </summary>
+    private static void AddPresence(IServiceCollection services)
+    {
+        services.AddSingleton<MessagingPresence>();
+        services.AddSingleton<IMessagingPresence>(provider => provider.GetRequiredService<MessagingPresence>());
+        services.AddSingleton<IMessagingPresenceReader, LocalMessagingPresenceReader>();
     }
 }
