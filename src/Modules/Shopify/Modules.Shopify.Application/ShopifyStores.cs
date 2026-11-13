@@ -13,6 +13,10 @@ public sealed record ListShopifyStoresQuery(Guid TenantId) : IQuery<IReadOnlyLis
 /// <summary>Spec 2026-10-15 §7 <c>GET /stores/{connectionId}</c> (<c>integrations.connection.read</c>).</summary>
 public sealed record GetShopifyStoreQuery(Guid TenantId, Guid ConnectionId) : IQuery<ShopifyStoreDto>;
 
+/// <summary><c>GET /stores/{connectionId}/document-sources</c> (<c>integrations.connection.read</c>), la misma lectura que la
+/// tienda.</summary>
+public sealed record GetShopifyDocumentSourcesQuery(Guid TenantId, Guid ConnectionId) : IQuery<ShopifyDocumentSourcesDto>;
+
 /// <summary>Spec 2026-10-15 §6.1 y §7 <c>PUT /stores/{connectionId}</c> (<c>integrations.connection.manage</c>).
 /// <paramref name="ExpectedVersion"/> llega por <c>If-Match</c>.</summary>
 public sealed record UpdateShopifyStoreCommand(
@@ -156,6 +160,34 @@ public sealed class GetShopifyStoreHandler(
 
             throw;
         }
+    }
+}
+
+/// <summary>
+/// <c>GET /stores/{connectionId}/document-sources</c>: lo que el select «Atributo del documento» puede ofrecer para esa tienda
+/// (<see cref="ShopifyDocumentSources.Options"/> sobre los atributos de sus pedidos más recientes). Las mismas comprobaciones que
+/// <c>GET /stores/{connectionId}</c>: tenant, permiso y módulo, y la conexión de Shopify del tenant (403, nunca 404). A
+/// diferencia de esa lectura, no crea la tienda: sólo lee el espejo.
+/// </summary>
+public sealed class GetShopifyDocumentSourcesHandler(
+    IExecutionContext executionContext,
+    ITenantModules tenantModules,
+    IShopifyConnectionDirectory connections,
+    IShopifyOrderMirrorRepository mirrors) : IQueryHandler<GetShopifyDocumentSourcesQuery, ShopifyDocumentSourcesDto>
+{
+    /// <summary>Cuántos pedidos, los más recientes de la tienda, se recorren. Alcanza para ver las claves que el checkout usa hoy
+    /// sin leer el espejo entero de una tienda con años de pedidos; una clave que no apareció en los últimos 500 no es la que el
+    /// checkout manda.</summary>
+    public const int RecentOrders = 500;
+
+    public async Task<ShopifyDocumentSourcesDto> HandleAsync(GetShopifyDocumentSourcesQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        await ShopifyAuthorization.EnsureAsync(executionContext, tenantModules, query.TenantId, ShopifyPermissions.ConnectionRead, cancellationToken);
+        await ShopifyStoreSupport.ConnectionAsync(connections, query.TenantId, query.ConnectionId, cancellationToken);
+
+        var keys = await mirrors.ListAttributeKeysAsync(query.TenantId, query.ConnectionId, RecentOrders, cancellationToken);
+        return new ShopifyDocumentSourcesDto(ShopifyDocumentSources.Options(keys));
     }
 }
 

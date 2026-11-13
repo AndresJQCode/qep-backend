@@ -38,7 +38,8 @@ public sealed class ShopifyStore
     /// <summary>Con ella nace un cliente completo; sin ella, el comprador siempre nace incompleto (§6.2.1).</summary>
     public Guid? DefaultClassificationId { get; private set; }
 
-    /// <summary>Clave en <c>customAttributes</c> del pedido donde viene el documento del comprador.</summary>
+    /// <summary>De dónde sale el documento del comprador: la ruta <c>shipping_address.company</c> o el nombre de un atributo del
+    /// checkout (<c>ShopifyDocumentSources</c> en Application).</summary>
     public string DocumentAttributeKey { get; private set; } = DefaultDocumentAttributeKey;
 
     public string DocumentTypeAttributeKey { get; private set; } = DefaultDocumentTypeAttributeKey;

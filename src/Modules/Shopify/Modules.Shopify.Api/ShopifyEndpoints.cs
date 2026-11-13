@@ -26,6 +26,11 @@ public static class ShopifyEndpoints
             .Produces<ShopifyStoreDto>()
             .ProducesProblem(StatusCodes.Status403Forbidden);
 
+        group.MapGet("/stores/{connectionId:guid}/document-sources", GetDocumentSourcesAsync)
+            .RequireAuthorization(ShopifyPermissions.ConnectionRead)
+            .Produces<ShopifyDocumentSourcesDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden);
+
         group.MapPut("/stores/{connectionId:guid}", UpdateStoreAsync)
             .RequireAuthorization(ShopifyPermissions.ConnectionManage)
             .Produces<ShopifyStoreDto>()
@@ -80,6 +85,10 @@ public static class ShopifyEndpoints
         httpContext.Response.Headers.ETag = $"\"{store.Version}\"";
         return Results.Ok(store);
     }
+
+    private static async Task<IResult> GetDocumentSourcesAsync(
+        Guid tenantId, Guid connectionId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifyDocumentSourcesQuery(tenantId, connectionId), cancellationToken));
 
     // Mismo contrato que el resto del repo: sin If-Match 428, versión vieja 412 (en el handler), y el ETag trae la nueva.
     private static async Task<IResult> UpdateStoreAsync(
