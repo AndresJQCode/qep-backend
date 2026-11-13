@@ -27,6 +27,11 @@ internal sealed class AiConnections(IMessagingConnectionDirectory directory) : I
         ];
     }
 
+    // Existe por el autoguardado del borrador, que valida en cada pausa al escribir: ListActiveAsync resuelve cada conexión activa con
+    // su secreto, y para contar las conexiones vivas bastan los ids.
+    public async Task<IReadOnlySet<Guid>> ListIdsAsync(Guid tenantId, CancellationToken cancellationToken) =>
+        (await directory.ListAllAsync(tenantId, cancellationToken)).Select(connection => connection.Id).ToHashSet();
+
     private static string Handle(MessagingConnectionDto connection) =>
         connection.Channel == nameof(ConversationChannel.Instagram)
             ? string.IsNullOrWhiteSpace(connection.Username) ? string.Empty : $"@{connection.Username}"

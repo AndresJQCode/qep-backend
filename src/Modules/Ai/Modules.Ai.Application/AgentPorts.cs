@@ -35,6 +35,9 @@ public sealed record AiConnectionRef(Guid Id, string Name, string Channel, strin
 public interface IAiConnections
 {
     Task<IReadOnlyList<AiConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+
+    /// <summary>Sólo los ids de las conexiones que siguen existiendo, en cualquier estado: lo que necesita validar el borrador.</summary>
+    Task<IReadOnlySet<Guid>> ListIdsAsync(Guid tenantId, CancellationToken cancellationToken);
 }
 
 /// <summary>Un miembro que puede responder conversaciones: el destino posible de un traspaso.</summary>

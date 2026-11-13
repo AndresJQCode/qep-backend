@@ -28,14 +28,15 @@ public sealed class AgentEditorBuilder(
     public async Task<IReadOnlyList<AgentIssue>> ValidateAsync(Agent agent, bool publishing, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(agent);
-        return await ValidateAsync(agent, publishing, await connections.ListAsync(agent.TenantId, cancellationToken), cancellationToken);
+        // Sólo los ids: esto corre en cada autoguardado del borrador, y la lectura completa resuelve cada conexión activa.
+        return await ValidateAsync(agent, publishing, await connections.ListIdsAsync(agent.TenantId, cancellationToken), cancellationToken);
     }
 
     /// <summary>Sólo cuentan las conexiones que siguen existiendo en Integrations: Integrations borra la conexión sin avisar (nadie
     /// consume <c>integrations.connection.deleted</c>) y la referencia de <c>ai.agent_connections</c> es blanda. Sin el filtro, un agente
     /// cuya única conexión se borró pasaría la validación y se publicaría sin atender nada.</summary>
     private async Task<IReadOnlyList<AgentIssue>> ValidateAsync(
-        Agent agent, bool publishing, IReadOnlyList<AiConnectionRef> live, CancellationToken cancellationToken)
+        Agent agent, bool publishing, IReadOnlySet<Guid> live, CancellationToken cancellationToken)
     {
         var config = agent.DraftConfig;
         bool? memberCanReply = null;
@@ -48,18 +49,16 @@ public sealed class AgentEditorBuilder(
             config, new AgentValidationContext(LiveConnectionIds(agent, live).Count, AvailabilityOf(config.Model), memberCanReply, publishing));
     }
 
-    private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlyList<AiConnectionRef> live)
-    {
-        var ids = live.Select(connection => connection.Id).ToHashSet();
-        return [.. agent.Connections.Select(connection => connection.ConnectionId).Where(ids.Contains)];
-    }
+    private static List<Guid> LiveConnectionIds(Agent agent, IReadOnlySet<Guid> live) =>
+        [.. agent.Connections.Select(connection => connection.ConnectionId).Where(live.Contains)];
 
     public async Task<AgentEditorDto> BuildAsync(Agent agent, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(agent);
         // Una sola lectura de las conexiones del tenant para la validación, las elegidas y las elegibles.
         var live = await connections.ListAsync(agent.TenantId, cancellationToken);
-        var issues = await ValidateAsync(agent, publishing: false, live, cancellationToken);
+        var liveIds = live.Select(connection => connection.Id).ToHashSet();
+        var issues = await ValidateAsync(agent, publishing: false, liveIds, cancellationToken);
         var selectable = await ListSelectableAsync(agent.TenantId, live, cancellationToken);
         var assignable = await members.ListAsync(agent.TenantId, cancellationToken);
         var published = agent.PublishedVersion;
@@ -73,7 +72,7 @@ public sealed class AgentEditorBuilder(
             agent.HasDraftChanges,
             AvailabilityOf(agent.DraftConfig.Model) != AgentModelAvailability.Available,
             [.. issues.Select(ToDto)],
-            LiveConnectionIds(agent, live),
+            LiveConnectionIds(agent, liveIds),
             selectable,
             [.. assignable.Select(member => new AiMemberDto(member.Id, member.Name))],
             ModelCatalog.ToDto(catalog));

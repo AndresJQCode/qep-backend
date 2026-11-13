@@ -40,6 +40,22 @@ public sealed class AgentEditorBuilderTests
         Assert.DoesNotContain(editor.Issues, issue => issue.Code == "connections_missing");
     }
 
+    // Plan 2026-11-12 (correcciones), Tarea 5: el autoguardado valida el borrador en cada pausa al escribir. Para contar las conexiones
+    // vivas bastan los ids; la lectura completa resuelve cada conexión activa con su secreto.
+    [Fact]
+    public async Task ValidatingReadsOnlyConnectionIds()
+    {
+        var liveId = Guid.CreateVersion7();
+        var agent = NewAgent();
+        agent.SetConnections([liveId], Now);
+        var connections = new FakeConnections(new AiConnectionRef(liveId, "Ventas", "WhatsApp", "+57 300", "Active"));
+
+        var issues = await Builder(connections).ValidateAsync(agent, publishing: false, Ct);
+
+        Assert.DoesNotContain(issues, issue => issue.Code == "connections_missing");
+        Assert.Equal((0, 1), (connections.ListCalls, connections.ListIdsCalls));
+    }
+
     private static Agent NewAgent() =>
         Agent.Create(Tenant, "Asesor virtual", AgentConfig.Default(new AgentModelRef("anthropic", "claude-opus-5-5")), By, Now);
 
@@ -48,8 +64,21 @@ public sealed class AgentEditorBuilderTests
 
     private sealed class FakeConnections(params AiConnectionRef[] connections) : IAiConnections
     {
-        public Task<IReadOnlyList<AiConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<AiConnectionRef>>(connections);
+        public int ListCalls { get; private set; }
+
+        public int ListIdsCalls { get; private set; }
+
+        public Task<IReadOnlyList<AiConnectionRef>> ListAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            ListCalls++;
+            return Task.FromResult<IReadOnlyList<AiConnectionRef>>(connections);
+        }
+
+        public Task<IReadOnlySet<Guid>> ListIdsAsync(Guid tenantId, CancellationToken cancellationToken)
+        {
+            ListIdsCalls++;
+            return Task.FromResult<IReadOnlySet<Guid>>(connections.Select(connection => connection.Id).ToHashSet());
+        }
     }
 
     private sealed class FakeSlots : IAgentConnectionSlots
