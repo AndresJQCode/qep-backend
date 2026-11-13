@@ -20,7 +20,7 @@ internal sealed partial class ValkeyConnection(
     IConfiguration configuration,
     IOptions<ValkeyOptions> options,
     ILogger<ValkeyConnection> logger)
-    : IHostedService, IAsyncDisposable
+    : IHostedService, IAsyncDisposable, IDisposable
 {
     /// <summary><c>ConnectionStrings:Valkey</c>, formato de StackExchange.Redis.</summary>
     internal const string ConnectionStringName = "Valkey";
@@ -94,15 +94,26 @@ internal sealed partial class ValkeyConnection(
 
     public async ValueTask DisposeAsync()
     {
-        var multiplexer = Interlocked.Exchange(ref _multiplexer, null);
-        if (multiplexer is null)
+        if (Detach() is { } multiplexer)
         {
-            return;
+            await multiplexer.DisposeAsync();
+        }
+    }
+
+    // También síncrono: un ServiceProvider que se dispone con Dispose() lanza si un singleton sólo implementa
+    // IAsyncDisposable (lo atrapa CompositionRootTests).
+    public void Dispose() => Detach()?.Dispose();
+
+    private ConnectionMultiplexer? Detach()
+    {
+        var multiplexer = Interlocked.Exchange(ref _multiplexer, null);
+        if (multiplexer is not null)
+        {
+            multiplexer.ConnectionFailed -= OnConnectionFailed;
+            multiplexer.ConnectionRestored -= OnConnectionRestored;
         }
 
-        multiplexer.ConnectionFailed -= OnConnectionFailed;
-        multiplexer.ConnectionRestored -= OnConnectionRestored;
-        await multiplexer.DisposeAsync();
+        return multiplexer;
     }
 
     private void OnConnectionFailed(object? sender, ConnectionFailedEventArgs args) =>
