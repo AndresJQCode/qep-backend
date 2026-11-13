@@ -283,3 +283,16 @@ La revisión final de la rama encontró dos hallazgos medios. Van en un solo blo
 - [ ] **RED.** `ValidatingReadsOnlyConnectionIds`: el doble cuenta las llamadas. Tras `ValidateAsync`, `ListAsync` va en 0 y `ListIdsAsync` en 1. Esperado en RED: `CS0535`/`CS1061`, porque el método no existe.
 - [ ] **GREEN.** `IAiConnections.ListIdsAsync` devuelve un `IReadOnlySet<Guid>`, y el adaptador lo arma sólo con `ListAllAsync`. El `ValidateAsync` público lo usa. `BuildAsync` conserva su única lectura completa y saca los ids de ahí.
 - [ ] **Commit:** `perf(ai): validate agent connections against ids only`.
+
+---
+
+## Task 6: Hallazgos de la revisión del bloque 4-5 (2026-11-13)
+
+Cuatro hallazgos, un commit cada uno.
+
+- **El borrado de una conexión se serializa con la sincronización.** El `FOR SHARE` de `IntegrationsConnectionBotOccupancy` no protegía nada: el handler no abría transacción, y un candado de fila no cubre la fila que una publicación todavía no inserta. Ahora `IIntegrationsUnitOfWork` expone `BeginTransactionAsync` (guardar confirma), `DeleteConnectionHandler` chequea y borra dentro de ella, y el adaptador toma `ConnectionSlotsLock` del tenant antes de leer `connection_bots`. Pruebas: `TheOccupancyCheckRunsInsideTheTransactionThatDeletes`, `AConflictDisposesTheTransactionWithoutSaving` (unitarias) y `AgentsApiTests.DeletingAConnectionWaitsForASlotSyncInFlight` (integración).
+- **El catch de `IsWriteRace` tiene prueba** en `AiUnitOfWorkTests` y `AutomationsUnitOfWorkTests`: 40P01 y 40001, envueltos o sueltos, salen como `concurrency.conflict`; un 23503 no se traduce. En el motor, `RunProcessor` reprograma esa excepción a 2 s (`Retry`, gasta un intento): un deadlock ya no espera el lease ni traspasa un arranque manual a una persona. No empeora; queda documentado en la prueba.
+- **El doble de ocupación responde por `(tenantId, connectionId)`**, con la prueba de que otra conexión u otro tenant no bloquean.
+- **Gemelo del chatbot en pausa:** `ChatbotsApiTests.DeletingAConnectionAPausedChatbotServesIsRejected`. `Chatbot.Pause` no toca `chatbot_connections.active`, así que conserva la fila.
+
+**Pendiente al mergear `develop`:** `ShopifyTokenLock.Namespace` de `develop` también es `20261112`, igual que `ConnectionSlotsLock.Namespace`. Las claves difieren (tenant contra conexión o instalación), así que sólo chocan si dos `hashtext` coinciden, y el efecto sería una espera de más, no un error. Igual conviene darle a uno de los dos otra constante al mergear.
