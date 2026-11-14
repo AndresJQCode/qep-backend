@@ -900,6 +900,43 @@ public sealed class ExternalOrderServiceTests(SharedQuotationsHost sharedHost) :
         Assert.Equal("Integration", auditPayload.RootElement.GetProperty("actorType").GetString());
     }
 
+    // Spec 2026-11-14 §5: la corrección del asesor en un pedido de Shopify deja historial con su membresía y auditoría con su sujeto.
+    [Fact]
+    public async Task CorrectByMemberWritesHistoryWithTheMemberAndAudits()
+    {
+        var factory = await sharedHost.StartTestAsync();
+        var setup = await ArrangeAsync(factory);
+        using var _ = setup.Client;
+        var order = await CreateAsync(factory, Draft(setup, "#3104", notes: "Shopify #3104", parties: PartiesRequest(Party())));
+        var state = await FindEditStateAsync(factory, setup.TenantId, order.OrderId);
+        var subjectId = Guid.CreateVersion7();
+
+        ExternalOrderEditState corrected;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            corrected = await scope.ServiceProvider.GetRequiredService<IExternalOrderWriter>().CorrectByMemberAsync(
+                new ExternalOrderCorrection(
+                    setup.TenantId, order.OrderId, state!.Version, Party(CityB), ReplaceBuyerNotes: true, "Dejar en portería",
+                    setup.AdvisorId, subjectId, RawAddressPrefix, DateTimeOffset.UtcNow),
+                TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal((CityB, "Dejar en portería"), (corrected.ShippingParty!.CityId!.Value, corrected.BuyerNotes));
+        var detail = await setup.Client.GetFromJsonAsync<OrderDetailResponse>(
+            $"{OrdersUrl(setup.TenantId)}/{order.OrderId}", TestContext.Current.CancellationToken);
+        var edits = detail!.History.Where(entry => entry.EventType != "Created").ToArray();
+        Assert.Equal(
+            [("NotesChanged", "Editó la nota del cliente."), ("PartiesChanged", "Editó la dirección de envío.")],
+            edits.Select(entry => (entry.EventType, entry.Details!)).OrderBy(entry => entry.EventType).ToArray());
+        Assert.All(edits, entry => Assert.Equal(setup.AdvisorId, entry.MemberId));
+        var actions = (await OutboxMessagesAsync(factory, "platform.audit.recorded.v1"))
+            .Where(message => message.PayloadJson.Contains(subjectId.ToString(), StringComparison.Ordinal))
+            .Select(message => JsonDocument.Parse(message.PayloadJson).RootElement.GetProperty("action").GetString()!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(["quotation.order.buyer_notes_changed", "quotation.order.shipping_party_changed"], actions);
+    }
+
     [Fact]
     public async Task FindEditStateReturnsLinesShippingPartyAndBuyerNotes()
     {

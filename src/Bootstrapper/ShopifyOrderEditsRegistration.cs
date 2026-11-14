@@ -18,6 +18,12 @@ public static class ShopifyOrderEditsRegistration
         services.AddScoped<ICommandHandler<AcceptShopifyChangeCommand, ShopifyOrderChangeDto>, AcceptShopifyChangeHandler>();
         services.AddScoped<ICommandHandler<RejectShopifyChangeCommand, ShopifyOrderChangeDto>, RejectShopifyChangeHandler>();
         services.AddScoped<ICommandHandler<ReviewShopifyChangeCommand, ShopifyOrderChangeDto>, ReviewShopifyChangeHandler>();
+        // Spec 2026-11-14 §5: la corrección del asesor y el panel del pedido. El escritor enrola Quotations en la transacción de
+        // Shopify del request (ver ShopifyOrderCorrectionWriter): scoped y sin scope propio, a propósito.
+        services.AddScoped<IShopifyOrderCorrectionWriter, ShopifyOrderCorrectionWriter>();
+        services.AddScoped<ShopifyOrderSyncReader>();
+        services.AddScoped<ICommandHandler<CorrectShopifyOrderCommand, ShopifyOrderSyncDto>, CorrectShopifyOrderHandler>();
+        services.AddScoped<IQueryHandler<GetShopifyOrderSyncQuery, ShopifyOrderSyncDto>, GetShopifyOrderSyncHandler>();
         return services;
     }
 }

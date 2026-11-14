@@ -163,7 +163,7 @@ public static class ShopifyEndpoints
                 "A valid If-Match header containing the loaded store version is required.");
 
     // Acepta lo que la SPA ya manda en el resto del repo: "7" y también el débil W/"7".
-    private static bool TryParseVersion(string? etag, out long version)
+    internal static bool TryParseVersion(string? etag, out long version)
     {
         version = 0;
         if (string.IsNullOrWhiteSpace(etag))

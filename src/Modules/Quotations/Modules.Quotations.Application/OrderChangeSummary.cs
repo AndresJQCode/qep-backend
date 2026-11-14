@@ -45,6 +45,12 @@ public static class OrderChangeSummary
 
     public static string NotesChanged() => "Editó las notas.";
 
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la parte de envío de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string ShippingPartyEdited() => "Editó la dirección de envío.";
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió la nota del cliente de un pedido de Shopify (viaja a Shopify).</summary>
+    public static string BuyerNotesEdited() => "Editó la nota del cliente.";
+
     /// <summary>El cambio de envío de un pedido pendiente (spec 2026-10-17 §5.4), con los textos de la
     /// cotización. <c>null</c> si nada de lo que se cuenta cambió.</summary>
     public static string? ShippingChanged(ShippingDetails before, ShippingDetails after, HistoryFormat format)

@@ -129,6 +129,23 @@ public sealed record ExternalOrderEditDraft(
     DateTimeOffset OccurredAt);
 
 /// <summary>
+/// Spec 2026-11-14 §5: lo que el asesor corrige en un pedido de la plataforma. <see cref="ShippingParty"/> en <c>null</c> no toca la
+/// parte; <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="MemberId"/> es la membresía que firma el
+/// historial y <see cref="SubjectId"/> el sujeto de la auditoría. <see cref="ExpectedVersion"/> es el <c>If-Match</c> del pedido.
+/// </summary>
+public sealed record ExternalOrderCorrection(
+    Guid TenantId,
+    Guid OrderId,
+    long ExpectedVersion,
+    ExternalShippingParty? ShippingParty,
+    bool ReplaceBuyerNotes,
+    string? BuyerNotes,
+    Guid MemberId,
+    Guid SubjectId,
+    string NotesLinePrefix,
+    DateTimeOffset OccurredAt);
+
+/// <summary>
 /// Spec 2026-10-15 §5.4 y spec de Shopify §6.2: el único camino para crear un pedido sin sesión HTTP.
 /// Un módulo consumidor declara su propio puerto y su adaptador en Bootstrapper llama a éste; nunca
 /// referencia <c>Modules.Quotations.Application</c>. A diferencia del pedido manual, las líneas llegan
@@ -181,6 +198,17 @@ public interface IExternalOrderWriter
     /// aplicado y la auditoría firmada por la integración. Las reglas del pedido (<c>order.order.not_editable</c>, …) se
     /// propagan como <c>QuotationsDomainException</c>; un pedido que no existe, como <c>ResourceNotFoundException</c>.</summary>
     Task<ExternalOrderEditState> ApplyEditAsync(ExternalOrderEditDraft draft, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Spec 2026-11-14 §5: la corrección del asesor (parte de envío y nota del cliente) en un pedido de la plataforma. Corre en la
+    /// transacción que ya tenga el contexto (la de Shopify, enrolada por el adaptador de Bootstrapper) y guarda con
+    /// <c>SaveChangesAsync</c>: confirmar es del dueño de la transacción. Con <see cref="ExternalOrderCorrection.ExpectedVersion"/>
+    /// distinta lanza <c>concurrency.conflict</c> sin escribir. Historial con autor (<c>PartiesChanged</c> «Editó la dirección de
+    /// envío.», <c>NotesChanged</c> «Editó la nota del cliente.») y auditoría del sujeto
+    /// (<c>quotation.order.shipping_party_changed</c>, <c>quotation.order.buyer_notes_changed</c>). Las reglas del pedido se propagan
+    /// como <c>QuotationsDomainException</c>.
+    /// </summary>
+    Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken);
 }
 
 public sealed class ExternalOrderService(
@@ -429,6 +457,47 @@ public sealed class ExternalOrderService(
 
         auditPublisher.PublishByIntegration(
             draft.TenantId, "quotation.order.external_edit_applied", order.Id.ToString(), "success", draft.OccurredAt);
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return EditState(order);
+    }
+
+    public async Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(correction);
+        var order = await orderRepository.FindByIdAsync(correction.TenantId, new OrderId(correction.OrderId), cancellationToken)
+            ?? throw OrderNotFound.ById(correction.OrderId);
+        if (order.Version != correction.ExpectedVersion)
+        {
+            throw new RequestConcurrencyException("concurrency.conflict", "The order changed since it was loaded.");
+        }
+
+        var partyChanged = correction.ShippingParty is { } party
+            && order.EditExternalShippingParty(ToDetails(party), correction.NotesLinePrefix, correction.OccurredAt);
+        var notesChanged = correction.ReplaceBuyerNotes
+            && order.UpdateExternalBuyerNotes(correction.BuyerNotes, correction.OccurredAt);
+        if (!partyChanged && !notesChanged)
+        {
+            return EditState(order);
+        }
+
+        var member = new MemberId(correction.MemberId);
+        foreach (var (changed, eventType, summary, action) in new[]
+                 {
+                     (partyChanged, OrderHistoryEventType.PartiesChanged, OrderChangeSummary.ShippingPartyEdited(),
+                         "quotation.order.shipping_party_changed"),
+                     (notesChanged, OrderHistoryEventType.NotesChanged, OrderChangeSummary.BuyerNotesEdited(),
+                         "quotation.order.buyer_notes_changed"),
+                 })
+        {
+            if (changed)
+            {
+                orderRepository.AddHistoryEntry(OrderHistoryEntry.Create(
+                    OrderHistoryEntryId.New(), order.Id, eventType, member, summary, correction.OccurredAt));
+                auditPublisher.Publish(
+                    correction.TenantId, correction.SubjectId, action, order.Id.ToString(), "success", correction.OccurredAt);
+            }
+        }
+
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return EditState(order);
     }

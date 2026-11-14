@@ -32,7 +32,47 @@ public static class ShopifyOrderEditEndpoints
             .ProducesProblem(StatusCodes.Status412PreconditionFailed);
         MapDecision(group, "reject", (tenantId, changeId) => new RejectShopifyChangeCommand(tenantId, changeId));
         MapDecision(group, "review", (tenantId, changeId) => new ReviewShopifyChangeCommand(tenantId, changeId));
+
+        // Spec 2026-11-14 §5 (plan D11): el panel de Shopify del detalle del pedido de QEP y la corrección del asesor.
+        group.MapGet("/qep-orders/{qepOrderId:guid}", GetSyncAsync)
+            .RequireAuthorization(ShopifyPermissions.OrderRead)
+            .Produces<ShopifyOrderSyncDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        group.MapPut("/orders/{orderId:guid}/corrections", CorrectAsync)
+            .RequireAuthorization(ShopifyPermissions.OrderManage)
+            .Produces<ShopifyOrderSyncDto>()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status412PreconditionFailed)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status428PreconditionRequired);
         return endpoints;
+    }
+
+    private static async Task<IResult> GetSyncAsync(
+        Guid tenantId, Guid qepOrderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
+        Results.Ok(await dispatcher.QueryAsync(new GetShopifyOrderSyncQuery(tenantId, qepOrderId), cancellationToken));
+
+    // El If-Match es la versión del pedido de QEP (OrderDto.version), no la de la fila del espejo: lo que se protege es el pedido.
+    private static async Task<IResult> CorrectAsync(
+        Guid tenantId,
+        Guid orderId,
+        CorrectShopifyOrderRequest request,
+        IRequestDispatcher dispatcher,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        if (!ShopifyEndpoints.TryParseVersion(httpContext.Request.Headers.IfMatch, out var version))
+        {
+            throw new PreconditionRequiredException(
+                "precondition.if_match_required", "A valid If-Match header containing the loaded order version is required.");
+        }
+
+        return Results.Ok(await dispatcher.SendAsync(
+            new CorrectShopifyOrderCommand(tenantId, orderId, version, request.ShippingParty, request.BuyerNotes, request.Attributes),
+            cancellationToken));
     }
 
     private static RouteHandlerBuilder MapDecision(
@@ -69,3 +109,8 @@ public static class ShopifyOrderEditEndpoints
         Guid tenantId, Guid orderId, IRequestDispatcher dispatcher, CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.QueryAsync(new ListShopifyOrderChangesQuery(tenantId, orderId), cancellationToken));
 }
+
+/// <summary>El cuerpo de <c>PUT /orders/{id}/corrections</c> (spec 2026-11-14 §5). Todo opcional en el binding para que un campo
+/// ausente sea un 422 con <c>errors</c> del validador y no un 400 del deserializador.</summary>
+public sealed record CorrectShopifyOrderRequest(
+    ShopifyPartyInput? ShippingParty, string? BuyerNotes, IReadOnlyList<ShopifyAttributeInput>? Attributes);

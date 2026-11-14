@@ -193,6 +193,17 @@ internal sealed class FakeExternalOrderWriter : IExternalOrderWriter
             ?? EditStates.GetValueOrDefault((draft.TenantId, draft.OrderId))
             ?? throw new InvalidOperationException("No edit state seeded for the order."));
     }
+
+    public List<ExternalOrderCorrection> Corrections { get; } = [];
+
+    public Task<ExternalOrderEditState> CorrectByMemberAsync(ExternalOrderCorrection correction, CancellationToken cancellationToken)
+    {
+        Calls++;
+        Corrections.Add(correction);
+        return Task.FromResult(
+            EditStates.GetValueOrDefault((correction.TenantId, correction.OrderId))
+            ?? throw new InvalidOperationException("No edit state seeded for the order."));
+    }
 }
 
 internal sealed class PassThroughPhones : IPhoneNumberNormalizer

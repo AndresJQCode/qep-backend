@@ -115,6 +115,10 @@ internal sealed class FakeShopifyDatabase
 
     public List<ShopifyOrderEdit> OrderEdits { get; } = [];
 
+    public List<ShopifyOrderPush> PendingOrderPushes { get; } = [];
+
+    public List<ShopifyOrderPush> OrderPushes { get; } = [];
+
     /// <summary>Los trabajos que otra réplica ya terminó: <c>LockIfPendingAsync</c> los ve no pendientes.</summary>
     public HashSet<Guid> CityCorrectionJobsFinishedElsewhere { get; } = [];
 
@@ -277,6 +281,29 @@ internal sealed class FakeOrderEditRepository(FakeShopifyDatabase database) : IS
     public void Add(ShopifyOrderEdit edit) => database.PendingOrderEdits.Add(edit);
 }
 
+/// <summary>Los envíos a Shopify (spec 2026-11-14 §5) en la «base», con la misma semántica que los cambios: lo agregado queda
+/// pendiente hasta el guardado y las búsquedas ven las dos cosas.</summary>
+internal sealed class FakeOrderPushRepository(FakeShopifyDatabase database) : IShopifyOrderPushRepository
+{
+    private IEnumerable<ShopifyOrderPush> All => database.OrderPushes.Concat(database.PendingOrderPushes);
+
+    public Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult(All.FirstOrDefault(push =>
+            push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending));
+
+    public Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        Task.FromResult(All
+            .Where(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId)
+            .OrderByDescending(push => push.CreatedAt)
+            .ThenByDescending(push => push.Id)
+            .FirstOrDefault());
+
+    public Task<ShopifyOrderPush?> FindByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromResult(All.FirstOrDefault(push => push.Id == id));
+
+    public void Add(ShopifyOrderPush push) => database.PendingOrderPushes.Add(push);
+}
+
 internal sealed class FakeWebhookDeliveries(FakeShopifyDatabase database) : IShopifyWebhookDeliveries
 {
     public Task<bool> EnqueueAsync(ShopifyWebhookEnvelope envelope, DateTimeOffset receivedAt, CancellationToken cancellationToken) =>
@@ -325,19 +352,21 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         }
 
         var written = database.PendingStores.Count + database.PendingOrders.Count + database.PendingAudit.Count
-            + database.PendingCityCorrections.Count + database.PendingCityCorrectionJobs.Count + database.PendingOrderEdits.Count;
+            + database.PendingCityCorrections.Count + database.PendingCityCorrectionJobs.Count + database.PendingOrderEdits.Count + database.PendingOrderPushes.Count;
         database.PendingStores.ForEach(store => database.Stores[store.ConnectionId] = store);
         database.PendingOrders.ForEach(row => database.Orders[(row.ConnectionId, row.ShopifyOrderId)] = row);
         database.Audit.AddRange(database.PendingAudit);
         database.CityCorrections.AddRange(database.PendingCityCorrections);
         database.CityCorrectionJobs.AddRange(database.PendingCityCorrectionJobs);
         database.OrderEdits.AddRange(database.PendingOrderEdits);
+        database.OrderPushes.AddRange(database.PendingOrderPushes);
         database.PendingStores.Clear();
         database.PendingOrders.Clear();
         database.PendingAudit.Clear();
         database.PendingCityCorrections.Clear();
         database.PendingCityCorrectionJobs.Clear();
         database.PendingOrderEdits.Clear();
+        database.PendingOrderPushes.Clear();
         return written;
     }
 
@@ -364,6 +393,7 @@ internal sealed class FakeUnitOfWork(FakeShopifyDatabase database) : IShopifyUni
         database.PendingCityCorrections.Clear();
         database.PendingCityCorrectionJobs.Clear();
         database.PendingOrderEdits.Clear();
+        database.PendingOrderPushes.Clear();
     }
 }
 

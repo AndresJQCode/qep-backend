@@ -111,6 +111,23 @@ public interface IShopifyOrderEditRepository
     void Add(ShopifyOrderEdit edit);
 }
 
+/// <summary>Spec 2026-11-14 §5: los envíos a Shopify (<c>shopify.order_pushes</c>). Con tracking; lo agregado commitea con
+/// <see cref="IShopifyUnitOfWork"/>, que traduce el índice único del pendiente (<c>IX_order_pushes_mirror_pending</c>) a
+/// <c>concurrency.conflict</c>.</summary>
+public interface IShopifyOrderPushRepository
+{
+    /// <summary>El envío <c>Pending</c> de la fila, si hay (a lo sumo uno).</summary>
+    Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>El último envío de la fila, en cualquier estado (lo muestra el detalle del pedido).</summary>
+    Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken);
+
+    /// <summary>Por id, sin tenant: lo usa el worker, que corre fuera de un request.</summary>
+    Task<ShopifyOrderPush?> FindByIdAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(ShopifyOrderPush push);
+}
+
 /// <summary>Spec 2026-10-26 §5: las huellas de los sinónimos (<c>shopify.city_corrections</c>). Con tracking; lo agregado commitea
 /// con <see cref="IShopifyUnitOfWork"/>, que traduce el índice único <c>(sinónimo, destino, id)</c> a <c>concurrency.conflict</c>.</summary>
 public interface IShopifyCityCorrectionRepository

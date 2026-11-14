@@ -170,3 +170,40 @@ public sealed record ShopifyOrderChangeDto(
 
 /// <summary>Spec 2026-11-14 §6 <c>GET /changes</c>: la página y el total del filtro, como <see cref="ShopifyOrderPageDto"/>.</summary>
 public sealed record ShopifyOrderChangePageDto(IReadOnlyList<ShopifyOrderChangeDto> Items, int Total, int Page, int PageSize);
+
+/// <summary>Spec 2026-11-14 §5: un atributo de Shopify (<c>note_attributes</c>) como lo edita el detalle del pedido.</summary>
+public sealed record ShopifyAttributeDto(string Key, string Value);
+
+/// <summary>Spec 2026-11-14 §5: el último envío a Shopify del pedido. <see cref="Status"/> (<c>Pending</c>, <c>Sent</c>,
+/// <c>Failed</c>) y <see cref="Groups"/> (<c>ShippingAddress</c>, <c>Note</c>, <c>Attributes</c>) por nombre;
+/// <see cref="FailureCode"/> en <c>snake_case</c> (<c>access_denied</c>, <c>user_error</c>, <c>order_not_found</c>,
+/// <c>connection_missing</c>, <c>rejected</c>, <c>retries_exhausted</c>), que el frontend traduce. <see cref="LastAttemptAt"/> es la
+/// última vez que el worker lo tocó, <c>null</c> si todavía no lo intentó.</summary>
+public sealed record ShopifyOrderPushDto(
+    string Status, IReadOnlyList<string> Groups, string? FailureCode, int Attempts, DateTimeOffset? LastAttemptAt, DateTimeOffset? SentAt);
+
+/// <summary>
+/// Spec 2026-11-14 §5 y §6: el panel de Shopify en el detalle del pedido de QEP (plan D11). BFF: la pantalla no conoce la regla de
+/// edición de Quotations ni la fila del espejo, así que todo lo que decide qué se muestra y qué se deja editar viene armado acá.
+/// <para><see cref="CanEdit"/>: la fila está <c>Imported</c> y el pedido es editable. <see cref="EditBlockedReason"/> (plan D20) es
+/// <c>null</c> si y sólo si <see cref="CanEdit"/>; si no, el primero que aplique en este orden: <c>NotImported</c> (la fila no está
+/// importada o no tiene pedido), <c>Cancelled</c>, <c>Archived</c>, <c>Invoiced</c>, <c>Prepared</c>, que son los estados que el dominio
+/// distingue en <c>Order.IsEditable</c>. Así la pantalla dice por qué no se puede editar sin repetir la regla.</para>
+/// <para><see cref="ShippingAddressSupported"/> es <c>false</c> con recogida en tienda o con una dirección fuera de Colombia (plan
+/// D21): la pantalla manda entonces <c>shippingParty: null</c>, y nota y atributos siguen editables.</para>
+/// <para><see cref="Attributes"/> son los de QEP si el asesor los corrigió (<see cref="AttributesEditedInQep"/>); si no, los del
+/// último Shopify aplicado. <see cref="OrderVersion"/> es el <c>If-Match</c> del <c>PUT …/corrections</c>. <see cref="Push"/> es el
+/// último envío (<c>null</c> si nunca hubo) y <see cref="OpenChange"/>, el cambio <c>Pending</c> o <c>Blocked</c> de Shopify.</para>
+/// </summary>
+public sealed record ShopifyOrderSyncDto(
+    Guid MirrorOrderId,
+    Guid ConnectionId,
+    string OrderName,
+    long OrderVersion,
+    bool CanEdit,
+    string? EditBlockedReason,
+    bool ShippingAddressSupported,
+    IReadOnlyList<ShopifyAttributeDto> Attributes,
+    bool AttributesEditedInQep,
+    ShopifyOrderPushDto? Push,
+    ShopifyOrderChangeDto? OpenChange);

@@ -38,6 +38,20 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     /// responde <c>shopify.custom_line.already_mapped</c> (409).</summary>
     public const string CustomLineMappingConnectionTitleIndex = "IX_custom_line_mappings_connection_title";
 
+    /// <summary>Spec 2026-11-14 §5: un solo envío <c>Pending</c> por pedido. Dos correcciones a la vez sobre una fila sin pendiente
+    /// chocan acá; <see cref="ShopifyUnitOfWork"/> lo traduce por nombre a <c>concurrency.conflict</c>.</summary>
+    public const string OrderPushMirrorPendingIndex = "IX_order_pushes_mirror_pending";
+
+    // Los grupos de un envío como text[] por nombre, como edit_payment_statuses de la tienda.
+    private static readonly ValueConverter<IReadOnlyList<ShopifyPushGroup>, string[]> PushGroupsConverter = new(
+        groups => groups.Select(group => group.ToString()).ToArray(),
+        names => names.Select(name => Enum.Parse<ShopifyPushGroup>(name)).ToArray());
+
+    private static readonly ValueComparer<IReadOnlyList<ShopifyPushGroup>> PushGroupsComparer = new(
+        (left, right) => left!.SequenceEqual(right!),
+        groups => groups.Aggregate(0, (hash, group) => HashCode.Combine(hash, group)),
+        groups => groups.ToArray());
+
     private const int EnumNameMaxLength = 16;
 
     // La lista de ciudades pedidas por un trabajo como uuid[] (el mismo par que Messaging usa para sus audiencias).
@@ -60,6 +74,8 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
 
     public DbSet<ShopifyOrderEdit> OrderEdits => Set<ShopifyOrderEdit>();
 
+    public DbSet<ShopifyOrderPush> OrderPushes => Set<ShopifyOrderPush>();
+
     internal DbSet<ShopifyInboxMessage> Inbox => Set<ShopifyInboxMessage>();
 
     internal DbSet<ShopifyOutboxRecord> Outbox => Set<ShopifyOutboxRecord>();
@@ -79,6 +95,7 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         ConfigureStore(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderEdit(modelBuilder);
+        ConfigureOrderPush(modelBuilder);
         ConfigureDelivery(modelBuilder);
         ConfigureCityCorrection(modelBuilder);
         ConfigureCityCorrectionJob(modelBuilder);
@@ -365,6 +382,48 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
             .OnDelete(DeleteBehavior.Cascade);
         edit.HasIndex(value => new { value.MirrorOrderId, value.Status }).HasDatabaseName("IX_order_edits_mirror_status");
         edit.HasIndex(value => new { value.TenantId, value.Status, value.CreatedAt }).HasDatabaseName("IX_order_edits_tenant_status_created");
+    }
+
+    // Spec 2026-11-14 §5. Los nombres van a mano: la cola del worker reclama y cierra por SQL crudo (attempts, lease_until,
+    // updated_at, status, failure_code).
+    private static void ConfigureOrderPush(ModelBuilder modelBuilder)
+    {
+        var push = modelBuilder.Entity<ShopifyOrderPush>();
+        push.ToTable("order_pushes", Schema, table =>
+            table.HasCheckConstraint("CK_order_pushes_status", NamesCheck<ShopifyOrderPushStatus>("status")));
+        push.HasKey(value => value.Id);
+        push.Property(value => value.Id).HasColumnName("id").ValueGeneratedNever();
+        push.Property(value => value.TenantId).HasColumnName("tenant_id");
+        push.Property(value => value.ConnectionId).HasColumnName("connection_id");
+        push.Property(value => value.MirrorOrderId).HasColumnName("mirror_order_id");
+        // Referencia blanda a quotations.orders: otro módulo, sin FK.
+        push.Property(value => value.QepOrderId).HasColumnName("qep_order_id");
+        push.Property(value => value.Groups)
+            .HasColumnName("groups")
+            .HasColumnType("text[]")
+            .HasConversion(PushGroupsConverter, PushGroupsComparer)
+            .IsRequired();
+        push.Property(value => value.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(EnumNameMaxLength);
+        push.Property(value => value.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+        push.Property(value => value.LeaseUntil).HasColumnName("lease_until");
+        push.Property(value => value.FailureCode).HasColumnName("failure_code").HasMaxLength(ShopifyOrderPush.FailureCodeMaxLength);
+        push.Property(value => value.CreatedAt).HasColumnName("created_at");
+        push.Property(value => value.UpdatedAt).HasColumnName("updated_at");
+        push.Property(value => value.SentAt).HasColumnName("sent_at");
+        push.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();
+
+        // Borrar la fila del espejo (shop/redact, borrar la tienda) se lleva sus envíos.
+        push.HasOne<ShopifyOrderMirror>()
+            .WithMany()
+            .HasForeignKey(value => value.MirrorOrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+        push.HasIndex(value => value.MirrorOrderId)
+            .IsUnique()
+            .HasFilter("status = 'Pending'")
+            .HasDatabaseName(OrderPushMirrorPendingIndex);
+        // El worker busca los pendientes con el lease vencido; el detalle del pedido lee el último envío de su fila.
+        push.HasIndex(value => new { value.Status, value.LeaseUntil }).HasDatabaseName("IX_order_pushes_status_lease");
+        push.HasIndex(value => new { value.MirrorOrderId, value.CreatedAt }).HasDatabaseName("IX_order_pushes_mirror_created");
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder)

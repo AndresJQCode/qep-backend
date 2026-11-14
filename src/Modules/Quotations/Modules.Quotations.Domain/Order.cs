@@ -1604,6 +1604,59 @@ public sealed class Order
     }
 
     /// <summary>
+    /// Spec 2026-11-14 §5: el asesor corrige la parte de envío de un pedido de Shopify (nombre, teléfono, correo, dirección,
+    /// departamento y ciudad). Si el pedido no la tenía, la crea y quita de las notas toda línea que empiece por
+    /// <paramref name="notesLinePrefix"/> (la dirección cruda de la importación); si la tenía, la reemplaza en su fila.
+    /// <c>true</c> si cambió; la misma parte no toca nada. Sólo pedidos externos editables, sin recogida en tienda, y la parte
+    /// debe quedar completa. Es el único camino por el que un pedido edita su parte de envío (desvío S1 sigue para los demás).
+    /// </summary>
+    public bool EditExternalShippingParty(QuotationPartyDetails party, string notesLinePrefix, DateTimeOffset occurredAt)
+    {
+        ArgumentNullException.ThrowIfNull(party);
+        ArgumentException.ThrowIfNullOrEmpty(notesLinePrefix);
+        if (!IsExternal)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.SourceInvalid, "Only an external order has its shipping party corrected for the platform.");
+        }
+
+        EnsureEditable("The shipping party can only be corrected while the order is editable.");
+        if (IsStorePickup)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.StorePickup, "An order picked up at the store has no shipping party.");
+        }
+
+        var candidate = OrderParty.Create(Id, QuotationPartyRole.Shipping, party);
+        if (!candidate.IsComplete)
+        {
+            throw new QuotationsDomainException(
+                ExternalOrderErrors.ShippingPartyIncomplete, "The shipping party must have all its fields filled.");
+        }
+
+        if (Shipping is { } current)
+        {
+            if (current.ToDetails() == candidate.ToDetails())
+            {
+                return false;
+            }
+
+            current.Apply(candidate.ToDetails());
+        }
+        else
+        {
+            _parties.Add(candidate);
+            Notes = NormalizeNotes(string.Join(
+                '\n',
+                (Notes ?? string.Empty).Split('\n').Where(line => !line.StartsWith(notesLinePrefix, StringComparison.Ordinal))));
+        }
+
+        UpdatedAt = occurredAt;
+        Version++;
+        return true;
+    }
+
+    /// <summary>
     /// Spec 2026-10-26 §4.6: cambia sólo el departamento y la ciudad de la parte de envío, y sólo si sigue siendo
     /// la que se guardó (<paramref name="expected"/>) salvo la ciudad: si alguien tocó otro campo, lanza
     /// <c>order.order.shipping_party_changed</c>. <c>true</c> si cambió; <c>false</c> si la parte ya no está en la ciudad de

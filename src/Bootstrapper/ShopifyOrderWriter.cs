@@ -170,7 +170,7 @@ internal sealed class ShopifyOrderWriter(IServiceScopeFactory scopes) : IShopify
         }
     }
 
-    private static ShopifyOrderState ToShopify(ExternalOrderEditState state) =>
+    internal static ShopifyOrderState ToShopify(ExternalOrderEditState state) =>
         new(
             state.OrderId,
             state.Version,

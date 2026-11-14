@@ -1436,6 +1436,51 @@ public sealed class OrderTests
         Assert.Equal(1, order.Version);
     }
 
+    // Spec 2026-11-14 §5: el asesor corrige la parte de envío de un pedido de Shopify. Si no la tenía, se crea y la línea cruda
+    // de la dirección sale de las notas.
+    [Fact]
+    public void EditExternalShippingPartyCreatesItAndDropsTheRawAddressLine()
+    {
+        var order = NewShopifyOrder("Shopify #1001\nDirección de envío de Shopify: Cra 5, CALLI");
+        var later = Now.AddHours(1);
+
+        var changed = order.EditExternalShippingParty(ShippingParty(), RawAddressPrefix, later);
+
+        Assert.True(changed);
+        Assert.Equal("Shopify #1001", order.Notes);
+        Assert.Equal(ShippingParty(), order.Shipping!.ToDetails());
+        Assert.Equal((later, 2), (order.UpdatedAt, order.Version));
+    }
+
+    [Fact]
+    public void EditExternalShippingPartyReplacesTheExistingOne()
+    {
+        var order = NewShopifyOrder("Shopify #1001", parties: new QuotationParties(null, ShippingParty()));
+        var corrected = ShippingParty(CityB) with { Address = "Calle 9 # 8-7" };
+
+        var changed = order.EditExternalShippingParty(corrected, RawAddressPrefix, Now.AddHours(1));
+
+        Assert.True(changed);
+        Assert.Equal(corrected, order.Shipping!.ToDetails());
+        Assert.Equal(2, order.Version);
+        Assert.False(order.EditExternalShippingParty(corrected, RawAddressPrefix, Now.AddHours(2)));
+        Assert.Equal(2, order.Version);
+    }
+
+    // La parte de un pedido de la tienda pública es la que el comprador escribió: el asesor no la corrige por este camino.
+    [Fact]
+    public void EditExternalShippingPartyOnAStoreOrderIsSourceInvalid()
+    {
+        var order = NewBuyerStoreOrder(Guid.CreateVersion7());
+        var before = order.Shipping?.ToDetails();
+
+        var error = Assert.Throws<QuotationsDomainException>(() =>
+            order.EditExternalShippingParty(ShippingParty(CityB), RawAddressPrefix, Now.AddHours(1)));
+
+        Assert.Equal("order.order.source_invalid", error.Code);
+        Assert.Equal(before, order.Shipping?.ToDetails());
+    }
+
     // Spec 2026-11-14 §4: una edición de Shopify que se aplica al pedido. Las líneas llegan preciadas por la plataforma.
     private static ExternalOrderEdit Edit(
         IReadOnlyCollection<OrderLineInput>? lines = null,

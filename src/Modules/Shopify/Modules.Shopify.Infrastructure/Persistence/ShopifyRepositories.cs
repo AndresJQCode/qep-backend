@@ -221,6 +221,30 @@ internal sealed class ShopifyOrderMirrorRepository(ShopifyDbContext dbContext) :
     }
 }
 
+/// <summary>Spec 2026-11-14 §5: los envíos a Shopify. Con tracking. El pendiente se busca también entre lo agregado y sin guardar:
+/// dos encolados en la misma unidad de trabajo se fusionan en vez de chocar con el índice.</summary>
+internal sealed class ShopifyOrderPushRepository(ShopifyDbContext dbContext) : IShopifyOrderPushRepository
+{
+    public async Task<ShopifyOrderPush?> FindPendingAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes.Local.FirstOrDefault(push =>
+            push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending)
+        ?? await dbContext.OrderPushes.SingleOrDefaultAsync(
+            push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId && push.Status == ShopifyOrderPushStatus.Pending,
+            cancellationToken);
+
+    public Task<ShopifyOrderPush?> FindLatestAsync(Guid tenantId, Guid mirrorOrderId, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes
+            .Where(push => push.TenantId == tenantId && push.MirrorOrderId == mirrorOrderId)
+            .OrderByDescending(push => push.CreatedAt)
+            .ThenByDescending(push => push.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public Task<ShopifyOrderPush?> FindByIdAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.OrderPushes.SingleOrDefaultAsync(push => push.Id == id, cancellationToken);
+
+    public void Add(ShopifyOrderPush push) => dbContext.OrderPushes.Add(push);
+}
+
 /// <summary>Spec 2026-11-14 §3: los cambios de Shopify. Con tracking para escribir; las listas, sin. Todo filtra por
 /// <c>tenant_id</c>.</summary>
 internal sealed class ShopifyOrderEditRepository(ShopifyDbContext dbContext) : IShopifyOrderEditRepository

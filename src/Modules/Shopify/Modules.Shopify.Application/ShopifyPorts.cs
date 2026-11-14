@@ -548,6 +548,32 @@ public interface IShopifyOrderWriter
     Task<ShopifyOrderEditOutcome> ApplyEditAsync(ShopifyOrderEditDraft draft, CancellationToken cancellationToken);
 }
 
+/// <summary>Spec 2026-11-14 §5: lo que el asesor corrige en el pedido de QEP de una fila del espejo. <see cref="ShippingParty"/> en
+/// <c>null</c> no toca la parte; <see cref="BuyerNotes"/> sólo cuenta con <see cref="ReplaceBuyerNotes"/>. <see cref="MemberId"/>
+/// firma el historial y <see cref="SubjectId"/> la auditoría; <see cref="ExpectedVersion"/> es el <c>If-Match</c> del pedido.</summary>
+public sealed record ShopifyOrderCorrection(
+    Guid TenantId,
+    Guid OrderId,
+    long ExpectedVersion,
+    ShopifyPartyDraft? ShippingParty,
+    bool ReplaceBuyerNotes,
+    string? BuyerNotes,
+    Guid MemberId,
+    Guid SubjectId);
+
+/// <summary>
+/// Spec 2026-11-14 §5: la corrección del asesor escribe el pedido de QEP <b>dentro de la transacción de Shopify</b>, para que el
+/// pedido, los atributos de la fila del espejo y el envío encolado queden juntos o no queden. Adaptador en Bootstrapper
+/// (<c>ShopifyOrderCorrectionWriter</c>), scoped y <b>sin scope propio</b> (al revés que <see cref="IShopifyOrderWriter"/>): enrola el
+/// <c>QuotationsDbContext</c> del request en la transacción abierta del <c>ShopifyDbContext</c>, como <c>CatalogProductDeletionCleanup</c>;
+/// sin transacción abierta lanza <see cref="InvalidOperationException"/>. Las reglas del pedido (<c>QuotationsDomainException</c>, 422)
+/// y <c>RequestConcurrencyException</c> (412) se propagan.
+/// </summary>
+public interface IShopifyOrderCorrectionWriter
+{
+    Task<ShopifyOrderState> CorrectAsync(ShopifyOrderCorrection correction, CancellationToken cancellationToken);
+}
+
 /// <summary>Spec 2026-10-15 §6.1 y §6.2: el asesor de la tienda es una membresía del tenant. Adaptador sobre Tenancy e
 /// Identity.</summary>
 public interface IShopifyMemberDirectory

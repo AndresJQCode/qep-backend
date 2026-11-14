@@ -46,4 +46,10 @@ public static class ShopifyAuditActions
     public const string OrderEditReviewed = "shopify.order_edit.reviewed";
 
     public const string OrderEditResourceType = "shopify_order_edit";
+
+    /// <summary>Spec 2026-11-14 §5: el asesor corrigió envío, nota o atributos de un pedido de Shopify y quedó encolado el envío. El
+    /// recurso es la fila del espejo y el detalle lleva los grupos (<c>{ "groups": [...] }</c>).</summary>
+    public const string OrderCorrected = "shopify.order.corrected";
+
+    public const string ShopifyOrderResourceType = "shopify_order";
 }
