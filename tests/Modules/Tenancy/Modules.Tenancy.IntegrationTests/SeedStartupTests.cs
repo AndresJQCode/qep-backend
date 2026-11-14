@@ -18,7 +18,7 @@ using Modules.Identity.Infrastructure.Seed;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -558,17 +558,6 @@ public sealed class SeedStartupTests
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.All(rows, row => Assert.Equal(expectedSource, row.Source));
         return rows.Select(row => row.ModuleKey.Value).Order(StringComparer.Ordinal).ToList();
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed class QepApiFactory(

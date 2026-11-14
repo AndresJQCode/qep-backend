@@ -5,7 +5,7 @@ using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -21,7 +21,7 @@ public sealed class MembershipTenantForeignKeyTests
     [Fact]
     public async Task AMembershipPointingToAMissingTenantIsRejectedByTheDatabase()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         await using var scope = provider.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -46,7 +46,7 @@ public sealed class MembershipTenantForeignKeyTests
     [Fact]
     public async Task TenantAndItsOwnerMembershipAreInsertedInTheSameSaveChanges()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         await using var scope = provider.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<TenancyDbContext>();
@@ -80,7 +80,7 @@ public sealed class MembershipTenantForeignKeyTests
         Assert.Equal(tenantId, stored.TenantId);
     }
 
-    private static async Task<ServiceProvider> MigratedServicesAsync(PostgreSqlContainer database)
+    private static async Task<ServiceProvider> MigratedServicesAsync(TestDatabase database)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:QepDatabase"] = database.GetConnectionString() })
@@ -91,16 +91,5 @@ public sealed class MembershipTenantForeignKeyTests
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.MigrateAsync(TestContext.Current.CancellationToken);
         return provider;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }

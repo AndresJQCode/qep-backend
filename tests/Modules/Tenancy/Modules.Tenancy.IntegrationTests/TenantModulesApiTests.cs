@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -279,17 +279,6 @@ public sealed class TenantModulesApiTests
             .Select(module => (module.ModuleKey.Value, module.Source))
             .OrderBy(row => row.Value, StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private sealed record RegisteredDto(Guid TenantId, Guid OwnerUserId);

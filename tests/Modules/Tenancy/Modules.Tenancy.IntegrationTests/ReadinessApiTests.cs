@@ -18,7 +18,7 @@ public sealed class ReadinessApiTests
     [Fact]
     public async Task ReadyRespondsOkWhileTheDatabaseIsUp()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await TenancyTestDatabase.StartDatabaseAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = factory.CreateClient();
 
@@ -31,7 +31,8 @@ public sealed class ReadinessApiTests
     [Fact]
     public async Task ReadyRespondsServiceUnavailableWhenTheDatabaseGoesDownButLiveStaysOk()
     {
-        await using var database = await StartDatabaseAsync();
+        // Contenedor propio, no el servidor compartido: la prueba lo apaga.
+        await using var database = await StartOwnContainerAsync();
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = factory.CreateClient();
 
@@ -47,7 +48,7 @@ public sealed class ReadinessApiTests
         Assert.Equal(HttpStatusCode.OK, live.StatusCode);
     }
 
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
+    private static async Task<PostgreSqlContainer> StartOwnContainerAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
             .WithDatabase("qep")

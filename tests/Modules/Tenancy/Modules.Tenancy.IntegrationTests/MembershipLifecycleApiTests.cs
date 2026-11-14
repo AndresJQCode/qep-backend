@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Tenancy.Application;
 using Modules.Tenancy.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -1042,17 +1042,6 @@ public sealed class MembershipLifecycleApiTests
             connection);
         command.Parameters.AddWithValue("id", membershipId);
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

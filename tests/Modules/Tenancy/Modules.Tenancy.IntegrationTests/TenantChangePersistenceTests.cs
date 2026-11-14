@@ -6,7 +6,7 @@ using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Tenancy.IntegrationTests.TenancyTestDatabase;
 
 namespace Modules.Tenancy.IntegrationTests;
 
@@ -18,7 +18,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task ListByTenantReturnsInactiveRowsAndTracksThem()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
 
@@ -40,7 +40,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task BothKindsOfChangeRoundTripThroughTheTable()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         var batchId = Guid.CreateVersion7();
@@ -73,7 +73,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task TheLockSerializesTwoScopesOnTheSameTenant()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         await using var first = provider.CreateAsyncScope();
@@ -93,7 +93,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task TheLockDoesNotBlockAnotherTenant()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var one = await SeedTenantAsync(provider);
         var other = await SeedTenantAsync(provider);
@@ -115,7 +115,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task TheLastReasonBreaksTiesByTheHighestId()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         var actor = Guid.CreateVersion7();
@@ -160,7 +160,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task TheLockLivesInItsOwnTwoKeySpace()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         var key = TenantChangeLock.KeyFor(tenantId.Value);
@@ -199,7 +199,7 @@ public sealed class TenantChangePersistenceTests
     [Fact]
     public async Task ADuplicateModuleRowIsNoChangesNotA500()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         await using var provider = await MigratedServicesAsync(database);
         var tenantId = await SeedTenantAsync(provider);
         await using (var scope = provider.CreateAsyncScope())
@@ -234,7 +234,7 @@ public sealed class TenantChangePersistenceTests
         return tenant.Id;
     }
 
-    private static async Task<ServiceProvider> MigratedServicesAsync(PostgreSqlContainer database)
+    private static async Task<ServiceProvider> MigratedServicesAsync(TestDatabase database)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:QepDatabase"] = database.GetConnectionString() })
@@ -245,16 +245,5 @@ public sealed class TenantChangePersistenceTests
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<TenancyDbContext>().Database.MigrateAsync(TestContext.Current.CancellationToken);
         return provider;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 }
