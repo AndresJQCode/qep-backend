@@ -1,4 +1,5 @@
 using Bootstrapper.Startup;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -13,6 +14,9 @@ namespace Bootstrapper.UnitTests;
 /// </summary>
 public sealed class StartupLockTests(StartupLockTests.Database database) : IClassFixture<StartupLockTests.Database>
 {
+    private static readonly string[] LockSessionSettings =
+        ["transaction_timeout", "tcp_keepalives_idle", "tcp_keepalives_interval", "tcp_keepalives_count"];
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private string ConnectionString => database.ConnectionString;
@@ -107,6 +111,64 @@ public sealed class StartupLockTests(StartupLockTests.Database database) : IClas
         }
     }
 
+    [Fact]
+    public async Task TheLockSessionDisablesTheTransactionTimeoutAndDetectsADeadPeerQuickly()
+    {
+        var settings = new Dictionary<string, string>();
+
+        // Un transaction_timeout del servidor cortaría la transacción del candado a mitad del bloque, como el ocioso.
+        await ExecuteAsync(ConnectionString, "ALTER DATABASE qep SET transaction_timeout = '1h'");
+        try
+        {
+            await StartupLock.RunAsync(
+                ConnectionString, "QepDatabase", NullLogger.Instance,
+                async (connection, transaction, token) =>
+                {
+                    foreach (var name in LockSessionSettings)
+                    {
+                        await using var show = new NpgsqlCommand($"SHOW {name}", connection, transaction);
+                        settings[name] = (string)(await show.ExecuteScalarAsync(token))!;
+                    }
+                }, Ct);
+        }
+        finally
+        {
+            await ExecuteAsync(ConnectionString, "ALTER DATABASE qep RESET transaction_timeout");
+        }
+
+        // La imagen de pruebas es PG18: transaction_timeout existe desde PG17.
+        Assert.Equal("0", settings["transaction_timeout"]);
+        Assert.Equal("30", settings["tcp_keepalives_idle"]);
+        Assert.Equal("10", settings["tcp_keepalives_interval"]);
+        Assert.Equal("3", settings["tcp_keepalives_count"]);
+    }
+
+    [Fact]
+    public async Task ALostLockConnectionIsLoggedByKeyNameWhenReleasing()
+    {
+        var logger = new CapturingLogger();
+
+        await StartupLock.RunAsync(
+            ConnectionString, "QepDatabaseListener", logger,
+            async (connection, _, token) =>
+            {
+                // Otro proceso mata la sesión del candado, como un nodo caído o un failover: el candado se suelta solo.
+                await using var killer = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString) { Pooling = false }.ConnectionString);
+                await killer.OpenAsync(token);
+                await using var terminate = new NpgsqlCommand("SELECT pg_terminate_backend(@pid)", killer);
+                terminate.Parameters.AddWithValue("pid", connection.ProcessID);
+                await terminate.ExecuteNonQueryAsync(token);
+            }, Ct);
+
+        var lost = Assert.Single(logger.Entries, entry => entry.EventId.Id == 4110);
+        Assert.Equal(LogLevel.Warning, lost.Level);
+        Assert.Contains("QepDatabaseListener", lost.Message, StringComparison.Ordinal);
+        var host = new NpgsqlConnectionStringBuilder(ConnectionString).Host!;
+        Assert.DoesNotContain(host, lost.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("qep-integration", lost.Message, StringComparison.Ordinal);
+        Assert.True(await IsFreeAsync(ConnectionString));
+    }
+
     /// <summary>Toma el candado como lo haría otro pod: su propia conexión y transacción. Al soltarlo, <c>COMMIT</c>.</summary>
     private static async Task<IAsyncDisposable> HoldLockAsync(string connectionString)
     {
@@ -157,6 +219,21 @@ public sealed class StartupLockTests(StartupLockTests.Database database) : IClas
             await transaction.CommitAsync(CancellationToken.None);
             await transaction.DisposeAsync();
             await connection.DisposeAsync();
+        }
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        public List<(LogLevel Level, EventId EventId, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            // La excepción también podría filtrar la cadena: se suma al texto que se revisa.
+            Entries.Add((logLevel, eventId, formatter(state, exception) + " " + exception));
         }
     }
 

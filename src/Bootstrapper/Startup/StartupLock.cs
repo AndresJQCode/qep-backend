@@ -35,6 +35,10 @@ public static partial class StartupLock
         Message = "Startup migrations and seed finished in {ElapsedMilliseconds} ms under the startup lock.")]
     private static partial void LogFinished(ILogger logger, long elapsedMilliseconds);
 
+    [LoggerMessage(EventId = 4110, Level = LogLevel.Warning,
+        Message = "The startup lock connection (connection string key {ConnectionStringKey}) was lost before release ({ExceptionType}); the lock may have been released early.")]
+    private static partial void LogConnectionLost(ILogger logger, string connectionStringKey, string exceptionType);
+
     /// <summary>
     /// Lo que llama <c>Program.cs</c>: resuelve la conexión del candado como la del listener de Messaging y corre
     /// <paramref name="work"/> con el candado tomado. La espera respeta <paramref name="cancellationToken"/>.
@@ -55,11 +59,26 @@ public static partial class StartupLock
     }
 
     /// <summary>El núcleo, separado de la configuración para que las pruebas le pasen la cadena directo.</summary>
-    internal static async Task RunAsync(
+    internal static Task RunAsync(
         string connectionString,
         string keyName,
         ILogger logger,
         Func<CancellationToken, Task> work,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        return RunAsync(connectionString, keyName, logger, (_, _, token) => work(token), cancellationToken);
+    }
+
+    /// <summary>
+    /// La misma, pero el trabajo recibe la conexión y la transacción del candado. Sólo para las pruebas, que leen la
+    /// configuración de esa sesión o la matan: el trabajo real nunca escribe por esta conexión.
+    /// </summary>
+    internal static async Task RunAsync(
+        string connectionString,
+        string keyName,
+        ILogger logger,
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task> work,
         CancellationToken cancellationToken)
     {
         // Sin pool: la conexión es de un solo uso, y al cerrarla se cierra de verdad. Una del pool volvería al pool con
@@ -75,8 +94,14 @@ public static partial class StartupLock
             // La transacción queda ociosa todo el bloque, y el segundo pod espera lo que tarde el primero en migrar. Un
             // idle_in_transaction_session_timeout del servidor mataría la conexión y soltaría el candado a mitad de una
             // migración; un lock_timeout o un statement_timeout cortarían la espera. SET LOCAL los apaga sólo acá.
+            // transaction_timeout (PG17+) cortaría la transacción entera, ociosa o no. Y los keepalives: si el nodo del pod
+            // muere sin cerrar el socket, Postgres no se entera hasta que el keepalive del sistema falla (unas dos horas con
+            // el default de Linux), y hasta entonces el candado sigue tomado. Con 30 + 10 × 3 s lo suelta en un minuto.
+            var transactionTimeout = connection.PostgreSqlVersion.Major >= 17 ? "; SET LOCAL transaction_timeout = 0" : "";
             await using (var settings = new NpgsqlCommand(
-                "SET LOCAL lock_timeout = 0; SET LOCAL statement_timeout = 0; SET LOCAL idle_in_transaction_session_timeout = 0",
+                "SET LOCAL lock_timeout = 0; SET LOCAL statement_timeout = 0; SET LOCAL idle_in_transaction_session_timeout = 0"
+                    + transactionTimeout
+                    + "; SET LOCAL tcp_keepalives_idle = 30; SET LOCAL tcp_keepalives_interval = 10; SET LOCAL tcp_keepalives_count = 3",
                 connection,
                 transaction))
             {
@@ -96,21 +121,22 @@ public static partial class StartupLock
             LogAcquired(logger, waiting.ElapsedMilliseconds, keyName);
 
             var running = Stopwatch.StartNew();
-            await work(cancellationToken);
+            await work(connection, transaction, cancellationToken);
             LogFinished(logger, running.ElapsedMilliseconds);
         }
         finally
         {
-            await ReleaseAsync(transaction);
+            await ReleaseAsync(transaction, keyName, logger);
         }
     }
 
     /// <summary>
     /// Deshace la transacción (no escribió nada). Si la conexión ya está rota —una espera cancelada, un servidor que la
     /// cortó—, el rollback puede fallar; no se deja que tape la excepción original: cerrar la conexión, que es sin pool,
-    /// suelta el candado igual.
+    /// suelta el candado igual. Pero se avisa: si la conexión se perdió mientras el trabajo corría, el candado se soltó
+    /// antes de tiempo y otro pod pudo empezar a migrar a la vez.
     /// </summary>
-    private static async Task ReleaseAsync(NpgsqlTransaction transaction)
+    private static async Task ReleaseAsync(NpgsqlTransaction transaction, string keyName, ILogger logger)
     {
         try
         {
@@ -118,7 +144,9 @@ public static partial class StartupLock
         }
         catch (Exception exception) when (exception is NpgsqlException or InvalidOperationException)
         {
-            // El dispose de la conexión, que sigue a esto, cierra la sesión y con ella el candado.
+            // Sólo el tipo de la excepción: su mensaje puede traer el host. El dispose de la conexión, que sigue a esto,
+            // cierra la sesión y con ella el candado.
+            LogConnectionLost(logger, keyName, exception.GetType().Name);
         }
     }
 }
