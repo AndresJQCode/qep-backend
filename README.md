@@ -4404,7 +4404,8 @@ prendido, al importador:
   (`store_not_configured`, `advisor_inactive`, `billing_account_missing`, `currency_mismatch`, `customer_inactive`,
   `product_unmatched`, `freight_tax_rate_missing`, `order_rejected`). La tienda se configura con
   `PUT /tenants/{tenantId}/shopify/stores/{connectionId}` (`If-Match`): asesor, cuenta de cobro, clasificación por
-  defecto y de dónde sale el documento: `documentAttributeKey` es una ruta, `shipping_address.company` (el campo
+  defecto, `historyDays` (ver «Sincronizar ahora» más abajo) y de dónde sale el documento: `documentAttributeKey` es
+  una ruta, `shipping_address.company` (el campo
   «Empresa» de la dirección de envío) o el nombre de un atributo del checkout. Las opciones del select las da
   `GET /tenants/{tenantId}/shopify/stores/{connectionId}/document-sources` (`integrations.connection.read`):
   `{ "sources": ["shipping_address.company", …] }`, con los nombres de atributo de los 500 pedidos más recientes de esa
@@ -4424,10 +4425,21 @@ prendido, al importador:
   facturado queda `Cancelled` con `invoiced_before_cancel` para anularlo a mano). Un pedido cancelado que llega sin fila del espejo
   pero con su pedido en QEP también se anula.
 - `ShopifyReconcileWorker` corre cada `Shopify:Reconcile:IntervalMinutes` por tienda operativa: trae por GraphQL lo
-  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: no se importa historial) y
+  actualizado desde la última corrida (5 minutos de solape; la primera, desde el enlace: el cron no importa historial) y
   reintenta hasta 200 `Waiting`. Así, crear el producto que faltaba o prender el módulo otra vez surte efecto sin tocar
   nada más. `POST …/shopify/stores/{connectionId}/sync` hace lo mismo en el request; `POST …/shopify/orders/{id}/retry`,
   una sola fila.
+- **Días de historial de «Sincronizar ahora»** (spec `2026-10-21-shopify-historial-dias-design.md`). Un pedido creado en
+  Shopify **antes** de enlazar la tienda no entra nunca por la ventana normal, y el sync responde `fetched = 0` sin error.
+  Para traerlo, la tienda guarda `historyDays` (columna `shopify.stores.history_days`, `null` o de 1 a 30, con `CHECK`):
+  viaja siempre en `GET|PUT …/shopify/stores/{connectionId}` (`null` = sin historial) y el `PUT` lo reemplaza como al
+  resto, así que un cuerpo sin `historyDays` lo apaga. Fuera de rango responde 422 `validation.failed` con
+  `errors.historyDays`, y su cambio queda en `shopify.store.updated` por nombre. Con valor, **sólo** el `POST …/sync` trae
+  desde `min(ventana normal, enlace − historyDays)` (`ReconcileStore.ComputeSince`): cuenta desde el enlace (la creación
+  de la conexión), no desde hoy, y nunca acorta la ventana. Se aplica en **cada** pulsación, para importar lo que quedó
+  `Waiting` o falló después de corregir su causa; releer lo ya importado no duplica ni cambia nada (el espejo acepta el
+  snapshot igual y `IX_orders_tenant_external_key` deja un solo pedido). El cron no lo usa, y `last_reconciled_at` se
+  mueve igual que siempre. Sin fecha de enlace, el historial se ignora.
 
 **La bandeja.** `GET /tenants/{tenantId}/shopify/orders` pagina el espejo (tope 50, más recientes primero) con
 `state` (repetible o separado por comas; sin él, `Waiting`), `connectionId`, `withWarnings=true` (avisos sin revisar;
