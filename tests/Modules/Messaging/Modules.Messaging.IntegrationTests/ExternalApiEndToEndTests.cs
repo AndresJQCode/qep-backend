@@ -199,6 +199,8 @@ public sealed class ExternalApiEndToEndTests
 
         Assert.Equal(f.ConnectionId, Assert.Single(connections.EnumerateArray()).GetProperty("id").GetGuid());
         Assert.Equal([TemplateName, "aviso_logo"], templates.EnumerateArray().Select(template => template.GetProperty("name").GetString()!).Order().ToArray());
+        var logo = templates.EnumerateArray().Single(template => template.GetProperty("name").GetString() == "aviso_logo");
+        Assert.Equal("image", logo.GetProperty("header").GetProperty("type").GetString());
         Assert.Equal(HttpStatusCode.Created, sent.StatusCode);
         var body = await BodyAsync(sent);
         var conversationId = body.GetProperty("conversationId").GetGuid();
