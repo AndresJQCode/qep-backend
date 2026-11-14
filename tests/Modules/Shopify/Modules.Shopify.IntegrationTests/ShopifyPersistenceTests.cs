@@ -338,4 +338,105 @@ public sealed class ShopifyPersistenceTests
 
         Assert.Equal("concurrency.conflict", error.Code);
     }
+
+    private const string CustomTitle = "Garantía por 1 año + Envío Prioritario🚛";
+
+    private static ShopifyCustomLineMapping NewMapping(Guid tenantId, Guid connectionId, string title, Guid? variantId = null) =>
+        ShopifyCustomLineMapping.Create(tenantId, connectionId, title, variantId ?? Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+
+    private static async Task SaveAsync(QepApiFactory factory, params ShopifyCustomLineMapping[] mappings)
+    {
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IShopifyCustomLineMappingRepository>();
+        foreach (var mapping in mappings)
+        {
+            repository.Add(mapping);
+        }
+
+        await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+    }
+
+    // Contrato con lulo-crm-migrator, que siembra esta tabla por SQL: los nombres y los tipos no se tocan.
+    [Fact]
+    public async Task CustomLineMappingRoundTripsWithTheContractColumns()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var mapping = NewMapping(Guid.CreateVersion7(), Guid.CreateVersion7(), CustomTitle);
+
+        await SaveAsync(factory, mapping);
+
+        Assert.Equal(
+            string.Join('|', mapping.Id, mapping.TenantId, mapping.ConnectionId, CustomTitle, mapping.VariantId, mapping.CreatedBy),
+            await ScalarAsync<string>(
+                connectionString,
+                "SELECT concat_ws('|', id, tenant_id, connection_id, title, variant_id, created_by) FROM shopify.custom_line_mappings"));
+        Assert.Equal(
+            Now.UtcDateTime,
+            await ScalarAsync<DateTime>(connectionString, "SELECT created_at FROM shopify.custom_line_mappings"));
+        Assert.Equal(
+            "id:uuid,tenant_id:uuid,connection_id:uuid,title:character varying(255),variant_id:uuid,created_at:timestamp with time zone,created_by:uuid",
+            await ScalarAsync<string>(
+                connectionString,
+                """
+                SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum)
+                FROM pg_attribute a
+                WHERE a.attrelid = 'shopify.custom_line_mappings'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                """));
+        Assert.Equal(0L, await ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'shopify' AND table_name = 'custom_line_mappings' AND is_nullable = 'YES'"));
+        Assert.Equal(
+            0L,
+            await ScalarAsync<long>(
+                connectionString,
+                "SELECT count(*) FROM pg_constraint WHERE conrelid = 'shopify.custom_line_mappings'::regclass AND contype = 'f'"));
+        Assert.Contains(
+            "(connection_id, title)",
+            await IndexDefinitionAsync(connectionString, "IX_custom_line_mappings_connection_title"),
+            StringComparison.Ordinal);
+    }
+
+    // Review Focus 4: el índice único sale como 409 con su código, no como 500 ni como concurrency.conflict.
+    [Fact]
+    public async Task DuplicateTitleOnTheSameConnectionIsAlreadyMapped()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var connectionId = Guid.CreateVersion7();
+        await SaveAsync(factory, NewMapping(tenantId, connectionId, "Garantía🚛"));
+
+        var error = await Assert.ThrowsAsync<ResourceConflictException>(
+            () => SaveAsync(factory, NewMapping(tenantId, connectionId, " Garantía🚛 ")));
+
+        Assert.Equal("shopify.custom_line.already_mapped", error.Code);
+
+        // Otra mayúscula es otro nombre: la comparación es ordinal.
+        await SaveAsync(factory, NewMapping(tenantId, connectionId, "garantía🚛"));
+    }
+
+    // Review Focus 5: una asociación nunca aplica fuera de su conexión.
+    [Fact]
+    public async Task FindVariantIdsByTitlesOnlyReadsItsConnection()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        var tenantId = Guid.CreateVersion7();
+        var storeA = Guid.CreateVersion7();
+        var storeB = Guid.CreateVersion7();
+        var variantA = Guid.CreateVersion7();
+        var variantB = Guid.CreateVersion7();
+        await SaveAsync(factory, NewMapping(tenantId, storeA, "Garantía🚛", variantA), NewMapping(tenantId, storeB, "Garantía🚛", variantB));
+
+        using var scope = factory.Services.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IShopifyCustomLineMappingRepository>();
+
+        var found = await repository.FindVariantIdsByTitlesAsync(tenantId, storeA, ["Garantía🚛", "Otra"], Ct);
+        var otherTenant = await repository.FindVariantIdsByTitlesAsync(Guid.CreateVersion7(), storeA, ["Garantía🚛"], Ct);
+
+        Assert.Equal([KeyValuePair.Create("Garantía🚛", variantA)], found.ToArray());
+        Assert.Empty(otherTenant);
+    }
 }
