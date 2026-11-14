@@ -2157,6 +2157,12 @@ no del catálogo de hoy: renombrar o recodificar la variante después no cambia 
 configuración; su encabezado cae bajo la regla de choque de arriba. El PDF de la cotización no cambió de
 plantilla: `productName` ya es ese nombre visible.
 
+**Notas del cliente** (2026-11-14): el catálogo gana una columna más al final, `Notas del cliente`
+(`buyer_notes`), que sale de `Order.BuyerNotes`: la nota que el comprador escribió en la tienda pública o en
+Shopify. `Observaciones` (`notes`) sigue saliendo de `Notes`, que es del asesor (en un pedido de Shopify,
+«Shopify #N» y, si aplica, la dirección cruda). **Nace oculta**, también sin layout guardado: un tenant sin
+layout puede tener un ERP leyendo la hoja por defecto. Su encabezado no choca con ninguno de «MIGRACION 1».
+
 **Aviso para operadores:** la hoja sembrada «MIGRACION 1» conserva su columna fija `valor flete`, vacía, y
 por eso `Valor Flete` del catálogo queda oculta en ella. Para que el ERP reciba el valor real, en
 Configuración › Excel de pedidos cambia la fija por la columna del catálogo «Valor Flete».
@@ -2190,8 +2196,8 @@ y ETag `"1"`. Cada columna viaja con `kind` (`Catalog` | `Fixed`), `key` y
 `defaultHeader`/`defaultPosition`/`defaultVisible` (sólo las del catálogo; `null` en las fijas),
 `header`, `value` (sólo las fijas) y `visible`. `defaultVisible` es `true` en todas menos en
 `coordinadora_city` (2026-10-02), las `payment_method_N` (2026-10-03), `carrier` (2026-10-05),
-`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17) y
-`variant` (2026-10-20).
+`freight_without_tax`, `freight_tax`, `freight_charge_mode` y `cash_on_delivery` (2026-10-17),
+`variant` (2026-10-20) y `buyer_notes` (2026-11-14).
 
 El `PUT` reemplaza la lista entera con `If-Match` obligatorio (428 sin él; 412 con una versión
 vieja, incluido el choque de dos primeros guardados). No exige el catálogo entero: lo que no

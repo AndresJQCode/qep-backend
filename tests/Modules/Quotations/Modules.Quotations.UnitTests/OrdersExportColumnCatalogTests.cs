@@ -31,6 +31,7 @@ public sealed class OrdersExportColumnCatalogTests
         "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
         "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
         "withholding_retefuente", "withholding_reteica",
+        "buyer_notes",
     ];
 
     private static readonly string[] Headers =
@@ -57,12 +58,13 @@ public sealed class OrdersExportColumnCatalogTests
         "Nombre envío", "Tipo de identificación envío", "Identificación envío", "Tipo de persona envío",
         "Dirección envío", "Ciudad envío", "Ciudad Coordinadora envío", "Departamento envío", "Teléfono envío", "Email envío",
         "Retefuente", "ReteICA",
+        "Notas del cliente",
     ];
 
     [Fact]
-    public void HasTheEightyThreeColumnsOfTheSpecInItsOrder()
+    public void HasTheEightyFourColumnsOfTheSpecInItsOrder()
     {
-        Assert.Equal(83, OrdersExportColumnCatalog.Columns.Count);
+        Assert.Equal(84, OrdersExportColumnCatalog.Columns.Count);
         Assert.Equal(Keys, OrdersExportColumnCatalog.Columns.Select(column => column.Key));
         Assert.Equal(Headers, OrdersExportColumnCatalog.Columns.Select(column => column.DefaultHeader));
     }
@@ -156,7 +158,7 @@ public sealed class OrdersExportColumnCatalogTests
             OrdersExportColumnCatalog.Columns.Skip(71).Take(10));
         Assert.Equal(71, OrdersExportColumnCatalog.IndexOf("shipping_name"));
         Assert.Equal(OrdersExportColumnCatalog.IndexOf("shipping_city") + 1, OrdersExportColumnCatalog.IndexOf("shipping_city_coordinadora"));
-        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 3, OrdersExportColumnCatalog.IndexOf("shipping_email"));
+        Assert.Equal(OrdersExportColumnCatalog.Columns.Count - 4, OrdersExportColumnCatalog.IndexOf("shipping_email"));
     }
 
     // Se retiraron las llaves «customer_own_*»: un layout guardado que las nombre las pierde (Effective descarta
@@ -264,7 +266,7 @@ public sealed class OrdersExportColumnCatalogTests
                 "billing_address", "billing_city", "billing_department", "billing_phone", "billing_email",
                 "shipping_name", "shipping_identification_type", "shipping_identification_number", "shipping_person_type",
                 "shipping_address", "shipping_city", "shipping_city_coordinadora", "shipping_department", "shipping_phone", "shipping_email",
-                "withholding_retefuente", "withholding_reteica"],
+                "withholding_retefuente", "withholding_reteica", "buyer_notes"],
             OrdersExportColumnCatalog.Columns.Where(column => !column.DefaultVisible).Select(column => column.Key));
     }
 
@@ -316,11 +318,19 @@ public sealed class OrdersExportColumnCatalogTests
         var count = OrdersExportColumnCatalog.Columns.Count;
         Assert.Equal(
             new OrdersExportCatalogColumn("withholding_retefuente", "Retefuente", 16, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[count - 2]);
+            OrdersExportColumnCatalog.Columns[count - 3]);
         Assert.Equal(
             new OrdersExportCatalogColumn("withholding_reteica", "ReteICA", 16, DefaultVisible: false),
-            OrdersExportColumnCatalog.Columns[count - 1]);
+            OrdersExportColumnCatalog.Columns[count - 2]);
     }
+
+    // Spec 2026-11-14 (D13): «Notas del cliente» es Order.BuyerNotes. Al final y oculta, también sin layout guardado:
+    // un tenant sin layout puede tener un ERP leyendo la hoja por defecto.
+    [Fact]
+    public void BuyerNotesIsTheLastColumnAndHidden() =>
+        Assert.Equal(
+            new OrdersExportCatalogColumn("buyer_notes", "Notas del cliente", 40, DefaultVisible: false),
+            OrdersExportColumnCatalog.Columns[^1]);
 
     // Las llaves son identificadores: únicas, y el tenant no puede inventar ni repetir una.
     [Fact]

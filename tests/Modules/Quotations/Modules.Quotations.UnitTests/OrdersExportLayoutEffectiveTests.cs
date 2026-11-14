@@ -134,6 +134,19 @@ public sealed class OrdersExportLayoutEffectiveTests
             && string.Equals(column.Header, "Variante", StringComparison.OrdinalIgnoreCase));
     }
 
+    // Spec 2026-11-14 (D13), contra el catálogo real: un layout guardado antes de «Notas del cliente» la recibe al final y
+    // oculta, así que ningún Excel que el ERP ya lee gana una columna.
+    [Fact]
+    public void ASavedLayoutGetsBuyerNotesHidden()
+    {
+        var stored = new[] { OrdersExportColumnSetting.Catalog("notes", "Observaciones", visible: true) };
+
+        var effective = OrdersExportLayout.Effective(stored, OrdersExportColumnCatalog.Columns);
+
+        var last = effective[^1];
+        Assert.Equal(("buyer_notes", "Notas del cliente", false), (last.Key, last.Header, last.Visible));
+    }
+
     // Lo guardado manda sobre el defecto: el tenant que la prendió la sigue viendo.
     [Fact]
     public void AStoredKeyHiddenByDefaultKeepsTheVisibilityTheTenantSaved()

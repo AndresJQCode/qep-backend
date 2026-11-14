@@ -127,11 +127,11 @@ public sealed class QuotationsSeedTests
     }
 
     // Spec impuestos por tipo (P12): «Retefuente» y «ReteICA» nacen ocultas y ninguna visible de la hoja
-    // sembrada comparte su encabezado. No necesita base de datos.
+    // sembrada comparte su encabezado; «Notas del cliente» (spec 2026-11-14) tampoco. No necesita base de datos.
     [Fact]
     public void NoHeaderCollidesWithTheSeedLayout()
     {
-        foreach (var key in new[] { "withholding_retefuente", "withholding_reteica" })
+        foreach (var key in new[] { "withholding_retefuente", "withholding_reteica", "buyer_notes" })
         {
             var column = Assert.Single(OrdersExportColumnCatalog.Columns, candidate => candidate.Key == key);
 
