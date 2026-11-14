@@ -4491,7 +4491,7 @@ sigue mostrando con `productName` y `variantCode` en `null` e `isActive = false`
 | `Shopify:App:ClientId` | ConfigMap, desde `SHOPIFY_APP_CLIENT_ID` | Client ID de la app en el Dev Dashboard |
 | `Shopify:App:ClientSecret` | Secret, desde la variable **secreta** `SHOPIFY_APP_CLIENT_SECRET` | Firma los webhooks, verifica el HMAC de la instalación y canjea el `code` |
 | `Shopify:App:ApiVersion` | ConfigMap, `2026-10` | Versión de la Admin API (`^\d{4}-(01\|04\|07\|10)$`) |
-| `Shopify:App:Scopes` | ConfigMap, `read_orders,read_customers` | Lo que pide la autorización |
+| `Shopify:App:Scopes` | ConfigMap, `read_orders,write_orders,read_customers` | Lo que pide la autorización (`write_orders` desde el 2026-11-14) |
 | `Shopify:App:AllowedRedirectOrigins:N` | ConfigMap, `https://qep.qcode.co` | Orígenes del `redirect_uri` (local: `http://localhost:3002`, en `appsettings.Development.json`) |
 | `Shopify:App:WebhookCallbackUrl` | ConfigMap, `https://qep-api.qcode.co/api/webhooks/shopify` | Lo que el enlace registra en cada tienda |
 | `Shopify:Reconcile:IntervalMinutes` | ConfigMap, `10` | Periodo de la conciliación |
@@ -4501,6 +4501,11 @@ En `Production`, `ShopifyAppOptionsValidator` exige con `ValidateOnStart` `Clien
 `WebhookCallbackUrl` (https) y al menos un origen; un `ClientId` o `ClientSecret` que llega como `#{…}#` (la variable
 no está en `Backend-prod`) cuenta como ausente. Sin ellas el pod entra en crash-loop, a propósito. Fuera de
 `Production`, sin `ClientId` y `ClientSecret` el proveedor sale del catálogo y el módulo arranca igual.
+
+**`write_orders` (spec 2026-11-14).** La corrección del asesor (dirección de envío, nota del cliente y atributos) viaja a
+Shopify con `orderUpdate`, que exige `write_orders`. Las tiendas enlazadas antes del cambio sólo concedieron
+`read_orders,read_customers`: tienen que conceder `write_orders` (V-13). Un canje sin él falla con `scopes_missing`,
+que es lo correcto.
 
 En local, los dos van por user-secrets. `set` imprime el valor, así que va con `| Out-Null`; el secreto se pide con
 `Read-Host -MaskInput` para que no quede en el historial de PSReadLine, y la verificación cuenta. `-MaskInput` exige

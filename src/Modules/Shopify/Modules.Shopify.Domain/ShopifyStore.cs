@@ -54,6 +54,13 @@ public sealed class ShopifyStore
     /// Nulo es sin historial (D-S4). Se aplica en cada pulsación, nunca en el cron.</summary>
     public int? HistoryDays { get; private set; }
 
+    /// <summary>Spec 2026-11-14: si una edición de Shopify sobre un pedido ya importado espera aceptación o se aplica sola.</summary>
+    public ShopifyEditSync EditSync { get; private set; } = ShopifyEditSync.Manual;
+
+    /// <summary>Spec 2026-11-14: con qué estados de pago del pedido de QEP se admite aplicar un cambio de Shopify (nombres de
+    /// <see cref="ShopifyPaymentStatuses.All"/>, sin repetir, al menos uno). Por defecto, todos.</summary>
+    public IReadOnlyList<string> EditPaymentStatuses { get; private set; } = ShopifyPaymentStatuses.All;
+
     /// <summary>§5.3: desde dónde trae la próxima conciliación (menos 5 minutos de margen).</summary>
     public DateTimeOffset? LastReconciledAt { get; private set; }
 
@@ -85,6 +92,7 @@ public sealed class ShopifyStore
     /// §6.1 y §7: la tienda configurada de una vez, como la guarda el <c>PUT</c>. Lo que depende de otros módulos (que
     /// el asesor sea miembro activo, que la cuenta exista en la empresa, que la clasificación sea del tenant, que el tipo de
     /// documento sea uno de los de Customers) lo valida el handler antes de llamar; acá sólo la forma y los anchos de las columnas.
+    /// <paramref name="editPaymentStatuses"/> vacío, con un nombre repetido o desconocido es <see cref="ArgumentException"/>.
     /// Sube <see cref="Version"/>: es el <c>If-Match</c> del <c>PUT</c>.
     /// </summary>
     public void Configure(
@@ -95,6 +103,8 @@ public sealed class ShopifyStore
         string documentTypeAttributeKey,
         string defaultIdentificationType,
         int? historyDays,
+        ShopifyEditSync editSync,
+        IReadOnlyCollection<string> editPaymentStatuses,
         Guid updatedBy,
         DateTimeOffset now)
     {
@@ -116,6 +126,12 @@ public sealed class ShopifyStore
         var documentTypeKey = Required(documentTypeAttributeKey, AttributeKeyMaxLength, nameof(documentTypeAttributeKey));
         var identificationType = Required(defaultIdentificationType, IdentificationTypeMaxLength, nameof(defaultIdentificationType))
             .ToUpperInvariant();
+        if (!Enum.IsDefined(editSync))
+        {
+            throw new ArgumentOutOfRangeException(nameof(editSync), editSync, "The edit sync mode is not one of the known ones.");
+        }
+
+        var paymentStatuses = ValidatedPaymentStatuses(editPaymentStatuses);
 
         AdvisorMembershipId = advisorMembershipId;
         Billing = account;
@@ -124,6 +140,8 @@ public sealed class ShopifyStore
         DocumentTypeAttributeKey = documentTypeKey;
         DefaultIdentificationType = identificationType;
         HistoryDays = historyDays;
+        EditSync = editSync;
+        EditPaymentStatuses = paymentStatuses;
         UpdatedBy = updatedBy;
         UpdatedAt = now;
         Version++;
@@ -153,6 +171,20 @@ public sealed class ShopifyStore
         return string.IsNullOrEmpty(trimmed) || trimmed.Length > maxLength
             ? throw new ArgumentException($"The value is required and cannot exceed {maxLength} characters.", parameterName)
             : trimmed;
+    }
+
+    private static string[] ValidatedPaymentStatuses(IReadOnlyCollection<string> statuses)
+    {
+        ArgumentNullException.ThrowIfNull(statuses);
+        if (statuses.Count == 0
+            || statuses.Distinct(StringComparer.Ordinal).Count() != statuses.Count
+            || !statuses.All(ShopifyPaymentStatuses.IsKnown))
+        {
+            throw new ArgumentException(
+                "The payment statuses must be at least one, without repeats, of the known ones.", nameof(statuses));
+        }
+
+        return [.. statuses];
     }
 
     private static ShopifyBillingAccount ValidatedBilling(ShopifyBillingAccount billing)

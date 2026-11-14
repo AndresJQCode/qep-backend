@@ -29,6 +29,9 @@ public sealed record ShopifyStoreSummaryDto(
 /// (<c>Documento</c>, <c>Tipo de documento</c>, <c>CC</c>), que es lo que el formulario pinta de entrada.
 /// <see cref="HistoryDays"/> (spec 2026-10-21) son los días antes del enlace que trae «Sincronizar ahora»; <c>null</c> es sin
 /// historial, y viaja siempre, también en <c>null</c>, para que el campo del formulario arranque vacío.
+/// <see cref="EditSync"/> (<c>Manual</c> | <c>Automatic</c>) y <see cref="EditPaymentStatuses"/> (nombres de los estados de pago
+/// del pedido de QEP con los que se admite un cambio de Shopify) son del spec 2026-11-14 y viajan siempre, con sus valores por
+/// defecto en una tienda sin configurar, para que el formulario no tenga que conocerlos.
 /// </summary>
 public sealed record ShopifyStoreDto(
     Guid ConnectionId,
@@ -47,6 +50,8 @@ public sealed record ShopifyStoreDto(
     string DocumentTypeAttributeKey,
     string DefaultIdentificationType,
     int? HistoryDays,
+    string EditSync,
+    IReadOnlyList<string> EditPaymentStatuses,
     DateTimeOffset? LastReconciledAt,
     DateTimeOffset UpdatedAt,
     long Version);

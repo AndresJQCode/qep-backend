@@ -147,6 +147,100 @@ public sealed class ShopifyStoreHandlersTests
         Assert.True(result.IsValid);
     }
 
+    // Spec 2026-11-14 (D15): un frontend viejo no manda editSync ni editPaymentStatuses; null conserva lo guardado.
+    [Fact]
+    public async Task UpdateWithoutEditFieldsKeepsTheSavedOnes()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+        await world.PutAsync(world.Command() with { EditSync = "Automatic", EditPaymentStatuses = ["PaymentPending"] });
+
+        var dto = await world.PutAsync(world.Command() with { ExpectedVersion = 2 });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal((ShopifyEditSync.Automatic, 3L), (store.EditSync, store.Version));
+        Assert.Equal(["PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    [Fact]
+    public async Task PutSavesAndReturnsTheEditSyncAndPaymentStatuses()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var dto = await world.PutAsync(world.Command() with
+        {
+            EditSync = "Automatic",
+            EditPaymentStatuses = ["PendingVerification", "PaymentPending"],
+        });
+
+        var store = world.Database.Stores[StoreHandlersWorld.ConnectionId];
+        Assert.Equal(ShopifyEditSync.Automatic, store.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], store.EditPaymentStatuses);
+        Assert.Equal("Automatic", dto.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], dto.EditPaymentStatuses);
+    }
+
+    // Una tienda sin configurar sale con lo que nace: Manual y los cuatro estados.
+    [Fact]
+    public async Task GetOfANewStoreReturnsManualAndEveryPaymentStatus()
+    {
+        var world = new StoreHandlersWorld();
+
+        var dto = await world.GetAsync();
+
+        Assert.Equal("Manual", dto.EditSync);
+        Assert.Equal(ShopifyPaymentStatuses.All, dto.EditPaymentStatuses);
+    }
+
+    // Los enums viajan por nombre y se comparan ordinal: ni «automatic» ni un número ni un nombre a medias.
+    [Theory]
+    [InlineData("automatic")]
+    [InlineData("Auto")]
+    [InlineData("1")]
+    public async Task AnUnknownEditSyncIsAValidationError(string value)
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => world.PutAsync(world.Command() with { EditSync = value }));
+
+        Assert.Equal(["editSync"], error.Errors.Select(failure => failure.PropertyName));
+        Assert.Equal(0, world.UnitOfWork.Saves);
+    }
+
+    [Fact]
+    public async Task ARepeatedPaymentStatusIsAValidationError()
+    {
+        var world = new StoreHandlersWorld();
+        world.SeedStore();
+
+        var error = await Assert.ThrowsAsync<ValidationException>(
+            () => world.PutAsync(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+
+        Assert.Equal(["editPaymentStatuses"], error.Errors.Select(failure => failure.PropertyName));
+    }
+
+    // Contrato con el frontend: las claves de errors son exactamente éstas (camelCase; el índice lo agrega FluentValidation).
+    [Fact]
+    public void StoreValidationErrorKeysAreTheContractOnes()
+    {
+        var world = new StoreHandlersWorld();
+        var validator = new UpdateShopifyStoreValidator();
+
+        string[] Keys(UpdateShopifyStoreCommand command) =>
+            [.. validator.Validate(command).Errors.Select(failure => failure.PropertyName).Distinct().Order(StringComparer.Ordinal)];
+
+        Assert.Equal(
+            ["editPaymentStatuses[1]", "editSync"],
+            Keys(world.Command() with { EditSync = "x", EditPaymentStatuses = ["PaymentPending", "Paid"] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = [] }));
+        Assert.Equal(["editPaymentStatuses"], Keys(world.Command() with { EditPaymentStatuses = ["PaymentPending", "PaymentPending"] }));
+        Assert.Empty(Keys(world.Command() with { EditSync = "Manual", EditPaymentStatuses = ShopifyPaymentStatuses.All }));
+    }
+
     [Fact]
     public async Task PutSavesAndReturnsTheHistoryDays()
     {
@@ -517,6 +611,8 @@ internal sealed class StoreHandlersWorld
         "Documento",
         "Tipo de documento",
         "CC",
+        null,
+        null,
         null,
         1);
 

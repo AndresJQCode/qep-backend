@@ -249,6 +249,19 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
             .HasColumnName("default_identification_type")
             .HasMaxLength(ShopifyStore.IdentificationTypeMaxLength);
         store.Property(value => value.HistoryDays).HasColumnName("history_days");
+        // Spec 2026-11-14: por nombre, como el resto de los enums del esquema. El default de las dos columnas es el de una tienda
+        // nueva y llena las filas que existían antes de la migración; el sentinel fuera de rango hace que EF mande siempre el valor.
+        store.Property(value => value.EditSync)
+            .HasColumnName("edit_sync")
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .HasDefaultValue(ShopifyEditSync.Manual)
+            .HasSentinel((ShopifyEditSync)(-1));
+        store.Property(value => value.EditPaymentStatuses)
+            .HasColumnName("edit_payment_statuses")
+            .HasColumnType("text[]")
+            .HasDefaultValueSql("'{FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification}'::text[]")
+            .IsRequired();
         store.Property(value => value.LastReconciledAt).HasColumnName("last_reconciled_at");
         store.Property(value => value.ReconcileLeaseUntil).HasColumnName("reconcile_lease_until");
         store.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();

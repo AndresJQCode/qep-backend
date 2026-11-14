@@ -621,7 +621,8 @@ public sealed class ReconcileStoreTests
                 Store.Configure(
                     Guid.CreateVersion7(), new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP"), null,
                     ShopifyStore.DefaultDocumentAttributeKey, ShopifyStore.DefaultDocumentTypeAttributeKey,
-                    ShopifyStore.DefaultIdentificationTypeCode, historyDays, Guid.CreateVersion7(), lastReconciledAt);
+                    ShopifyStore.DefaultIdentificationTypeCode, historyDays, ShopifyEditSync.Manual, ShopifyPaymentStatuses.All,
+                    Guid.CreateVersion7(), lastReconciledAt);
             }
 
             Database.Stores[ConnectionId] = Store;

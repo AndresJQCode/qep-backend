@@ -515,6 +515,21 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("document_type_attribute_key");
 
+                    b.PrimitiveCollection<string[]>("EditPaymentStatuses")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("edit_payment_statuses")
+                        .HasDefaultValueSql("'{FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification}'::text[]");
+
+                    b.Property<string>("EditSync")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasDefaultValue("Manual")
+                        .HasColumnName("edit_sync");
+
                     b.Property<int?>("HistoryDays")
                         .HasColumnType("integer")
                         .HasColumnName("history_days");

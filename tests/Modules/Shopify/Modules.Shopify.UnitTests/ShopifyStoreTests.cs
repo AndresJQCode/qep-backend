@@ -65,7 +65,9 @@ public sealed class ShopifyStoreTests
         var classification = Guid.CreateVersion7();
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "cop");
 
-        store.Configure(advisor, billing, classification, " Cédula ", "Tipo", " nit ", 7, advisor, LinkedAt.AddHours(1));
+        store.Configure(
+            advisor, billing, classification, " Cédula ", "Tipo", " nit ", 7, ShopifyEditSync.Manual, ShopifyPaymentStatuses.All, advisor,
+            LinkedAt.AddHours(1));
 
         Assert.True(store.IsConfigured);
         Assert.Equal((advisor, billing with { Currency = "COP" }, classification), (store.AdvisorMembershipId!.Value, store.Billing, store.DefaultClassificationId));
@@ -80,7 +82,9 @@ public sealed class ShopifyStoreTests
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
 
         Assert.Throws<ArgumentException>(
-            () => store.Configure(Guid.CreateVersion7(), billing, null, " ", "Tipo", "CC", null, Guid.CreateVersion7(), LinkedAt));
+            () => store.Configure(
+                Guid.CreateVersion7(), billing, null, " ", "Tipo", "CC", null, ShopifyEditSync.Manual, ShopifyPaymentStatuses.All,
+                Guid.CreateVersion7(), LinkedAt));
         Assert.Equal(1L, store.Version);
     }
 
@@ -95,7 +99,9 @@ public sealed class ShopifyStoreTests
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
 
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => store.Configure(Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, Guid.CreateVersion7(), LinkedAt));
+            () => store.Configure(
+                Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, ShopifyEditSync.Manual,
+                ShopifyPaymentStatuses.All, Guid.CreateVersion7(), LinkedAt));
         Assert.Equal((1L, (int?)null), (store.Version, store.HistoryDays));
     }
 
@@ -108,8 +114,54 @@ public sealed class ShopifyStoreTests
         var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
         var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
 
-        store.Configure(Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, Guid.CreateVersion7(), LinkedAt);
+        store.Configure(
+            Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", historyDays, ShopifyEditSync.Manual, ShopifyPaymentStatuses.All,
+            Guid.CreateVersion7(), LinkedAt);
 
         Assert.Equal((2L, historyDays), (store.Version, store.HistoryDays));
+    }
+
+    // Spec 2026-11-14: una tienda nueva espera aceptación de cada cambio de Shopify y lo admite con cualquier estado de pago.
+    [Fact]
+    public void ANewStoreIsManualWithEveryPaymentStatus()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+
+        Assert.Equal(ShopifyEditSync.Manual, store.EditSync);
+        Assert.Equal(
+            ["FullPaymentReceived", "PartialPaymentReceived", "PaymentPending", "PendingVerification"],
+            store.EditPaymentStatuses);
+    }
+
+    [Fact]
+    public void ConfigureStoresTheEditSyncAndThePaymentStatuses()
+    {
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
+
+        store.Configure(
+            Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", null, ShopifyEditSync.Automatic,
+            ["PaymentPending", "PendingVerification"], Guid.CreateVersion7(), LinkedAt);
+
+        Assert.Equal(ShopifyEditSync.Automatic, store.EditSync);
+        Assert.Equal(["PaymentPending", "PendingVerification"], store.EditPaymentStatuses);
+    }
+
+    // Separados por coma: vacía, desconocido, repetido y con otra capitalización (la comparación es ordinal).
+    [Theory]
+    [InlineData("")]
+    [InlineData("Paid")]
+    [InlineData("PaymentPending,PaymentPending")]
+    [InlineData("paymentpending")]
+    public void ConfigureRejectsAnEmptyOrUnknownPaymentStatusList(string list)
+    {
+        var statuses = list.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), LinkedAt);
+        var billing = new ShopifyBillingAccount(Guid.CreateVersion7(), "Bancolombia", "123-456", "COP");
+
+        Assert.Throws<ArgumentException>(() => store.Configure(
+            Guid.CreateVersion7(), billing, null, "Documento", "Tipo", "CC", null, ShopifyEditSync.Automatic, statuses,
+            Guid.CreateVersion7(), LinkedAt));
+        Assert.Equal((1L, ShopifyEditSync.Manual), (store.Version, store.EditSync));
     }
 }

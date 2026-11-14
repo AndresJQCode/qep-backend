@@ -150,7 +150,9 @@ public sealed class ShopifyPersistenceTests
         using var factory = new QepApiFactory(database.GetConnectionString());
         var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
         var (advisor, classification, company) = (Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7());
-        store.Configure(advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", 14, advisor, Now);
+        store.Configure(
+            advisor, new ShopifyBillingAccount(company, "Bancolombia", "123-456", "COP"), classification, "Cédula", "Tipo", "NIT", 14,
+            ShopifyEditSync.Automatic, ["PendingVerification", "PaymentPending"], advisor, Now);
 
         using (var scope = factory.Services.CreateScope())
         {
@@ -169,6 +171,44 @@ public sealed class ShopifyPersistenceTests
         Assert.Equal(14, saved.HistoryDays);
         Assert.Equal(14, await ScalarAsync<int>(
             database.GetConnectionString(), "SELECT history_days FROM shopify.stores WHERE connection_id = @c", ("c", store.ConnectionId)));
+        // Spec 2026-11-14: el modo va por nombre y los estados como text[], en el orden guardado.
+        Assert.Equal(ShopifyEditSync.Automatic, saved.EditSync);
+        Assert.Equal(["PendingVerification", "PaymentPending"], saved.EditPaymentStatuses);
+        Assert.Equal("Automatic|PendingVerification,PaymentPending", await ScalarAsync<string>(
+            database.GetConnectionString(),
+            "SELECT edit_sync || '|' || array_to_string(edit_payment_statuses, ',') FROM shopify.stores WHERE connection_id = @c",
+            ("c", store.ConnectionId)));
+    }
+
+    // Spec 2026-11-14: una fila que existía antes de la migración nace Manual y con los cuatro estados (default de la columna).
+    [Fact]
+    public async Task AStoreRowWithoutEditFieldsGetsTheColumnDefaults()
+    {
+        await using var database = await StartDatabaseAsync();
+        var connectionString = database.GetConnectionString();
+        using var factory = new QepApiFactory(connectionString);
+        var store = ShopifyStore.Create(Guid.CreateVersion7(), Guid.CreateVersion7(), Now);
+        using (var scope = factory.Services.CreateScope())
+        {
+            scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);
+            await scope.ServiceProvider.GetRequiredService<IShopifyUnitOfWork>().SaveChangesAsync(Ct);
+        }
+
+        await ScalarAsync<int>(
+            connectionString,
+            """
+            WITH reset AS (
+                UPDATE shopify.stores SET edit_sync = DEFAULT, edit_payment_statuses = DEFAULT WHERE connection_id = @c RETURNING 1)
+            SELECT count(*)::int FROM reset
+            """,
+            ("c", store.ConnectionId));
+
+        Assert.Equal(
+            "Manual|FullPaymentReceived,PartialPaymentReceived,PaymentPending,PendingVerification",
+            await ScalarAsync<string>(
+                connectionString,
+                "SELECT edit_sync || '|' || array_to_string(edit_payment_statuses, ',') FROM shopify.stores WHERE connection_id = @c",
+                ("c", store.ConnectionId)));
     }
 
     // Spec 2026-10-21: el CHECK de la columna repite el rango del dominio; un UPDATE a mano fuera de 1..30 no entra.
