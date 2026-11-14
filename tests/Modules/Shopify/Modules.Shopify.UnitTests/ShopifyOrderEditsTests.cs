@@ -74,6 +74,57 @@ public sealed class ShopifyOrderEditsTests
         Assert.Equal("A", world.World.Writer.States[OrderId].BuyerNotes);
     }
 
+    // Spec §3: el conflicto se marca para que se vea en la bandeja. Con la tienda automática no se aplica solo: queda pendiente.
+    [Fact]
+    public async Task AnAutomaticChangeWithAConflictStaysPending()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Configure(ShopifyEditSync.Automatic);
+        var row = world.ImportedRow();
+        world.World.Writer.States[OrderId] = world.Order with { BuyerNotes = "Q" };
+
+        await world.DeliverAsync(row, Snapshot(note: "C", minutes: 10));
+
+        var edit = Assert.Single(world.AllEdits);
+        Assert.Equal((ShopifyOrderEditStatus.Pending, (string?)null), (edit.Status, edit.StatusReason));
+        Assert.Equal([("Note", "Conflict", "qep_changed")], Groups(edit));
+        Assert.Empty(world.World.Writer.Edits);
+        Assert.Equal(ShopifyOrderIngestion.WritePayload(world.Applied), row.AppliedPayload);
+    }
+
+    // Un conflicto deja todo el cambio pendiente, también los grupos que sí se aplicarían: lo decide una persona.
+    [Fact]
+    public async Task AnAutomaticChangeWithAConflictAndAnApplyGroupAppliesNothing()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Configure(ShopifyEditSync.Automatic);
+        var row = world.ImportedRow();
+        world.World.Writer.States[OrderId] = world.Order with { BuyerNotes = "Q" };
+
+        await world.DeliverAsync(row, Snapshot(lines: [Line(quantity: 1m)], note: "C", minutes: 10));
+
+        var edit = Assert.Single(world.AllEdits);
+        Assert.Equal(ShopifyOrderEditStatus.Pending, edit.Status);
+        Assert.Equal([("Lines", "Apply", (string?)null), ("Note", "Conflict", "qep_changed")], Groups(edit));
+        Assert.Equal(2m, world.World.Writer.States[OrderId].Lines[0].Quantity);
+    }
+
+    // Review M-2: otra regla del pedido rechazó la aplicación automática; el cambio sigue pendiente y dice por qué.
+    [Fact]
+    public async Task AnAutomaticApplyRejectedByTheOrderStaysPendingWithTheRuleCode()
+    {
+        var world = new ShopifyEditTestWorld();
+        world.Configure(ShopifyEditSync.Automatic);
+        world.World.Writer.OnApplyEdit = _ => new ShopifyOrderEditOutcome(null, "order.order.store_pickup");
+        var row = world.ImportedRow();
+
+        await world.DeliverAsync(row, Snapshot(note: "B", minutes: 10));
+
+        var edit = Assert.Single(world.AllEdits);
+        Assert.Equal((ShopifyOrderEditStatus.Pending, "order.order.store_pickup"), (edit.Status, edit.StatusReason));
+        Assert.Equal("A", world.World.Writer.States[OrderId].BuyerNotes);
+    }
+
     [Fact]
     public async Task ALegacyRowUsesThePreviousPayloadAsBase()
     {

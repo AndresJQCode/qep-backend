@@ -138,6 +138,22 @@ public sealed class ShopifyOrderEdit
         Version++;
     }
 
+    /// <summary>Review M-2: la aplicación automática la rechazó una regla del pedido que no es «no editable» (por ejemplo
+    /// <c>order.order.store_pickup</c>). El cambio sigue <c>Pending</c>, para que una persona lo acepte o lo rechace, y
+    /// <see cref="StatusReason"/> guarda el código de la regla para que la bandeja diga por qué no se aplicó solo.</summary>
+    public void HoldRejected(string ruleCode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ruleCode);
+        EnsureOpen();
+        if (Status != ShopifyOrderEditStatus.Pending)
+        {
+            throw new InvalidOperationException("Only a pending Shopify change keeps the rule that rejected its automatic apply.");
+        }
+
+        StatusReason = Reason(ruleCode);
+        Version++;
+    }
+
     public void Reject(Guid decidedBy, DateTimeOffset now) => Close(ShopifyOrderEditStatus.Rejected, decidedBy, now);
 
     /// <summary>Plan D9: «revisado» cierra un cambio bloqueado que el asesor ya resolvió a mano. Sólo desde <c>Blocked</c>.</summary>

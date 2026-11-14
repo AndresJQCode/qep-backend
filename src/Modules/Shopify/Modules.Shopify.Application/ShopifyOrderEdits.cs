@@ -19,8 +19,9 @@ namespace Modules.Shopify.Application;
 /// <item>Sin grupos (nada cambió o todo es eco): reemplaza el abierto y adopta el snapshot como versión aplicada.</item>
 /// <item>Con grupos: reemplaza el abierto y crea el cambio <c>Blocked</c> (con su motivo) o <c>Pending</c>.</item>
 /// </list>
-/// Con la tienda automática, el pendiente se aplica en el mismo procesamiento pero <b>después</b> del guardado de la ingesta
-/// (<see cref="ApplyPendingAsync"/>). El pedido cambia en Quotations, que confirma por su cuenta (review I-1, N-1, N-2):
+/// Con la tienda automática, el pendiente sin conflictos se aplica en el mismo procesamiento pero <b>después</b> del guardado de la
+/// ingesta (<see cref="ApplyPendingAsync"/>); uno con algún conflicto queda pendiente (review I-2). El pedido cambia en Quotations,
+/// que confirma por su cuenta (review I-1, N-1, N-2):
 /// <list type="bullet">
 /// <item>Si algo falla antes de ese guardado (la reacción de §6.3, la fila del espejo), el pedido no se tocó y el reintento vuelve a
 /// detectar desde el mismo estado.</item>
@@ -29,7 +30,10 @@ namespace Modules.Shopify.Application;
 /// snapshot y, como el cambio los aplicaba, la proyección toma el valor del pedido: el reintento o un nuevo aceptar
 /// (<see cref="ApplyAsync"/>, también cuando el pedido ya no se puede editar: <see cref="OnlySettles"/>), y el rechazo, la revisión
 /// o el reemplazo por un snapshot más nuevo (<see cref="SettleAsync"/>). No se aplica dos veces y la edición siguiente de ese grupo
-/// no es un conflicto falso.</item>
+/// no es un conflicto falso, salvo un límite conocido (review N-4): dos snapshots del mismo pedido que tocan el mismo grupo,
+/// intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
+/// falla), pueden dejar la proyección vieja y un <c>qep_changed</c> falso en la edición siguiente. La salida sería un candado
+/// advisory por fila del espejo alrededor de la detección y la aplicación; no se cerró.</item>
 /// <item>Un eco que el cambio no aplicaba (la corrección del asesor que vuelve de Shopify, Review Focus 5) nunca mueve la
 /// proyección.</item>
 /// </list>
@@ -121,6 +125,14 @@ public sealed class ShopifyOrderEdits(
     /// Con la tienda automática, aplica el cambio pendiente del snapshot vigente de la fila. La ingesta lo llama después de guardar
     /// el cambio, así que el pedido de QEP nunca cambia sin un cambio guardado que lo explique. Vuelve a planear contra el pedido de
     /// ahora: la reacción de §6.3 pudo haberlo movido, o es el reintento de una aplicación cuyo guardado cayó (review I-1).
+    /// <list type="bullet">
+    /// <item>Bloqueado por el plan: queda <c>Blocked</c> con su motivo.</item>
+    /// <item>Con algún grupo <c>Conflict</c> (spec §3, review I-2): no se aplica nada y queda <c>Pending</c>, para que una persona lo
+    /// acepte o lo rechace en «Cambios por revisar». Sólo se aplica solo un cambio cuyos grupos son <c>Apply</c> o
+    /// <c>Informative</c>.</item>
+    /// <item>Rechazado por Quotations: «no editable» lo bloquea; otra regla lo deja <c>Pending</c> con el código de la regla en
+    /// <c>status_reason</c> (review M-2).</item>
+    /// </list>
     /// </summary>
     public async Task<bool> ApplyPendingAsync(ShopifyStore store, ShopifyOrderMirror row, CancellationToken cancellationToken)
     {
@@ -156,12 +168,26 @@ public sealed class ShopifyOrderEdits(
             return true;
         }
 
+        if (plan.Groups.Any(group => group.Outcome == ShopifyEditGroupOutcome.Conflict))
+        {
+            // Spec §3 (review I-2): un conflicto se marca para que se vea en la bandeja. Aplicarlo solo lo cerraría como Applied y
+            // nadie se enteraría de que Shopify cambió algo que el asesor había corregido: queda pendiente, entero, para una persona.
+            return false;
+        }
+
         try
         {
-            if (await ApplyAsync(store, row, edit, plan, projection, incoming, order, null, cancellationToken) is { } rejected
-                && string.Equals(rejected, OrderNotEditableCode, StringComparison.Ordinal))
+            if (await ApplyAsync(store, row, edit, plan, projection, incoming, order, null, cancellationToken) is { } rejected)
             {
-                edit.Block(ShopifyEditReasons.OrderNotEditable, edit.Groups, now);
+                if (string.Equals(rejected, OrderNotEditableCode, StringComparison.Ordinal))
+                {
+                    edit.Block(ShopifyEditReasons.OrderNotEditable, edit.Groups, now);
+                }
+                else
+                {
+                    // Review M-2: otra regla del pedido; sigue pendiente y dice por qué no se aplicó solo.
+                    edit.HoldRejected(rejected);
+                }
             }
         }
         catch (RequestConcurrencyException exception) when (string.Equals(exception.Code, ConcurrencyConflict, StringComparison.Ordinal))

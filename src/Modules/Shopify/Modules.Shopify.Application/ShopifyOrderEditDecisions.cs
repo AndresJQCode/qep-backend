@@ -221,7 +221,9 @@ public sealed class ShopifyChangeDecider(
         // Review N-2: sin nada que escribir pero con lo aplicado ya en el pedido, se termina en vez de bloquear.
         if (plan.BlockReason is { } reason && !ShopifyOrderEdits.OnlySettles(edit, plan))
         {
-            throw await BlockAsync(edit, reason, ShopifyOrderEdits.WriteGroups(plan.Groups), now, cancellationToken);
+            // Review N-6: un plan sin grupos (todo eco) no deja el cambio bloqueado con una lista vacía; conserva lo que mostraba.
+            throw await BlockAsync(
+                edit, reason, plan.IsEmpty ? edit.Groups : ShopifyOrderEdits.WriteGroups(plan.Groups), now, cancellationToken);
         }
 
         // Si un aceptar anterior confirmó en Quotations y su guardado cayó, lo aplicado sale ahora como eco y ApplyAsync lleva la
@@ -233,7 +235,9 @@ public sealed class ShopifyChangeDecider(
                 throw await BlockAsync(edit, ShopifyEditReasons.OrderNotEditable, edit.Groups, now, cancellationToken);
             }
 
-            // Otra regla del pedido (por ejemplo un envío que el dominio no admite): no se aplica y el cambio sigue abierto.
+            // Otra regla del pedido (por ejemplo un envío que el dominio no admite): no se aplica y el cambio sigue abierto. Es un
+            // DomainException, así que ApiExceptionHandler responde 422 con el código de Quotations (review M-2; la lista está en el
+            // contrato de la API del plan).
             throw new ShopifyDomainException(rejected, "The order rejected the Shopify change.");
         }
 

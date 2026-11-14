@@ -182,8 +182,45 @@ public sealed class ShopifyOrderEditDecisionsTests
         var edit = await world.DeliverAsync(Snapshot(note: "B", minutes: 10));
         world.Memberships.Members.Clear();
 
-        await Assert.ThrowsAnyAsync<Exception>(() => world.Decider.RejectAsync(ImporterWorld.TenantId, edit.Id, Ct));
+        var error = await Assert.ThrowsAsync<RequestForbiddenException>(() => world.Decider.RejectAsync(ImporterWorld.TenantId, edit.Id, Ct));
 
+        Assert.Equal(ShopifyAuthorization.DeniedCode, error.Code);
+        Assert.Equal(ShopifyOrderEditStatus.Pending, edit.Status);
+    }
+
+    // Review N-6: el plan de ahora no trae grupos (todo es eco) y el pedido ya no se edita; el bloqueo conserva los grupos que el
+    // cambio mostraba en vez de guardar una lista vacía.
+    [Fact]
+    public async Task AcceptBlockedWithAnEmptyPlanKeepsTheGroupsItShowed()
+    {
+        var world = new DecisionWorld();
+        world.Edit.World.Writer.States[OrderId] = world.Edit.World.Writer.States[OrderId] with { BuyerNotes = "Q" };
+        var edit = await world.DeliverAsync(Snapshot(note: "C", minutes: 10));
+        var groups = edit.Groups;
+        Assert.Equal([("Note", "Conflict", "qep_changed")], Groups(edit));
+        world.Edit.World.Writer.States[OrderId] = world.Edit.World.Writer.States[OrderId] with
+        {
+            BuyerNotes = "C", IsEditable = false, IsPrepared = true,
+        };
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Decider.AcceptAsync(ImporterWorld.TenantId, edit.Id, Ct));
+
+        Assert.Equal("shopify.edit.order_not_editable", error.Code);
+        Assert.Equal((ShopifyOrderEditStatus.Blocked, groups), (edit.Status, edit.Groups));
+    }
+
+    // Review M-2: otra regla del pedido al aceptar es un 422 con el código de Quotations, y el cambio sigue abierto.
+    [Fact]
+    public async Task AcceptRejectedByAnotherOrderRuleIs422WithItsCode()
+    {
+        var world = new DecisionWorld();
+        var edit = await world.DeliverAsync(Snapshot(note: "B", minutes: 10));
+        world.Edit.World.Writer.OnApplyEdit = _ => new ShopifyOrderEditOutcome(null, "order.order.items_required");
+
+        var error = await Assert.ThrowsAsync<ShopifyDomainException>(() => world.Decider.AcceptAsync(ImporterWorld.TenantId, edit.Id, Ct));
+
+        Assert.Equal("order.order.items_required", error.Code);
+        Assert.IsAssignableFrom<BuildingBlocks.Domain.DomainException>(error);
         Assert.Equal(ShopifyOrderEditStatus.Pending, edit.Status);
     }
 }
