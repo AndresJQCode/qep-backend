@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -536,17 +536,6 @@ public sealed class CopyPriceScalesApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(problem);
         return problem;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

@@ -9,7 +9,7 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -402,7 +402,7 @@ public sealed class OptionLibraryApiTests
             },
         };
 
-    private static async Task<int> CountAsync(PostgreSqlContainer database, string sql)
+    private static async Task<int> CountAsync(TestDatabase database, string sql)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -410,17 +410,6 @@ public sealed class OptionLibraryApiTests
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(TestContext.Current.CancellationToken),
             System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

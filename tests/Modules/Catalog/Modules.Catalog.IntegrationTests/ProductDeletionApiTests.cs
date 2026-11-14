@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -255,7 +255,7 @@ public sealed class ProductDeletionApiTests
     /// después del <c>PUT</c> y las dos fotos.
     /// </summary>
     private static async Task<(ProductResponse Product, Guid[] Photos)> CreateFullAsync(
-        HttpClient client, PostgreSqlContainer database)
+        HttpClient client, TestDatabase database)
     {
         var option = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/catalog/options",
@@ -308,7 +308,7 @@ public sealed class ProductDeletionApiTests
     }
 
     private static async Task<long> CountAsync(
-        PostgreSqlContainer database, string table, string filter, Guid productId, Guid[] variantIds)
+        TestDatabase database, string table, string filter, Guid productId, Guid[] variantIds)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -318,7 +318,7 @@ public sealed class ProductDeletionApiTests
         return (long)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
     }
 
-    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(PostgreSqlContainer database, string eventName)
+    private static async Task<IReadOnlyList<string>> ReadEventPayloadsAsync(TestDatabase database, string eventName)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -350,7 +350,7 @@ public sealed class ProductDeletionApiTests
 
     // El estado Available se fuerza por SQL: completar la subida exige R2 y el escáner, que no existen en una prueba
     // (ver ProductImageApiTests.UploadFileAsync).
-    private static async Task<Guid> UploadImageAsync(HttpClient client, PostgreSqlContainer database, string name)
+    private static async Task<Guid> UploadImageAsync(HttpClient client, TestDatabase database, string name)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{TenantId}/files",
@@ -370,17 +370,6 @@ public sealed class ProductDeletionApiTests
         command.Parameters.AddWithValue("id", fileId);
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
         return fileId;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

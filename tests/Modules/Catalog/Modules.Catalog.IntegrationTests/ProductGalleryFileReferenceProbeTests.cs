@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -147,7 +147,7 @@ public sealed class ProductGalleryFileReferenceProbeTests
     // existen en una prueba (ver ProductImageApiTests.UploadFileAsync).
     private static async Task<Guid> UploadImageAsync(
         HttpClient client,
-        PostgreSqlContainer database,
+        TestDatabase database,
         string name)
     {
         var response = await client.PostAsJsonAsync(
@@ -168,17 +168,6 @@ public sealed class ProductGalleryFileReferenceProbeTests
         command.Parameters.AddWithValue("id", fileId);
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
         return fileId;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(QepApiFactory factory)

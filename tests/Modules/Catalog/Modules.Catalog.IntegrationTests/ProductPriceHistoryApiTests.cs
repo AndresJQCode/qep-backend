@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -277,7 +277,7 @@ public sealed class ProductPriceHistoryApiTests
     // Leído por SQL y no por un endpoint: no hay ninguno todavía —el reporte es otro trabajo— y
     // la pregunta acá es justamente si la fila está en la tabla.
     private static async Task<IReadOnlyList<HistoryRow>> ReadHistoryAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid productId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -325,17 +325,6 @@ public sealed class ProductPriceHistoryApiTests
         DateTimeOffset ChangedAt,
         string? Currency,
         Guid VariantId);
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
-    }
 
     private static HttpClient CreateClient(
         QepApiFactory factory,

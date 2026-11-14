@@ -11,7 +11,7 @@ using Modules.Catalog.Domain;
 using Modules.Companies.Application;
 using Modules.Companies.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -834,17 +834,6 @@ public sealed class TaxRateApiTests
         }
 
         return payloads;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     // El stub de desarrollo concede sólo los defaults de tenancy cuando X-Permissions no está,

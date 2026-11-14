@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Modules.Catalog.Application;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -145,17 +145,6 @@ public sealed class TaxUnitOperatorApiTests
         Assert.True(response.StatusCode == status, $"{(int)response.StatusCode}: {body}");
         using var json = JsonDocument.Parse(body);
         Assert.Equal(code, json.RootElement.GetProperty("code").GetString());
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(QepApiFactory factory, Guid tenantId, params string[] permissions)

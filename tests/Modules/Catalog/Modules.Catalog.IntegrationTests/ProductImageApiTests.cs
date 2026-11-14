@@ -7,7 +7,7 @@ using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -383,7 +383,7 @@ public sealed class ProductImageApiTests
     /// publicación copia el objeto en R2, que en una prueba no existe. Lo que hace falta acá es la
     /// **consecuencia** de publicar —que haya `public_storage_key`—, no el viaje a R2.
     /// </summary>
-    private static async Task PublishAsync(PostgreSqlContainer database, Guid fileId)
+    private static async Task PublishAsync(TestDatabase database, Guid fileId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -441,7 +441,7 @@ public sealed class ProductImageApiTests
     private static async Task<Guid> UploadFileAsync(
         HttpClient client,
         string tenantId,
-        PostgreSqlContainer database,
+        TestDatabase database,
         string name,
         string mimeType)
     {
@@ -460,7 +460,7 @@ public sealed class ProductImageApiTests
     private static Task<Guid> UploadImageAsync(
         HttpClient client,
         string tenantId,
-        PostgreSqlContainer database,
+        TestDatabase database,
         string name) =>
         UploadFileAsync(client, tenantId, database, name, "image/png");
 
@@ -499,17 +499,6 @@ public sealed class ProductImageApiTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(body);
         return body.Items;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Modules.Catalog.Application;
 using Modules.Storage.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -472,7 +472,7 @@ public sealed class ProductVariantsApiTests
     }
 
     private static async Task<long> CountHistoryAsync(
-        PostgreSqlContainer database, Guid productId, Guid? variantId = null)
+        TestDatabase database, Guid productId, Guid? variantId = null)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -493,7 +493,7 @@ public sealed class ProductVariantsApiTests
     // Mismo atajo que ProductImageApiTests: la sesión de carga por la API y el estado Available por
     // SQL, porque el binario va contra R2, que en pruebas no existe.
     private static async Task<Guid> UploadImageAsync(
-        HttpClient client, string tenantId, PostgreSqlContainer database, string name)
+        HttpClient client, string tenantId, TestDatabase database, string name)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
@@ -512,7 +512,7 @@ public sealed class ProductVariantsApiTests
         return fileId;
     }
 
-    private static async Task PublishAsync(PostgreSqlContainer database, Guid fileId)
+    private static async Task PublishAsync(TestDatabase database, Guid fileId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -522,17 +522,6 @@ public sealed class ProductVariantsApiTests
         command.Parameters.AddWithValue("id", fileId);
         command.Parameters.AddWithValue("key", $"public/{fileId}.png");
         Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

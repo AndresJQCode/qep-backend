@@ -8,7 +8,7 @@ using Modules.Catalog.Application;
 using Modules.Catalog.Domain;
 using Modules.Catalog.Infrastructure.Persistence;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -329,7 +329,7 @@ public sealed class TaxRateDeletionApiTests
     }
 
     private static async Task<int> CountTaxRateAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid taxRateId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -343,7 +343,7 @@ public sealed class TaxRateDeletionApiTests
     }
 
     private static async Task InsertProductWithTaxRateAsync(
-        PostgreSqlContainer database,
+        TestDatabase database,
         Guid taxRateId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
@@ -388,17 +388,6 @@ public sealed class TaxRateDeletionApiTests
         }
 
         return payloads;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(

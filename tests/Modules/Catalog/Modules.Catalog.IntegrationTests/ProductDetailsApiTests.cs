@@ -9,7 +9,7 @@ using Modules.Catalog.Domain;
 using Modules.Storage.Application;
 using Modules.Storage.Domain;
 using Npgsql;
-using Testcontainers.PostgreSql;
+using static Modules.Catalog.IntegrationTests.CatalogTestDatabase;
 
 namespace Modules.Catalog.IntegrationTests;
 
@@ -50,7 +50,7 @@ public sealed class ProductDetailsApiTests
     private static async Task<Guid> UploadImageAsync(
         HttpClient client,
         string tenantId,
-        PostgreSqlContainer database)
+        TestDatabase database)
     {
         var response = await client.PostAsJsonAsync(
             $"/api/v1/tenants/{tenantId}/files",
@@ -655,17 +655,6 @@ public sealed class ProductDetailsApiTests
         }
 
         return payloads;
-    }
-
-    private static async Task<PostgreSqlContainer> StartDatabaseAsync()
-    {
-        var database = new PostgreSqlBuilder("postgres:18-alpine")
-            .WithDatabase("qep")
-            .WithUsername("qep")
-            .WithPassword("qep-integration")
-            .Build();
-        await database.StartAsync(TestContext.Current.CancellationToken);
-        return database;
     }
 
     private static HttpClient CreateClient(
