@@ -50,4 +50,32 @@ public sealed class TaxCountriesTests
     [Fact]
     public void TypeOfAnotherCountryIsNull() =>
         Assert.Null(TaxCountries.FindType("ES", "IVA"));
+
+    // Spec ReteICA por empresa §7.1: el alcance territorial decide las reglas, nunca el nombre del tipo.
+    [Fact]
+    public void ColombiaScopes()
+    {
+        Assert.Equal(TaxScope.National, TaxCountries.FindType("CO", "IVA")!.Scope);
+        Assert.Equal(TaxScope.National, TaxCountries.FindType("CO", "Retefuente")!.Scope);
+        Assert.Equal(TaxScope.Municipal, TaxCountries.FindType("CO", "ReteICA")!.Scope);
+    }
+
+    [Fact]
+    public void MunicipalTypesOfColombiaIsReteIca() =>
+        Assert.Equal(["ReteICA"], TaxCountries.MunicipalTypes(" co ").Select(t => t.Type));
+
+    [Fact]
+    public void MunicipalTypesOfUnknownCountryIsEmpty()
+    {
+        Assert.Empty(TaxCountries.MunicipalTypes("ES"));
+        Assert.Empty(TaxCountries.MunicipalTypes(null));
+    }
+
+    [Fact]
+    public void IsMunicipal()
+    {
+        Assert.True(TaxCountries.IsMunicipal("CO", "ReteICA"));
+        Assert.False(TaxCountries.IsMunicipal("CO", "Retefuente"));
+        Assert.False(TaxCountries.IsMunicipal("ES", "ReteICA"));
+    }
 }
