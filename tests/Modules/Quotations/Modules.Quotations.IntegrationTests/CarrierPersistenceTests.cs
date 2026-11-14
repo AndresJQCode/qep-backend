@@ -18,7 +18,7 @@ public sealed class CarrierPersistenceTests
     [Fact]
     public async Task EditingACarrierKeepingItsNameAndChangingOneAliasRoundTrips()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using (var setup = NewContext(connectionString))
         {
@@ -53,7 +53,7 @@ public sealed class CarrierPersistenceTests
     [Fact]
     public async Task ACollidingNameInTheSameTenantIsCarrierNameTaken()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await using (var setup = NewContext(connectionString))
         {

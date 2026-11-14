@@ -9,7 +9,6 @@ using Modules.Quotations.Application;
 using Modules.Quotations.Domain;
 using Modules.Tenancy.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Quotations.IntegrationTests.QuotationsApiHarness;
 
 namespace Modules.Quotations.IntegrationTests;
@@ -541,7 +540,7 @@ public sealed class ExternalOrderServiceTests
             party.Name, null, party.Phone, party.Email, party.Address, party.DepartmentId, party.CityId));
 
     private static async Task<(string? Phone, Guid? CityId, string? Notes)> ReadShippingAsync(
-        PostgreSqlContainer database, Guid orderId)
+        TestDatabase database, Guid orderId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
@@ -820,7 +819,7 @@ public sealed class ExternalOrderServiceTests
             .FindShippingStateAsync(tenantId, orderId, TestContext.Current.CancellationToken);
     }
 
-    private static async Task ExecuteOnOrderAsync(PostgreSqlContainer database, string sql, Guid orderId)
+    private static async Task ExecuteOnOrderAsync(TestDatabase database, string sql, Guid orderId)
     {
         await using var connection = new NpgsqlConnection(database.GetConnectionString());
         await connection.OpenAsync(TestContext.Current.CancellationToken);
