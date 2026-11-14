@@ -13,7 +13,8 @@ namespace Modules.Shopify.Application;
 /// <c>shopify.store.sync_in_progress</c> sin tocar nada.</item>
 /// <item>Trae, página por página, los pedidos con <c>updated_at ≥ last_reconciled_at − </c><see cref="Overlap"/> y pasa cada uno por
 /// <see cref="ShopifyOrderIngestion.ApplyAsync"/>, el mismo camino del webhook: espejo, reacción de §6.3 con el estado anterior y
-/// el bucle de <c>concurrency.conflict</c> contra el worker de entregas.</item>
+/// el bucle de <c>concurrency.conflict</c> contra el worker de entregas. «Sincronizar ahora» con días de historial extiende esa
+/// ventana hasta antes del enlace (<see cref="ComputeSince"/>, spec 2026-10-21).</item>
 /// <item>Reintenta los <c>Waiting</c> de la tienda, los más viejos primero, hasta <see cref="WaitingRetryLimit"/>, por el mismo camino
 /// (con el snapshot que guardó el espejo), salvo los que la corrida acaba de traer.</item>
 /// <item>Sólo si nada falló mueve <c>last_reconciled_at</c> al instante en que <b>empezó</b> la corrida.</item>
@@ -64,7 +65,26 @@ public sealed partial class ReconcileStore(
     [LoggerMessage(Level = LogLevel.Warning, Message = "Shopify order {OrderId} of store {ConnectionId} (tenant {TenantId}) skipped by the reconciliation: {Reason}")]
     private static partial void LogSkipped(ILogger logger, string orderId, Guid connectionId, Guid tenantId, string reason);
 
-    public async Task<ShopifySyncResult> RunAsync(ShopifyConnectionRef connection, CancellationToken cancellationToken)
+    /// <summary>
+    /// Spec 2026-10-21: desde dónde trae la corrida. La ventana normal es <c>(last_reconciled_at ?? startedAt) − </c><see cref="Overlap"/>.
+    /// Sólo en <see cref="ShopifyReconcileMode.Manual"/>, con <paramref name="historyDays"/> y con la fecha del enlace, se extiende
+    /// hasta <c>linkedAt − historyDays</c>; nunca se acorta (gana la más vieja). Sin <paramref name="linkedAt"/> no se inventa una
+    /// fecha: se usa la normal.
+    /// </summary>
+    public static DateTimeOffset ComputeSince(
+        DateTimeOffset? lastReconciledAt, DateTimeOffset startedAt, DateTimeOffset? linkedAt, int? historyDays, ShopifyReconcileMode mode)
+    {
+        var normal = (lastReconciledAt ?? startedAt) - Overlap;
+        if (mode != ShopifyReconcileMode.Manual || historyDays is not { } days || linkedAt is not { } linked)
+        {
+            return normal;
+        }
+
+        var history = linked.AddDays(-days);
+        return history < normal ? history : normal;
+    }
+
+    public async Task<ShopifySyncResult> RunAsync(ShopifyConnectionRef connection, ShopifyReconcileMode mode, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(connection);
         if (!connection.IsOperational)
@@ -89,7 +109,7 @@ public sealed partial class ReconcileStore(
         try
         {
             var run = new Run();
-            var since = (store.LastReconciledAt ?? startedAt) - Overlap;
+            var since = ComputeSince(store.LastReconciledAt, startedAt, connection.LinkedAt, store.HistoryDays, mode);
             string? cursor = null;
             var reread = false;
             do
@@ -354,6 +374,14 @@ public sealed partial class ReconcileStore(
 
         private int Count(ShopifyImportState state) => States.Values.Count(value => value == state);
     }
+}
+
+/// <summary>Spec 2026-10-21: quién pide la conciliación. Sólo <see cref="Manual"/> («Sincronizar ahora») usa los días de historial
+/// de la tienda; <see cref="Scheduled"/> (el cron) sigue con la ventana normal para no releer 30 días en cada ciclo.</summary>
+public enum ShopifyReconcileMode
+{
+    Scheduled,
+    Manual,
 }
 
 /// <summary>
