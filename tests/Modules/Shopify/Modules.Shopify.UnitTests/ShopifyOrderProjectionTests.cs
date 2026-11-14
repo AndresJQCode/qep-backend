@@ -43,6 +43,25 @@ public sealed class ShopifyOrderProjectionTests
         Assert.True(ShopifyOrderProjection.SameParty(null, null));
     }
 
+    // Review I-3: Shopify puede guardar el teléfono en E.164 aunque QEP lo haya mandado nacional. El eco tiene que salir igual.
+    [Theory]
+    [InlineData("3001112233", "+573001112233", true)]
+    [InlineData("+57 300 111 2233", "300 111 2233", true)]
+    [InlineData("6044445566", "+57 604 444 5566", true)]
+    [InlineData("3001112233", "3001112234", false)]
+    [InlineData("3001112233", "+13001112233000", false)]
+    [InlineData("1112233", "+5730011112233", false)]
+    [InlineData("2233", "+573001112233", false)]
+    [InlineData("", "+573001112233", false)]
+    [InlineData(null, null, true)]
+    public void SamePartyComparesPhonesIgnoringTheCountryCode(string? a, string? b, bool expected)
+    {
+        var party = new ShopifyShippingFingerprint("Laura Gómez", a, "a@x.co", "Cra 5 # 10-20", Department, City);
+
+        Assert.Equal(expected, ShopifyOrderProjection.SameParty(party, party with { Phone = b }));
+        Assert.Equal(expected, ShopifyOrderProjection.SameParty(party with { Phone = b }, party));
+    }
+
     [Fact]
     public void WriteAndReadRoundTrip()
     {

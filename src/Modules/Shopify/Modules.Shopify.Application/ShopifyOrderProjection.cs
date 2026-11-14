@@ -24,6 +24,11 @@ public sealed record ShopifyOrderProjection(
     ShopifyBuyerDocument? Document,
     IReadOnlyDictionary<string, string> Attributes)
 {
+    // Un número nacional tiene al menos 7 dígitos en la práctica (Colombia: 10, celular y fijo con 60x).
+    private const int MinNationalDigits = 7;
+
+    private const int MaxCountryCodeDigits = 3;
+
     // camelCase, como el payload del espejo (ShopifyOrderIngestion.WritePayload): el SQL lo lee igual. Las tildes van tal cual (como
     // los detalles del importador), no como í.
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -80,7 +85,8 @@ public sealed record ShopifyOrderProjection(
         return true;
     }
 
-    /// <summary>La misma parte de envío: textos recortados, el teléfono sólo por sus dígitos y la misma ciudad y departamento. El
+    /// <summary>La misma parte de envío: textos recortados, el teléfono sólo por sus dígitos y sin el indicativo de país
+    /// (<see cref="SamePhone"/>) y la misma ciudad y departamento. El
     /// correo no cuenta: Shopify no lo trae en la dirección (sale del comprador) y no se corrige desde ahí.</summary>
     public static bool SameParty(ShopifyShippingFingerprint? a, ShopifyShippingFingerprint? b)
     {
@@ -90,10 +96,31 @@ public sealed record ShopifyOrderProjection(
         }
 
         return string.Equals(Text(a.Name), Text(b.Name), StringComparison.Ordinal)
-            && string.Equals(Digits(a.Phone), Digits(b.Phone), StringComparison.Ordinal)
+            && SamePhone(a.Phone, b.Phone)
             && string.Equals(Text(a.Address), Text(b.Address), StringComparison.Ordinal)
             && a.DepartmentId == b.DepartmentId
             && a.CityId == b.CityId;
+    }
+
+    /// <summary>
+    /// Review I-3: el mismo teléfono con o sin indicativo de país. Shopify puede guardar en E.164 (<c>+573001112233</c>) lo que QEP
+    /// mandó nacional (<c>3001112233</c>), y el eco de una corrección no puede salir como conflicto. Se comparan sólo los dígitos; si
+    /// difieren, el más corto tiene que ser el final del más largo, con al menos <see cref="MinNationalDigits"/> dígitos, y lo que
+    /// sobra adelante, de 1 a <see cref="MaxCountryCodeDigits"/> dígitos (un indicativo E.164 tiene de 1 a 3). El mínimo evita que un
+    /// fragmento («2233») case con cualquier número; el tope, que un número corto case con el final de otro más largo.
+    /// </summary>
+    public static bool SamePhone(string? a, string? b)
+    {
+        var (x, y) = (Digits(a), Digits(b));
+        if (string.Equals(x, y, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var (shorter, longer) = x.Length <= y.Length ? (x, y) : (y, x);
+        return shorter.Length >= MinNationalDigits
+            && longer.Length - shorter.Length <= MaxCountryCodeDigits
+            && longer.EndsWith(shorter, StringComparison.Ordinal);
     }
 
     // decimal.Equals compara por valor, así que la tupla ya ignora la escala.
