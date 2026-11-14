@@ -221,6 +221,8 @@ owner para la primera versión) o **formulario fijo con parámetros** [owner]. V
 | --- | --- |
 | D1 | PQRSF y soporte técnico en **un solo módulo**. |
 | D2 | Términos por defecto **15 / 10 / 30 días hábiles**, reutilizando el horario de atención (`business_hours`) de Mensajería para saber qué días son hábiles. |
+| D2b | (2026-11-14) Festivos y excepciones de fecha del **horario predeterminado** del tenant; país de los festivos: el del horario, y si no tiene o no hay horario, `Tenant.Country`. Soporte y la bandeja nunca muestran un calendario distinto (§7.2). |
+| D2c | (2026-11-14) El umbral de **«por vencer»** es configurable por tenant, **3 días hábiles** si el tenant no lo ha fijado. Lo edita quien tiene `support.settings.manage` y lo leen quienes ven los tickets (§7.2). |
 | D3 | La **respuesta de fondo** se envía como PDF; su contenido es el de §8.3. |
 | D4 | Un ticket **bloquea el borrado del cliente** («lo bloquea»). Cualquier ticket, abierto o cerrado, como cotizaciones y pedidos; la fusión mueve los tickets al cliente que queda. |
 | D5 | Satisfacción por **plantilla aprobada o según el canal** (§8.4). |
@@ -242,7 +244,7 @@ hilo (canal)» por ticket. El owner también decidió servir `soporte.lulocrm.co
 Vercel, como un dominio más.
 
 **[coordinador]** marca las decisiones del coordinador de la sesión, revisables por el owner: el
-reloj de §7.2, los festivos por país, la encuesta y el cierre automático de §8.4, las plantillas de
+reloj de §7.2, la encuesta y el cierre automático de §8.4, las plantillas de
 §8.5, la respuesta formal por tipo de ticket de §8.3, la política CORS aparte de §10 y los detalles
 de la búsqueda del cliente de §9.3. La visibilidad de todos los tickets es del owner.
 
@@ -287,9 +289,17 @@ Seis estados: `nuevo`, `abierto` (se muestra «En gestión»), `espera_cliente`,
 
 - Cada ticket tiene un vencimiento calculado en **días hábiles** a partir del término de su
   tipo, fotografiado al radicar (§4, §7.5 y D2). Un día es hábil si el horario predeterminado del tenant atiende ese día
-  de la semana y no es festivo. Sin horario configurado se usan lunes a viernes. [diseñador]
-- **Festivos por país** [coordinador]: con `Tenant.Country = CO` se usa `ColombianHolidays`; con
-  otro país, lunes a viernes sin festivos, hasta que exista un calendario de ese país.
+  de la semana, no es festivo y ninguna excepción de fecha lo cierra. Sin horario configurado se usan lunes a viernes.
+  [diseñador]
+- **Mismo calendario que la bandeja** [owner, 2026-11-14, D2b]: Soporte toma los festivos **y** las excepciones de fecha
+  del horario predeterminado del tenant (`BusinessHoursSchedule`: `HolidayCountry` y `Exceptions`). Soporte y la bandeja
+  nunca muestran un calendario distinto para el mismo tenant.
+  - **País de los festivos:** el `HolidayCountry` del horario; si el horario no tiene, o no hay horario, `Tenant.Country`.
+    Con `CO` se usa `ColombianHolidays`; con otro país no hay festivos, hasta que exista un calendario de ese país.
+  - **Excepciones de fecha:** salen del horario predeterminado y mandan sobre el día de la semana y sobre el festivo, en el
+    mismo orden que la bandeja (`BusinessHoursSchedule.RangesFor`): una excepción sin franjas cierra el día; una con franjas
+    lo abre.
+  - **Sin horario:** lunes a viernes más los festivos de `Tenant.Country`.
 - **Inicio y fin** [coordinador]: el plazo cuenta desde el **día hábil siguiente** a la radicación
   (Ley 1755 art. 14, «siguientes a su recepción») y vence al **final del día hábil**, en la zona
   horaria del tenant (`Tenant.TimeZone`).
@@ -300,6 +310,10 @@ Seis estados: `nuevo`, `abierto` (se muestra «En gestión»), `espera_cliente`,
 - **Cambio de tipo**: recalcula el vencimiento con el término del tipo nuevo [owner], contado
   **desde la radicación**, más las pausas acumuladas [coordinador]. Editar un tipo no mueve los
   vencimientos ya calculados (§7.5) [owner].
+- **«Por vencer»** [owner, 2026-11-14, D2c]: un ticket cuyo reloj corre está «por vencer» cuando le quedan tantos días
+  hábiles o menos como el umbral del tenant, y «vencido» cuando pasó el final del día hábil del vencimiento. El umbral es
+  configurable en los ajustes de Soporte y vale **3 días hábiles** si el tenant no lo ha fijado. El plan fija el rango (de 0
+  a 30, con 0 para apagar «por vencer»). La bandeja, su resumen y el estado del plazo de cada ticket leen el valor del tenant.
 - **Prórroga** [coordinador]: única, con motivo obligatorio y aviso al solicitante antes de que
   venza el plazo; el nuevo plazo **no excede el doble del término inicial**. Es una interpretación
   a validar con el abogado, así que el tope es configurable. Queda en la traza.
@@ -698,7 +712,7 @@ Store (sólo una URL).
   | --- | --- |
   | `support.ticket.read` | Ver todos los tickets del tenant. |
   | `support.ticket.manage` | Crear, responder, cambiar estado, asignar y prorrogar. |
-  | `support.settings.manage` | Formulario, textos legales, tipos de ticket, términos y encuesta. |
+  | `support.settings.manage` | Formulario, textos legales, tipos de ticket, términos, umbral de «por vencer» [owner] y encuesta. |
 
   Roles de sistema: admin los tres; asesor `read` y `manage`. **Visibilidad** [owner]: todo miembro
   cuyo rol tenga `support.ticket.read` o `support.ticket.manage` ve **todos** los tickets del tenant.
