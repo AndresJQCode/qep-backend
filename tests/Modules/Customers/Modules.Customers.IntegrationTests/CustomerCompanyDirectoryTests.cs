@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Modules.Customers.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -52,7 +51,7 @@ public sealed class CustomerCompanyDirectoryTests
     }
 
     // La fábrica arranca el host, que migra la base; la ciudad no se usa, sólo fuerza el arranque y la semilla del tenant.
-    private static async Task<(QepApiFactory Factory, string ConnectionString)> StartAsync(PostgreSqlContainer database)
+    private static async Task<(QepApiFactory Factory, string ConnectionString)> StartAsync(TestDatabase database)
     {
         var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateManager(factory);

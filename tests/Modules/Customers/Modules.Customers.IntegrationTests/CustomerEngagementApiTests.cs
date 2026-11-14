@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Modules.Customers.Application;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
@@ -16,10 +15,10 @@ public sealed class CustomerEngagementApiTests
 
     private sealed class Fixture : IAsyncDisposable
     {
-        private readonly PostgreSqlContainer _database;
+        private readonly TestDatabase _database;
         private readonly QepApiFactory _factory;
 
-        private Fixture(PostgreSqlContainer database, QepApiFactory factory, Guid customerId, string connectionString)
+        private Fixture(TestDatabase database, QepApiFactory factory, Guid customerId, string connectionString)
         {
             _database = database;
             _factory = factory;

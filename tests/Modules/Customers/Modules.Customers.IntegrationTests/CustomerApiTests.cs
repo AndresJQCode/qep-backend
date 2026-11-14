@@ -5,7 +5,7 @@ using static Modules.Customers.IntegrationTests.CustomersApiHarness;
 
 namespace Modules.Customers.IntegrationTests;
 
-public sealed class CustomerApiTests
+public sealed class CustomerApiTests(SharedCustomersHost sharedHost) : IClassFixture<SharedCustomersHost>
 {
     [Fact]
     public async Task ListReturnsTheEnvelopeWithItemsAndTotal()
@@ -466,8 +466,7 @@ public sealed class CustomerApiTests
     [Fact]
     public async Task ListWithoutTheReadPermissionIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClient(factory, SubjectId, TenantId);
 
         var response = await client.GetAsync(
@@ -480,8 +479,7 @@ public sealed class CustomerApiTests
     [Fact]
     public async Task ListForAnotherTenantIsForbidden()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateClient(
             factory, SubjectId, TenantId, CustomersPermissions.CustomerRead);
 
@@ -541,8 +539,7 @@ public sealed class CustomerApiTests
     [Fact]
     public async Task GetAnUnknownCustomerIsNotFoundWithItsDomainCode()
     {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
+        var factory = sharedHost.Factory;
         using var client = CreateManager(factory);
 
         var response = await client.GetAsync(

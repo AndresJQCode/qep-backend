@@ -43,7 +43,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task OldCustomersBecomeCompleteAndTheChecksHoldTheLine()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -76,7 +76,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task AnOldBinaryInsertWithoutCompletenessStillLandsComplete()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -92,7 +92,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task RevertingDeletesTheIncompleteCustomersFirst()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -112,7 +112,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task ACompleteCustomerWithoutAddressFitsAndRevertingFillsTheColumn()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -140,7 +140,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task ACompleteCustomerWithoutIdentificationIsAccepted()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -157,7 +157,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task HalfAnIdentificationIsRejectedByThePairCheck()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
@@ -174,7 +174,7 @@ public sealed class CustomerCompletenessMigrationTests
     [Fact]
     public async Task TwoCustomersWithoutIdentificationCoexistInATenant()
     {
-        await using var database = await StartDatabaseAsync();
+        await using var database = await StartEmptyDatabaseAsync();
         var connectionString = database.GetConnectionString();
         await MigrateGeographyToLatestAsync(connectionString);
         await using var context = NewCustomersContext(connectionString);
