@@ -487,6 +487,37 @@ Lo que hay que saber **antes** de escribir, y no se ve leyendo un módulo ya hec
   conciliación, «Sincronizar ahora» y el reintento manual llaman al mismo método, que captura el estado anterior antes de
   `ApplySnapshot` y corre la reacción de pago y cancelación (§6.3) antes del guardado (2026-10-18, `82c4b2d9..f9b98fd1`, `WorkerFailedReactionIsSeenAgainOnRetry`). Llamar al importador o
   a `ApplySnapshot` directo compila y pasa las pruebas del importador, y pierde en silencio el pago o la cancelación.
+  Desde el spec 2026-11-14 también detecta las ediciones: `IShopifyOrderEditDetector.DetectAsync` corre ahí, después del espejo
+  y antes de la reacción, y sólo crea el cambio (no escribe en Quotations); `ApplyPendingAsync` aplica el pendiente de una tienda
+  `Automatic` **después** del guardado y atrapa el `concurrency.conflict` de Quotations (el cambio queda `Pending`). Un camino
+  nuevo que dispare ediciones fuera de la ingesta rompe la regla del único camino y deja cambios sin espejo que los explique.
+- **La corrección del asesor no mueve `applied_projection`; la corrección de ciudad del sistema sí** (plan D3, spec
+  2026-11-14 §5). La proyección es lo que QEP escribió desde Shopify: si la corrección del asesor la moviera, la siguiente edición
+  de Shopify sobre ese grupo dejaría de ser conflicto y pisaría lo del asesor, también después del eco. Lo amarran
+  `ACorrectionDoesNotMoveTheProjection`, `AfterAnEchoALaterShopifyEditOfThatGroupIsStillAConflict` y
+  `TheEchoOfAPushedCorrectionCreatesNoChange`; el trabajo de sinónimos la mueve (`AnAppliedOrderCorrectionMovesTheProjectionAndEnqueuesAPush`).
+  Una fila sin `applied_projection` (importada antes) toma la del pedido actual (D6, `AnOrderImportedBeforeTheSyncTakesAShopifyNoteEditWithoutConflict`).
+  Y un eco que el cambio no aplicaba nunca mueve la proyección: sólo `SettleAsync`/`ApplyAsync` la mueven para los grupos que el
+  propio cambio aplicaba.
+- **`orderUpdate` reemplaza la dirección entera, y un envío sólo manda los grupos que se encolaron** (spec 2026-11-14, plan D12).
+  `company` (donde muchas tiendas guardan el documento) y `countryCode` salen del **último** snapshot; sin ellos, corregir la
+  ciudad borra la «Empresa» en Shopify. Mandar un grupo no encolado pisa la nota de Shopify con el `BuyerNotes` vacío de un pedido
+  importado antes (sin backfill). Lo amarran `PushKeepsCompanyAndCountryFromTheLatestSnapshot` y
+  `APushOnlySendsTheGroupsItWasEnqueuedFor`. Del `userError` de Shopify sólo se loguean los campos: el mensaje puede traer datos
+  del comprador (`ThePushNeverLogsTheTokenOrTheUserErrorMessage`).
+- **`current_quantity` ausente es `quantity`, y el descuento va sobre la cantidad original** (plan D2). Leer sólo la vigente deja
+  en 0 toda línea de un payload que no la trae (las fixtures no la traen); calcular el porcentaje sobre la vigente cambia el precio
+  neto de una línea a la que le quitaron unidades (`discount_allocations` reparte el descuento de la original).
+- **El `PUT …/shopify/orders/{id}/corrections` enrola el `QuotationsDbContext` del request en la transacción de Shopify**
+  (`ShopifyOrderCorrectionWriter`, como `CatalogProductDeletionCleanup`): el pedido, `qep_attributes` y el envío encolado
+  quedan juntos o no quedan (`AShopifyFailureAfterTheOrderWriteRollsBackBoth`). Después del commit ese contexto apunta a una
+  transacción terminada: nada en el scope vuelve a usarlo (el handler relee el pedido por `IShopifyOrderWriter`, que abre su
+  scope). Un camino nuevo que corrija un pedido de Shopify y encole su envío pasa por ahí, nunca por `IShopifyOrderWriter`.
+- **Límite conocido de la detección de ediciones** (spec 2026-11-14): dos snapshots del mismo pedido que tocan el mismo grupo,
+  intercalados por milisegundos (B reemplaza a A antes de que la escritura de A en Quotations confirme, y el segundo guardado de A
+  falla), pueden dejar la proyección vieja y un `qep_changed` falso en la edición siguiente. No se cerró; la alternativa es un
+  candado advisory por fila del espejo alrededor de la detección y la aplicación. No lo «arregles» moviendo la proyección con
+  la corrección del asesor.
 - **`ShopifyLayerTests` prohíbe que el módulo Shopify referencie módulos de negocio:** Application sólo ve Tenancy y Audit.
   La conexión (Integrations), el pedido (Quotations), el cliente (Customers), el producto (Catalog) y la ciudad
   (Geography) entran por los puertos de `ShopifyPorts.cs`, con adaptador en `src/Bootstrapper/Shopify*.cs`. El costo son

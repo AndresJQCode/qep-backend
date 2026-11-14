@@ -1,6 +1,8 @@
 # Shopify: sincronizar ediciones del pedido en los dos sentidos
 
-Fecha: 2026-11-14. Estado: **aprobado por el owner** (2026-11-14), sin implementar. Extiende
+Fecha: 2026-11-14. Estado: **aprobado por el owner** (2026-11-14); backend implementado en
+`feature/shopify-sincronizar-ediciones` (plan `2026-11-14-shopify-sincronizar-ediciones-backend.md`); V-11, V-12 y V-13
+pendientes. Extiende
 [2026-10-15-integracion-shopify-pedidos-design.md](2026-10-15-integracion-shopify-pedidos-design.md), que dejó fuera
 (§6.3 y §14) las ediciones de líneas, envío, dirección y cliente después de importar.
 
@@ -233,6 +235,16 @@ Aceptar, rechazar y revisar: `quotations.order.manage` (como «Sincronizar ahora
 | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada; que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo |
 | V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes` | Corregir una ciudad en QEP y verla en Shopify |
 | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` |
+
+## Decisiones de la implementación
+
+Lo que este spec deja abierto y lo que el código obligó está en la tabla D1–D22 del plan
+(`docs/superpowers/plans/2026-11-14-shopify-sincronizar-ediciones-backend.md`, «Decisiones del plan»). Las que cambian lo que se
+lee acá: la tabla es `shopify.order_edits` y no `order_changes` (D1); la corrección del asesor no mueve la proyección y la del
+sistema sí (D3); «revisado» adopta el snapshot como el rechazo (D9); la parte de envío sólo se corrige en Colombia (D21). La
+frecuencia del worker y la política de espera del envío son las de D14. El README (§ Integración con Shopify, «Ediciones del
+pedido») documenta además un límite conocido: dos snapshots del mismo grupo intercalados por milisegundos pueden dejar un
+`qep_changed` falso.
 
 ## Lo que queda al implementador
 
