@@ -883,6 +883,36 @@ public sealed class CompositionRootTests
     }
 
     /// <summary>
+    /// Plan 2026-11-12, 5.2 y C-14: el contenedor arma un adaptador del modelo para cada proveedor, y el cliente HTTP de Claude no tiene
+    /// los loggers de <see cref="HttpClient"/> (escribirían el header con la clave del tenant) ni sigue redirecciones.
+    /// </summary>
+    [Fact]
+    public void EveryAiProviderHasAModelClientAndTheClaudeHttpClientHasNoLoggers()
+    {
+        var services = BuildPlatformServices();
+        services.AddLogging();
+        services.AddSingleton<IHostEnvironment>(new TestHostEnvironment());
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var resolver = scope.ServiceProvider.GetRequiredService<IAiModelClientResolver>();
+        foreach (var aiProvider in Modules.Ai.Domain.AiProviders.All)
+        {
+            Assert.NotNull(resolver.For(aiProvider));
+        }
+
+        HttpMessageHandler handler = provider.GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(Modules.Ai.Infrastructure.Model.Anthropic.ClaudeModelClient.HttpClientName);
+        while (handler is DelegatingHandler delegating)
+        {
+            Assert.DoesNotContain("Logging", delegating.GetType().Name, StringComparison.Ordinal);
+            handler = delegating.InnerHandler!;
+        }
+
+        Assert.False(Assert.IsType<SocketsHttpHandler>(handler).AllowAutoRedirect);
+    }
+
+    /// <summary>
     /// Spec 2026-10-25 D-E5: <c>RunUnitWriter</c> es un parámetro opcional de <c>RunProcessor</c>, así que sin su registro el contenedor
     /// arma el procesador igual, sin registro de unidades, y ninguna corrida deja su fila en <c>run_units</c> sin error en ningún lado.
     /// </summary>

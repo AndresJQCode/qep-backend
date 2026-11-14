@@ -23,6 +23,10 @@ public sealed class AiModelClientResolverTests
         {
             Assert.NotNull(resolver.For(aiProvider));
         }
+
+        Assert.IsType<Infrastructure.Model.Anthropic.ClaudeModelClient>(resolver.For(AiProviders.Anthropic));
+        // Hasta la Tarea 6 OpenAI tiene un doble que nunca llama a nadie.
+        Assert.IsNotType<Infrastructure.Model.Anthropic.ClaudeModelClient>(resolver.For(AiProviders.OpenAi));
     }
 
     [Fact]

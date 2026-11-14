@@ -172,6 +172,11 @@ public sealed class AiInvalidResponseException(string reason, string? requestId 
     public string Reason { get; } = reason;
 }
 
+/// <summary>Los topes de un trabajo (D-A20) y del contexto (§6.3), de <c>Ai:Model</c>. Son propuesta (P-2).</summary>
+/// <param name="MaxContextTokens"><c>null</c>: sin tope por tokens, sólo por turnos.</param>
+public sealed record AiRunLimits(
+    int MaxOutputTokens, TimeSpan JobTimeout, int MaxModelCalls, int MaxToolCalls, int MaxHistoryTurns, int? MaxContextTokens);
+
 /// <summary>Los códigos de la tabla de errores del plan 2026-11-12. Son contrato (eventos de traspaso, pantalla); no se renombran.</summary>
 public static class AiModelErrorCodes
 {
