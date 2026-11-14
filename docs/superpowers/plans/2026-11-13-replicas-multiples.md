@@ -409,9 +409,10 @@ A mano: iniciar sesión, navegar y abrir Mensajería en dos pestañas; los logs 
 
 `CoexistenceEventsWorker` pasó de `Idempotent` a `Claimed`: el código reclama con `ClaimedOutboxConsumer` (`CoexistenceEventsProcessor.cs:28`), además del `ON CONFLICT` del alta.
 
-| Estado en memoria (2026-11-13, 15 tipos detectados) | Clasificación |
+| Estado en memoria (2026-11-13, 16 tipos detectados; el escaneo repite también los registros de `Program.cs`) | Clasificación |
 | --- | --- |
-| `MessagingPresence`, `ApiKeyRateLimiter` | `SharedWithLocalFallback`: el plan Valkey base está en esta rama (`9c0cdfa1`, `e2a946a8`). Compartido **sólo** con `Valkey:Areas:Presence` y `RateLimiting` prendidas en producción, prerrequisito del Bloque C |
+| `MessagingPresence`, `ApiKeyRateLimiter` | `SharedWithLocalFallback`: el plan Valkey base está en esta rama (`9c0cdfa1`, `e2a946a8`). Compartido **sólo** con `Valkey__Enabled`, `Valkey__Areas__Presence` y `Valkey__Areas__RateLimiting` en `"true"` en el ConfigMap; con `replicas > 1`, `MoreThanOneReplicaRequiresNoUnsafeEntry` lo exige (`MultiReplicaInventory.SharedStateSwitches`) |
+| `WebTelemetryMetrics` (Api, `Program.cs:77`) | `PerPodByDesign` (tope de 256 rutas por pod en el histograma) |
 | `ExternalApiCallLogChannel` (`Channel.CreateBounded`) | `PerPodByDesign` (se pierde con `SIGKILL`, igual que hoy) |
 | `QueueGauges` | `PerPodByDesign` (dashboard con `max`/`avg`) |
 | `ValkeyConnection` | `PerPodByDesign` (el multiplexer de cada pod) |

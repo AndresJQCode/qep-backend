@@ -437,6 +437,58 @@
           "xunit.v3.runner.common": "[3.2.2]"
         }
       },
+      "api": {
+        "type": "Project",
+        "dependencies": {
+          "Bootstrapper": "[1.0.0, )",
+          "Microsoft.AspNetCore.OpenApi": "[10.0.13, )",
+          "Microsoft.OpenApi": "[2.12.2, )",
+          "Modules.ApiAccess.Api": "[1.0.0, )",
+          "Modules.ApiAccess.Infrastructure": "[1.0.0, )",
+          "Modules.Audit.Infrastructure": "[1.0.0, )",
+          "Modules.Automations.Api": "[1.0.0, )",
+          "Modules.Automations.Infrastructure": "[1.0.0, )",
+          "Modules.Buyers.Api": "[1.0.0, )",
+          "Modules.Buyers.Infrastructure": "[1.0.0, )",
+          "Modules.Catalog.Api": "[1.0.0, )",
+          "Modules.Catalog.Infrastructure": "[1.0.0, )",
+          "Modules.Companies.Api": "[1.0.0, )",
+          "Modules.Companies.Infrastructure": "[1.0.0, )",
+          "Modules.Customers.Api": "[1.0.0, )",
+          "Modules.Customers.Infrastructure": "[1.0.0, )",
+          "Modules.Geography.Api": "[1.0.0, )",
+          "Modules.Geography.Infrastructure": "[1.0.0, )",
+          "Modules.Identity.Infrastructure": "[1.0.0, )",
+          "Modules.Integrations.Api": "[1.0.0, )",
+          "Modules.Integrations.Infrastructure": "[1.0.0, )",
+          "Modules.Loans.Api": "[1.0.0, )",
+          "Modules.Loans.Infrastructure": "[1.0.0, )",
+          "Modules.Messaging.Api": "[1.0.0, )",
+          "Modules.Messaging.Infrastructure": "[1.0.0, )",
+          "Modules.Notifications.Infrastructure": "[1.0.0, )",
+          "Modules.Pipeline.Api": "[1.0.0, )",
+          "Modules.Pipeline.Infrastructure": "[1.0.0, )",
+          "Modules.Platform.Api": "[1.0.0, )",
+          "Modules.Platform.Infrastructure": "[1.0.0, )",
+          "Modules.Pos.Api": "[1.0.0, )",
+          "Modules.Pos.Infrastructure": "[1.0.0, )",
+          "Modules.Quotations.Api": "[1.0.0, )",
+          "Modules.Quotations.Infrastructure": "[1.0.0, )",
+          "Modules.Reporting.Api": "[1.0.0, )",
+          "Modules.Reporting.Infrastructure": "[1.0.0, )",
+          "Modules.ServiceContracts.Api": "[1.0.0, )",
+          "Modules.ServiceContracts.Infrastructure": "[1.0.0, )",
+          "Modules.Shopify.Api": "[1.0.0, )",
+          "Modules.Shopify.Infrastructure": "[1.0.0, )",
+          "Modules.Storage.Api": "[1.0.0, )",
+          "Modules.Storage.Infrastructure": "[1.0.0, )",
+          "Modules.Store.Api": "[1.0.0, )",
+          "Modules.Store.Infrastructure": "[1.0.0, )",
+          "Modules.Suppliers.Api": "[1.0.0, )",
+          "Modules.Suppliers.Infrastructure": "[1.0.0, )",
+          "Scalar.AspNetCore": "[2.16.16, )"
+        }
+      },
       "bootstrapper": {
         "type": "Project",
         "dependencies": {
@@ -1029,6 +1081,14 @@
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.3, )"
         }
       },
+      "modules.platform.api": {
+        "type": "Project",
+        "dependencies": {
+          "BuildingBlocks.Application": "[1.0.0, )",
+          "Modules.Platform.Application": "[1.0.0, )",
+          "Modules.Platform.Domain": "[1.0.0, )"
+        }
+      },
       "modules.platform.application": {
         "type": "Project",
         "dependencies": {
@@ -1453,6 +1513,15 @@
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.19.2"
         }
       },
+      "Microsoft.AspNetCore.OpenApi": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "XVuqUBGjVUVyb4DXR5BrSkrW0Br7sYKq39f723ILhQLlFHCyhAgWe1PkJBc42R/5mKBIgHiKVSY+PN5/4XtcQw==",
+        "dependencies": {
+          "Microsoft.OpenApi": "[2.12.2, 3.0.0)"
+        }
+      },
       "Microsoft.EntityFrameworkCore": {
         "type": "CentralTransitive",
         "requested": "[10.0.13, )",
@@ -1549,6 +1618,12 @@
           "Microsoft.Extensions.Primitives": "10.0.13"
         }
       },
+      "Microsoft.OpenApi": {
+        "type": "CentralTransitive",
+        "requested": "[2.12.2, )",
+        "resolved": "2.12.2",
+        "contentHash": "ZkT7qiJe0Kj0+DTZOZo+xrDy1kNmdsWFQVPIQLNx9ZJ0T9cB2LG7r+Bi60so8/+yg1nkS7QCPadrzsTG4VPKrA=="
+      },
       "Npgsql.EntityFrameworkCore.PostgreSQL": {
         "type": "CentralTransitive",
         "requested": "[10.0.3, )",
@@ -1617,6 +1692,12 @@
         "dependencies": {
           "OpenTelemetry.Api": "[1.16.0, 2.0.0)"
         }
+      },
+      "Scalar.AspNetCore": {
+        "type": "CentralTransitive",
+        "requested": "[2.16.16, )",
+        "resolved": "2.16.16",
+        "contentHash": "Ax0e0bIh+Upf92k1+pTBUom3e/kbpu20qsrDYmmS1NM721Eq2xF8c789x6IbiNrvW8WwySRzPv/icYYhb6idSg=="
       },
       "SixLabors.ImageSharp": {
         "type": "CentralTransitive",

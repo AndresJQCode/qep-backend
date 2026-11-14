@@ -47,6 +47,9 @@ public sealed record WorkerEntry(string TypeFullName, WorkerClassification Class
 /// <param name="Evidence">«archivo:línea — mecanismo».</param>
 public sealed record StateEntry(string TypeFullName, StateClassification Classification, string Evidence);
 
+/// <param name="Evidence">«archivo:línea» del registro con la fábrica.</param>
+public sealed record FactoryEntry(string ServiceTypeFullName, string ImplementationTypeFullName, string Evidence);
+
 /// <summary>
 /// El inventario D-6: todo hosted service y todo estado en memoria de nuestros ensamblados, con cómo convive con otro pod.
 /// Lo exige <c>MultiReplicaInventoryTests</c>: quien agrega un worker o un singleton con estado lo clasifica acá, en el
@@ -178,6 +181,8 @@ public static class MultiReplicaInventory
 
         new("Bootstrapper.ApiKeys.ExternalApiCallLogChannel", StateClassification.PerPodByDesign,
             "Bootstrapper/ApiKeys/ExternalApiCallLogChannel.cs:21 — Channel.CreateBounded por pod; lo no escrito se pierde con SIGKILL, igual que con un pod"),
+        new("Api.WebTelemetryMetrics", StateClassification.PerPodByDesign,
+            "Api/WebTelemetryMetrics.cs:23 — HashSet de rutas que acota la cardinalidad del histograma a 256 (MaxRoutes) por pod; cada pod publica sus métricas"),
         new("Bootstrapper.Observability.QueueGauges", StateClassification.PerPodByDesign,
             "Bootstrapper/Observability/QueueGauges.cs:20 — la última lectura del pod; el dashboard agrega con max/avg"),
         new("Bootstrapper.Valkey.ValkeyConnection", StateClassification.PerPodByDesign,
@@ -200,6 +205,42 @@ public static class MultiReplicaInventory
             "Modules/Integrations/Modules.Integrations.Infrastructure/Verification/ConnectionTesterRegistry.cs:10 — diccionario inmutable de los testers registrados"),
         new("Modules.Messaging.Infrastructure.Webhook.MarketingOptOutButtons", StateClassification.PerPodByDesign,
             "Modules/Messaging/Modules.Messaging.Infrastructure/Webhook/MarketingOptOutButtons.cs:13 — textos de la configuración, inmutables; igual en cada pod"),
+    ];
+
+    /// <summary>
+    /// El interruptor del ConfigMap de producción que hace compartido cada estado <c>SharedWithLocalFallback</c>. Con más
+    /// de una réplica, <c>MoreThanOneReplicaRequiresNoUnsafeEntry</c> exige cada uno, y <c>Valkey__Enabled</c>, en
+    /// <c>"true"</c>: apagado, el estado es por pod.
+    /// </summary>
+    // Las claves son las de ValkeyOptions (src/Bootstrapper/Valkey/ValkeyOptions.cs) escritas como variable de entorno, igual
+    // que Seed__ExportLoad__Quotations en k8s/prod-configMap.yaml.
+    public static readonly IReadOnlyDictionary<string, string> SharedStateSwitches = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["Modules.Messaging.Application.MessagingPresence"] = "Valkey__Areas__Presence",
+        ["Bootstrapper.ApiKeys.ApiKeyRateLimiter"] = "Valkey__Areas__RateLimiting",
+    };
+
+    /// <summary>
+    /// Singletons con fábrica tipada a una interfaz: el concreto que devuelve la fábrica, para que el escaneo de estado lo
+    /// mire. Si el concreto tiene estado, además va en <see cref="State"/>.
+    /// </summary>
+    public static readonly IReadOnlyList<FactoryEntry> InterfaceFactories =
+    [
+        new("Modules.Messaging.Application.IMessagingPresence", "Modules.Messaging.Application.MessagingPresence",
+            "Bootstrapper/Valkey/ValkeyServiceCollectionExtensions.cs:65 — reenvía al singleton MessagingPresence (presencia apagada)"),
+        new("Modules.Messaging.Infrastructure.CustomerDeletion.ICustomerMediaPurgeProcessor",
+            "Modules.Messaging.Infrastructure.CustomerDeletion.CustomerMediaPurgeProcessor",
+            "Modules/Messaging/Modules.Messaging.Infrastructure/MessagingInfrastructureExtensions.cs:147 — reenvía al singleton concreto"),
+        new("Modules.Notifications.Application.IEmailChannel", "Modules.Notifications.Infrastructure.Channels.InfobipEmailChannel",
+            "Modules/Notifications/Modules.Notifications.Infrastructure/NotificationsInfrastructureExtensions.cs:71 — sólo con Notifications:EmailProvider = infobip"),
+        new("Modules.Quotations.Application.IQuotationPdfRenderer", "Modules.Quotations.Infrastructure.Pdf.QCodePdfRenderer",
+            "Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:95"),
+        new("Modules.Quotations.Application.IZenviaWhatsAppSender", "Modules.Quotations.Infrastructure.Whatsapp.ZenviaWhatsAppSender",
+            "Modules/Quotations/Modules.Quotations.Infrastructure/QuotationsInfrastructureExtensions.cs:113"),
+        new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.ClamAvFileScanner",
+            "Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:55-60 — con Storage:ClamAv:Enabled"),
+        new("Modules.Storage.Application.IFileScanner", "Modules.Storage.Infrastructure.Scanning.NoopFileScanner",
+            "Modules/Storage/Modules.Storage.Infrastructure/StorageInfrastructureExtensions.cs:55-60 — sin ClamAV"),
     ];
 
     private const string OutboxDelivery =

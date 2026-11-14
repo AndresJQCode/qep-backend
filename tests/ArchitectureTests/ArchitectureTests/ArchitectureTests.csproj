@@ -14,6 +14,9 @@
          registro vive acá. Los LayerTests siguen comparando ensamblados de módulo entre sí: esta
          referencia no los afecta. -->
     <ProjectReference Include="..\..\..\src\Bootstrapper\Bootstrapper.csproj" />
+    <!-- MultiReplicaInventoryTests repite los registros que Program.cs hace fuera de AddQepPlatform (AddWebTelemetry,
+         AddMessagingRealtime…): sin el ensamblado Api, un singleton con estado registrado ahí quedaría sin clasificar. -->
+    <ProjectReference Include="..\..\..\src\Api\Api.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Application\Modules.Audit.Application.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Domain\Modules.Audit.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\Modules\Audit\Modules.Audit.Infrastructure\Modules.Audit.Infrastructure.csproj" />
