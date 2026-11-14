@@ -77,6 +77,60 @@ public sealed class MultiReplicaInventoryTests
             + "inventario D-6. Agrégalos a ReplayProgramRegistrations y a ReplayedProgramRegistrations: " + string.Join(", ", missing));
     }
 
+    /// <summary>
+    /// Spec 2026-10-29 D-2: toda migración (<c>Initialize…DatabaseAsync</c>) y la semilla (<c>RunQepSeedAsync</c>) corren
+    /// dentro de la lambda de <c>RunUnderStartupLockAsync</c>. Una que quede afuera —por ejemplo, un módulo nuevo agregado
+    /// al resolver un merge a mano— migraría en dos pods a la vez sin que nada más se ponga rojo.
+    /// </summary>
+    [Fact]
+    public void EveryStartupMigrationAndTheSeedRunUnderTheStartupLock()
+    {
+        var (inside, outside) = StartupWorkAgainstTheLock(File.ReadAllText(RepositoryFile("src/Api/Program.cs")));
+
+        Assert.True(inside.Count > 0,
+            "No se encontró ninguna migración ni la semilla dentro de RunUnderStartupLockAsync en Program.cs: la prueba no "
+            + "estaría mirando nada.");
+        Assert.True(outside.Count == 0,
+            "Estas llamadas de Program.cs corren fuera de RunUnderStartupLockAsync, así que dos pods las correrían a la vez "
+            + "(spec 2026-10-29 D-2). Muévelas dentro de la lambda: " + string.Join(", ", outside));
+    }
+
+    /// <summary>La detección de arriba, con un <c>Program.cs</c> de juguete: una migración fuera de la lambda se ve.</summary>
+    [Fact]
+    public void AMigrationOutsideTheStartupLockIsDetected()
+    {
+        const string program = """
+            await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) =>
+            {
+                // Un comentario con { llaves } no confunde el emparejamiento.
+                await services.InitializeTenancyDatabaseAsync(cancellationToken);
+                if (true) { await services.RunQepSeedAsync(cancellationToken); }
+            }, app.Lifetime.ApplicationStopping);
+            await app.Services.InitializeAiDatabaseAsync(app.Lifetime.ApplicationStopping);
+            await app.RunAsync();
+            """;
+
+        var (inside, outside) = StartupWorkAgainstTheLock(program);
+
+        Assert.Equal(["InitializeTenancyDatabaseAsync", "RunQepSeedAsync"], inside);
+        Assert.Equal(["InitializeAiDatabaseAsync"], outside);
+    }
+
+    /// <summary>Sin <c>RunUnderStartupLockAsync</c>, todas las llamadas quedan afuera.</summary>
+    [Fact]
+    public void WithoutTheStartupLockEveryCallIsOutside()
+    {
+        const string program = """
+            await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
+            await app.Services.RunQepSeedAsync(app.Lifetime.ApplicationStopping);
+            """;
+
+        var (inside, outside) = StartupWorkAgainstTheLock(program);
+
+        Assert.Empty(inside);
+        Assert.Equal(["InitializeTenancyDatabaseAsync", "RunQepSeedAsync"], outside);
+    }
+
     [Fact]
     public void EveryHostedServiceIsClassified()
     {
@@ -260,6 +314,96 @@ public sealed class MultiReplicaInventoryTests
         }
 
         return violations;
+    }
+
+    /// <summary>
+    /// Las llamadas a <c>Initialize…DatabaseAsync</c> y <c>RunQepSeedAsync</c> de <paramref name="program"/>, separadas en
+    /// las que caen dentro del cuerpo de la lambda de <c>RunUnderStartupLockAsync(</c> y las que no.
+    /// </summary>
+    private static (List<string> Inside, List<string> Outside) StartupWorkAgainstTheLock(string program)
+    {
+        var (start, end) = StartupLockLambdaBody(program);
+        var inside = new List<string>();
+        var outside = new List<string>();
+        foreach (Match call in Regex.Matches(program, @"\b(Initialize\w*DatabaseAsync|RunQepSeedAsync)\s*\("))
+        {
+            (call.Index > start && call.Index < end ? inside : outside).Add(call.Groups[1].Value);
+        }
+
+        return (inside, outside);
+    }
+
+    /// <summary>
+    /// Las posiciones de la primera <c>{</c> después de <c>RunUnderStartupLockAsync(</c> y de su <c>}</c> pareja, saltando
+    /// comentarios y literales de texto o de carácter. <c>(-1, -1)</c> si no hay <c>RunUnderStartupLockAsync(</c>.
+    /// </summary>
+    private static (int Start, int End) StartupLockLambdaBody(string program)
+    {
+        var call = program.IndexOf("RunUnderStartupLockAsync(", StringComparison.Ordinal);
+        if (call < 0)
+        {
+            return (-1, -1);
+        }
+
+        var depth = 0;
+        var start = -1;
+        for (var i = call; i < program.Length; i++)
+        {
+            var current = program[i];
+            var next = i + 1 < program.Length ? program[i + 1] : '\0';
+            if (current == '/' && next == '/')
+            {
+                i = program.IndexOf('\n', i);
+                if (i < 0)
+                {
+                    break;
+                }
+            }
+            else if (current == '/' && next == '*')
+            {
+                i = program.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                if (i < 0)
+                {
+                    break;
+                }
+
+                i++;
+            }
+            else if (current is '"' or '\'')
+            {
+                i = EndOfLiteral(program, i);
+            }
+            else if (current == '{' && depth++ == 0)
+            {
+                start = i;
+            }
+            else if (current == '}' && depth > 0 && --depth == 0)
+            {
+                return (start, i);
+            }
+        }
+
+        Assert.Fail("La lambda de RunUnderStartupLockAsync no cierra su llave en Program.cs.");
+        return (-1, -1);
+    }
+
+    /// <summary>La posición de la comilla que cierra el literal que abre <paramref name="open"/>.</summary>
+    private static int EndOfLiteral(string text, int open)
+    {
+        var quote = text[open];
+        for (var i = open + 1; i < text.Length; i++)
+        {
+            if (text[i] == '\\')
+            {
+                i++;
+            }
+            else if (text[i] == quote)
+            {
+                return i;
+            }
+        }
+
+        return text.Length;
     }
 
     private static bool IsSet(string configMap, string key, string value) =>
