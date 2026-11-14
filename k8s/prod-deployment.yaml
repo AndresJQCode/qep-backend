@@ -45,12 +45,17 @@ spec:
                 name: #{APP_NAME}#-config
             - secretRef:
                 name: #{APP_NAME}#-secret
+          # 180 s (36 intentos cada 5 s; spec 2026-10-29 de réplicas múltiples, D-3). Sólo cuenta hasta
+          # el primer éxito: después mandan la liveness y la readiness. Cubre dos arranques seguidos,
+          # porque con el candado de arranque (D-2) un segundo pod espera a que el primero termine de
+          # migrar y sembrar antes de hacer lo suyo. Se reajusta con el log 4109 (cuánto tardó el
+          # bloque): si en producción pasa de 60 s, toca volver a la alternativa del Job de migración.
           startupProbe:
             httpGet:
               path: /health/live
               port: http
             periodSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 36
           # La readiness mira la base (/health/ready): un pod sin conexión sale del Service
           # sin reiniciarse. startup y liveness se quedan en /health/live, que no la toca:
           # si dependieran de ella, una caída de la base reiniciaría todos los pods en cadena.

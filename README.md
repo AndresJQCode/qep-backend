@@ -496,7 +496,8 @@ Existe para medir en el pod real cuánto cuesta exportar un año (spec
 `docs/superpowers/specs/2026-09-13-ajustes-post-export-design.md`). No depende de `Seed:Enabled`,
 pero también exige `Seed:OwnerEmail`.
 
-- **No corre dentro del arranque.** El `startupProbe` le da al pod 60 s, y sembrar decenas de miles
+- **No corre dentro del arranque.** El `startupProbe` le da al pod 180 s (36 intentos cada 5 s), de
+  los que un segundo pod gasta una parte esperando el candado de arranque, y sembrar decenas de miles
   de filas ahí haría que Kubernetes lo matara. La siembra termina con la línea
   `Export load seed finished: …` en el log.
 - **Va con SQL masivo en una transacción.** No pasa por los handlers, así que la siembra no deja
