@@ -415,7 +415,9 @@ internal static class CustomersApiHarness
                 [CustomerImportColumns.City] = row.City,
                 [CustomerImportColumns.Classification] = row.Classification,
                 [CustomerImportColumns.Retefuente] = row.Retefuente,
-                [CustomerImportColumns.ReteIca] = row.ReteIca,
+                // Spec ReteICA por empresa (A3): la columna salió de la plantilla, pero un archivo de un develop local
+                // todavía puede traerla y se lee ignorándola.
+                ["ReteICA"] = row.ReteIca,
                 [CustomerImportColumns.VatSurplus] = row.VatSurplus,
                 // La columna que ya no existe: un archivo viejo todavia la trae y se lee ignorandola.
                 ["Con Retencion"] = row.LegacyWithRetention,

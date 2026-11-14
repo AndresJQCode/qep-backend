@@ -113,7 +113,7 @@ public sealed class ImportCustomersCompanyTests
 
     private static ExcelCustomerRow Row(
         int rowNumber, string name, string number, string? company = null, string? cuc = null, string type = "NIT") =>
-        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, ReteIca: null, VatSurplus: "No", company);
+        new(rowNumber, cuc, name, null, type, number, "3001112233", null, "Calle 2", "Atlantico", "Barranquilla", null, Retefuente: null, VatSurplus: "No", company);
 
     private static ImportRowError ErrorOf(ImportCustomersResponse response, int rowNumber) =>
         Assert.Single(response.Errors, error => error.RowNumber == rowNumber);

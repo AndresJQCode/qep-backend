@@ -447,7 +447,7 @@ public sealed class ImportCustomersHandler(
             }
 
             var withholdingTaxRateIds = Array.Empty<Guid>();
-            if (!string.IsNullOrWhiteSpace(row.Retefuente) || !string.IsNullOrWhiteSpace(row.ReteIca))
+            if (!string.IsNullOrWhiteSpace(row.Retefuente))
             {
                 withholdingRates ??= await taxRateLookup.ListWithholdingAsync(tenantId, cancellationToken);
                 var (resolvedIds, withholdingError) = ResolveWithholdings(row, withholdingRates);
@@ -509,8 +509,8 @@ public sealed class ImportCustomersHandler(
     }
 
     /// <summary>
-    /// Resuelve las columnas por tipo (Retefuente, ReteICA) al id de la tasa del catalogo, por nombre y sin importar
-    /// mayusculas. Una celda vacia no asigna tasa. Un nombre que no es una tasa activa de ese tipo es un error de la fila,
+    /// Resuelve las columnas por tipo (hoy sólo Retefuente: la ReteICA ya no es del cliente, spec ReteICA por empresa A3) al
+    /// id de la tasa del catalogo, por nombre y sin importar mayusculas. Una celda vacia no asigna tasa. Un nombre que no es una tasa activa de ese tipo es un error de la fila,
     /// con la columna como campo; el resultado pasa por las mismas reglas que el alta por API
     /// (<see cref="CustomerWithholdingRules"/>), asi el Excel no se salta ningun invariante.
     /// </summary>
@@ -520,7 +520,6 @@ public sealed class ImportCustomersHandler(
         (string Type, string? Cell, string Field)[] columns =
         [
             (CustomerImportColumns.Retefuente, row.Retefuente, nameof(ExcelCustomerRow.Retefuente)),
-            (CustomerImportColumns.ReteIca, row.ReteIca, nameof(ExcelCustomerRow.ReteIca))
         ];
 
         var chosen = new Dictionary<Guid, CustomerTaxRateRef>();
@@ -1175,7 +1174,8 @@ public sealed class ImportCustomersHandler(
         row.City ?? string.Empty,
         row.Classification ?? string.Empty,
         row.Retefuente,
-        row.ReteIca,
+        // P9: el campo heredado se queda en el contrato para no romper al frontend que reenvía la fila, siempre null.
+        ReteIca: null,
         row.VatSurplus,
         row.CompanyIdentificationNumber);
 

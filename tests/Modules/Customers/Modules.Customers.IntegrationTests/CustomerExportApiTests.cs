@@ -219,14 +219,14 @@ public sealed class CustomerExportApiTests
         Assert.Equal(city.CityName, Value(CustomerImportColumns.City));
         Assert.Equal(classification.Name, Value(CustomerImportColumns.Classification));
         Assert.Equal(string.Empty, Value(CustomerImportColumns.Retefuente));
-        Assert.Equal(string.Empty, Value(CustomerImportColumns.ReteIca));
+        Assert.DoesNotContain("ReteICA", headers);
         Assert.Equal("No", Value(CustomerImportColumns.VatSurplus));
         Assert.Equal("Si", Value("Activo"));
         Assert.Equal("Completa", Value("Estado de la ficha"));
     }
 
-    // 14 de la importacion + Empresa + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
-    private const int StatusColumnIndex = 19;
+    // 13 de la importacion (sin «ReteICA» desde el spec ReteICA por empresa) + Empresa + Activo, Creado, Actualizado + «Estado de la ficha» (y después «Tipo de persona»).
+    private const int StatusColumnIndex = 18;
 
     // Por nombre, como lo hace el importador. Con cabeceras repetidas gana la primera; la prueba de
     // alineacion comprueba aparte que no las haya.

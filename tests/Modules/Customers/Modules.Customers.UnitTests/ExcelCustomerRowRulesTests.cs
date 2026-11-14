@@ -26,11 +26,10 @@ public sealed class ExcelCustomerRowRulesTests
         string? city = "Medellin",
         string? classification = "Mayorista",
         string? retefuente = null,
-        string? reteIca = null,
         string? vatSurplus = "No") =>
         new(2, cuc, name, null, identificationType, identificationNumber, phone,
             email, address,
-            department, city, classification, retefuente, reteIca, vatSurplus);
+            department, city, classification, retefuente, vatSurplus);
 
     private static readonly CustomerFieldPolicy Relaxed =
         new(new FieldRequirement(false, true), new FieldRequirement(false, true));
@@ -324,7 +323,7 @@ public sealed class ExcelCustomerRowRulesTests
     [Fact]
     public void RateColumnsAreNotJudgedByTheFieldRules()
     {
-        var result = validator.Validate(ValidRow(retefuente: "IVA 19", reteIca: "cualquier nombre"));
+        var result = validator.Validate(ValidRow(retefuente: "IVA 19"));
 
         Assert.True(result.IsValid);
     }

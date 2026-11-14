@@ -108,17 +108,24 @@ public sealed class ClosedXmlCustomerExportBuilderTests
     public void ExportWritesRateNamesPerType()
     {
         using var workbook = BuildWorkbook(
-            Customer(null, [Rate("Retefuente 2,5 %", "Retefuente"), Rate("ReteICA 0,966 %", "ReteICA")]),
-            Customer(null, [Rate("ReteICA 0,966 %", "ReteICA")]),
+            Customer(null, [Rate("Retefuente 2,5 %", "Retefuente")]),
             Customer(null));
 
         Assert.Equal("Retefuente 2,5 %", CellOf(workbook, 2, CustomerImportColumns.Retefuente));
-        Assert.Equal("ReteICA 0,966 %", CellOf(workbook, 2, CustomerImportColumns.ReteIca));
         Assert.Equal(string.Empty, CellOf(workbook, 3, CustomerImportColumns.Retefuente));
-        Assert.Equal("ReteICA 0,966 %", CellOf(workbook, 3, CustomerImportColumns.ReteIca));
-        Assert.Equal(string.Empty, CellOf(workbook, 4, CustomerImportColumns.Retefuente));
-        Assert.Equal(string.Empty, CellOf(workbook, 4, CustomerImportColumns.ReteIca));
         Assert.DoesNotContain("Con Retencion", Headers(workbook));
+    }
+
+    // Spec ReteICA por empresa §7.4 (A3): la ReteICA ya no es del cliente, así que su columna sale de la exportación.
+    [Fact]
+    public void ExportHasNoReteIcaColumn()
+    {
+        using var workbook = BuildWorkbook(Customer(null));
+
+        var headers = Headers(workbook);
+
+        Assert.Contains("Retefuente", headers);
+        Assert.DoesNotContain("ReteICA", headers);
     }
 
     [Fact]

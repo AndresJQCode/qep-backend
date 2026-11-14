@@ -366,6 +366,8 @@ public sealed record CustomerImportRowData(
     string City,
     string Classification,
     string? Retefuente,
+    /// <summary>Heredado (spec ReteICA por empresa, P9): la columna «ReteICA» salió del Excel. Se queda en el record para no
+    /// romper al frontend que reenvía la fila; viaja siempre <c>null</c> y se ignora al recibirlo.</summary>
     string? ReteIca,
     string? VatSurplus,
     /// <summary>Spec 2026-11-10 A22: el valor de la columna «Empresa» tal como vino. Último y opcional: el frontend viejo no lo manda.</summary>

@@ -89,14 +89,15 @@ public sealed class ClosedXmlCustomerImportTemplateBuilderTests
                 (range.RangeAddress.ToString() ?? string.Empty).StartsWith("A2:", StringComparison.Ordinal)));
     }
 
+    // Spec ReteICA por empresa §7.4 (A3): la ReteICA ya no es del cliente, así que su columna sale de la plantilla.
     [Fact]
-    public void TemplateHasBothColumnsAndNoConRetencion()
+    public void TemplateHasNoReteIcaColumn()
     {
         using var workbook = BuildWorkbook();
         var headers = workbook.Worksheet("Clientes").Row(1).CellsUsed().Select(cell => cell.GetString()).ToArray();
 
         Assert.Contains("Retefuente", headers);
-        Assert.Contains("ReteICA", headers);
+        Assert.DoesNotContain("ReteICA", headers);
         Assert.DoesNotContain("Con Retencion", headers);
     }
 

@@ -1525,22 +1525,61 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         using var client = CreateImporter(factory);
         var city = await EnsureCityAsync(client);
         var retefuente = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
-        var reteIca = await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA Medellin", "ReteICA", 0.966m);
 
         // Sin importar mayusculas, como FindByNameAsync.
         var result = await ImportAsync(client,
         [
             new ExcelRowInput(
                 Department: city.DepartmentName, City: city.CityName,
-                Retefuente: "RETEFUENTE SERVICIOS", ReteIca: "reteica medellin")
+                Retefuente: "RETEFUENTE SERVICIOS")
         ]);
 
         Assert.Empty(result.Errors);
         var customer = await ImportedCustomerAsync(client, result);
-        Assert.Equal(
-            new[] { retefuente, reteIca }.Order(),
-            customer.WithholdingTaxRates.Select(rate => rate.Id).Order());
+        Assert.Equal([retefuente], customer.WithholdingTaxRates.Select(rate => rate.Id));
         Assert.True(customer.WithRetention);
+    }
+
+    // Spec ReteICA por empresa §7.4 (A3): la plantilla ya no trae «ReteICA», y un archivo sin ella importa como siempre.
+    [Fact]
+    public async Task ImportWithoutReteIcaColumnWorks()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        var retefuente = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
+
+        Assert.DoesNotContain("ReteICA", CustomerImportColumns.Ordered);
+        var result = await ImportAsync(client,
+        [
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Retefuente: "Retefuente servicios")
+        ]);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(retefuente, Assert.Single((await ImportedCustomerAsync(client, result)).WithholdingTaxRates).Id);
+    }
+
+    // Un archivo con la columna «ReteICA» (sólo pudo salir de un develop local) se lee ignorándola, como «Con Retencion»:
+    // ni asigna la tasa municipal ni la reporta como error de la fila.
+    [Fact]
+    public async Task OldFileWithReteIcaColumnIsImportedIgnoringIt()
+    {
+        await using var database = await StartDatabaseAsync();
+        using var factory = new QepApiFactory(database.GetConnectionString());
+        using var client = CreateImporter(factory);
+        var city = await EnsureCityAsync(client);
+        await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA Medellin", "ReteICA", 0.966m);
+        string[] oldHeaders = [.. CustomerImportColumns.Ordered, "ReteICA"];
+
+        var result = await ImportAsync(
+            client,
+            [new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, ReteIca: "ReteICA Medellin")],
+            oldHeaders);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(1, result.ImportedCount);
+        Assert.Empty((await ImportedCustomerAsync(client, result)).WithholdingTaxRates);
     }
 
     [Theory]
@@ -1579,16 +1618,16 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
         using var factory = new QepApiFactory(database.GetConnectionString());
         using var client = CreateImporter(factory);
         var city = await EnsureCityAsync(client);
-        await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA vieja", "ReteICA", 1m, isActive: false);
+        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente vieja", "Retefuente", 1m, isActive: false);
 
         var result = await ImportAsync(client,
         [
-            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, ReteIca: "ReteICA vieja")
+            new ExcelRowInput(Department: city.DepartmentName, City: city.CityName, Retefuente: "Retefuente vieja")
         ]);
 
         var error = Assert.Single(result.Errors);
         Assert.Equal("customers.customer.withholding_tax_rate_invalid", error.Code);
-        Assert.Equal("ReteIca", error.Field);
+        Assert.Equal("Retefuente", error.Field);
         Assert.Equal(0, result.ImportedCount);
     }
 
@@ -1650,44 +1689,6 @@ public sealed class CustomerStatusAndImportApiTests(SharedCustomersHost sharedHo
 
         Assert.Empty(updated.Errors);
         Assert.Equal(rate, Assert.Single((await GetAsync(client, customer.Id)).WithholdingTaxRates).Id);
-    }
-
-    // La presencia de las columnas es por tipo: un archivo con sólo «Retefuente» actualiza esa tasa y conserva la ReteICA
-    // que el cliente ya tiene, porque no traer la columna no es lo mismo que traerla vacía.
-    [Fact]
-    public async Task AFileWithOnlyTheRetefuenteColumnKeepsTheReteIca()
-    {
-        await using var database = await StartDatabaseAsync();
-        using var factory = new QepApiFactory(database.GetConnectionString());
-        using var manager = CreateManager(factory);
-        using var client = CreateImporter(factory);
-        var city = await EnsureCityAsync(client);
-        var classification = await CreateClassificationAsync(manager);
-        await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente compras", "Retefuente", 2.5m);
-        var servicios = await InsertTaxRateAsync(database.GetConnectionString(), "Retefuente servicios", "Retefuente", 4m);
-        var reteIca = await InsertTaxRateAsync(database.GetConnectionString(), "ReteICA Medellin", "ReteICA", 0.966m);
-        var created = await ImportAsync(client,
-        [
-            new ExcelRowInput(
-                Department: city.DepartmentName, City: city.CityName, Classification: classification.Name,
-                Retefuente: "Retefuente compras", ReteIca: "ReteICA Medellin")
-        ]);
-        var customer = await ImportedCustomerAsync(client, created);
-        string[] onlyRetefuente = [.. CustomerImportColumns.Ordered.Where(column => column is not "ReteICA")];
-
-        var updated = await ImportAsync(
-            client,
-            [
-                new ExcelRowInput(
-                    Cuc: customer.Cuc, Department: city.DepartmentName, City: city.CityName,
-                    Classification: classification.Name, Retefuente: "Retefuente servicios")
-            ],
-            onlyRetefuente);
-
-        Assert.Empty(updated.Errors);
-        Assert.Equal(
-            new[] { servicios, reteIca }.Order(),
-            (await GetAsync(client, customer.Id)).WithholdingTaxRates.Select(rate => rate.Id).Order());
     }
 
     [Fact]
