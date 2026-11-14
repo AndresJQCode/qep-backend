@@ -140,7 +140,12 @@ Estado del cambio al crearse:
 | No editable (preparado, facturado, anulado) | — | — | `Blocked` (motivo: `order_not_editable`) |
 | Editable | no | — | `Blocked` (motivo: `payment_status_not_allowed`) |
 | Editable | sí | `Automatic` | se aplica en el mismo procesamiento → `Applied` |
+| Editable | sí | `Automatic`, con algún grupo en conflicto | `Pending` (no se aplica nada: el conflicto se ve en la bandeja, §3) |
 | Editable | sí | `Manual` | `Pending` |
+
+Revisión final del backend (I-2): en `Automatic`, un cambio con algún grupo `Conflict` no se aplica solo, ni siquiera sus
+grupos `Apply`; queda `Pending` para que una persona lo acepte o lo rechace. Si Quotations rechaza la aplicación automática
+con una regla distinta de «no editable», el cambio también queda `Pending`, con el código de la regla en `status_reason`.
 
 - **Aplicar** = `IShopifyOrderWriter.ApplyEditAsync` → `IExternalOrderWriter.ApplyExternalEditAsync` → un método nuevo de
   dominio (`Order.ApplyExternalEdit`) que reemplaza, de los grupos que se aplican, líneas, detalle de envío, parte de envío,
@@ -233,7 +238,7 @@ Aceptar, rechazar y revisar: `quotations.order.manage` (como «Sincronizar ahora
 | # | Qué | Cómo se cierra |
 | --- | --- | --- |
 | V-11 | Que el webhook REST traiga `current_quantity` y la línea quitada; que `orders/updated` llegue al editar un pedido (orderEdit) | Editar un pedido en la tienda de desarrollo |
-| V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes` | Corregir una ciudad en QEP y verla en Shopify |
+| V-12 | Que `orderUpdate` acepte `shippingAddress` con `provinceCode` de Colombia y `customAttributes`; que el teléfono vuelva como eco aunque Shopify lo guarde en E.164 (QEP compara sin el indicativo de país); que `note: null` borre la nota en Shopify (si la ignora, mandar `""`) | Corregir una ciudad en QEP y verla en Shopify, sin cambio de vuelta; mirar el teléfono guardado; borrar la nota en QEP y verla vacía en Shopify |
 | V-13 | Que las instalaciones existentes tengan `write_orders` | `currentAppInstallation.accessScopes` |
 
 ## Decisiones de la implementación
