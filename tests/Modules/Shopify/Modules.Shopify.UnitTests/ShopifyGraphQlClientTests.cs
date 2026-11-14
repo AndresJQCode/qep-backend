@@ -414,11 +414,16 @@ public sealed class ShopifyGraphQlQueryContractTests
     public void OrderQueryRequestsEveryFieldTheParserReads()
     {
         var order = SampleOrder();
-        // D2: IsCustom exige variant y product en null; si la consulta deja de pedirlos, la llave falta y sale false.
+        // D2: IsCustom exige variant y product en null. La muestra sólo trae las llaves que la consulta pide: se exigen antes de
+        // ponerlas en null, o la prueba seguiría verde aunque LineFields dejara de pedirlas.
         foreach (var line in order["lineItems"]!["nodes"]!.AsArray())
         {
-            line!["variant"] = null;
-            line["product"] = null;
+            var fields = line!.AsObject();
+            Assert.True(fields.ContainsKey("variant"), "LineFields no pide variant { id }.");
+            Assert.True(fields.ContainsKey("product"), "LineFields no pide product { id }.");
+            Assert.True(fields.ContainsKey("title"), "LineFields no pide title.");
+            fields["variant"] = null;
+            fields["product"] = null;
         }
 
         var snapshot = GraphQlOrderParser.Parse(JsonSerializer.SerializeToElement(order));
@@ -426,14 +431,19 @@ public sealed class ShopifyGraphQlQueryContractTests
         AssertPopulated(snapshot, "snapshot");
     }
 
+    // Se mira el nodo de las líneas del pedido y no el texto de la consulta: ShippingLineFields también pide `title`.
     [Fact]
     public void LineQueryAsksForTitleVariantAndProduct()
     {
         foreach (var query in new[] { ShopifyGraphQlClient.OrderQuery, ShopifyGraphQlClient.OrderLinesQuery })
         {
-            Assert.Contains("title", query, StringComparison.Ordinal);
-            Assert.Contains("variant { id }", query, StringComparison.Ordinal);
-            Assert.Contains("product { id }", query, StringComparison.Ordinal);
+            var order = Selection.Parse(query).Children.Single(child => child.Name == "order");
+            var fields = order.Children.Single(child => child.Name == "lineItems")
+                .Children.Single(child => child.Name == "nodes").Children;
+
+            Assert.Contains(fields, field => field.Name == "title" && field.Children.Count == 0);
+            Assert.Contains(fields, field => field.Name == "variant" && field.Children.Any(child => child.Name == "id"));
+            Assert.Contains(fields, field => field.Name == "product" && field.Children.Any(child => child.Name == "id"));
         }
     }
 
