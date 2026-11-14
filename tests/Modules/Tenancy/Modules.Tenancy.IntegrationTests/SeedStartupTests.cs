@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Bootstrapper.Seeding;
+using Bootstrapper.Startup;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -18,6 +19,7 @@ using Modules.Identity.Infrastructure.Seed;
 using Modules.Tenancy.Domain;
 using Modules.Tenancy.Infrastructure.Persistence;
 using Modules.Tenancy.Infrastructure.Seed;
+using Npgsql;
 using Testcontainers.PostgreSql;
 
 namespace Modules.Tenancy.IntegrationTests;
@@ -48,6 +50,75 @@ public sealed class SeedStartupTests
             .AnyAsync(tenant => tenant.Slug == "origen-botanico", TestContext.Current.CancellationToken);
 
         Assert.False(seeded);
+    }
+
+    // Spec 2026-10-29 (réplicas múltiples), D-2: con el candado de arranque tomado por otro pod, este no migra ni
+    // siembra; espera. Tenancy es la primera migración, así que su tabla no existe mientras espera.
+    [Fact]
+    public async Task TheHostWaitsForTheStartupLock()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var database = await StartDatabaseAsync();
+        await using var holder = new NpgsqlConnection(database.GetConnectionString());
+        await holder.OpenAsync(ct);
+        await using var held = await holder.BeginTransactionAsync(ct);
+        await using (var acquire = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@namespace, @key)", holder, held))
+        {
+            acquire.Parameters.AddWithValue("namespace", StartupLock.Namespace);
+            acquire.Parameters.AddWithValue("key", StartupLock.Key);
+            await acquire.ExecuteNonQueryAsync(ct);
+        }
+
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: false);
+        var start = Task.Run(() => factory.CreateClient(), ct);
+        await Task.Delay(TimeSpan.FromSeconds(3), ct);
+
+        Assert.False(start.IsCompleted);
+        // ::text porque Npgsql no lee regclass como objeto.
+        Assert.True(await ScalarIsNullAsync(database, "SELECT to_regclass('tenancy.tenants')::text"));
+
+        await held.CommitAsync(ct);
+        using var client = await start.WaitAsync(TimeSpan.FromMinutes(2), ct);
+        var live = await client.GetAsync("/health/live", ct);
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+    }
+
+    // El log dice de qué clave salió la conexión del candado (QepDatabase o QepDatabaseListener), nunca la cadena: la
+    // contraseña del contenedor no puede aparecer.
+    [Fact]
+    public async Task TheStartupLockLogNamesTheKeyAndNotTheValue()
+    {
+        await using var database = await StartDatabaseAsync();
+        var logs = new CapturingLoggerProvider();
+        using var factory = new QepApiFactory(database.GetConnectionString(), seedEnabled: false, logs: logs);
+        using var client = factory.CreateClient();
+
+        var entry = Assert.Single(logs.Entries, e => e.EventId == 4108);
+        Assert.Contains("QepDatabase", entry.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("qep-integration", entry.Message, StringComparison.Ordinal);
+        Assert.Single(logs.Entries, e => e.EventId == 4109);
+    }
+
+    // Spec 2026-10-29, «Pruebas», 4: dos pods arrancan a la vez sobre la misma base vacía y la semilla queda una vez.
+    // Puede pasar por suerte sin el candado: es amarre, no RED.
+    [Fact]
+    public async Task TwoConcurrentStartupsSeedOnce()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var database = await StartDatabaseAsync();
+        using var a = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+        using var b = new QepApiFactory(database.GetConnectionString(), seedEnabled: true);
+
+        var clients = await Task.WhenAll(Task.Run(() => a.CreateClient(), ct), Task.Run(() => b.CreateClient(), ct));
+        foreach (var client in clients)
+        {
+            client.Dispose();
+        }
+
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM tenancy.tenants WHERE slug = 'origen-botanico'"));
+        Assert.Equal(1L, await ScalarAsync<long>(
+            database, "SELECT count(*) FROM identity.users WHERE email = 'semilla@qcode.co'"));
     }
 
     // Prendida sin email no se puede sembrar la membresía, y un tenant al que nadie puede
@@ -560,6 +631,23 @@ public sealed class SeedStartupTests
         return rows.Select(row => row.ModuleKey.Value).Order(StringComparer.Ordinal).ToList();
     }
 
+    private static async Task<bool> ScalarIsNullAsync(PostgreSqlContainer database, string sql)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return value is null or DBNull;
+    }
+
+    private static async Task<T> ScalarAsync<T>(PostgreSqlContainer database, string sql)
+    {
+        await using var connection = new NpgsqlConnection(database.GetConnectionString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        return (T)(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken))!;
+    }
+
     private static async Task<PostgreSqlContainer> StartDatabaseAsync()
     {
         var database = new PostgreSqlBuilder("postgres:18-alpine")
@@ -604,6 +692,9 @@ public sealed class SeedStartupTests
             }
 
             builder.UseSetting("ConnectionStrings:QepDatabase", connectionString);
+            // Fijada vacía, nunca heredada: el candado de arranque y el listener la prefieren a QepDatabase, y un valor en
+            // los user-secrets de quien corre las pruebas los mandaría a otra base.
+            builder.UseSetting("ConnectionStrings:QepDatabaseListener", string.Empty);
             builder.UseSetting("OpenTelemetry:Endpoint", string.Empty);
             builder.UseSetting("Storage:R2:AccountId", "test-account");
             builder.UseSetting("Storage:R2:AccessKeyId", "test-access-key");

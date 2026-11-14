@@ -8,6 +8,7 @@ using Bootstrapper.Csrf;
 using Bootstrapper.Health;
 using Bootstrapper.ReverseProxy;
 using Bootstrapper.Seeding;
+using Bootstrapper.Startup;
 using Bootstrapper.Valkey.RateLimiting;
 using BuildingBlocks.Observability;
 using Microsoft.Extensions.Options;
@@ -343,105 +344,113 @@ app.MapPublicStoreEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolic
 // Cuentas de comprador (spec 2026-11-07): mismo prefijo y misma clave del storefront; las credenciales llevan su propio cupo por ruta.
 app.MapPublicBuyerEndpoints(RateLimiterPolicies.StorefrontRead, RateLimiterPolicies.StorefrontCredentials);
 
-await app.Services.InitializeTenancyDatabaseAsync(app.Lifetime.ApplicationStopping);
-// Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
-// resolver permisos, TODO request autenticado sale 500 — no sólo los de roles. Fue
-// exactamente lo que rompió los tests de integración de Tenancy al agregar el módulo.
-await app.Services.InitializeAuthorizationDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
-// que la migración del módulo Audit pase a ser su única dueña (ADR 0019).
-await app.Services.InitializeAuditDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeIdentityDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// El esquema `platform` ya existia --lo usa la tabla outbox_messages, que crea BuildingBlocks--
-// pero nadie lo tenia a cargo. Esta migracion solo crea request_failures; el orden respecto de
-// los demas modulos no importa, porque la tabla no referencia a ninguna otra a proposito.
-await app.Services.InitializePlatformDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeNotificationsDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeStorageDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeCatalogDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// Antes de Customers: la migracion de Customers agrega una FK real
-// (customers.customers.city_id -> geography.cities.id), asi que geography.cities tiene que
-// existir cuando esa migracion corre. Ver el comentario en CustomersDbContext.ConfigureCustomer.
-await app.Services.InitializeGeographyDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeCustomersDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-await app.Services.InitializeCompaniesDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// Después de Geography: suppliers.suppliers lleva una FK real a geography.cities.
-await app.Services.InitializeSuppliersDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// Despues de Catalog, Customers y Companies, y el orden es estricto: quotations referencia sus datos
-// (producto, cliente) por id suelto, sin FK real, pero dos migraciones de impuestos por tipo leen y escriben esos
-// esquemas: AddQuotationWithholdings copia el pais de la empresa desde companies.companies, y
-// MigrateRetentionToWithholdings (§11.2) escribe en catalog.tax_rates y customers.customer_tax_rates. Tienen que
-// existir con su forma final cuando corren: si faltan, el guard de to_regclass las deja sin hacer nada y no vuelven a
-// correr.
-await app.Services.InitializeQuotationsDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
-// Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
-// decisión 8), así que esa tabla tiene que existir cuando esta migración corre.
-await app.Services.InitializePosDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+// Spec 2026-10-29 (réplicas múltiples), D-2: con más de un pod, dos arranques a la vez migrarían y sembrarían a la vez.
+// Todo el bloque —las migraciones y la semilla— corre bajo pg_advisory_xact_lock(StartupLock.Namespace, StartupLock.Key),
+// tomado en una conexión directa (la regla del listener: QepDatabaseListener o QepDatabase) y sin pool. Es de transacción
+// y no de sesión: no hay unlock que olvidar, y si el pod muere a mitad del bloque Postgres lo suelta al cerrar la conexión.
+// Cada migración y la semilla siguen en sus propias conexiones: el candado es un semáforo, no una unidad de trabajo.
+await app.Services.RunUnderStartupLockAsync(async (services, cancellationToken) =>
+{
+    await services.InitializeTenancyDatabaseAsync(cancellationToken);
+    // Sin esto `authorization.roles` no existe, y como `TenantRoleCatalog` la consulta al
+    // resolver permisos, TODO request autenticado sale 500 — no sólo los de roles. Fue
+    // exactamente lo que rompió los tests de integración de Tenancy al agregar el módulo.
+    await services.InitializeAuthorizationDatabaseAsync(
+        cancellationToken);
+    // Después de Tenancy: Tenancy suelta la tabla de auditoría (DropAuditOwnership) antes de
+    // que la migración del módulo Audit pase a ser su única dueña (ADR 0019).
+    await services.InitializeAuditDatabaseAsync(
+        cancellationToken);
+    await services.InitializeIdentityDatabaseAsync(
+        cancellationToken);
+    // El esquema `platform` ya existia --lo usa la tabla outbox_messages, que crea BuildingBlocks--
+    // pero nadie lo tenia a cargo. Esta migracion solo crea request_failures; el orden respecto de
+    // los demas modulos no importa, porque la tabla no referencia a ninguna otra a proposito.
+    await services.InitializePlatformDatabaseAsync(
+        cancellationToken);
+    await services.InitializeNotificationsDatabaseAsync(
+        cancellationToken);
+    await services.InitializeStorageDatabaseAsync(
+        cancellationToken);
+    await services.InitializeCatalogDatabaseAsync(
+        cancellationToken);
+    // Antes de Customers: la migracion de Customers agrega una FK real
+    // (customers.customers.city_id -> geography.cities.id), asi que geography.cities tiene que
+    // existir cuando esa migracion corre. Ver el comentario en CustomersDbContext.ConfigureCustomer.
+    await services.InitializeGeographyDatabaseAsync(
+        cancellationToken);
+    await services.InitializeCustomersDatabaseAsync(
+        cancellationToken);
+    await services.InitializeCompaniesDatabaseAsync(
+        cancellationToken);
+    // Después de Geography: suppliers.suppliers lleva una FK real a geography.cities.
+    await services.InitializeSuppliersDatabaseAsync(
+        cancellationToken);
+    // Despues de Catalog, Customers y Companies, y el orden es estricto: quotations referencia sus datos
+    // (producto, cliente) por id suelto, sin FK real, pero dos migraciones de impuestos por tipo leen y escriben esos
+    // esquemas: AddQuotationWithholdings copia el pais de la empresa desde companies.companies, y
+    // MigrateRetentionToWithholdings (§11.2) escribe en catalog.tax_rates y customers.customer_tax_rates. Tienen que
+    // existir con su forma final cuando corren: si faltan, el guard de to_regclass las deja sin hacer nada y no vuelven a
+    // correr.
+    await services.InitializeQuotationsDatabaseAsync(
+        cancellationToken);
+    // Después de Companies: pos.cash_sessions lleva una FK real a companies.companies (spec,
+    // decisión 8), así que esa tabla tiene que existir cuando esta migración corre.
+    await services.InitializePosDatabaseAsync(
+        cancellationToken);
 
-// Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
-// audit.entries, que crea la migración de Audit.
-await app.Services.InitializeIntegrationsDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Integrations (spec 2026-10-08): sin FKs a otros esquemas. Va después de Audit porque escribe en
+    // audit.entries, que crea la migración de Audit.
+    await services.InitializeIntegrationsDatabaseAsync(
+        cancellationToken);
 
-// Messaging (spec 2026-10-09): después de Audit (escribe en audit.entries); no tiene FKs a otros
-// esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
-// btree_gin) van en public, como las de Customers y Catalog.
-await app.Services.InitializeMessagingDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Messaging (spec 2026-10-09): después de Audit (escribe en audit.entries); no tiene FKs a otros
+    // esquemas: Integrations y Customers entran por puertos. Las extensiones (pg_trgm, unaccent,
+    // btree_gin) van en public, como las de Customers y Catalog.
+    await services.InitializeMessagingDatabaseAsync(
+        cancellationToken);
 
-// Pipeline (spec 2026-10-13): después de Audit (escribe en audit.entries) y de Tenancy (lee platform.outbox_messages). Sin FKs
-// a otros esquemas: clientes, conversaciones, membresías y cotizaciones son referencias blandas.
-await app.Services.InitializePipelineDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Pipeline (spec 2026-10-13): después de Audit (escribe en audit.entries) y de Tenancy (lee platform.outbox_messages). Sin FKs
+    // a otros esquemas: clientes, conversaciones, membresías y cotizaciones son referencias blandas.
+    await services.InitializePipelineDatabaseAsync(
+        cancellationToken);
 
-// Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
-// pedido, asesor y empresa son referencias blandas.
-await app.Services.InitializeShopifyDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Shopify (spec 2026-10-15 §9): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas: conexión, cliente,
+    // pedido, asesor y empresa son referencias blandas.
+    await services.InitializeShopifyDatabaseAsync(
+        cancellationToken);
 
-// Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
-// Audit (escribe en audit.entries).
-await app.Services.InitializeAutomationsDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Automations (spec 2026-10-21 §4.1): después de Messaging e Integrations, cuyas conexiones y conversaciones referencia sin FK, y de
+    // Audit (escribe en audit.entries).
+    await services.InitializeAutomationsDatabaseAsync(
+        cancellationToken);
 
-// ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
-await app.Services.InitializeServiceContractsDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // ServiceContracts (spec 2026-10-29 §2): sin FKs a otros esquemas; clientes y membresías son referencias blandas.
+    await services.InitializeServiceContractsDatabaseAsync(
+        cancellationToken);
 
-// Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
-// referencias blandas.
-await app.Services.InitializeLoansDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Loans (spec 2026-10-31): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; clientes y membresías son
+    // referencias blandas.
+    await services.InitializeLoansDatabaseAsync(
+        cancellationToken);
 
-// Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
-// clientes, pedidos y membresías son referencias blandas.
-await app.Services.InitializeStoreDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // Store (spec 2026-11-03): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant, empresa, categorías,
+    // clientes, pedidos y membresías son referencias blandas.
+    await services.InitializeStoreDatabaseAsync(
+        cancellationToken);
 
-// Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
-await app.Services.InitializeBuyersDatabaseAsync(app.Lifetime.ApplicationStopping);
+    // Buyers (spec 2026-11-07): esquema propio, sin FKs a otros esquemas. Escribe en platform.outbox_messages (proyección).
+    await services.InitializeBuyersDatabaseAsync(cancellationToken);
 
-// ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
-// membresías son referencias blandas.
-await app.Services.InitializeApiAccessDatabaseAsync(
-    app.Lifetime.ApplicationStopping);
+    // ApiAccess (spec 2026-10-30 §4.1): después de Audit (escribe en audit.entries). Sin FKs a otros esquemas; tenant y
+    // membresías son referencias blandas.
+    await services.InitializeApiAccessDatabaseAsync(
+        cancellationToken);
 
-// Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
-// necesita que existan. Apagada por defecto — ver SeedOptions.
-await app.Services.RunQepSeedAsync(app.Lifetime.ApplicationStopping);
+    // Después de todas las migraciones: la semilla escribe en las tablas de cuatro módulos y
+    // necesita que existan. Apagada por defecto — ver SeedOptions.
+    await services.RunQepSeedAsync(cancellationToken);
+}, app.Lifetime.ApplicationStopping);
 
 await app.RunAsync();
 
