@@ -36,6 +36,8 @@ internal sealed record InstagramRefreshRunResult(int Refreshed, int Rejected, in
 /// <item>Timeout, red o 5xx se registran y esperan a la próxima corrida.</item>
 /// <item>El token nuevo entra por <see cref="IntegrationConnection.Update"/>, que lo cifra y marca la verificación; un
 /// <c>PUT</c> en el medio choca por versión y la conexión vuelve en la próxima corrida.</item>
+/// <item>Lo mismo si el choque de versión sale al reportar el rechazo: esa conexión cuenta como diferida y la corrida sigue
+/// con las demás (owner, 2026-11-14), como en <c>ShopifyTokenRefreshWorker</c>.</item>
 /// <item>Un solo refresco por conexión (owner, 2026-11-14, réplicas múltiples): todo va bajo
 /// <c>pg_try_advisory_xact_lock(InstagramTokenLock.Namespace, hashtext(id))</c>, tomado antes de leer la conexión y de llamar
 /// a Meta. Si Meta invalida el token viejo al refrescar, el perdedor guardaría uno muerto o recibiría un 4xx y marcaría la
@@ -68,6 +70,9 @@ internal sealed partial class InstagramTokenRefreshWorker(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Instagram connection {ConnectionId}: the token refresh could not reach Meta ({Reason}); it is retried on the next run.")]
     private static partial void LogDeferred(ILogger logger, Guid connectionId, string reason);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Instagram connection {ConnectionId}: the connection changed while its rejected token was being reported; it is retried on the next run.")]
+    private static partial void LogRejectConflict(ILogger logger, Guid connectionId);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Instagram connection {ConnectionId}: another process holds its token lock; it is retried on the next run.")]
     private static partial void LogLocked(ILogger logger, Guid connectionId);
@@ -202,10 +207,20 @@ internal sealed partial class InstagramTokenRefreshWorker(
             }
 
             LogRejected(logger, connection.Id, failure.HttpStatus, failure.Code);
-            // El guardado del reporte confirma la transacción, con el candado todavía tomado.
-            await scope.ServiceProvider.GetRequiredService<IConnectionHealthReporter>()
-                .ReportCredentialsRejectedAsync(connection.TenantId, connection.Id, ConnectionFailureCodes.TokenExpired, cancellationToken);
-            return Outcome.Rejected;
+            try
+            {
+                // El guardado del reporte confirma la transacción, con el candado todavía tomado.
+                await scope.ServiceProvider.GetRequiredService<IConnectionHealthReporter>()
+                    .ReportCredentialsRejectedAsync(connection.TenantId, connection.Id, ConnectionFailureCodes.TokenExpired, cancellationToken);
+                return Outcome.Rejected;
+            }
+            catch (RequestConcurrencyException)
+            {
+                // Otro guardado cambió la conexión entre la lectura y el reporte: vuelve en la próxima corrida, y las que
+                // vienen detrás en esta lista se siguen refrescando.
+                LogRejectConflict(logger, connection.Id);
+                return Outcome.Deferred;
+            }
         }
 
         var provider = IntegrationProviders.Instagram;
