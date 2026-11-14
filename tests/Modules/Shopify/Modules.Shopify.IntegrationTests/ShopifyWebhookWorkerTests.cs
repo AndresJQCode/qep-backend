@@ -290,6 +290,7 @@ public sealed class ShopifyWebhookWorkerTests
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
+            null,
             world.AdvisorMembershipId,
             DateTimeOffset.UtcNow);
         scope.ServiceProvider.GetRequiredService<IShopifyStoreRepository>().Add(store);

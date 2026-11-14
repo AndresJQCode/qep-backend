@@ -474,6 +474,10 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("document_type_attribute_key");
 
+                    b.Property<int?>("HistoryDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("history_days");
+
                     b.Property<DateTimeOffset?>("LastReconciledAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_reconciled_at");
@@ -513,7 +517,10 @@ namespace Modules.Shopify.Infrastructure.Persistence.Migrations
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_stores_tenant");
 
-                    b.ToTable("stores", "shopify");
+                    b.ToTable("stores", "shopify", t =>
+                        {
+                            t.HasCheckConstraint("CK_stores_history_days", "history_days IS NULL OR history_days BETWEEN 1 AND 30");
+                        });
                 });
 
             modelBuilder.Entity("Modules.Shopify.Infrastructure.Persistence.ShopifyInboxMessage", b =>

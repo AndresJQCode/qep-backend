@@ -567,7 +567,7 @@ internal sealed record ShopifyWorld(
 
     /// <summary>§6.1: la tienda configurada (asesor, cuenta de cobro COP, clasificación y las claves por defecto), como la deja el
     /// <c>PUT</c> de la tienda.</summary>
-    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory)
+    public async Task ConfigureStoreAsync(ShopifyApiHarness.QepApiFactory factory, int? historyDays = null)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var store = Modules.Shopify.Domain.ShopifyStore.Create(ConnectionId, TenantId, DateTimeOffset.UtcNow);
@@ -578,6 +578,7 @@ internal sealed record ShopifyWorld(
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultDocumentTypeAttributeKey,
             Modules.Shopify.Domain.ShopifyStore.DefaultIdentificationTypeCode,
+            historyDays,
             AdvisorMembershipId,
             DateTimeOffset.UtcNow);
         scope.ServiceProvider.GetRequiredService<Modules.Shopify.Application.IShopifyStoreRepository>().Add(store);

@@ -357,6 +357,7 @@ internal sealed class ImporterWorld
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
+            null,
             AdvisorId,
             Now.AddDays(-1));
     }
@@ -412,6 +413,7 @@ internal sealed class ImporterWorld
             ShopifyStore.DefaultDocumentAttributeKey,
             ShopifyStore.DefaultDocumentTypeAttributeKey,
             ShopifyStore.DefaultIdentificationTypeCode,
+            null,
             AdvisorId,
             Now.AddDays(-1));
         return this;

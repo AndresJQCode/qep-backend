@@ -191,7 +191,10 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
     private static void ConfigureStore(ModelBuilder modelBuilder)
     {
         var store = modelBuilder.Entity<ShopifyStore>();
-        store.ToTable("stores", Schema);
+        // Spec 2026-10-21: el mismo rango que ShopifyStore.Configure; nulo es sin historial.
+        store.ToTable("stores", Schema, table => table.HasCheckConstraint(
+            "CK_stores_history_days",
+            $"history_days IS NULL OR history_days BETWEEN 1 AND {ShopifyStore.HistoryDaysMax}"));
         store.HasKey(value => value.ConnectionId).HasName(StorePrimaryKey);
         store.Property(value => value.ConnectionId).HasColumnName("connection_id").ValueGeneratedNever();
         store.Property(value => value.TenantId).HasColumnName("tenant_id");
@@ -218,6 +221,7 @@ public sealed class ShopifyDbContext(DbContextOptions<ShopifyDbContext> options)
         store.Property(value => value.DefaultIdentificationType)
             .HasColumnName("default_identification_type")
             .HasMaxLength(ShopifyStore.IdentificationTypeMaxLength);
+        store.Property(value => value.HistoryDays).HasColumnName("history_days");
         store.Property(value => value.LastReconciledAt).HasColumnName("last_reconciled_at");
         store.Property(value => value.ReconcileLeaseUntil).HasColumnName("reconcile_lease_until");
         store.Property(value => value.Version).HasColumnName("version").IsConcurrencyToken();

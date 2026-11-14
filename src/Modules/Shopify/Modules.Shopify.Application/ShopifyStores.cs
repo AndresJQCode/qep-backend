@@ -242,6 +242,7 @@ public sealed class UpdateShopifyStoreHandler(
             command.DocumentAttributeKey!,
             command.DocumentTypeAttributeKey!,
             ShopifyDocumentTypes.Normalize(command.DefaultIdentificationType)!,
+            store.HistoryDays,
             updatedBy,
             clock.UtcNow);
         if (isNew)
