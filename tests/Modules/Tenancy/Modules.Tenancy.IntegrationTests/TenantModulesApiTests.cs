@@ -143,7 +143,7 @@ public sealed class TenantModulesApiTests(SharedTenancyHost host) : IClassFixtur
 
         var modules = await ModulesAsync(client, tenantId);
 
-        Assert.Equal(17, modules.Modules.Count);
+        Assert.Equal(18, modules.Modules.Count);
         Assert.All(modules.Modules, module =>
         {
             Assert.True(module.Enabled);
