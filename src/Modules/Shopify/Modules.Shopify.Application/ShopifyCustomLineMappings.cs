@@ -162,7 +162,17 @@ public sealed class DeleteShopifyCustomLineMappingHandler(
             mapping.Id.ToString(),
             ShopifyCustomLineMappingMapper.AuditDetail(mapping),
             clock.UtcNow);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (RequestConcurrencyException exception) when (ShopifyStoreSupport.IsConflict(exception))
+        {
+            // D7: otro DELETE del mismo id ganó la carrera (el guardado no afectó ninguna fila): ya está borrada, y esa
+            // petición es la que audita.
+            return false;
+        }
+
         return true;
     }
 }
